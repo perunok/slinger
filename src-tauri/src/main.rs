@@ -7,7 +7,9 @@ mod db;
 mod domain;
 
 use anyhow::Result;
+use reqwest::header::{HeaderName, HeaderValue};
 use sqlx::SqlitePool;
+use std::time::Instant;
 use tauri::State;
 
 #[tauri::command]
@@ -80,6 +82,16 @@ async fn list_requests(
 }
 
 #[tauri::command]
+async fn list_folders(
+    state: State<'_, SqlitePool>,
+    collection_id: String,
+) -> Result<Vec<domain::ApiFolder>, String> {
+    db::list_folders(&state, collection_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn import_postman_collection(
     state: State<'_, SqlitePool>,
     workspace_id: String,
@@ -88,6 +100,69 @@ async fn import_postman_collection(
     db::import_postman_collection(&state, workspace_id, payload)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn execute_http_request(
+    input: domain::HttpRequestInput,
+) -> Result<domain::HttpResponseData, String> {
+    let method = input
+        .method
+        .parse::<reqwest::Method>()
+        .map_err(|err| err.to_string())?;
+    let url = input.url.trim();
+
+    if url.is_empty() {
+        return Err("request URL is required".to_string());
+    }
+
+    if url.contains("{{") || url.contains("}}") {
+        return Err("request URL contains unresolved variables".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let mut builder = client.request(method, url);
+
+    for header in input.headers {
+        let key = header.key.trim();
+        let value = header.value.trim();
+
+        if key.is_empty() {
+            continue;
+        }
+
+        let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|err| err.to_string())?;
+        let header_value = HeaderValue::from_str(value).map_err(|err| err.to_string())?;
+        builder = builder.header(header_name, header_value);
+    }
+
+    if let Some(body) = input.body {
+        if !body.is_empty() {
+            builder = builder.body(body);
+        }
+    }
+
+    let started_at = Instant::now();
+    let response = builder.send().await.map_err(|err| err.to_string())?;
+    let duration_ms = started_at.elapsed().as_millis();
+    let status = response.status();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(key, value)| domain::RequestHeader {
+            key: key.to_string(),
+            value: value.to_str().unwrap_or("").to_string(),
+        })
+        .collect();
+    let body = response.text().await.map_err(|err| err.to_string())?;
+
+    Ok(domain::HttpResponseData {
+        status: status.as_u16(),
+        status_text: status.canonical_reason().unwrap_or("").to_string(),
+        duration_ms,
+        headers,
+        body,
+    })
 }
 
 fn main() -> Result<()> {
@@ -109,7 +184,9 @@ fn main() -> Result<()> {
             rename_collection,
             delete_collection,
             list_requests,
+            list_folders,
             import_postman_collection,
+            execute_http_request,
         ])
         .run(tauri::generate_context!())?;
 

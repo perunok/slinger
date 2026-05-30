@@ -13,10 +13,20 @@ export type Collection = {
   created_at: number
 }
 
+export type ApiFolder = {
+  id: string
+  workspace_id: string
+  collection_id: string
+  parent_folder_id: string | null
+  name: string
+  created_at: number
+}
+
 export type ApiRequest = {
   id: string
   workspace_id: string
   collection_id: string
+  folder_id: string | null
   name: string
   method: string
   url: string
@@ -26,12 +36,34 @@ export type ApiRequest = {
 
 export type PostmanImportResult = {
   collection: Collection
+  folders: ApiFolder[]
   requests: ApiRequest[]
+}
+
+export type RequestHeader = {
+  key: string
+  value: string
+}
+
+export type HttpRequestInput = {
+  method: string
+  url: string
+  headers: RequestHeader[]
+  body?: string | null
+}
+
+export type HttpResponseData = {
+  status: number
+  status_text: string
+  duration_ms: number
+  headers: RequestHeader[]
+  body: string
 }
 
 type StoredData = {
   workspaces: Workspace[]
   collections: Collection[]
+  folders: ApiFolder[]
   requests: ApiRequest[]
 }
 
@@ -46,6 +78,7 @@ type PostmanItem = {
     body?: unknown
     auth?: unknown
   }
+  event?: unknown
   response?: unknown
 }
 
@@ -56,7 +89,16 @@ type PostmanCollection = {
   item?: PostmanItem[]
 }
 
+type RequestDraft = {
+  folderPath: string[]
+  name: string
+  method: string
+  url: string
+  document_json: string
+}
+
 const STORAGE_KEY = 'slinger.browser-preview.v1'
+const PATH_SEPARATOR = '\u001f'
 
 export const isTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -76,6 +118,7 @@ function readStore(): StoredData {
   const fallback: StoredData = {
     workspaces: [],
     collections: [],
+    folders: [],
     requests: [],
   }
 
@@ -87,7 +130,11 @@ function readStore(): StoredData {
     return ensurePersonalWorkspace({
       workspaces: parsed.workspaces ?? [],
       collections: parsed.collections ?? [],
-      requests: parsed.requests ?? [],
+      folders: parsed.folders ?? [],
+      requests: (parsed.requests ?? []).map((request) => ({
+        ...request,
+        folder_id: request.folder_id ?? null,
+      })),
     })
   } catch {
     return ensurePersonalWorkspace(fallback)
@@ -138,51 +185,114 @@ function postmanUrlToString(
   return `${host.replace(/\/$/, '')}/${path}`
 }
 
-function collectPostmanRequests(items: PostmanItem[] | undefined): Array<{
-  name: string
-  method: string
-  url: string
-  document_json: string
-}> {
-  const requests: Array<{
-    name: string
-    method: string
-    url: string
-    document_json: string
-  }> = []
+function collectPostmanRequests(items: PostmanItem[] | undefined): RequestDraft[] {
+  const requests: RequestDraft[] = []
 
-  for (const item of items ?? []) {
-    if (item.item) {
-      requests.push(...collectPostmanRequests(item.item))
-      continue
+  function walk(currentItems: PostmanItem[] | undefined, folderPath: string[]) {
+    for (const item of currentItems ?? []) {
+      if (item.item) {
+        const folderName = item.name?.trim() || 'Untitled Folder'
+        walk(item.item, [...folderPath, folderName])
+        continue
+      }
+
+      if (!item.request) continue
+
+      const name = item.name?.trim() || 'Untitled Request'
+      const method = item.request.method?.trim().toUpperCase() || 'GET'
+      const url = postmanUrlToString(item.request.url)
+      const document = {
+        name,
+        method,
+        url,
+        description: item.request.description ?? null,
+        headers: item.request.header ?? [],
+        body: item.request.body ?? null,
+        auth: item.request.auth ?? null,
+        scripts: item.event ?? [],
+        responses: item.response ?? [],
+        source: item,
+      }
+
+      requests.push({
+        folderPath,
+        name,
+        method,
+        url,
+        document_json: JSON.stringify(document),
+      })
     }
-
-    if (!item.request) continue
-
-    const name = item.name?.trim() || 'Untitled Request'
-    const method = item.request.method?.trim().toUpperCase() || 'GET'
-    const url = postmanUrlToString(item.request.url)
-    const document = {
-      name,
-      method,
-      url,
-      description: item.request.description ?? null,
-      headers: item.request.header ?? [],
-      body: item.request.body ?? null,
-      auth: item.request.auth ?? null,
-      responses: item.response ?? [],
-      source: item,
-    }
-
-    requests.push({
-      name,
-      method,
-      url,
-      document_json: JSON.stringify(document),
-    })
   }
 
+  walk(items, [])
   return requests
+}
+
+function createFoldersFromPaths(
+  workspaceId: string,
+  collectionId: string,
+  paths: string[][],
+): { folders: ApiFolder[]; pathToFolderId: Map<string, string> } {
+  const folders: ApiFolder[] = []
+  const pathToFolderId = new Map<string, string>()
+
+  for (const path of paths) {
+    let parentFolderId: string | null = null
+    let currentPath: string[] = []
+
+    for (const name of path) {
+      currentPath = [...currentPath, name]
+      const key = currentPath.join(PATH_SEPARATOR)
+
+      if (pathToFolderId.has(key)) {
+        parentFolderId = pathToFolderId.get(key) ?? null
+        continue
+      }
+
+      const folder = {
+        id: createId(),
+        workspace_id: workspaceId,
+        collection_id: collectionId,
+        parent_folder_id: parentFolderId,
+        name,
+        created_at: nowUnixSeconds(),
+      }
+
+      folders.push(folder)
+      pathToFolderId.set(key, folder.id)
+      parentFolderId = folder.id
+    }
+  }
+
+  return { folders, pathToFolderId }
+}
+
+async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseData> {
+  if (input.url.includes('{{') || input.url.includes('}}')) {
+    throw new Error('request URL contains unresolved variables')
+  }
+
+  const headers = input.headers.reduce<Record<string, string>>((current, header) => {
+    const key = header.key.trim()
+    if (key) current[key] = header.value
+    return current
+  }, {})
+  const startedAt = performance.now()
+  const response = await fetch(input.url, {
+    method: input.method,
+    headers,
+    body: input.body || undefined,
+  })
+  const body = await response.text()
+  const durationMs = Math.round(performance.now() - startedAt)
+
+  return {
+    status: response.status,
+    status_text: response.statusText,
+    duration_ms: durationMs,
+    headers: Array.from(response.headers.entries()).map(([key, value]) => ({ key, value })),
+    body,
+  }
 }
 
 async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -265,8 +375,14 @@ export async function deleteCollection(collectionId: string): Promise<void> {
   writeStore({
     ...data,
     collections: data.collections.filter((collection) => collection.id !== collectionId),
+    folders: data.folders.filter((folder) => folder.collection_id !== collectionId),
     requests: data.requests.filter((request) => request.collection_id !== collectionId),
   })
+}
+
+export async function getFolders(collectionId: string): Promise<ApiFolder[]> {
+  if (isTauriRuntime) return invokeTauri('list_folders', { collectionId })
+  return readStore().folders.filter((folder) => folder.collection_id === collectionId)
 }
 
 export async function getRequests(collectionId: string): Promise<ApiRequest[]> {
@@ -295,22 +411,38 @@ export async function importPostmanCollection(
     name: collectionName,
     created_at: nowUnixSeconds(),
   }
+  const { folders, pathToFolderId } = createFoldersFromPaths(
+    workspaceId,
+    collection.id,
+    requestDrafts.map((request) => request.folderPath),
+  )
   const requests = requestDrafts.map((request) => ({
-    ...request,
     id: createId(),
     workspace_id: workspaceId,
     collection_id: collection.id,
+    folder_id: pathToFolderId.get(request.folderPath.join(PATH_SEPARATOR)) ?? null,
+    name: request.name,
+    method: request.method,
+    url: request.url,
+    document_json: request.document_json,
     created_at: nowUnixSeconds(),
   }))
 
   writeStore({
     ...data,
     collections: [...data.collections, collection],
+    folders: [...data.folders, ...folders],
     requests: [...data.requests, ...requests],
   })
 
   return {
     collection,
+    folders,
     requests,
   }
+}
+
+export async function executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData> {
+  if (isTauriRuntime) return invokeTauri('execute_http_request', { input })
+  return executeWithFetch(input)
 }
