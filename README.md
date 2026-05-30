@@ -28,6 +28,22 @@ without requiring major architectural changes.
 
 ---
 
+# Getting Started
+
+```bash
+npm install
+npm run dev
+```
+
+In another shell, if you want to build the Rust Tauri backend:
+
+```bash
+cd src-tauri
+cargo build
+```
+
+---
+
 # Core Principles
 
 ## Local First
