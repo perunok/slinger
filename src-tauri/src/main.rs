@@ -14,6 +14,13 @@ async fn create_workspace(state: State<'_, SqlitePool>, name: String) -> Result<
         .map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+async fn list_workspaces(state: State<'_, SqlitePool>) -> Result<Vec<domain::Workspace>, String> {
+    db::list_workspaces(&state)
+        .await
+        .map_err(|err| err.to_string())
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -21,10 +28,11 @@ fn main() -> Result<()> {
         .build()?;
 
     let pool = runtime.block_on(db::init_database("slinger.db"))?;
+    runtime.block_on(db::ensure_default_workspace(&pool))?;
 
     tauri::Builder::default()
         .manage(pool)
-        .invoke_handler(tauri::generate_handler![create_workspace])
+        .invoke_handler(tauri::generate_handler![create_workspace, list_workspaces])
         .run(tauri::generate_context!())?;
 
     Ok(())

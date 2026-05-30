@@ -42,6 +42,8 @@ cd src-tauri
 cargo build
 ```
 
+> Linux only: building the Tauri backend requires native packages such as `pkg-config`, `libgtk-4-dev`, and `libglib2.0-dev`.
+
 ---
 
 # Core Principles

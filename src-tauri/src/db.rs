@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{query, query_as, sqlite::SqlitePoolOptions, SqlitePool};
 use uuid::Uuid;
 
 use crate::domain::Workspace;
@@ -15,7 +15,7 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
     let database_url = format!("sqlite://{}", path);
     let pool = SqlitePoolOptions::new().max_connections(5).connect(&database_url).await?;
 
-    sqlx::query(
+    query(
         r#"
         CREATE TABLE IF NOT EXISTS workspaces (
             id TEXT PRIMARY KEY,
@@ -27,7 +27,7 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
-    sqlx::query(
+    query(
         r#"
         CREATE TABLE IF NOT EXISTS collections (
             id TEXT PRIMARY KEY,
@@ -44,6 +44,30 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+pub async fn ensure_default_workspace(pool: &SqlitePool) -> Result<()> {
+    let (count,): (i64,) = query_as("SELECT COUNT(*) FROM workspaces")
+        .fetch_one(pool)
+        .await?;
+
+    if count == 0 {
+        create_workspace(pool, "Personal".to_string()).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn list_workspaces(pool: &SqlitePool) -> Result<Vec<Workspace>> {
+    query_as::<_, Workspace>(
+        r#"
+        SELECT id, name, created_at
+        FROM workspaces
+        ORDER BY created_at
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspace> {
     let workspace = Workspace {
         id: Uuid::now_v7(),
@@ -51,7 +75,7 @@ pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspa
         created_at: now_unix_seconds(),
     };
 
-    sqlx::query(
+    query(
         r#"
         INSERT INTO workspaces (id, name, created_at)
         VALUES (?, ?, ?)
