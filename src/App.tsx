@@ -220,6 +220,7 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [responseHeight, setResponseHeight] = useState(260)
   const [isResizingResponse, setIsResizingResponse] = useState(false)
+  const [selectedResponseIndex, setSelectedResponseIndex] = useState(0)
   const responseSplitRef = useRef<HTMLDivElement>(null)
 
   const selectedWorkspace = useMemo(
@@ -237,7 +238,7 @@ function App() {
   const selectedDocument = useMemo(() => parseDocument(selectedRequest), [selectedRequest])
   const headers = useMemo(() => requestHeaders(selectedDocument), [selectedDocument])
   const responseExamples = useMemo(() => requestResponses(selectedDocument), [selectedDocument])
-  const firstResponse = responseExamples[0] ?? null
+  const selectedResponse = responseExamples[selectedResponseIndex] ?? responseExamples[0] ?? null
 
   useEffect(() => {
     function handlePointerMove(event: PointerEvent) {
@@ -267,7 +268,17 @@ function App() {
       window.removeEventListener('pointercancel', handlePointerUp)
     }
   }, [isResizingResponse])
-  const firstResponseBody = firstResponse?.body ? formatMaybeJson(firstResponse.body) : ''
+
+  useEffect(() => {
+    if (responseExamples.length === 0) {
+      setSelectedResponseIndex(0)
+      return
+    }
+
+    setSelectedResponseIndex((current) => (current >= responseExamples.length ? 0 : current))
+  }, [responseExamples.length])
+
+  const selectedResponseBody = selectedResponse?.body ? formatMaybeJson(selectedResponse.body) : ''
   const params = useMemo(() => extractParams(urlDraft, selectedDocument), [selectedDocument, urlDraft])
   const scripts = useMemo(() => scriptText(requestScripts(selectedDocument)), [selectedDocument])
   const description =
@@ -988,20 +999,40 @@ function App() {
                           {formatMaybeJson(sendResult.body) || 'No response body.'}
                         </pre>
                       </div>
-                    ) : firstResponse ? (
+                    ) : responseExamples.length > 0 ? (
                       <div className="space-y-3">
-                        <div className="flex items-center gap-3 text-sm">
-                          <span className="font-semibold text-white">{firstResponse.name ?? 'Example'}</span>
-                          <span className="text-[#9d9d9d]">{firstResponse.status ?? 'Imported response'}</span>
-                          {firstResponse.code ? (
-                            <span className="rounded bg-[#1e3a2a] px-2 py-0.5 text-xs text-[#8de1a6]">
-                              {firstResponse.code}
-                            </span>
-                          ) : null}
+                        <div className="flex flex-wrap items-center gap-3 rounded border border-[#333] bg-[#1f1f1f] p-3">
+                          <div className="flex items-center gap-2 text-sm text-[#c0c0c0]">
+                            <span className="font-semibold text-white">Example</span>
+                            <span className="text-[#6b6b6b]">▼</span>
+                          </div>
+                          <select
+                            value={selectedResponseIndex}
+                            onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
+                            className="min-w-[180px] rounded border border-[#3c3c3c] bg-[#181818] px-3 py-2 text-sm text-white outline-none focus:border-[#5a8fff]"
+                          >
+                            {responseExamples.map((response, index) => (
+                              <option key={`${response.name ?? 'example'}-${index}`} value={index}>
+                                {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
+                              </option>
+                            ))}
+                          </select>
                         </div>
-                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#333] bg-[#202020] p-3 font-mono text-xs leading-5 text-[#cbd5e1]">
-                          {firstResponseBody || 'No response body.'}
-                        </pre>
+
+                        <div className="space-y-2 rounded border border-[#333] bg-[#202020] p-4">
+                          <div className="flex flex-wrap items-center gap-3 text-sm">
+                            <span className="font-semibold text-white">{selectedResponse?.name ?? 'Example'}</span>
+                            <span className="text-[#9d9d9d]">{selectedResponse?.status ?? 'Imported response'}</span>
+                            {selectedResponse?.code ? (
+                              <span className="rounded bg-[#1e3a2a] px-2 py-0.5 text-xs text-[#8de1a6]">
+                                {selectedResponse.code}
+                              </span>
+                            ) : null}
+                          </div>
+                          <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#333] bg-[#202020] p-3 font-mono text-xs leading-5 text-[#cbd5e1]">
+                            {selectedResponseBody || 'No response body.'}
+                          </pre>
+                        </div>
                       </div>
                     ) : (
                       <div className="flex h-full items-center justify-center text-sm text-[#8e8e8e]">
