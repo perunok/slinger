@@ -218,6 +218,9 @@ function App() {
   const [loadingRequests, setLoadingRequests] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [responseHeight, setResponseHeight] = useState(260)
+  const [isResizingResponse, setIsResizingResponse] = useState(false)
+  const responseSplitRef = useRef<HTMLDivElement>(null)
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -235,6 +238,35 @@ function App() {
   const headers = useMemo(() => requestHeaders(selectedDocument), [selectedDocument])
   const responseExamples = useMemo(() => requestResponses(selectedDocument), [selectedDocument])
   const firstResponse = responseExamples[0] ?? null
+
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent) {
+      if (!isResizingResponse || !responseSplitRef.current) return
+
+      const rect = responseSplitRef.current.getBoundingClientRect()
+      const newHeight = rect.bottom - event.clientY
+      const minHeight = 120
+      const maxHeight = rect.height - 120
+
+      setResponseHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)))
+    }
+
+    function handlePointerUp() {
+      setIsResizingResponse(false)
+    }
+
+    if (isResizingResponse) {
+      window.addEventListener('pointermove', handlePointerMove)
+      window.addEventListener('pointerup', handlePointerUp)
+      window.addEventListener('pointercancel', handlePointerUp)
+    }
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [isResizingResponse])
   const firstResponseBody = firstResponse?.body ? formatMaybeJson(firstResponse.body) : ''
   const params = useMemo(() => extractParams(urlDraft, selectedDocument), [selectedDocument, urlDraft])
   const scripts = useMemo(() => scriptText(requestScripts(selectedDocument)), [selectedDocument])
@@ -911,26 +943,27 @@ function App() {
                 </div>
               ) : null}
 
-              <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_260px]">
-                <div className="min-h-0 overflow-auto border-b border-[#343434] bg-[#1f1f1f]">
+              <div ref={responseSplitRef} className="min-h-0 flex flex-1 flex-col bg-[#1f1f1f]">
+                <div className="min-h-0 flex-1 overflow-auto border-b border-[#343434] bg-[#1f1f1f]">
                   {renderActiveTab()}
                 </div>
 
-                <div className="flex min-h-0 flex-col bg-[#1f1f1f]">
-                  <div className="flex h-10 items-center gap-5 border-b border-[#303030] px-4 text-sm">
-                    <span className="font-semibold text-white">Response</span>
-                    <span className="text-[#858585]">History</span>
-                    {sendResult ? (
-                      <span className={`ml-auto rounded px-2 py-0.5 text-xs ${statusClass(sendResult.status)}`}>
-                        {sendResult.status} {sendResult.status_text} in {sendResult.duration_ms} ms
-                      </span>
-                    ) : responseExamples.length > 0 ? (
-                      <span className="ml-auto text-xs text-[#9d9d9d]">
-                        {responseExamples.length} imported examples
-                      </span>
-                    ) : null}
+                <div
+                  className="flex h-5 cursor-row-resize items-center justify-center bg-[#222] hover:bg-[#3a3a3a]"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    setIsResizingResponse(true)
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                  }}
+                >
+                  <div className="flex h-1.5 w-12 items-center justify-between">
+                    <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
+                    <span className="text-xs text-[#909090]">⇕</span>
+                    <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
                   </div>
-                  <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+                </div>
+
+                <div className="min-h-0 overflow-auto px-4 py-3" style={{ height: `${responseHeight}px` }}>
                     {sendError ? (
                       <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#5a2626] bg-[#2b1616] p-3 font-mono text-xs leading-5 text-[#ffb3b3]">
                         {sendError}
@@ -978,7 +1011,6 @@ function App() {
                   </div>
                 </div>
               </div>
-            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <div className="text-center">
