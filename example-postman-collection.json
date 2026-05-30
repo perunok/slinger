@@ -1,0 +1,1060 @@
+{
+  "info": {
+    "_postman_id": "a04f09d8-cf18-44ff-a990-8ebb72d0aebe",
+    "name": "thub-collection",
+    "description": "Postman Collection for et.com.act.vib3.hub.transfer.transferhub engine.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "32410822"
+  },
+  "item": [
+    {
+      "name": "Create Charge Detail",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"service_type\": \"IWD\",\n    \"charge_parameters\": [\n      {\n        \"amount_range\": \"1-1000\",\n        \"charge_percentage\": 1.5,\n        \"vat_percentage\": 15.0,\n        \"risk_percentage\": 0.2\n      },\n      {\n        \"amount_range\": \"1001-5000\",\n        \"charge_percentage\": 1.2,\n        \"vat_percentage\": 15.0,\n        \"risk_percentage\": 0.1\n      }\n    ]\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{thub_url}}/api/v1/transferhub/charge-details",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "charge-details"
+          ]
+        },
+        "description": "Accepts a list of ChargeDetailParameter to create new charge details configurations."
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"service_type\": \"IWD\",\n    \"charge_parameters\": [\n      {\n        \"amount_range\": \"1-1000\",\n        \"charge_percentage\": 1.5,\n        \"vat_percentage\": 15.0,\n        \"risk_percentage\": 0.2\n      },\n      {\n        \"amount_range\": \"1001-5000\",\n        \"charge_percentage\": 1.2,\n        \"vat_percentage\": 15.0,\n        \"risk_percentage\": 0.1\n      }\n    ]\n  }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details"
+              ]
+            }
+          },
+          "status": "Created",
+          "code": 201,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"success\",\n    \"message\": \"created\",\n    \"id\": 1,\n    \"serviceType\": \"IWD\"\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"service_type\": \"IWD\",\n    \"charge_parameters\": [\n        {\n            \"amount_range\": \"1-1000\",\n            \"charge_percentage\": 1.5,\n            \"vat_percentage\": 15.0,\n            \"risk_percentage\": 0.2\n        },\n        {\n            \"amount_range\": \"1001-5000\",\n            \"charge_percentage\": 1.2,\n            \"vat_percentage\": 15.0,\n            \"risk_percentage\": 0.1\n        }\n    ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details"
+              ]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THUB-CHG-006\",\n    \"message\": \"your range is inconsistant.\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Get All Charge Details",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{thub_url}}/api/v1/transferhub/charge-details",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "charge-details"
+          ]
+        },
+        "description": "Fetches all elements recorded inside the charge_percentage database table mapping."
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details"
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"success\",\n    \"message\": \"retrieved successfuly\",\n    \"data\": [\n        {\n            \"charge_details\": [\n                {\n                    \"amount_range\": \"1-1000\",\n                    \"charge_percentage\": 1.5,\n                    \"vat_percentage\": 15,\n                    \"risk_percentage\": 0.2\n                },\n                {\n                    \"amount_range\": \"1001-5000\",\n                    \"charge_percentage\": 1.2,\n                    \"vat_percentage\": 15,\n                    \"risk_percentage\": 0.1\n                }\n            ],\n            \"id\": 1,\n            \"service_type\": \"IWD\"\n        },\n        {\n            \"charge_details\": [\n                {\n                    \"amount_range\": \"1-1000\",\n                    \"charge_percentage\": 1.5,\n                    \"vat_percentage\": 15,\n                    \"risk_percentage\": 0.2\n                },\n                {\n                    \"amount_range\": \"1001-5000\",\n                    \"charge_percentage\": 1.2,\n                    \"vat_percentage\": 15,\n                    \"risk_percentage\": 0.1\n                }\n            ],\n            \"id\": 2,\n            \"service_type\": \"INT\"\n        }\n    ]\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details"
+              ]
+            }
+          },
+          "status": "Not Found",
+          "code": 404,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THUB-CHG-004\",\n    \"message\": \"no data found\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Get Charge Details by Service Type",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{thub_url}}/api/v1/transferhub/charge-details/service-type/:serviceType",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "charge-details",
+            "service-type",
+            ":serviceType"
+          ],
+          "variable": [
+            {
+              "key": "serviceType",
+              "value": "MOBILE_MONEY_TRANSFER",
+              "description": "The string code of the target transaction service type"
+            }
+          ]
+        },
+        "description": "Filters the charge parameters database matching specifically to a single service domain."
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details/service-type/:serviceType",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details",
+                "service-type",
+                ":serviceType"
+              ],
+              "variable": [
+                {
+                  "key": "serviceType",
+                  "value": "MOBILE_MONEY_TRANSFER",
+                  "description": "The string code of the target transaction service type"
+                }
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n   \"status\":\"SUCCESS\",\n   \"code\":\"THUB-CHG-002\",\n   \"message\":\"charge detail fetched successfully\",\n   \"id\":804,\n   \"service_type\":\"FRA\",\n   \"charge_detail\":[\n      {\n         \"amount_range\":\"1-1000\",\n         \"charge_percentage\":0.5,\n         \"vat_percentage\":0,\n         \"risk_percentage\":0\n      },\n      {\n         \"amount_range\":\"1001-5000\",\n         \"charge_percentage\":0.43,\n         \"vat_percentage\":0.21,\n         \"risk_percentage\":0.2\n      }\n   ]\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{thub_url}}/api/v1/transferhub/charge-details/service-type/:serviceType",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details",
+                "service-type",
+                ":serviceType"
+              ],
+              "variable": [
+                {
+                  "key": "serviceType",
+                  "value": "MOBILE_MONEY_TRANSFER",
+                  "description": "The string code of the target transaction service type"
+                }
+              ]
+            }
+          },
+          "status": "Not Found",
+          "code": 404,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THUB-CHG-003\",\n    \"message\": \"no setting found with provided service type\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Update Charge Detail by Service Type",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"service_type\": \"IWD\",\n  \"charge_parameters\": [\n    {\n      \"amount_range\": \"1-1000\",\n      \"charge_percentage\": 1.75,\n      \"vat_percentage\": 15.0,\n      \"risk_percentage\": 0.25\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{thub_url}}/api/v1/transferhub/charge-detail/:serviceType",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "charge-detail",
+            ":serviceType"
+          ],
+          "variable": [
+            {
+              "key": "serviceType",
+              "value": "INT",
+              "description": "The service type whose parameters you intend to replace/update"
+            }
+          ]
+        },
+        "description": "Accepts a single ChargeDetailParameter payload to update the database configuration record."
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_type\": \"IWD\",\n  \"charge_parameters\": [\n    {\n      \"amount_range\": \"1-1000\",\n      \"charge_percentage\": 1.75,\n      \"vat_percentage\": 15.0,\n      \"risk_percentage\": 0.25\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-detail/:serviceType",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-detail",
+                ":serviceType"
+              ],
+              "variable": [
+                {
+                  "key": "serviceType",
+                  "value": "MOBILE_MONEY_TRANSFER",
+                  "description": "The service type whose parameters you intend to replace/update"
+                }
+              ]
+            }
+          },
+          "status": "Accepted",
+          "code": 202,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"success\",\n    \"message\": \"updated\",\n    \"id\": 1,\n    \"service_type\": \"IWD\"\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_type\": \"IWD\",\n  \"charge_parameters\": [\n    {\n      \"amount_range\": \"1-1000\",\n      \"charge_percentage\": 1.75,\n      \"vat_percentage\": 15.0,\n      \"risk_percentage\": 0.25\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details"
+              ]
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"BDEE\",\n    \"message\": \"your range is inconsistant.\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Delete Charge Detail",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{thub_url}}/api/v1/transferhub/charge-details/FRA",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "charge-details",
+            "FRA"
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "failure Copy",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{thub_url}}/api/v1/transferhub/charge-details/service-type/:serviceType",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details",
+                "service-type",
+                ":serviceType"
+              ],
+              "variable": [
+                {
+                  "key": "serviceType",
+                  "value": "MOBILE_MONEY_TRANSFER",
+                  "description": "The string code of the target transaction service type"
+                }
+              ]
+            }
+          },
+          "status": "Not Found",
+          "code": 404,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THUB-CHG-004\",\n    \"message\": \"no setting found with provided service type\"\n}"
+        },
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transferhub/charge-details/service-type/:serviceType",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "charge-details",
+                "service-type",
+                ":serviceType"
+              ],
+              "variable": [
+                {
+                  "key": "serviceType",
+                  "value": "MOBILE_MONEY_TRANSFER",
+                  "description": "The string code of the target transaction service type"
+                }
+              ]
+            }
+          },
+          "status": "Accepted",
+          "code": 202,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n   \"status\":\"SUCCESS\",\n   \"code\":\"success\",\n   \"message\":\"setting removed successfuly\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "internal transfer",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const idempotencyKey =",
+              "    'idem-' +",
+              "    Date.now() +",
+              "    '-' +",
+              "    Math.random().toString(36).substring(2, 15);",
+              "",
+              "pm.environment.set(\"idempotency_key\", idempotencyKey);"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              ""
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-stepped-up",
+            "value": "true"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"from_account\": \"0011124978513001\",\n  \"from_account_holder\": \"John Doe\",\n  \"amount\": 2.75,\n  \"channel\": \"MB\",\n  \"from_phone\": \"251911223344\",\n  \"from_account_currency\": \"ETB\",\n  \"remark\": \"Internal transfer payment\",\n  \"idempotency_key\": \"{{idempotency_key}}\",\n  \"to_account\": \"0011100257734001\",\n  \"to_account_holder\": \"Jane Smith\",\n  \"to_account_currency\": \"ETB\",\n  \"service_type\": \"INT\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://{{thub_url}}/api/v1/transferhub/internal",
+          "protocol": "http",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "internal"
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-stepped-up",
+                "value": "true"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_account\": \"0011122015513001\",\n  \"from_account_holder\": \"John Doe\",\n  \"amount\": 2500.75,\n  \"channel\": \"MB\",\n  \"from_phone\": \"251911223344\",\n  \"from_account_currency\": \"ETB\",\n  \"remark\": \"Internal transfer payment\",\n  \"idempotency_key\": \"24a5257d-249c-471b-8901-7dc7f7ff8440\",\n  \"to_account\": \"0011100257734001\",\n  \"to_account_holder\": \"Jane Smith\",\n  \"to_account_currency\": \"ETB\",\n  \"service_type\": \"INT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/internal",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "internal"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"THB-TXN-000\",\n    \"failure_reason\": null,\n    \"message\": \"transaction accepted successfully\",\n    \"idempotency_key\": \"24a5257d-249c-471b-8901-7dc7f7ff8440\",\n    \"reference_number\": \"26140IWD38C46E\",\n    \"service_charge\": 30.01,\n    \"vat\": 375.11\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-stepped-up",
+                "value": "true"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_account\": \"0011122015513001\",\n  \"from_account_holder\": \"John Doe\",\n  \"amount\": 2500.75,\n  \"channel\": \"MB\",\n  \"from_phone\": \"251911223344\",\n  \"from_account_currency\": \"ETB\",\n  \"remark\": \"Internal transfer payment\",\n  \"idempotency_key\": \"24a5257d-249c-471b-8901-7dc7f7ff8440\",\n  \"to_account\": \"0011100257734001\",\n  \"to_account_holder\": \"Jane Smith\",\n  \"to_account_currency\": \"ETB\",\n  \"service_type\": \"INT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/internal",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "internal"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THB-VAL-004\",\n    \"message\": \"transaction failed\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "inward transfer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"account\": \"1234567890\",\n  \"customer_name\": \"ABDI ALEMAYEHU INKOSA\",\n  \"currency\": \"ETB\",\n  \"amount\": 10.00,\n  \"channel\": \"MOBILE\",\n  \"remark\": \"Test transfer\",\n  \"idempotency_key\": \"idem-123e4567-e89b-12d3-a456-426614174001\",\n  \"service_type\": \"UNI\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://{{thub_url}}/api/v1/transferhub/inward",
+          "protocol": "http",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "inward"
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/inward",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "inward"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"THB-TXN-000\",\n    \"failure_reason\": null,\n    \"message\": \"transaction accepted successfully\",\n    \"idempotency_key\": \"24a5257d-249c-471b-8901-7dc7f7ff8440\",\n    \"reference_number\": \"26140IWD38C46E\",\n    \"service_charge\": 30.01,\n    \"vat\": 375.11\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/inward",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "inward"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THB-VAL-004\",\n    \"message\": \"transaction failed\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "outward transfer",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const idempotencyKey = crypto.randomUUID();",
+              "",
+              "pm.environment.set(\"idempotency_key\", idempotencyKey);"
+            ],
+            "type": "text/javascript",
+            "packages": {},
+            "requests": {}
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-stepped-up",
+            "value": "true"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"from_phone\": \"251912218992\",\n  \"from_account\": \"0671120345113001\",\n  \"from_account_holder\": \"John Doe\",\n  \"from_account_currency\": \"ETB\",\n  \"amount\": 1.00,\n  \"channel\": \"MB\",\n  \"remark\": \"Payment for services\",\n  \"idempotency_key\": \"{{idempotency_key}}\",\n  \"to_account\": \"0011100257734001\",\n  \"to_account_holder\": \"Jane Smith\",\n  \"to_account_currency\": \"ETB\",\n  \"service_type\": \"TTP\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://{{thub_url}}/api/v1/transferhub/outward",
+          "protocol": "http",
+          "host": [
+            "{{thub_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transferhub",
+            "outward"
+          ]
+        }
+      },
+      "response": [
+        {
+          "name": "success",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-stepped-up",
+                "value": "true"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"from_phone\": \"251911223344\",\n  \"from_account\": \"1010032438801\",\n  \"from_account_holder\": \"John Doe\",\n  \"from_account_currency\": \"ETB\",\n  \"amount\": 1000.00,\n  \"channel\": \"MB\",\n  \"remark\": \"Payment for services\",\n  \"idempotency_key\": \"37e9a7bf-89dd-4427-9d20-acae7ed5f8ae\",\n  \"to_account\": \"0011100257734001\",\n  \"to_account_holder\": \"Jane Smith\",\n  \"to_account_currency\": \"ETB\",\n  \"service_type\": \"IWD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/outward",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "outward"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"SUCCESS\",\n    \"code\": \"THB-TXN-000\",\n    \"failure_reason\": null,\n    \"message\": \"transaction accepted successfully\",\n    \"idempotency_key\": \"24a5257d-249c-471b-8901-7dc7f7ff8440\",\n    \"reference_number\": \"26140IWD38C46E\",\n    \"service_charge\": 30.01,\n    \"vat\": 375.11\n}"
+        },
+        {
+          "name": "failure",
+          "originalRequest": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-stepped-up",
+                "value": "true"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://{{thub_url}}/api/v1/transferhub/outward",
+              "protocol": "http",
+              "host": [
+                "{{thub_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transferhub",
+                "outward"
+              ]
+            }
+          },
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json",
+              "description": "",
+              "type": "text"
+            }
+          ],
+          "cookie": [
+            {
+              "expires": "Invalid Date",
+              "domain": "",
+              "path": ""
+            }
+          ],
+          "body": "{\n    \"status\": \"FAILURE\",\n    \"code\": \"THB-VAL-004\",\n    \"message\": \"transaction failed\"\n}"
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    }
+  ]
+}

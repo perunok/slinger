@@ -9,6 +9,18 @@
   "version": "0.1.0",
   "identifier": "com.slinger.app",
   "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Slinger",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true,
+        "center": true
+      }
+    ],
     "security": {
       "csp": null
     }
