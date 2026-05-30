@@ -42,7 +42,15 @@ cd src-tauri
 cargo build
 ```
 
-> Linux only: building the Tauri backend requires native packages such as `pkg-config`, `libgtk-4-dev`, and `libglib2.0-dev`.
+To run the full desktop app:
+
+```bash
+npm run tauri:dev
+```
+
+> Linux only: building the Tauri backend requires native packages such as `pkg-config`, `libgtk-4-dev`, `libglib2.0-dev`, and `libwebkit2gtk-4.1-dev`.
+
+The local SQLite database file is created automatically at `src-tauri/slinger.db`.
 
 ---
 

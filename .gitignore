@@ -14,3 +14,4 @@ yarn.lock
 pnpm-lock.yaml
 
 src-tauri/gen/
+src-tauri/slinger.db

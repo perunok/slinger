@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{query, query_as, sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{query, query_as, sqlite::{SqliteConnectOptions, SqlitePoolOptions}, SqlitePool};
 use uuid::Uuid;
 
 use crate::domain::Workspace;
@@ -12,8 +12,32 @@ fn now_unix_seconds() -> i64 {
 }
 
 pub async fn init_database(path: &str) -> Result<SqlitePool> {
-    let database_url = format!("sqlite://{}", path);
-    let pool = SqlitePoolOptions::new().max_connections(5).connect(&database_url).await?;
+    let db_path = std::path::Path::new(path);
+    let database_path = if db_path.is_absolute() {
+        db_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(db_path)
+    };
+
+    if let Some(parent) = database_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+
+    tokio::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&database_path)
+        .await?;
+
+    let connect_options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(connect_options)
+        .await?;
 
     query(
         r#"
