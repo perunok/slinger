@@ -13,11 +13,11 @@ The platform provides:
 - API testing
 - Request collections
 - Environment management
-- Postman collection import
 - Offline operation
 - Team collaboration
 - Self-hosted synchronization
 - Enterprise deployment capabilities
+- Import from Postman
 
 The system is designed from day one to support both:
 
