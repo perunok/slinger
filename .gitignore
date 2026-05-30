@@ -12,3 +12,5 @@ yarn-debug.log*
 yarn-error.log*
 yarn.lock
 pnpm-lock.yaml
+
+src-tauri/gen/

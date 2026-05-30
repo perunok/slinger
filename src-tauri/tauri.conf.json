@@ -2,20 +2,18 @@
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
-    "devPath": "http://localhost:5173",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Slinger",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "bundle": {
-      "identifier": "com.slinger.app",
-      "icon": []
-    },
+  "productName": "Slinger",
+  "version": "0.1.0",
+  "identifier": "com.slinger.app",
+  "app": {
     "security": {
       "csp": null
     }
+  },
+  "bundle": {
+    "icon": []
   }
 }

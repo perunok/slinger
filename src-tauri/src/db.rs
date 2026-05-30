@@ -57,7 +57,7 @@ pub async fn ensure_default_workspace(pool: &SqlitePool) -> Result<()> {
 }
 
 pub async fn list_workspaces(pool: &SqlitePool) -> Result<Vec<Workspace>> {
-    query_as::<_, Workspace>(
+    Ok(query_as::<_, Workspace>(
         r#"
         SELECT id, name, created_at
         FROM workspaces
@@ -65,7 +65,7 @@ pub async fn list_workspaces(pool: &SqlitePool) -> Result<Vec<Workspace>> {
         "#,
     )
     .fetch_all(pool)
-    .await
+    .await?)
 }
 
 pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspace> {

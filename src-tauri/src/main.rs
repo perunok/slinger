@@ -5,7 +5,7 @@ mod domain;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
-use tauri::{Manager, State};
+use tauri::State;
 
 #[tauri::command]
 async fn create_workspace(state: State<'_, SqlitePool>, name: String) -> Result<domain::Workspace, String> {
