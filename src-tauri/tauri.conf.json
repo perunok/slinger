@@ -6,8 +6,9 @@
     "frontendDist": "../dist"
   },
   "productName": "Slinger",
+    "productName": "Slinger",
   "version": "0.1.0",
-  "identifier": "com.slinger.app",
+  "identifier": "com.gear.fang.app",
   "app": {
     "windows": [
       {
