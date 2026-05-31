@@ -6,7 +6,6 @@
     "frontendDist": "../dist"
   },
   "productName": "Slinger",
-    "productName": "Slinger",
   "version": "0.1.0",
   "identifier": "com.gear.fang.app",
   "app": {
