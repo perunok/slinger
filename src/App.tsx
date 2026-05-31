@@ -220,6 +220,10 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [responseHeight, setResponseHeight] = useState(260)
   const [isResizingResponse, setIsResizingResponse] = useState(false)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = window.localStorage.getItem('slinger-theme')
+    return saved === 'light' ? 'light' : 'dark'
+  })
   const [selectedResponseIndex, setSelectedResponseIndex] = useState(0)
   const responseSplitRef = useRef<HTMLDivElement>(null)
 
@@ -277,6 +281,11 @@ function App() {
 
     setSelectedResponseIndex((current) => (current >= responseExamples.length ? 0 : current))
   }, [responseExamples.length])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('slinger-theme', theme)
+  }, [theme])
 
   const selectedResponseBody = selectedResponse?.body ? formatMaybeJson(selectedResponse.body) : ''
   const params = useMemo(() => extractParams(urlDraft, selectedDocument), [selectedDocument, urlDraft])
@@ -569,8 +578,8 @@ function App() {
         onClick={() => setSelectedRequestId(request.id)}
         className={`flex h-7 w-full items-center gap-2 rounded px-2 text-left text-xs ${
           request.id === selectedRequestId
-            ? 'bg-[#3d3d3d] text-white'
-            : 'text-[#d7d7d7] hover:bg-[#303030]'
+            ? 'bg-[var(--surface)] text-[var(--text)]'
+            : 'text-[var(--muted)] hover:bg-[var(--panel)]'
         }`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
@@ -594,7 +603,7 @@ function App() {
           onClick={() => toggleFolder(folder.id)}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
         >
-          <span className="w-3 shrink-0 text-[#bdbdbd]">{isOpen ? 'v' : '>'}</span>
+          <span className="w-3 shrink-0 text-[var(--muted)]">{isOpen ? 'v' : '>'}</span>
           <span className="min-w-0 flex-1 truncate">{folder.name}</span>
         </button>
         {isOpen ? (
@@ -609,16 +618,16 @@ function App() {
 
   function renderTable(rows: Array<{ key: string; value: string; source?: string }>) {
     if (rows.length === 0) {
-      return <div className="px-4 py-4 text-sm text-[#8f8f8f]">None</div>
+      return <div className="px-4 py-4 text-sm text-[var(--muted)]">None</div>
     }
 
     return (
-      <div className="grid grid-cols-[180px_1fr_120px] border-t border-[#303030] text-sm">
+      <div className="grid grid-cols-[180px_1fr_120px] border-t border-[var(--border)] text-sm">
         {rows.map((row, index) => (
           <div key={`${row.key}-${index}`} className="contents">
-            <div className="border-b border-[#303030] px-4 py-2 font-mono text-[#d7d7d7]">{row.key}</div>
-            <div className="border-b border-[#303030] px-4 py-2 font-mono text-[#aeb8c5]">{row.value}</div>
-            <div className="border-b border-[#303030] px-4 py-2 text-[#858585]">{row.source ?? ''}</div>
+            <div className="border-b border-[var(--border)] px-4 py-2 font-mono text-[var(--text)]">{row.key}</div>
+            <div className="border-b border-[var(--border)] px-4 py-2 font-mono text-[var(--muted)]">{row.value}</div>
+            <div className="border-b border-[var(--border)] px-4 py-2 text-[var(--muted)]">{row.source ?? ''}</div>
           </div>
         ))}
       </div>
@@ -629,17 +638,17 @@ function App() {
     switch (activeTab) {
       case 'Docs':
         return (
-          <div className="space-y-4 p-4 text-sm text-[#d4d4d4]">
-            <h2 className="text-lg font-semibold text-white">{selectedRequest?.name}</h2>
-            <p className="max-w-3xl whitespace-pre-wrap text-[#b8b8b8]">{description || 'No description'}</p>
+          <div className="space-y-4 p-4 text-sm text-[var(--muted)]">
+            <h2 className="text-lg font-semibold text-[var(--text)]">{selectedRequest?.name}</h2>
+            <p className="max-w-3xl whitespace-pre-wrap text-[var(--muted)]">{description || 'No description'}</p>
             {responseExamples.length > 0 ? (
               <div>
-                <h3 className="mb-2 font-semibold text-white">Examples</h3>
+                <h3 className="mb-2 font-semibold text-[var(--text)]">Examples</h3>
                 <div className="space-y-2">
                   {responseExamples.map((response, index) => (
-                    <div key={`${response.name}-${index}`} className="rounded border border-[#333] bg-[#202020] p-3">
-                      <span className="font-semibold text-white">{response.name ?? 'Example'}</span>
-                      <span className="ml-3 text-[#999]">{response.status ?? ''}</span>
+                    <div key={`${response.name}-${index}`} className="rounded border border-[var(--border)] bg-[var(--panel)] p-3">
+                      <span className="font-semibold text-[var(--text)]">{response.name ?? 'Example'}</span>
+                      <span className="ml-3 text-[var(--muted)]">{response.status ?? ''}</span>
                     </div>
                   ))}
                 </div>
@@ -690,24 +699,24 @@ function App() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-[#1f1f1f] text-[#f1f1f1]">
-      <header className="flex h-7 items-center border-b border-[#202020] bg-[#282b2f] px-3 text-[13px]">
-        <div className="flex w-1/3 items-center gap-4 font-medium text-white">
+    <main className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
+      <header className="flex h-7 items-center border-b border-[var(--border)] bg-[var(--toolbar)] px-3 text-[13px]">
+        <div className="flex w-1/3 items-center gap-4 font-medium text-[var(--text)]">
           <span>File</span>
           <span>Edit</span>
           <span>View</span>
           <span>Help</span>
         </div>
-        <div className="w-1/3 truncate text-center text-[#ededed]">
+        <div className="w-1/3 truncate text-center text-[var(--text)]">
           {selectedRequest ? `${selectedRequest.name} - Slinger` : 'Slinger'}
         </div>
-        <div className="flex w-1/3 justify-end gap-3 text-[#a7a7a7]">
+        <div className="flex w-1/3 justify-end gap-3 text-[var(--muted)]">
           <span>Invite</span>
           <span>Upgrade</span>
         </div>
       </header>
 
-      <div className="flex h-16 items-center gap-3 border-b border-[#303030] bg-[#242424] px-3">
+      <div className="flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-alt)] px-3">
         <div className="flex items-center gap-2 text-[#a8a8a8]">
           <button className="toolbar-button" aria-label="Back">
             &lt;
@@ -720,7 +729,7 @@ function App() {
         <select
           value={selectedWorkspaceId ?? ''}
           onChange={(event) => setSelectedWorkspaceId(event.target.value || null)}
-          className="h-8 w-52 rounded border border-[#393939] bg-[#1f1f1f] px-2 text-sm text-white outline-none"
+          className="select-field h-8 w-52 rounded px-2 text-sm outline-none"
           disabled={loadingWorkspaces}
         >
           {workspaces.map((workspace) => (
@@ -735,26 +744,43 @@ function App() {
             value={workspaceName}
             onChange={(event) => setWorkspaceName(event.target.value)}
             placeholder="New workspace"
-            className="h-8 w-40 rounded border border-[#393939] bg-[#1f1f1f] px-2 text-sm outline-none placeholder:text-[#777]"
+            className="h-8 w-40 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
           />
           <button className="secondary-button" disabled={!workspaceName.trim()}>
             Add
           </button>
         </form>
 
-        <div className="mx-auto flex h-8 w-[320px] items-center rounded border border-[#3a3a3a] bg-[#202020] px-3 text-sm text-[#9d9d9d]">
+        <div className="mx-auto flex h-8 w-[320px] items-center rounded border border-[var(--border)] bg-[var(--panel)] px-3 text-sm text-[var(--muted)]">
           Search
         </div>
 
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        >
+          {theme === 'dark' ? (
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="5"></circle>
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          )}
+        </button>
         <button className="secondary-button">Save</button>
         <button className="secondary-button">Share</button>
       </div>
 
       <div className="flex h-[calc(100vh-92px)] min-h-0">
-        <aside className="flex w-[385px] shrink-0 flex-col border-r border-[#333] bg-[#242424]">
-          <div className="border-b border-[#343434] p-3">
+        <aside className="flex w-[385px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-alt)]">
+          <div className="border-b border-[var(--border)] p-3">
             <div className="flex items-center justify-between gap-3">
-              <h1 className="text-xs font-bold uppercase tracking-wide text-white">Collections</h1>
+              <h1 className="text-xs font-bold uppercase tracking-wide text-[var(--text)]">Collections</h1>
               <button
                 className="toolbar-button"
                 onClick={() => importInputRef.current?.click()}
@@ -777,7 +803,7 @@ function App() {
                 value={collectionName}
                 onChange={(event) => setCollectionName(event.target.value)}
                 placeholder="New collection"
-                className="h-8 min-w-0 flex-1 rounded border border-[#383838] bg-[#1f1f1f] px-2 text-sm outline-none placeholder:text-[#737373]"
+                className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
                 disabled={!selectedWorkspaceId}
               />
               <button
@@ -804,7 +830,7 @@ function App() {
 
           <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
             {loadingCollections ? (
-              <p className="px-2 py-3 text-sm text-[#999]">Loading collections...</p>
+              <p className="px-2 py-3 text-sm text-[var(--muted)]">Loading collections...</p>
             ) : collections.length === 0 ? (
               <div className="px-2 py-4 text-sm text-[#9a9a9a]">
                 Create a collection or import the Postman JSON sample.
@@ -819,14 +845,14 @@ function App() {
                   <div key={collection.id} className="mb-1">
                     <div
                       className={`group flex h-8 w-full items-center gap-2 rounded px-2 text-left text-sm ${
-                        expanded ? 'bg-[#353535] text-white' : 'text-[#d8d8d8] hover:bg-[#303030]'
+                        expanded ? 'bg-[var(--surface)] text-[var(--text)]' : 'text-[var(--muted)] hover:bg-[var(--panel)]'
                       }`}
                     >
                       <button
                         className="flex min-w-0 flex-1 items-center gap-2 text-left"
                         onClick={() => setSelectedCollectionId(collection.id)}
                       >
-                        <span className="w-3 shrink-0 text-[#bdbdbd]">{expanded ? 'v' : '>'}</span>
+                        <span className="w-3 shrink-0 text-[var(--muted)]">{expanded ? 'v' : '>'}</span>
                         <span className="min-w-0 flex-1 truncate">{collection.name}</span>
                       </button>
                       <button
@@ -846,9 +872,9 @@ function App() {
                     {expanded ? (
                       <div className="ml-3 mt-1 space-y-1">
                         {loadingRequests ? (
-                          <p className="py-2 text-xs text-[#999]">Loading requests...</p>
+                          <p className="py-2 text-xs text-[var(--muted)]">Loading requests...</p>
                         ) : requests.length === 0 && folders.length === 0 ? (
-                          <p className="py-2 text-xs text-[#999]">No requests yet.</p>
+                          <p className="py-2 text-xs text-[var(--muted)]">No requests yet.</p>
                         ) : (
                           <>
                             {rootFolders.map((folder) => renderFolder(folder))}
@@ -863,11 +889,11 @@ function App() {
             )}
           </div>
 
-          <div className="border-t border-[#343434] text-xs font-bold uppercase text-white">
+          <div className="border-t border-[var(--border)] text-xs font-bold uppercase text-[var(--text)]">
             {['Environments', 'Specs', 'Flows'].map((label) => (
               <button
                 key={label}
-                className="flex h-8 w-full items-center gap-2 border-b border-[#303030] px-3 text-left"
+                className="flex h-8 w-full items-center gap-2 border-b border-[var(--border)] px-3 text-left text-[var(--muted)]"
               >
                 <span>&gt;</span>
                 {label}
@@ -876,32 +902,32 @@ function App() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col bg-[#1f1f1f]">
-          <div className="flex h-9 items-end gap-1 border-b border-[#343434] bg-[#252525] px-4">
+        <section className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
+          <div className="flex h-9 items-end gap-1 border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
             {selectedRequest ? (
-              <button className="h-7 max-w-[260px] truncate rounded-t bg-[#3a3a3a] px-4 text-left text-xs text-white">
+              <button className="h-7 max-w-[260px] truncate rounded-t bg-[var(--surface)] px-4 text-left text-xs text-[var(--text)]">
                 <span className={`mr-2 font-semibold ${methodClass(selectedRequest.method)}`}>
                   {selectedRequest.method}
                 </span>
                 {selectedRequest.name}
               </button>
             ) : (
-              <button className="h-7 rounded-t bg-[#303030] px-4 text-xs text-[#aaa]">No request selected</button>
+              <button className="h-7 rounded-t bg-[var(--surface)] px-4 text-xs text-[var(--muted)]">No request selected</button>
             )}
-            <button className="h-7 px-3 text-lg text-[#999]">+</button>
+            <button className="h-7 px-3 text-lg text-[var(--muted)]">+</button>
           </div>
 
           {selectedRequest ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex h-10 items-center gap-2 border-b border-[#303030] px-4 text-sm">
-                <span className="text-[#8d8d8d]">{selectedCollection?.name}</span>
-                <span className="text-[#606060]">&gt;</span>
-                <span className="font-semibold text-white">{selectedRequest.name}</span>
+              <div className="flex h-10 items-center gap-2 border-b border-[var(--border)] px-4 text-sm">
+                <span className="text-[var(--muted)]">{selectedCollection?.name}</span>
+                <span className="text-[var(--muted)]">&gt;</span>
+                <span className="font-semibold text-[var(--text)]">{selectedRequest.name}</span>
               </div>
 
-              <div className="flex items-center gap-2 border-b border-[#353535] px-3 py-3">
+              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
                 <div
-                  className={`flex h-8 w-24 items-center justify-center rounded border border-[#424242] bg-[#2a2a2a] text-sm font-bold ${methodClass(
+                  className={`flex h-8 w-24 items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-bold ${methodClass(
                     selectedRequest.method,
                   )}`}
                 >
@@ -910,41 +936,41 @@ function App() {
                 <input
                   value={urlDraft}
                   onChange={(event) => setUrlDraft(event.target.value)}
-                  className="h-8 min-w-0 flex-1 rounded border border-[#424242] bg-[#1e1e1e] px-3 font-mono text-sm outline-none"
+                  className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none"
                 />
                 <button className="primary-button h-8 w-24" onClick={handleSend} disabled={sending}>
                   {sending ? 'Sending' : 'Send'}
                 </button>
               </div>
 
-              <div className="flex h-10 items-center gap-6 border-b border-[#303030] px-4 text-sm text-[#b8b8b8]">
+              <div className="flex h-10 items-center gap-6 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
                 {REQUEST_TABS.map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
                     className={`h-10 border-b-2 ${
                       tab === activeTab
-                        ? 'border-[#f26b3a] font-semibold text-white'
-                        : 'border-transparent hover:text-white'
+                        ? 'border-[#f26b3a] font-semibold text-[var(--text)]'
+                        : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
                     }`}
                   >
                     {tab}
                     {tab === 'Headers' && headers.length > 0 ? (
-                      <span className="ml-1 text-[#777]">{headers.length}</span>
+                      <span className="ml-1 text-[var(--muted)]">{headers.length}</span>
                     ) : null}
                   </button>
                 ))}
               </div>
 
               {activeTab === 'Body' ? (
-                <div className="flex h-10 items-center gap-4 border-b border-[#303030] px-4 text-sm text-[#d0d0d0]">
+                <div className="flex h-10 items-center gap-4 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
                   {['none', 'form-data', 'x-www-form-urlencoded', 'raw', 'binary', 'GraphQL'].map((item) => (
                     <label key={item} className="flex items-center gap-2">
                       <span
                         className={`h-3 w-3 rounded-full border ${
                           item === (selectedDocument.body?.mode ?? 'raw')
                             ? 'border-[#5797ff] bg-[#5797ff]'
-                            : 'border-[#777]'
+                            : 'border-[var(--border)]'
                         }`}
                       />
                       {item}
@@ -954,13 +980,13 @@ function App() {
                 </div>
               ) : null}
 
-              <div ref={responseSplitRef} className="min-h-0 flex flex-1 flex-col bg-[#1f1f1f]">
-                <div className="min-h-0 flex-1 overflow-auto border-b border-[#343434] bg-[#1f1f1f]">
+              <div ref={responseSplitRef} className="min-h-0 flex flex-1 flex-col bg-[var(--bg)]">
+                <div className="min-h-0 flex-1 overflow-auto border-b border-[var(--border)] bg-[var(--bg)]">
                   {renderActiveTab()}
                 </div>
 
                 <div
-                  className="flex h-5 cursor-row-resize items-center justify-center bg-[#222] hover:bg-[#3a3a3a]"
+                  className="flex h-5 cursor-row-resize items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]"
                   onPointerDown={(event) => {
                     event.preventDefault()
                     setIsResizingResponse(true)
@@ -969,7 +995,7 @@ function App() {
                 >
                   <div className="flex h-1.5 w-12 items-center justify-between">
                     <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
-                    <span className="text-xs text-[#909090]">⇕</span>
+                    <span className="text-xs text-[var(--muted)]">⇕</span>
                     <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
                   </div>
                 </div>
@@ -982,34 +1008,34 @@ function App() {
                     ) : sendResult ? (
                       <div className="space-y-3">
                         {sendResult.headers.length > 0 ? (
-                          <div className="grid grid-cols-[220px_1fr] rounded border border-[#333] text-xs">
+                          <div className="grid grid-cols-[220px_1fr] rounded border border-[var(--border)] text-xs">
                             {sendResult.headers.map((header) => (
                               <div key={`${header.key}-${header.value}`} className="contents">
-                                <div className="border-b border-[#303030] px-3 py-1 font-mono text-[#d7d7d7]">
+                                <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--text)]">
                                   {header.key}
                                 </div>
-                                <div className="border-b border-[#303030] px-3 py-1 font-mono text-[#aeb8c5]">
+                                <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--muted)]">
                                   {header.value}
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : null}
-                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#333] bg-[#202020] p-3 font-mono text-xs leading-5 text-[#cbd5e1]">
+                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
                           {formatMaybeJson(sendResult.body) || 'No response body.'}
                         </pre>
                       </div>
                     ) : responseExamples.length > 0 ? (
                       <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-3 rounded border border-[#333] bg-[#1f1f1f] p-3">
-                          <div className="flex items-center gap-2 text-sm text-[#c0c0c0]">
-                            <span className="font-semibold text-white">Example</span>
-                            <span className="text-[#6b6b6b]">▼</span>
+                        <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+                          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                            <span className="font-semibold text-[var(--text)]">Example</span>
+                            <span className="text-[var(--muted)]">▼</span>
                           </div>
                           <select
                             value={selectedResponseIndex}
                             onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
-                            className="min-w-[180px] rounded border border-[#3c3c3c] bg-[#181818] px-3 py-2 text-sm text-white outline-none focus:border-[#5a8fff]"
+                            className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
                           >
                             {responseExamples.map((response, index) => (
                               <option key={`${response.name ?? 'example'}-${index}`} value={index}>
@@ -1019,23 +1045,23 @@ function App() {
                           </select>
                         </div>
 
-                        <div className="space-y-2 rounded border border-[#333] bg-[#202020] p-4">
+                        <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
                           <div className="flex flex-wrap items-center gap-3 text-sm">
-                            <span className="font-semibold text-white">{selectedResponse?.name ?? 'Example'}</span>
-                            <span className="text-[#9d9d9d]">{selectedResponse?.status ?? 'Imported response'}</span>
+                            <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
+                            <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
                             {selectedResponse?.code ? (
                               <span className="rounded bg-[#1e3a2a] px-2 py-0.5 text-xs text-[#8de1a6]">
                                 {selectedResponse.code}
                               </span>
                             ) : null}
                           </div>
-                          <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#333] bg-[#202020] p-3 font-mono text-xs leading-5 text-[#cbd5e1]">
+                          <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
                             {selectedResponseBody || 'No response body.'}
                           </pre>
                         </div>
                       </div>
                     ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-[#8e8e8e]">
+                      <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
                         Response body will appear here.
                       </div>
                     )}
@@ -1045,8 +1071,8 @@ function App() {
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white">No request open</h2>
-                <p className="mt-2 max-w-sm text-sm text-[#a5a5a5]">
+                <h2 className="text-lg font-semibold text-[var(--text)]">No request open</h2>
+                <p className="mt-2 max-w-sm text-sm text-[var(--muted)]">
                   Import the sample Postman collection or create a collection to begin building the
                   request workspace.
                 </p>
