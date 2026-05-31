@@ -234,6 +234,9 @@ function App() {
     return saved === 'light' ? 'light' : 'dark'
   })
   const [selectedResponseIndex, setSelectedResponseIndex] = useState(0)
+  const [responseViewTab, setResponseViewTab] = useState<'headers' | 'body'>('body')
+  const [responseContentType, setResponseContentType] = useState('json')
+  const [responseStatusCode, setResponseStatusCode] = useState<string>('200')
   const responseSplitRef = useRef<HTMLDivElement>(null)
 
   const selectedWorkspace = useMemo(
@@ -791,6 +794,12 @@ function App() {
           isResizingResponse={isResizingResponse}
           setIsResizingResponse={setIsResizingResponse}
           formatMaybeJson={formatMaybeJson}
+          responseViewTab={responseViewTab}
+          setResponseViewTab={setResponseViewTab}
+          responseContentType={responseContentType}
+          setResponseContentType={setResponseContentType}
+          responseStatusCode={responseStatusCode}
+          setResponseStatusCode={setResponseStatusCode}
         />
       </div>
     </main>

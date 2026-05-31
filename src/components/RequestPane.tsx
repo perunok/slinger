@@ -1,5 +1,25 @@
 import React from 'react'
 
+const HTTP_STATUS_CODES = [
+  { code: 200, text: 'OK' },
+  { code: 201, text: 'Created' },
+  { code: 204, text: 'No Content' },
+  { code: 301, text: 'Moved Permanently' },
+  { code: 302, text: 'Found' },
+  { code: 304, text: 'Not Modified' },
+  { code: 400, text: 'Bad Request' },
+  { code: 401, text: 'Unauthorized' },
+  { code: 403, text: 'Forbidden' },
+  { code: 404, text: 'Not Found' },
+  { code: 408, text: 'Request Timeout' },
+  { code: 429, text: 'Too Many Requests' },
+  { code: 500, text: 'Internal Server Error' },
+  { code: 501, text: 'Not Implemented' },
+  { code: 502, text: 'Bad Gateway' },
+  { code: 503, text: 'Service Unavailable' },
+  { code: 504, text: 'Gateway Timeout' },
+]
+
 type Props = {
   selectedRequest: any
   selectedCollection: any
@@ -31,6 +51,12 @@ type Props = {
   isResizingResponse: boolean
   setIsResizingResponse: (v: boolean) => void
   formatMaybeJson: (v: any) => string
+  responseViewTab: 'headers' | 'body'
+  setResponseViewTab: (tab: 'headers' | 'body') => void
+  responseContentType: string
+  setResponseContentType: (type: string) => void
+  responseStatusCode: string
+  setResponseStatusCode: (code: string) => void
 }
 
 export default function RequestPane(props: Props) {
@@ -64,6 +90,13 @@ export default function RequestPane(props: Props) {
     responseSplitRef,
     isResizingResponse,
     setIsResizingResponse,
+    formatMaybeJson,
+    responseViewTab,
+    setResponseViewTab,
+    responseContentType,
+    setResponseContentType,
+    responseStatusCode,
+    setResponseStatusCode,
   } = props
 
   return (
@@ -132,7 +165,121 @@ export default function RequestPane(props: Props) {
             </div>
 
             <div className="min-h-0 overflow-auto px-4 py-3" style={orientation === 'vertical' ? { height: `${responseHeight}px` } as any : { width: `${responseWidth}px` } as any}>
-              {sendError ? (<pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{sendError}</pre>) : sendResult ? (<div className="space-y-3">{sendResult.headers.length > 0 ? (<div className="grid grid-cols-[220px_1fr] rounded border border-[var(--border)] text-xs">{sendResult.headers.map((header: any) => (<div key={`${header.key}-${header.value}`} className="contents"><div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--text)]">{header.key}</div><div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--muted)]">{header.value}</div></div>))}</div>) : null}<pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{props.formatMaybeJson ? props.formatMaybeJson(sendResult.body) : (typeof sendResult.body === 'string' ? sendResult.body : JSON.stringify(sendResult.body, null, 2)) || 'No response body.'}</pre></div>) : responseExamples.length > 0 ? (<div className="space-y-3"><div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3"><div className="flex items-center gap-2 text-sm text-[var(--muted)]"><span className="font-semibold text-[var(--text)]">Example</span><span className="text-[var(--muted)]">▼</span></div><select value={selectedResponseIndex} onChange={(event) => setSelectedResponseIndex(Number(event.target.value))} className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]">{responseExamples.map((response, index) => (<option key={`${response.name ?? 'example'}-${index}`} value={index}>{response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}</option>))}</select></div><div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4"><div className="flex flex-wrap items-center gap-3 text-sm"><span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span><span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>{selectedResponse?.code ? (<span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">{selectedResponse.code}</span>) : null}</div><pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{selectedResponseBody || 'No response body.'}</pre></div></div>) : (<div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">Response body will appear here.</div>)}
+              {sendError ? (
+                <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{sendError}</pre>
+              ) : sendResult ? (
+                <div className="space-y-3">
+                  <div className="flex h-10 items-center gap-4 border-b border-[var(--border)] pb-3 text-sm">
+                    <button
+                      onClick={() => setResponseViewTab('headers')}
+                      className={`h-8 px-3 rounded transition-colors ${
+                        responseViewTab === 'headers'
+                          ? 'bg-[var(--surface)] text-[var(--text)]'
+                          : 'text-[var(--muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      Headers
+                    </button>
+                    <button
+                      onClick={() => setResponseViewTab('body')}
+                      className={`h-8 px-3 rounded transition-colors ${
+                        responseViewTab === 'body'
+                          ? 'bg-[var(--surface)] text-[var(--text)]'
+                          : 'text-[var(--muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      Body
+                    </button>
+
+                    <div className="ml-auto flex items-center gap-3">
+                      <span className="text-xs font-semibold text-[var(--muted)]">Status Code</span>
+                      <select
+                        value={responseStatusCode}
+                        onChange={(e) => setResponseStatusCode(e.target.value)}
+                        className="select-field h-8 w-32 rounded px-2 text-xs outline-none focus:border-[#5a8fff]"
+                      >
+                        {HTTP_STATUS_CODES.map((s) => (
+                          <option key={s.code} value={String(s.code)}>
+                            {s.code} {s.text}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {responseViewTab === 'headers' ? (
+                    <div className="space-y-3">
+                      {sendResult.headers.length > 0 ? (
+                        <div className="grid grid-cols-[220px_1fr] gap-0 rounded border border-[var(--border)] text-xs overflow-hidden">
+                          {sendResult.headers.map((header: any) => (
+                            <div key={`${header.key}-${header.value}`} className="contents">
+                              <div className="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono font-semibold text-[var(--text)]">{header.key}</div>
+                              <div className="border-b border-[var(--border)] px-3 py-2 font-mono text-[var(--muted)] break-all">{header.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex h-20 items-center justify-center rounded border border-[var(--border)] text-sm text-[var(--muted)]">No headers</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+                        <span className="text-xs font-semibold text-[var(--muted)]">Content Type</span>
+                        <select
+                          value={responseContentType}
+                          onChange={(e) => setResponseContentType(e.target.value)}
+                          className="select-field min-w-[140px] rounded px-2 py-1 text-xs outline-none focus:border-[#5a8fff]"
+                        >
+                          <option value="json">📄 JSON</option>
+                          <option value="xml">📋 XML</option>
+                          <option value="html">🌐 HTML</option>
+                          <option value="text">📝 Text</option>
+                          <option value="binary">⚙️ Binary</option>
+                        </select>
+                      </div>
+                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                        {props.formatMaybeJson ? props.formatMaybeJson(sendResult.body) : (typeof sendResult.body === 'string' ? sendResult.body : JSON.stringify(sendResult.body, null, 2)) || 'No response body.'}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ) : responseExamples.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+                    <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                      <span className="font-semibold text-[var(--text)]">Example</span>
+                      <span className="text-[var(--muted)]">▼</span>
+                    </div>
+                    <select
+                      value={selectedResponseIndex}
+                      onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
+                      className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
+                    >
+                      {responseExamples.map((response, index) => (
+                        <option key={`${response.name ?? 'example'}-${index}`} value={index}>
+                          {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
+                    <div className="flex flex-wrap items-center gap-3 text-sm">
+                      <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
+                      <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
+                      {selectedResponse?.code ? (
+                        <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">{selectedResponse.code}</span>
+                      ) : null}
+                    </div>
+                    <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                      {selectedResponseBody || 'No response body.'}
+                    </pre>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">Response body will appear here.</div>
+              )}
             </div>
           </div>
         </div>
