@@ -115,4 +115,31 @@ button:disabled {
   opacity: 0.45;
 }
 
+.glow-strip {
+  background: rgba(96, 165, 250, 0.1);
+  height: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.glow-slide {
+  position: absolute;
+  top: 0;
+  left: -30%;
+  width: 30%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(96, 165, 250, 0.95), transparent);
+  filter: drop-shadow(0 0 18px rgba(96, 165, 250, 0.75));
+  animation: glow-slide 1.6s ease-in-out infinite;
+}
+
+@keyframes glow-slide {
+  0%, 100% {
+    left: -30%;
+  }
+  50% {
+    left: 100%;
+  }
+}
+
 /* Duplicate rules removed to avoid overriding theme variables */

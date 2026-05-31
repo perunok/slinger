@@ -88,10 +88,17 @@ export default function RequestPane(props: Props) {
             <span className="font-semibold text-[var(--text)]">{selectedRequest.name}</span>
           </div>
 
-          <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
-            <div className={`flex h-8 w-24 items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-bold`}>{selectedRequest.method}</div>
-            <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none" />
-            <button className="primary-button h-8 w-24" onClick={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
+              <div className={`flex h-8 w-24 items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-bold`}>{selectedRequest.method}</div>
+              <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none" />
+              <button className="primary-button h-8 w-24" onClick={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
+            </div>
+            {sending ? (
+              <div className="glow-strip mx-3 rounded-full">
+                <div className="glow-slide" />
+              </div>
+            ) : null}
           </div>
 
           <div className="flex h-10 items-center gap-6 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
