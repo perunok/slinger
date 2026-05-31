@@ -220,6 +220,11 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [responseHeight, setResponseHeight] = useState(260)
   const [isResizingResponse, setIsResizingResponse] = useState(false)
+  const [responseWidth, setResponseWidth] = useState(420)
+  const [orientation, setOrientation] = useState<'vertical' | 'horizontal'>(() => {
+    const saved = window.localStorage.getItem('slinger-orientation')
+    return saved === 'horizontal' ? 'horizontal' : 'vertical'
+  })
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = window.localStorage.getItem('slinger-theme')
     return saved === 'light' ? 'light' : 'dark'
@@ -247,13 +252,21 @@ function App() {
   useEffect(() => {
     function handlePointerMove(event: PointerEvent) {
       if (!isResizingResponse || !responseSplitRef.current) return
-
       const rect = responseSplitRef.current.getBoundingClientRect()
-      const newHeight = rect.bottom - event.clientY
-      const minHeight = 120
-      const maxHeight = rect.height - 120
 
-      setResponseHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)))
+      if (orientation === 'vertical') {
+        const newHeight = rect.bottom - event.clientY
+        const minHeight = 120
+        const maxHeight = rect.height - 120
+
+        setResponseHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)))
+      } else {
+        const newWidth = rect.right - event.clientX
+        const minWidth = 200
+        const maxWidth = rect.width - 200
+
+        setResponseWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)))
+      }
     }
 
     function handlePointerUp() {
@@ -272,6 +285,10 @@ function App() {
       window.removeEventListener('pointercancel', handlePointerUp)
     }
   }, [isResizingResponse])
+
+  useEffect(() => {
+    window.localStorage.setItem('slinger-orientation', orientation)
+  }, [orientation])
 
   useEffect(() => {
     if (responseExamples.length === 0) {
@@ -772,6 +789,15 @@ function App() {
             </svg>
           )}
         </button>
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label={orientation === 'vertical' ? 'Switch to side-by-side' : 'Switch to stacked'}
+          onClick={() => setOrientation(orientation === 'vertical' ? 'horizontal' : 'vertical')}
+          title={orientation === 'vertical' ? 'Side-by-side' : 'Stacked'}
+        >
+          <span className="text-[var(--muted)]">{orientation === 'vertical' ? '⇆' : '⇕'}</span>
+        </button>
         <button className="secondary-button">Save</button>
         <button className="secondary-button">Share</button>
       </div>
@@ -980,93 +1006,103 @@ function App() {
                 </div>
               ) : null}
 
-              <div ref={responseSplitRef} className="min-h-0 flex flex-1 flex-col bg-[var(--bg)]">
-                <div className="min-h-0 flex-1 overflow-auto border-b border-[var(--border)] bg-[var(--bg)]">
+              <div ref={responseSplitRef} className={`min-h-0 flex flex-1 ${orientation === 'vertical' ? 'flex-col' : 'flex-row'} bg-[var(--bg)]`}>
+                <div className={`min-h-0 flex-1 overflow-auto ${orientation === 'vertical' ? 'border-b' : 'border-r'} border-[var(--border)] bg-[var(--bg)]`}>
                   {renderActiveTab()}
                 </div>
 
                 <div
-                  className="flex h-5 cursor-row-resize items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]"
+                  className={`${orientation === 'vertical' ? 'flex h-5 cursor-row-resize' : 'flex w-3 cursor-col-resize'} items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]`}
                   onPointerDown={(event) => {
                     event.preventDefault()
                     setIsResizingResponse(true)
                     event.currentTarget.setPointerCapture(event.pointerId)
                   }}
                 >
-                  <div className="flex h-1.5 w-12 items-center justify-between">
-                    <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
-                    <span className="text-xs text-[var(--muted)]">⇕</span>
-                    <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
-                  </div>
-                </div>
-
-                <div className="min-h-0 overflow-auto px-4 py-3" style={{ height: `${responseHeight}px` }}>
-                    {sendError ? (
-                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                        {sendError}
-                      </pre>
-                    ) : sendResult ? (
-                      <div className="space-y-3">
-                        {sendResult.headers.length > 0 ? (
-                          <div className="grid grid-cols-[220px_1fr] rounded border border-[var(--border)] text-xs">
-                            {sendResult.headers.map((header) => (
-                              <div key={`${header.key}-${header.value}`} className="contents">
-                                <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--text)]">
-                                  {header.key}
-                                </div>
-                                <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--muted)]">
-                                  {header.value}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                          {formatMaybeJson(sendResult.body) || 'No response body.'}
-                        </pre>
-                      </div>
-                    ) : responseExamples.length > 0 ? (
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
-                          <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
-                            <span className="font-semibold text-[var(--text)]">Example</span>
-                            <span className="text-[var(--muted)]">▼</span>
-                          </div>
-                          <select
-                            value={selectedResponseIndex}
-                            onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
-                            className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
-                          >
-                            {responseExamples.map((response, index) => (
-                              <option key={`${response.name ?? 'example'}-${index}`} value={index}>
-                                {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
-                          <div className="flex flex-wrap items-center gap-3 text-sm">
-                            <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
-                            <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
-                            {selectedResponse?.code ? (
-                              <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">
-                                {selectedResponse.code}
-                              </span>
-                            ) : null}
-                          </div>
-                          <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                            {selectedResponseBody || 'No response body.'}
-                          </pre>
-                        </div>
-                      </div>
+                  <div className={`${orientation === 'vertical' ? 'flex h-1.5 w-12 items-center justify-between' : 'flex h-6 w-1 items-center justify-between'}`}>
+                    {orientation === 'vertical' ? (
+                      <>
+                        <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
+                        <span className="text-xs text-[var(--muted)]">⇕</span>
+                        <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
+                      </>
                     ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
-                        Response body will appear here.
-                      </div>
+                      <>
+                        <span className="block w-0.5 h-3 rounded-full bg-[var(--muted)]" />
+                        <span className="text-xs text-[var(--muted)]">⇆</span>
+                        <span className="block w-0.5 h-3 rounded-full bg-[var(--muted)]" />
+                      </>
                     )}
                   </div>
                 </div>
+
+                <div className="min-h-0 overflow-auto px-4 py-3" style={orientation === 'vertical' ? { height: `${responseHeight}px` } : { width: `${responseWidth}px` }}>
+                  {sendError ? (
+                    <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                      {sendError}
+                    </pre>
+                  ) : sendResult ? (
+                    <div className="space-y-3">
+                      {sendResult.headers.length > 0 ? (
+                        <div className="grid grid-cols-[220px_1fr] rounded border border-[var(--border)] text-xs">
+                          {sendResult.headers.map((header) => (
+                            <div key={`${header.key}-${header.value}`} className="contents">
+                              <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--text)]">
+                                {header.key}
+                              </div>
+                              <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--muted)]">
+                                {header.value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                        {formatMaybeJson(sendResult.body) || 'No response body.'}
+                      </pre>
+                    </div>
+                  ) : responseExamples.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
+                        <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                          <span className="font-semibold text-[var(--text)]">Example</span>
+                          <span className="text-[var(--muted)]">▼</span>
+                        </div>
+                        <select
+                          value={selectedResponseIndex}
+                          onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
+                          className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
+                        >
+                          {responseExamples.map((response, index) => (
+                            <option key={`${response.name ?? 'example'}-${index}`} value={index}>
+                              {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
+                        <div className="flex flex-wrap items-center gap-3 text-sm">
+                          <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
+                          <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
+                          {selectedResponse?.code ? (
+                            <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">
+                              {selectedResponse.code}
+                            </span>
+                          ) : null}
+                        </div>
+                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
+                          {selectedResponseBody || 'No response body.'}
+                        </pre>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
+                      Response body will appear here.
+                    </div>
+                  )}
+                </div>
+              </div>
               </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
