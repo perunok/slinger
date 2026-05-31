@@ -39,6 +39,23 @@ pub struct ApiRequest {
     pub created_at: i64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct Environment {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub created_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
+pub struct EnvironmentVariable {
+    pub id: String,
+    pub environment_id: String,
+    pub key: String,
+    pub value: String,
+    pub created_at: i64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PostmanImportResult {
     pub collection: Collection,

@@ -7,19 +7,27 @@ import {
   ApiFolder,
   ApiRequest,
   Collection,
+  Environment,
+  EnvironmentVariable,
   HttpResponseData,
   Workspace,
   createCollection,
+  createEnvironment,
   createWorkspace,
   deleteCollection,
+  deleteEnvironmentVariable,
+  ensureDefaultEnvironment,
   executeHttpRequest,
   getCollections,
+  getEnvironmentVariables,
+  getEnvironments,
   getFolders,
   getRequests,
   getWorkspaces,
   importPostmanCollection,
   isTauriRuntime,
   renameCollection,
+  upsertEnvironmentVariable,
 } from './tauri'
 
 type ActiveTab = 'Docs' | 'Params' | 'Authorization' | 'Headers' | 'Body' | 'Scripts' | 'Settings'
@@ -199,19 +207,48 @@ function scriptText(events: ScriptEvent[]): string {
   return lines.join('\n')
 }
 
+function resolveTemplate(value: string, variables: EnvironmentVariable[]): string {
+  return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
+    const variable = variables.find((item) => item.key === key)
+    return variable ? variable.value : match
+  })
+}
+
+function unresolvedVariables(values: string[]): string[] {
+  const names = new Set<string>()
+
+  for (const value of values) {
+    for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+      names.add(match[1])
+    }
+  }
+
+  return [...names]
+}
+
+function beautifyJson(value: string): string {
+  return JSON.stringify(JSON.parse(value), null, 2)
+}
+
 function App() {
   const importInputRef = useRef<HTMLInputElement>(null)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
   const [folders, setFolders] = useState<ApiFolder[]>([])
   const [requests, setRequests] = useState<ApiRequest[]>([])
+  const [environments, setEnvironments] = useState<Environment[]>([])
+  const [environmentVariables, setEnvironmentVariables] = useState<EnvironmentVariable[]>([])
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null)
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null)
   const [openFolderIds, setOpenFolderIds] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<ActiveTab>('Body')
   const [urlDraft, setUrlDraft] = useState('')
   const [bodyDraft, setBodyDraft] = useState('')
+  const [environmentName, setEnvironmentName] = useState('')
+  const [variableKey, setVariableKey] = useState('')
+  const [variableValue, setVariableValue] = useState('')
   const [sendResult, setSendResult] = useState<HttpResponseData | null>(null)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -316,6 +353,10 @@ function App() {
   const scripts = useMemo(() => scriptText(requestScripts(selectedDocument)), [selectedDocument])
   const description =
     typeof selectedDocument.description === 'string' ? selectedDocument.description.trim() : ''
+  const resolvedUrlPreview = useMemo(
+    () => resolveTemplate(urlDraft, environmentVariables),
+    [environmentVariables, urlDraft],
+  )
 
   const foldersByParent = useMemo(() => {
     const groups = new Map<string, ApiFolder[]>()
@@ -368,7 +409,10 @@ function App() {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setCollections([])
+      setEnvironments([])
+      setEnvironmentVariables([])
       setSelectedCollectionId(null)
+      setSelectedEnvironmentId(null)
       return
     }
 
@@ -402,6 +446,67 @@ function App() {
       ignore = true
     }
   }, [selectedWorkspaceId])
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) return
+
+    const workspaceId = selectedWorkspaceId
+    let ignore = false
+
+    async function loadEnvironments() {
+      try {
+        const defaultEnvironment = await ensureDefaultEnvironment(workspaceId)
+        const items = await getEnvironments(workspaceId)
+        if (ignore) return
+
+        const nextItems =
+          items.length > 0 && items.some((environment) => environment.id === defaultEnvironment.id)
+            ? items
+            : [defaultEnvironment, ...items]
+        setEnvironments(nextItems)
+        setSelectedEnvironmentId((current) => {
+          if (current && nextItems.some((environment) => environment.id === current)) return current
+          return defaultEnvironment.id
+        })
+        setError(null)
+      } catch (err) {
+        console.error(err)
+        if (!ignore) setError('Unable to load environments for this workspace.')
+      }
+    }
+
+    loadEnvironments()
+
+    return () => {
+      ignore = true
+    }
+  }, [selectedWorkspaceId])
+
+  useEffect(() => {
+    if (!selectedEnvironmentId) {
+      setEnvironmentVariables([])
+      return
+    }
+
+    const environmentId = selectedEnvironmentId
+    let ignore = false
+
+    async function loadVariables() {
+      try {
+        const items = await getEnvironmentVariables(environmentId)
+        if (!ignore) setEnvironmentVariables(items)
+      } catch (err) {
+        console.error(err)
+        if (!ignore) setError('Unable to load environment variables.')
+      }
+    }
+
+    loadVariables()
+
+    return () => {
+      ignore = true
+    }
+  }, [selectedEnvironmentId])
 
   useEffect(() => {
     if (!selectedCollectionId) {
@@ -557,6 +662,77 @@ function App() {
     }
   }
 
+  async function handleCreateEnvironment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = environmentName.trim()
+    if (!name || !selectedWorkspaceId) return
+
+    try {
+      const environment = await createEnvironment(selectedWorkspaceId, name)
+      setEnvironments((current) => [...current, environment])
+      setSelectedEnvironmentId(environment.id)
+      setEnvironmentName('')
+      setNotice(`Environment "${environment.name}" created.`)
+      setError(null)
+    } catch (err) {
+      console.error(err)
+      setError('Unable to create environment.')
+    }
+  }
+
+  async function handleSaveVariable(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedEnvironmentId || !variableKey.trim()) return
+
+    try {
+      const variable = await upsertEnvironmentVariable(
+        selectedEnvironmentId,
+        variableKey,
+        variableValue,
+      )
+      setEnvironmentVariables((current) => {
+        const exists = current.some((item) => item.id === variable.id)
+        if (exists) return current.map((item) => (item.id === variable.id ? variable : item))
+        return [...current, variable]
+      })
+      setVariableKey('')
+      setVariableValue('')
+      setNotice(`Saved {{${variable.key}}}.`)
+      setError(null)
+    } catch (err) {
+      console.error(err)
+      setError('Unable to save environment variable.')
+    }
+  }
+
+  async function handleDeleteVariable(variable: EnvironmentVariable) {
+    try {
+      await deleteEnvironmentVariable(variable.id)
+      setEnvironmentVariables((current) => current.filter((item) => item.id !== variable.id))
+      setNotice(`Deleted {{${variable.key}}}.`)
+      setError(null)
+    } catch (err) {
+      console.error(err)
+      setError('Unable to delete environment variable.')
+    }
+  }
+
+  function handleEditVariable(variable: EnvironmentVariable) {
+    setVariableKey(variable.key)
+    setVariableValue(variable.value)
+  }
+
+  function handleBeautifyBody() {
+    if (!bodyDraft.trim()) return
+
+    try {
+      setBodyDraft(beautifyJson(bodyDraft))
+      setError(null)
+    } catch {
+      setError('Body is not valid JSON, so it cannot be beautified.')
+    }
+  }
+
   async function handleSend() {
     if (!selectedRequest) return
 
@@ -565,16 +741,29 @@ function App() {
     setSendError(null)
 
     try {
+      const resolvedUrl = resolveTemplate(urlDraft, environmentVariables)
+      const resolvedBody = resolveTemplate(bodyDraft, environmentVariables)
+      const resolvedHeaders = headers
+        .filter((header) => !header.disabled && header.key?.trim())
+        .map((header) => ({
+          key: resolveTemplate(header.key?.trim() ?? '', environmentVariables),
+          value: resolveTemplate(header.value ?? '', environmentVariables),
+        }))
+      const missingVariables = unresolvedVariables([
+        resolvedUrl,
+        resolvedBody,
+        ...resolvedHeaders.flatMap((header) => [header.key, header.value]),
+      ])
+
+      if (missingVariables.length > 0) {
+        throw new Error(`Unresolved variables: ${missingVariables.map((name) => `{{${name}}}`).join(', ')}`)
+      }
+
       const result = await executeHttpRequest({
         method: selectedRequest.method,
-        url: urlDraft,
-        headers: headers
-          .filter((header) => !header.disabled && header.key?.trim())
-          .map((header) => ({
-            key: header.key?.trim() ?? '',
-            value: header.value ?? '',
-          })),
-        body: bodyDraft,
+        url: resolvedUrl,
+        headers: resolvedHeaders,
+        body: resolvedBody,
       })
 
       setSendResult(result)
@@ -747,6 +936,20 @@ function App() {
           collectionName={collectionName}
           setCollectionName={setCollectionName}
           selectedWorkspace={selectedWorkspace}
+          environments={environments}
+          selectedEnvironmentId={selectedEnvironmentId}
+          setSelectedEnvironmentId={setSelectedEnvironmentId}
+          environmentName={environmentName}
+          setEnvironmentName={setEnvironmentName}
+          handleCreateEnvironment={handleCreateEnvironment}
+          environmentVariables={environmentVariables}
+          variableKey={variableKey}
+          setVariableKey={setVariableKey}
+          variableValue={variableValue}
+          setVariableValue={setVariableValue}
+          handleSaveVariable={handleSaveVariable}
+          handleEditVariable={handleEditVariable}
+          handleDeleteVariable={handleDeleteVariable}
           isTauriRuntime={isTauriRuntime}
           error={error}
           notice={notice}
@@ -774,6 +977,8 @@ function App() {
           setActiveTab={setActiveTab}
           bodyDraft={bodyDraft}
           setBodyDraft={setBodyDraft}
+          resolvedUrlPreview={resolvedUrlPreview}
+          handleBeautifyBody={handleBeautifyBody}
           REQUEST_TABS={REQUEST_TABS}
           headers={headers}
           params={params}

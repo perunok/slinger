@@ -31,6 +31,8 @@ type Props = {
   setActiveTab: (t: any) => void
   bodyDraft: string
   setBodyDraft: (v: string) => void
+  resolvedUrlPreview: string
+  handleBeautifyBody: () => void
   REQUEST_TABS: string[]
   headers: any[]
   params: any[]
@@ -71,6 +73,8 @@ export default function RequestPane(props: Props) {
     setActiveTab,
     bodyDraft,
     setBodyDraft,
+    resolvedUrlPreview,
+    handleBeautifyBody,
     REQUEST_TABS,
     headers,
     params,
@@ -127,6 +131,11 @@ export default function RequestPane(props: Props) {
               <input value={urlDraft} onChange={(event) => setUrlDraft(event.target.value)} className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none" />
               <button className="primary-button h-8 w-24" onClick={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
             </div>
+            {resolvedUrlPreview !== urlDraft ? (
+              <div className="border-b border-[var(--border)] px-3 pb-2 text-xs text-[var(--muted)]">
+                Resolved URL: <span className="font-mono text-[var(--text)]">{resolvedUrlPreview}</span>
+              </div>
+            ) : null}
             {sending ? (
               <div className="glow-strip mx-3 rounded-full">
                 <div className="glow-slide" />
@@ -152,6 +161,9 @@ export default function RequestPane(props: Props) {
                 </label>
               ))}
               <span className="font-semibold text-[#74a8ff]">JSON</span>
+              <button className="secondary-button ml-auto h-7" type="button" onClick={handleBeautifyBody}>
+                Beautify
+              </button>
             </div>
           ) : null}
 

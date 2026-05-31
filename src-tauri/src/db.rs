@@ -8,7 +8,10 @@ use sqlx::{
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::domain::{ApiFolder, ApiRequest, Collection, PostmanImportResult, Workspace};
+use crate::domain::{
+    ApiFolder, ApiRequest, Collection, Environment, EnvironmentVariable, PostmanImportResult,
+    Workspace,
+};
 
 fn now_unix_seconds() -> i64 {
     std::time::SystemTime::now()
@@ -110,6 +113,36 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
+    query(
+        r#"
+        CREATE TABLE IF NOT EXISTS environments (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+        );
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
+    query(
+        r#"
+        CREATE TABLE IF NOT EXISTS environment_variables (
+            id TEXT PRIMARY KEY,
+            environment_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE(environment_id, key),
+            FOREIGN KEY(environment_id) REFERENCES environments(id)
+        );
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
     ensure_requests_folder_column(&pool).await?;
 
     Ok(pool)
@@ -181,7 +214,175 @@ pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspa
     .execute(pool)
     .await?;
 
+    ensure_default_environment(pool, workspace.id.clone()).await?;
+
     Ok(workspace)
+}
+
+pub async fn list_environments(
+    pool: &SqlitePool,
+    workspace_id: String,
+) -> Result<Vec<Environment>> {
+    Ok(query_as::<_, Environment>(
+        r#"
+        SELECT id, workspace_id, name, created_at
+        FROM environments
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn create_environment(
+    pool: &SqlitePool,
+    workspace_id: String,
+    name: String,
+) -> Result<Environment> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    let name = name.trim().to_string();
+
+    if name.is_empty() {
+        bail!("environment name is required");
+    }
+
+    let environment = Environment {
+        id: Uuid::now_v7().to_string(),
+        workspace_id,
+        name,
+        created_at: now_unix_seconds(),
+    };
+
+    query(
+        r#"
+        INSERT INTO environments (id, workspace_id, name, created_at)
+        VALUES (?, ?, ?, ?)
+        "#,
+    )
+    .bind(&environment.id)
+    .bind(&environment.workspace_id)
+    .bind(&environment.name)
+    .bind(environment.created_at)
+    .execute(pool)
+    .await?;
+
+    Ok(environment)
+}
+
+pub async fn ensure_default_environment(
+    pool: &SqlitePool,
+    workspace_id: String,
+) -> Result<Environment> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    let existing = query_as::<_, Environment>(
+        r#"
+        SELECT id, workspace_id, name, created_at
+        FROM environments
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        LIMIT 1
+        "#,
+    )
+    .bind(&workspace_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match existing {
+        Some(environment) => Ok(environment),
+        None => create_environment(pool, workspace_id, "Local".to_string()).await,
+    }
+}
+
+pub async fn list_environment_variables(
+    pool: &SqlitePool,
+    environment_id: String,
+) -> Result<Vec<EnvironmentVariable>> {
+    Ok(query_as::<_, EnvironmentVariable>(
+        r#"
+        SELECT id, environment_id, key, value, created_at
+        FROM environment_variables
+        WHERE environment_id = ?
+        ORDER BY key COLLATE NOCASE, created_at, id
+        "#,
+    )
+    .bind(environment_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn upsert_environment_variable(
+    pool: &SqlitePool,
+    environment_id: String,
+    key: String,
+    value: String,
+) -> Result<EnvironmentVariable> {
+    let environment_id = Uuid::parse_str(&environment_id)?.to_string();
+    let key = key.trim().to_string();
+
+    if key.is_empty() {
+        bail!("variable key is required");
+    }
+
+    let existing_id: Option<(String,)> = query_as(
+        r#"
+        SELECT id
+        FROM environment_variables
+        WHERE environment_id = ? AND key = ?
+        "#,
+    )
+    .bind(&environment_id)
+    .bind(&key)
+    .fetch_optional(pool)
+    .await?;
+
+    let variable = EnvironmentVariable {
+        id: existing_id
+            .map(|(id,)| id)
+            .unwrap_or_else(|| Uuid::now_v7().to_string()),
+        environment_id,
+        key,
+        value,
+        created_at: now_unix_seconds(),
+    };
+
+    query(
+        r#"
+        INSERT INTO environment_variables (id, environment_id, key, value, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(environment_id, key)
+        DO UPDATE SET value = excluded.value
+        "#,
+    )
+    .bind(&variable.id)
+    .bind(&variable.environment_id)
+    .bind(&variable.key)
+    .bind(&variable.value)
+    .bind(variable.created_at)
+    .execute(pool)
+    .await?;
+
+    Ok(query_as::<_, EnvironmentVariable>(
+        r#"
+        SELECT id, environment_id, key, value, created_at
+        FROM environment_variables
+        WHERE environment_id = ? AND key = ?
+        "#,
+    )
+    .bind(&variable.environment_id)
+    .bind(&variable.key)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub async fn delete_environment_variable(pool: &SqlitePool, variable_id: String) -> Result<()> {
+    query("DELETE FROM environment_variables WHERE id = ?")
+        .bind(variable_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
 }
 
 pub async fn list_collections(pool: &SqlitePool, workspace_id: String) -> Result<Vec<Collection>> {
@@ -678,6 +879,41 @@ mod tests {
             stored_requests[0].folder_id,
             Some(stored_folders[1].id.clone())
         );
+
+        pool.close().await;
+        let _ = tokio::fs::remove_file(database_path).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stores_environment_variables() -> Result<()> {
+        let database_path = std::env::temp_dir().join(format!("slinger-env-{}.db", Uuid::now_v7()));
+        let database_path = database_path.to_string_lossy().into_owned();
+        let pool = init_database(&database_path).await?;
+        let workspace = create_workspace(&pool, "Env Test".to_string()).await?;
+        let environment = ensure_default_environment(&pool, workspace.id.to_string()).await?;
+
+        let first = upsert_environment_variable(
+            &pool,
+            environment.id.to_string(),
+            "thub_url".to_string(),
+            "https://example.test".to_string(),
+        )
+        .await?;
+        let updated = upsert_environment_variable(
+            &pool,
+            environment.id.to_string(),
+            "thub_url".to_string(),
+            "https://api.example.test".to_string(),
+        )
+        .await?;
+        let variables = list_environment_variables(&pool, environment.id.to_string()).await?;
+
+        assert_eq!(first.id, updated.id);
+        assert_eq!(variables.len(), 1);
+        assert_eq!(variables[0].key, "thub_url");
+        assert_eq!(variables[0].value, "https://api.example.test");
 
         pool.close().await;
         let _ = tokio::fs::remove_file(database_path).await;

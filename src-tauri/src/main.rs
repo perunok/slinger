@@ -30,6 +30,69 @@ async fn list_workspaces(state: State<'_, SqlitePool>) -> Result<Vec<domain::Wor
 }
 
 #[tauri::command]
+async fn create_environment(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+    name: String,
+) -> Result<domain::Environment, String> {
+    db::create_environment(&state, workspace_id, name)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn ensure_default_environment(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<domain::Environment, String> {
+    db::ensure_default_environment(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_environments(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<Vec<domain::Environment>, String> {
+    db::list_environments(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_environment_variables(
+    state: State<'_, SqlitePool>,
+    environment_id: String,
+) -> Result<Vec<domain::EnvironmentVariable>, String> {
+    db::list_environment_variables(&state, environment_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn upsert_environment_variable(
+    state: State<'_, SqlitePool>,
+    environment_id: String,
+    key: String,
+    value: String,
+) -> Result<domain::EnvironmentVariable, String> {
+    db::upsert_environment_variable(&state, environment_id, key, value)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn delete_environment_variable(
+    state: State<'_, SqlitePool>,
+    variable_id: String,
+) -> Result<(), String> {
+    db::delete_environment_variable(&state, variable_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn create_collection(
     state: State<'_, SqlitePool>,
     workspace_id: String,
@@ -179,6 +242,12 @@ fn main() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             create_workspace,
             list_workspaces,
+            create_environment,
+            ensure_default_environment,
+            list_environments,
+            list_environment_variables,
+            upsert_environment_variable,
+            delete_environment_variable,
             create_collection,
             list_collections,
             rename_collection,

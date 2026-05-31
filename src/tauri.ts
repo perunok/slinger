@@ -34,6 +34,21 @@ export type ApiRequest = {
   created_at: number
 }
 
+export type Environment = {
+  id: string
+  workspace_id: string
+  name: string
+  created_at: number
+}
+
+export type EnvironmentVariable = {
+  id: string
+  environment_id: string
+  key: string
+  value: string
+  created_at: number
+}
+
 export type PostmanImportResult = {
   collection: Collection
   folders: ApiFolder[]
@@ -65,6 +80,8 @@ type StoredData = {
   collections: Collection[]
   folders: ApiFolder[]
   requests: ApiRequest[]
+  environments: Environment[]
+  environmentVariables: EnvironmentVariable[]
 }
 
 type PostmanItem = {
@@ -120,6 +137,8 @@ function readStore(): StoredData {
     collections: [],
     folders: [],
     requests: [],
+    environments: [],
+    environmentVariables: [],
   }
 
   try {
@@ -135,6 +154,8 @@ function readStore(): StoredData {
         ...request,
         folder_id: request.folder_id ?? null,
       })),
+      environments: parsed.environments ?? [],
+      environmentVariables: parsed.environmentVariables ?? [],
     })
   } catch {
     return ensurePersonalWorkspace(fallback)
@@ -157,6 +178,15 @@ function ensurePersonalWorkspace(data: StoredData): StoredData {
   const next = {
     ...data,
     workspaces: [personal],
+    environments: [
+      ...data.environments,
+      {
+        id: createId(),
+        workspace_id: personal.id,
+        name: 'Local',
+        created_at: nowUnixSeconds(),
+      },
+    ],
   }
 
   writeStore(next)
@@ -317,9 +347,116 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   writeStore({
     ...data,
     workspaces: [...data.workspaces, workspace],
+    environments: [
+      ...data.environments,
+      {
+        id: createId(),
+        workspace_id: workspace.id,
+        name: 'Local',
+        created_at: nowUnixSeconds(),
+      },
+    ],
   })
 
   return workspace
+}
+
+export async function ensureDefaultEnvironment(workspaceId: string): Promise<Environment> {
+  if (isTauriRuntime) return invokeTauri('ensure_default_environment', { workspaceId })
+
+  const data = readStore()
+  const existing = data.environments.find((environment) => environment.workspace_id === workspaceId)
+
+  if (existing) return existing
+
+  const environment = {
+    id: createId(),
+    workspace_id: workspaceId,
+    name: 'Local',
+    created_at: nowUnixSeconds(),
+  }
+
+  writeStore({
+    ...data,
+    environments: [...data.environments, environment],
+  })
+
+  return environment
+}
+
+export async function getEnvironments(workspaceId: string): Promise<Environment[]> {
+  if (isTauriRuntime) return invokeTauri('list_environments', { workspaceId })
+  return readStore().environments.filter((environment) => environment.workspace_id === workspaceId)
+}
+
+export async function createEnvironment(workspaceId: string, name: string): Promise<Environment> {
+  if (isTauriRuntime) return invokeTauri('create_environment', { workspaceId, name })
+
+  const data = readStore()
+  const environment = {
+    id: createId(),
+    workspace_id: workspaceId,
+    name: requireName(name, 'environment'),
+    created_at: nowUnixSeconds(),
+  }
+
+  writeStore({
+    ...data,
+    environments: [...data.environments, environment],
+  })
+
+  return environment
+}
+
+export async function getEnvironmentVariables(
+  environmentId: string,
+): Promise<EnvironmentVariable[]> {
+  if (isTauriRuntime) return invokeTauri('list_environment_variables', { environmentId })
+  return readStore().environmentVariables.filter(
+    (variable) => variable.environment_id === environmentId,
+  )
+}
+
+export async function upsertEnvironmentVariable(
+  environmentId: string,
+  key: string,
+  value: string,
+): Promise<EnvironmentVariable> {
+  if (isTauriRuntime) {
+    return invokeTauri('upsert_environment_variable', { environmentId, key, value })
+  }
+
+  const data = readStore()
+  const trimmedKey = requireName(key, 'variable')
+  const existing = data.environmentVariables.find(
+    (variable) => variable.environment_id === environmentId && variable.key === trimmedKey,
+  )
+  const variable = {
+    id: existing?.id ?? createId(),
+    environment_id: environmentId,
+    key: trimmedKey,
+    value,
+    created_at: existing?.created_at ?? nowUnixSeconds(),
+  }
+
+  writeStore({
+    ...data,
+    environmentVariables: existing
+      ? data.environmentVariables.map((item) => (item.id === existing.id ? variable : item))
+      : [...data.environmentVariables, variable],
+  })
+
+  return variable
+}
+
+export async function deleteEnvironmentVariable(variableId: string): Promise<void> {
+  if (isTauriRuntime) return invokeTauri('delete_environment_variable', { variableId })
+
+  const data = readStore()
+  writeStore({
+    ...data,
+    environmentVariables: data.environmentVariables.filter((variable) => variable.id !== variableId),
+  })
 }
 
 export async function getCollections(workspaceId: string): Promise<Collection[]> {
