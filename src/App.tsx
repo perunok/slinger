@@ -1,4 +1,8 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import Header from './components/Header'
+import Toolbar from './components/Toolbar'
+import Sidebar from './components/Sidebar'
+import RequestPane from './components/RequestPane'
 import {
   ApiFolder,
   ApiRequest,
@@ -717,405 +721,77 @@ function App() {
 
   return (
     <main className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-      <header className="flex h-7 items-center border-b border-[var(--border)] bg-[var(--toolbar)] px-3 text-[13px]">
-        <div className="flex w-1/3 items-center gap-4 font-medium text-[var(--text)]">
-          <span>File</span>
-          <span>Edit</span>
-          <span>View</span>
-          <span>Help</span>
-        </div>
-        <div className="w-1/3 truncate text-center text-[var(--text)]">
-          {selectedRequest ? `${selectedRequest.name} - Slinger` : 'Slinger'}
-        </div>
-        <div className="flex w-1/3 justify-end gap-3 text-[var(--muted)]">
-          <span>Invite</span>
-          <span>Upgrade</span>
-        </div>
-      </header>
-
-      <div className="flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-alt)] px-3">
-        <div className="flex items-center gap-2 text-[#a8a8a8]">
-          <button className="toolbar-button" aria-label="Back">
-            &lt;
-          </button>
-          <button className="toolbar-button" aria-label="Forward">
-            &gt;
-          </button>
-        </div>
-
-        <select
-          value={selectedWorkspaceId ?? ''}
-          onChange={(event) => setSelectedWorkspaceId(event.target.value || null)}
-          className="select-field h-8 w-52 rounded px-2 text-sm outline-none"
-          disabled={loadingWorkspaces}
-        >
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
-          ))}
-        </select>
-
-        <form className="flex items-center gap-2" onSubmit={handleCreateWorkspace}>
-          <input
-            value={workspaceName}
-            onChange={(event) => setWorkspaceName(event.target.value)}
-            placeholder="New workspace"
-            className="h-8 w-40 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-          />
-          <button className="secondary-button" disabled={!workspaceName.trim()}>
-            Add
-          </button>
-        </form>
-
-        <div className="mx-auto flex h-8 w-[320px] items-center rounded border border-[var(--border)] bg-[var(--panel)] px-3 text-sm text-[var(--muted)]">
-          Search
-        </div>
-
-        <button
-          className="secondary-button"
-          type="button"
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        >
-          {theme === 'dark' ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="5"></circle>
-              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-            </svg>
-          )}
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          aria-label={orientation === 'vertical' ? 'Switch to side-by-side' : 'Switch to stacked'}
-          onClick={() => setOrientation(orientation === 'vertical' ? 'horizontal' : 'vertical')}
-          title={orientation === 'vertical' ? 'Side-by-side' : 'Stacked'}
-        >
-          <span className="text-[var(--muted)]">{orientation === 'vertical' ? '⇆' : '⇕'}</span>
-        </button>
-        <button className="secondary-button">Save</button>
-        <button className="secondary-button">Share</button>
-      </div>
+      <Header selectedRequest={selectedRequest} />
+      <Toolbar
+        workspaces={workspaces}
+        selectedWorkspaceId={selectedWorkspaceId}
+        setSelectedWorkspaceId={setSelectedWorkspaceId}
+        loadingWorkspaces={loadingWorkspaces}
+        workspaceName={workspaceName}
+        setWorkspaceName={setWorkspaceName}
+        handleCreateWorkspace={handleCreateWorkspace}
+        theme={theme}
+        setTheme={setTheme}
+        orientation={orientation}
+        setOrientation={setOrientation}
+      />
 
       <div className="flex h-[calc(100vh-92px)] min-h-0">
-        <aside className="flex w-[385px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-alt)]">
-          <div className="border-b border-[var(--border)] p-3">
-            <div className="flex items-center justify-between gap-3">
-              <h1 className="text-xs font-bold uppercase tracking-wide text-[var(--text)]">Collections</h1>
-              <button
-                className="toolbar-button"
-                onClick={() => importInputRef.current?.click()}
-                disabled={!selectedWorkspaceId}
-                title="Import Postman collection"
-              >
-                Import
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json,.json"
-                className="hidden"
-                onChange={handleImportFile}
-              />
-            </div>
+        <Sidebar
+          importInputRef={importInputRef}
+          handleImportFile={handleImportFile}
+          handleCreateCollection={handleCreateCollection}
+          collectionName={collectionName}
+          setCollectionName={setCollectionName}
+          selectedWorkspace={selectedWorkspace}
+          isTauriRuntime={isTauriRuntime}
+          error={error}
+          notice={notice}
+          loadingCollections={loadingCollections}
+          collections={collections}
+          loadingRequests={loadingRequests}
+          foldersByParent={foldersByParent}
+          requestsByFolder={requestsByFolder}
+          selectedCollectionId={selectedCollectionId}
+          setSelectedCollectionId={setSelectedCollectionId}
+          renderFolder={renderFolder}
+          renderRequestRow={renderRequestRow}
+          handleRenameCollection={handleRenameCollection}
+          handleDeleteCollection={handleDeleteCollection}
+        />
 
-            <form className="mt-3 flex gap-2" onSubmit={handleCreateCollection}>
-              <input
-                value={collectionName}
-                onChange={(event) => setCollectionName(event.target.value)}
-                placeholder="New collection"
-                className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                disabled={!selectedWorkspaceId}
-              />
-              <button
-                className="primary-button h-8"
-                disabled={!collectionName.trim() || !selectedWorkspaceId}
-              >
-                +
-              </button>
-            </form>
-
-            {selectedWorkspace ? (
-              <p className="mt-3 truncate text-xs text-[#8c8c8c]">Workspace: {selectedWorkspace.name}</p>
-            ) : null}
-            {!isTauriRuntime ? (
-              <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
-                Browser preview mode: data is stored in localStorage. Run the desktop app for SQLite.
-              </p>
-            ) : null}
-            {error ? <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{error}</p> : null}
-            {notice ? (
-              <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{notice}</p>
-            ) : null}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
-            {loadingCollections ? (
-              <p className="px-2 py-3 text-sm text-[var(--muted)]">Loading collections...</p>
-            ) : collections.length === 0 ? (
-              <div className="px-2 py-4 text-sm text-[#9a9a9a]">
-                Create a collection or import the Postman JSON sample.
-              </div>
-            ) : (
-              collections.map((collection) => {
-                const expanded = collection.id === selectedCollectionId
-                const rootFolders = foldersByParent.get(ROOT_ID) ?? []
-                const rootRequests = requestsByFolder.get(ROOT_ID) ?? []
-
-                return (
-                  <div key={collection.id} className="mb-1">
-                    <div
-                      className={`group flex h-8 w-full items-center gap-2 rounded px-2 text-left text-sm ${
-                        expanded ? 'bg-[var(--surface)] text-[var(--text)]' : 'text-[var(--muted)] hover:bg-[var(--panel)]'
-                      }`}
-                    >
-                      <button
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                        onClick={() => setSelectedCollectionId(collection.id)}
-                      >
-                        <span className="w-3 shrink-0 text-[var(--muted)]">{expanded ? 'v' : '>'}</span>
-                        <span className="min-w-0 flex-1 truncate">{collection.name}</span>
-                      </button>
-                      <button
-                        className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100"
-                        onClick={() => handleRenameCollection(collection)}
-                      >
-                        Rename
-                      </button>
-                      <button
-                        className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100"
-                        onClick={() => handleDeleteCollection(collection)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-
-                    {expanded ? (
-                      <div className="ml-3 mt-1 space-y-1">
-                        {loadingRequests ? (
-                          <p className="py-2 text-xs text-[var(--muted)]">Loading requests...</p>
-                        ) : requests.length === 0 && folders.length === 0 ? (
-                          <p className="py-2 text-xs text-[var(--muted)]">No requests yet.</p>
-                        ) : (
-                          <>
-                            {rootFolders.map((folder) => renderFolder(folder))}
-                            {rootRequests.map((request) => renderRequestRow(request))}
-                          </>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })
-            )}
-          </div>
-
-          <div className="border-t border-[var(--border)] text-xs font-bold uppercase text-[var(--text)]">
-            {['Environments', 'Specs', 'Flows'].map((label) => (
-              <button
-                key={label}
-                className="flex h-8 w-full items-center gap-2 border-b border-[var(--border)] px-3 text-left text-[var(--muted)]"
-              >
-                <span>&gt;</span>
-                {label}
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-          <div className="flex h-9 items-end gap-1 border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
-            {selectedRequest ? (
-              <button className="h-7 max-w-[260px] truncate rounded-t bg-[var(--surface)] px-4 text-left text-xs text-[var(--text)]">
-                <span className={`mr-2 font-semibold ${methodClass(selectedRequest.method)}`}>
-                  {selectedRequest.method}
-                </span>
-                {selectedRequest.name}
-              </button>
-            ) : (
-              <button className="h-7 rounded-t bg-[var(--surface)] px-4 text-xs text-[var(--muted)]">No request selected</button>
-            )}
-            <button className="h-7 px-3 text-lg text-[var(--muted)]">+</button>
-          </div>
-
-          {selectedRequest ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className="flex h-10 items-center gap-2 border-b border-[var(--border)] px-4 text-sm">
-                <span className="text-[var(--muted)]">{selectedCollection?.name}</span>
-                <span className="text-[var(--muted)]">&gt;</span>
-                <span className="font-semibold text-[var(--text)]">{selectedRequest.name}</span>
-              </div>
-
-              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
-                <div
-                  className={`flex h-8 w-24 items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-bold ${methodClass(
-                    selectedRequest.method,
-                  )}`}
-                >
-                  {selectedRequest.method}
-                </div>
-                <input
-                  value={urlDraft}
-                  onChange={(event) => setUrlDraft(event.target.value)}
-                  className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none"
-                />
-                <button className="primary-button h-8 w-24" onClick={handleSend} disabled={sending}>
-                  {sending ? 'Sending' : 'Send'}
-                </button>
-              </div>
-
-              <div className="flex h-10 items-center gap-6 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
-                {REQUEST_TABS.map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`h-10 border-b-2 ${
-                      tab === activeTab
-                        ? 'border-[#f26b3a] font-semibold text-[var(--text)]'
-                        : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    {tab}
-                    {tab === 'Headers' && headers.length > 0 ? (
-                      <span className="ml-1 text-[var(--muted)]">{headers.length}</span>
-                    ) : null}
-                  </button>
-                ))}
-              </div>
-
-              {activeTab === 'Body' ? (
-                <div className="flex h-10 items-center gap-4 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
-                  {['none', 'form-data', 'x-www-form-urlencoded', 'raw', 'binary', 'GraphQL'].map((item) => (
-                    <label key={item} className="flex items-center gap-2">
-                      <span
-                        className={`h-3 w-3 rounded-full border ${
-                          item === (selectedDocument.body?.mode ?? 'raw')
-                            ? 'border-[#5797ff] bg-[#5797ff]'
-                            : 'border-[var(--border)]'
-                        }`}
-                      />
-                      {item}
-                    </label>
-                  ))}
-                  <span className="font-semibold text-[#74a8ff]">JSON</span>
-                </div>
-              ) : null}
-
-              <div ref={responseSplitRef} className={`min-h-0 flex flex-1 ${orientation === 'vertical' ? 'flex-col' : 'flex-row'} bg-[var(--bg)]`}>
-                <div className={`min-h-0 flex-1 overflow-auto ${orientation === 'vertical' ? 'border-b' : 'border-r'} border-[var(--border)] bg-[var(--bg)]`}>
-                  {renderActiveTab()}
-                </div>
-
-                <div
-                  className={`${orientation === 'vertical' ? 'flex h-5 cursor-row-resize' : 'flex w-3 cursor-col-resize'} items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]`}
-                  onPointerDown={(event) => {
-                    event.preventDefault()
-                    setIsResizingResponse(true)
-                    event.currentTarget.setPointerCapture(event.pointerId)
-                  }}
-                >
-                  <div className={`${orientation === 'vertical' ? 'flex h-1.5 w-12 items-center justify-between' : 'flex h-6 w-1 items-center justify-between'}`}>
-                    {orientation === 'vertical' ? (
-                      <>
-                        <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
-                        <span className="text-xs text-[var(--muted)]">⇕</span>
-                        <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
-                      </>
-                    ) : (
-                      <>
-                        <span className="block w-0.5 h-3 rounded-full bg-[var(--muted)]" />
-                        <span className="text-xs text-[var(--muted)]">⇆</span>
-                        <span className="block w-0.5 h-3 rounded-full bg-[var(--muted)]" />
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                <div className="min-h-0 overflow-auto px-4 py-3" style={orientation === 'vertical' ? { height: `${responseHeight}px` } : { width: `${responseWidth}px` }}>
-                  {sendError ? (
-                    <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                      {sendError}
-                    </pre>
-                  ) : sendResult ? (
-                    <div className="space-y-3">
-                      {sendResult.headers.length > 0 ? (
-                        <div className="grid grid-cols-[220px_1fr] rounded border border-[var(--border)] text-xs">
-                          {sendResult.headers.map((header) => (
-                            <div key={`${header.key}-${header.value}`} className="contents">
-                              <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--text)]">
-                                {header.key}
-                              </div>
-                              <div className="border-b border-[var(--border)] px-3 py-1 font-mono text-[var(--muted)]">
-                                {header.value}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                        {formatMaybeJson(sendResult.body) || 'No response body.'}
-                      </pre>
-                    </div>
-                  ) : responseExamples.length > 0 ? (
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
-                        <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
-                          <span className="font-semibold text-[var(--text)]">Example</span>
-                          <span className="text-[var(--muted)]">▼</span>
-                        </div>
-                        <select
-                          value={selectedResponseIndex}
-                          onChange={(event) => setSelectedResponseIndex(Number(event.target.value))}
-                          className="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
-                        >
-                          {responseExamples.map((response, index) => (
-                            <option key={`${response.name ?? 'example'}-${index}`} value={index}>
-                              {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
-                        <div className="flex flex-wrap items-center gap-3 text-sm">
-                          <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
-                          <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
-                          {selectedResponse?.code ? (
-                            <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">
-                              {selectedResponse.code}
-                            </span>
-                          ) : null}
-                        </div>
-                        <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                          {selectedResponseBody || 'No response body.'}
-                        </pre>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-[var(--muted)]">
-                      Response body will appear here.
-                    </div>
-                  )}
-                </div>
-              </div>
-              </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-[var(--text)]">No request open</h2>
-                <p className="mt-2 max-w-sm text-sm text-[var(--muted)]">
-                  Import the sample Postman collection or create a collection to begin building the
-                  request workspace.
-                </p>
-              </div>
-            </div>
-          )}
-        </section>
+        <RequestPane
+          selectedRequest={selectedRequest}
+          selectedCollection={selectedCollection}
+          urlDraft={urlDraft}
+          setUrlDraft={setUrlDraft}
+          handleSend={handleSend}
+          sending={sending}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          bodyDraft={bodyDraft}
+          setBodyDraft={setBodyDraft}
+          REQUEST_TABS={REQUEST_TABS}
+          headers={headers}
+          params={params}
+          scripts={scripts}
+          selectedDocument={selectedDocument}
+          renderActiveTab={renderActiveTab}
+          responseExamples={responseExamples}
+          selectedResponseIndex={selectedResponseIndex}
+          setSelectedResponseIndex={setSelectedResponseIndex}
+          selectedResponseBody={selectedResponseBody}
+          selectedResponse={selectedResponse}
+          sendResult={sendResult}
+          sendError={sendError}
+          responseHeight={responseHeight}
+          responseWidth={responseWidth}
+          orientation={orientation}
+          responseSplitRef={responseSplitRef}
+          isResizingResponse={isResizingResponse}
+          setIsResizingResponse={setIsResizingResponse}
+          formatMaybeJson={formatMaybeJson}
+        />
       </div>
     </main>
   )
