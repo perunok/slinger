@@ -3,6 +3,12 @@ import Header from './components/Header'
 import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
 import RequestPane from './components/RequestPane'
+import PayloadViewer from './components/PayloadViewer'
+import {
+  PayloadContentType,
+  formatPayload,
+  normalizePayloadContentType,
+} from './lib/payloadFormatters'
 import {
   ApiFolder,
   ApiRequest,
@@ -108,16 +114,6 @@ function parseDocument(request: ApiRequest | null): RequestDocument {
   }
 }
 
-function formatMaybeJson(value: string): string {
-  if (!value.trim()) return ''
-
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2)
-  } catch {
-    return value
-  }
-}
-
 function methodClass(method: string): string {
   return METHOD_STYLES[method.toUpperCase()] ?? 'text-slate-300'
 }
@@ -126,10 +122,6 @@ function statusClass(status: number): string {
   if (status >= 200 && status < 300) return 'bg-[#1e3a2a] text-[#8de1a6]'
   if (status >= 400) return 'bg-[#3a1717] text-[#ffb3b3]'
   return 'bg-[#2f2f2f] text-[#d8d8d8]'
-}
-
-function editorLines(value: string): string[] {
-  return value ? value.split('\n') : ['']
 }
 
 function sortByCreated<T extends { created_at: number; id: string }>(items: T[]): T[] {
@@ -226,8 +218,13 @@ function unresolvedVariables(values: string[]): string[] {
   return [...names]
 }
 
-function beautifyJson(value: string): string {
-  return JSON.stringify(JSON.parse(value), null, 2)
+function payloadContentTypeFromHeaders(
+  headers: Array<{ key?: string; value?: string }>,
+): PayloadContentType | null {
+  const contentType = headers.find(
+    (header) => header.key?.toLowerCase() === 'content-type',
+  )?.value
+  return contentType ? normalizePayloadContentType(contentType) : null
 }
 
 function App() {
@@ -272,7 +269,9 @@ function App() {
   })
   const [selectedResponseIndex, setSelectedResponseIndex] = useState(0)
   const [responseViewTab, setResponseViewTab] = useState<'headers' | 'body'>('body')
-  const [responseContentType, setResponseContentType] = useState('json')
+  const [requestContentType, setRequestContentType] = useState<PayloadContentType>('json')
+  const [responseContentType, setResponseContentType] = useState<PayloadContentType>('json')
+  const [bodyViewMode, setBodyViewMode] = useState<'edit' | 'preview'>('edit')
   const [responseStatusCode, setResponseStatusCode] = useState<string>('200')
   const responseSplitRef = useRef<HTMLDivElement>(null)
 
@@ -348,7 +347,6 @@ function App() {
     window.localStorage.setItem('slinger-theme', theme)
   }, [theme])
 
-  const selectedResponseBody = selectedResponse?.body ? formatMaybeJson(selectedResponse.body) : ''
   const params = useMemo(() => extractParams(urlDraft, selectedDocument), [selectedDocument, urlDraft])
   const scripts = useMemo(() => scriptText(requestScripts(selectedDocument)), [selectedDocument])
   const description =
@@ -556,6 +554,9 @@ function App() {
     const rawBody = selectedDocument.body?.raw ?? ''
     setUrlDraft(selectedRequest?.url ?? '')
     setBodyDraft(rawBody)
+    setRequestContentType(
+      payloadContentTypeFromHeaders(requestHeaders(selectedDocument)) ?? 'json',
+    )
     setSendResult(null)
     setSendError(null)
     setActiveTab(rawBody ? 'Body' : 'Docs')
@@ -725,12 +726,14 @@ function App() {
   function handleBeautifyBody() {
     if (!bodyDraft.trim()) return
 
-    try {
-      setBodyDraft(beautifyJson(bodyDraft))
-      setError(null)
-    } catch {
+    const formatted = formatPayload(bodyDraft, requestContentType)
+    if (!formatted.ok) {
       setError('Body is not valid JSON, so it cannot be beautified.')
+      return
     }
+
+    setBodyDraft(formatted.value)
+    setError(null)
   }
 
   async function handleSend() {
@@ -765,6 +768,8 @@ function App() {
         headers: resolvedHeaders,
         body: resolvedBody,
       })
+      const detectedContentType = payloadContentTypeFromHeaders(result.headers)
+      if (detectedContentType) setResponseContentType(detectedContentType)
 
       setSendResult(result)
     } catch (err) {
@@ -900,7 +905,14 @@ function App() {
         ])
       case 'Body':
       default:
-        return (
+        return bodyViewMode === 'preview' ? (
+          <PayloadViewer
+            value={bodyDraft}
+            contentType={requestContentType}
+            emptyText="No request body."
+            className="payload-viewer-flush"
+          />
+        ) : (
           <textarea
             value={bodyDraft}
             onChange={(event) => setBodyDraft(event.target.value)}
@@ -975,8 +987,6 @@ function App() {
           sending={sending}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          bodyDraft={bodyDraft}
-          setBodyDraft={setBodyDraft}
           resolvedUrlPreview={resolvedUrlPreview}
           handleBeautifyBody={handleBeautifyBody}
           REQUEST_TABS={REQUEST_TABS}
@@ -985,10 +995,13 @@ function App() {
           scripts={scripts}
           selectedDocument={selectedDocument}
           renderActiveTab={renderActiveTab}
+          requestContentType={requestContentType}
+          setRequestContentType={setRequestContentType}
+          bodyViewMode={bodyViewMode}
+          setBodyViewMode={setBodyViewMode}
           responseExamples={responseExamples}
           selectedResponseIndex={selectedResponseIndex}
           setSelectedResponseIndex={setSelectedResponseIndex}
-          selectedResponseBody={selectedResponseBody}
           selectedResponse={selectedResponse}
           sendResult={sendResult}
           sendError={sendError}
@@ -996,9 +1009,7 @@ function App() {
           responseWidth={responseWidth}
           orientation={orientation}
           responseSplitRef={responseSplitRef}
-          isResizingResponse={isResizingResponse}
           setIsResizingResponse={setIsResizingResponse}
-          formatMaybeJson={formatMaybeJson}
           responseViewTab={responseViewTab}
           setResponseViewTab={setResponseViewTab}
           responseContentType={responseContentType}

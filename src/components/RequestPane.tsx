@@ -1,4 +1,6 @@
 import React from 'react'
+import PayloadViewer from './PayloadViewer'
+import { PAYLOAD_CONTENT_TYPE_OPTIONS, PayloadContentType } from '../lib/payloadFormatters'
 
 const HTTP_STATUS_CODES = [
   { code: 200, text: 'OK' },
@@ -29,8 +31,6 @@ type Props = {
   sending: boolean
   activeTab: string
   setActiveTab: (t: any) => void
-  bodyDraft: string
-  setBodyDraft: (v: string) => void
   resolvedUrlPreview: string
   handleBeautifyBody: () => void
   REQUEST_TABS: string[]
@@ -39,10 +39,13 @@ type Props = {
   scripts: string
   selectedDocument: any
   renderActiveTab: () => JSX.Element
+  requestContentType: PayloadContentType
+  setRequestContentType: (type: PayloadContentType) => void
+  bodyViewMode: 'edit' | 'preview'
+  setBodyViewMode: (mode: 'edit' | 'preview') => void
   responseExamples: any[]
   selectedResponseIndex: number
   setSelectedResponseIndex: (n: number) => void
-  selectedResponseBody: string
   selectedResponse: any
   sendResult: any
   sendError: string | null
@@ -50,15 +53,24 @@ type Props = {
   responseWidth: number
   orientation: 'vertical' | 'horizontal'
   responseSplitRef: React.RefObject<HTMLDivElement>
-  isResizingResponse: boolean
   setIsResizingResponse: (v: boolean) => void
-  formatMaybeJson: (v: any) => string
   responseViewTab: 'headers' | 'body'
   setResponseViewTab: (tab: 'headers' | 'body') => void
-  responseContentType: string
-  setResponseContentType: (type: string) => void
+  responseContentType: PayloadContentType
+  setResponseContentType: (type: PayloadContentType) => void
   responseStatusCode: string
   setResponseStatusCode: (code: string) => void
+}
+
+function payloadBodyToString(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 export default function RequestPane(props: Props) {
@@ -71,8 +83,6 @@ export default function RequestPane(props: Props) {
     sending,
     activeTab,
     setActiveTab,
-    bodyDraft,
-    setBodyDraft,
     resolvedUrlPreview,
     handleBeautifyBody,
     REQUEST_TABS,
@@ -81,10 +91,13 @@ export default function RequestPane(props: Props) {
     scripts,
     selectedDocument,
     renderActiveTab,
+    requestContentType,
+    setRequestContentType,
+    bodyViewMode,
+    setBodyViewMode,
     responseExamples,
     selectedResponseIndex,
     setSelectedResponseIndex,
-    selectedResponseBody,
     selectedResponse,
     sendResult,
     sendError,
@@ -92,9 +105,7 @@ export default function RequestPane(props: Props) {
     responseWidth,
     orientation,
     responseSplitRef,
-    isResizingResponse,
     setIsResizingResponse,
-    formatMaybeJson,
     responseViewTab,
     setResponseViewTab,
     responseContentType,
@@ -153,17 +164,53 @@ export default function RequestPane(props: Props) {
           </div>
 
           {activeTab === 'Body' ? (
-            <div className="flex h-10 items-center gap-4 border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
+            <div className="flex h-10 items-center gap-4 overflow-x-auto border-b border-[var(--border)] px-4 text-sm text-[var(--muted)]">
               {['none', 'form-data', 'x-www-form-urlencoded', 'raw', 'binary', 'GraphQL'].map((item) => (
-                <label key={item} className="flex items-center gap-2">
+                <label key={item} className="flex shrink-0 items-center gap-2">
                   <span className={`h-3 w-3 rounded-full border ${item === (selectedDocument.body?.mode ?? 'raw') ? 'border-[#5797ff] bg-[#5797ff]' : 'border-[var(--border)]'}`} />
                   {item}
                 </label>
               ))}
-              <span className="font-semibold text-[#74a8ff]">JSON</span>
-              <button className="secondary-button ml-auto h-7" type="button" onClick={handleBeautifyBody}>
-                Beautify
-              </button>
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <select
+                  value={requestContentType}
+                  onChange={(event) => setRequestContentType(event.target.value as PayloadContentType)}
+                  className="select-field h-7 rounded px-2 text-xs outline-none focus:border-[#5a8fff]"
+                >
+                  {PAYLOAD_CONTENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex overflow-hidden rounded border border-[var(--border)]">
+                  <button
+                    type="button"
+                    onClick={() => setBodyViewMode('edit')}
+                    className={`h-7 px-3 text-xs ${
+                      bodyViewMode === 'edit'
+                        ? 'bg-[var(--surface)] text-[var(--text)]'
+                        : 'text-[var(--muted)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBodyViewMode('preview')}
+                    className={`h-7 border-l border-[var(--border)] px-3 text-xs ${
+                      bodyViewMode === 'preview'
+                        ? 'bg-[var(--surface)] text-[var(--text)]'
+                        : 'text-[var(--muted)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    Preview
+                  </button>
+                </div>
+                <button className="secondary-button h-7" type="button" onClick={handleBeautifyBody}>
+                  Beautify
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -240,19 +287,21 @@ export default function RequestPane(props: Props) {
                         <span className="text-xs font-semibold text-[var(--muted)]">Content Type</span>
                         <select
                           value={responseContentType}
-                          onChange={(e) => setResponseContentType(e.target.value)}
+                          onChange={(event) => setResponseContentType(event.target.value as PayloadContentType)}
                           className="select-field min-w-[140px] rounded px-2 py-1 text-xs outline-none focus:border-[#5a8fff]"
                         >
-                          <option value="json">📄 JSON</option>
-                          <option value="xml">📋 XML</option>
-                          <option value="html">🌐 HTML</option>
-                          <option value="text">📝 Text</option>
-                          <option value="binary">⚙️ Binary</option>
+                          {PAYLOAD_CONTENT_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
                         </select>
                       </div>
-                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                        {props.formatMaybeJson ? props.formatMaybeJson(sendResult.body) : (typeof sendResult.body === 'string' ? sendResult.body : JSON.stringify(sendResult.body, null, 2)) || 'No response body.'}
-                      </pre>
+                      <PayloadViewer
+                        value={payloadBodyToString(sendResult.body)}
+                        contentType={responseContentType}
+                        emptyText="No response body."
+                      />
                     </div>
                   )}
                 </div>
@@ -274,6 +323,17 @@ export default function RequestPane(props: Props) {
                         </option>
                       ))}
                     </select>
+                    <select
+                      value={responseContentType}
+                      onChange={(event) => setResponseContentType(event.target.value as PayloadContentType)}
+                      className="select-field min-w-[120px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
+                    >
+                      {PAYLOAD_CONTENT_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
@@ -284,9 +344,11 @@ export default function RequestPane(props: Props) {
                         <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">{selectedResponse.code}</span>
                       ) : null}
                     </div>
-                    <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
-                      {selectedResponseBody || 'No response body.'}
-                    </pre>
+                    <PayloadViewer
+                      value={selectedResponse?.body ?? ''}
+                      contentType={responseContentType}
+                      emptyText="No response body."
+                    />
                   </div>
                 </div>
               ) : (

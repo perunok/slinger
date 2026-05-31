@@ -14,6 +14,14 @@
   --border: #333333;
   --input: #1f1f1f;
   --input-border: #393939;
+  --syntax-key: #8ab4f8;
+  --syntax-string: #a5d6a7;
+  --syntax-number: #f6c177;
+  --syntax-boolean: #c792ea;
+  --syntax-null: #ff8a8a;
+  --syntax-punctuation: #b8b8b8;
+  --line-number: #777777;
+  --line-number-border: #343434;
 }
 
 :root[data-theme='light'] {
@@ -28,6 +36,14 @@
   --border: #d1d5db;
   --input: #ffffff;
   --input-border: #cbd5e1;
+  --syntax-key: #0550ae;
+  --syntax-string: #116329;
+  --syntax-number: #953800;
+  --syntax-boolean: #8250df;
+  --syntax-null: #cf222e;
+  --syntax-punctuation: #57606a;
+  --line-number: #64748b;
+  --line-number-border: #d7dde6;
 }
 
 body {
@@ -113,6 +129,95 @@ textarea {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.payload-viewer {
+  min-height: 0;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.payload-viewer-flush {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.payload-viewer-empty {
+  display: flex;
+  min-height: 5rem;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  color: var(--muted);
+}
+
+.payload-viewer-notice {
+  border-bottom: 1px solid var(--border);
+  background: rgba(246, 193, 119, 0.12);
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+}
+
+.payload-pre {
+  min-width: max-content;
+  padding: 0.75rem 0;
+}
+
+.payload-line {
+  display: grid;
+  grid-template-columns: 3.25rem minmax(0, max-content);
+  min-height: 1.25rem;
+  white-space: pre;
+}
+
+.payload-line:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.payload-line-number {
+  user-select: none;
+  border-right: 1px solid var(--line-number-border);
+  padding: 0 0.75rem 0 0.5rem;
+  text-align: right;
+  color: var(--line-number);
+}
+
+.payload-code {
+  padding: 0 1rem;
+}
+
+.payload-token-key {
+  color: var(--syntax-key);
+}
+
+.payload-token-string {
+  color: var(--syntax-string);
+}
+
+.payload-token-number {
+  color: var(--syntax-number);
+}
+
+.payload-token-boolean {
+  color: var(--syntax-boolean);
+}
+
+.payload-token-null {
+  color: var(--syntax-null);
+}
+
+.payload-token-punctuation {
+  color: var(--syntax-punctuation);
 }
 
 .glow-strip {
