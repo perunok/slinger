@@ -692,7 +692,7 @@ function App() {
             value={bodyDraft}
             onChange={(event) => setBodyDraft(event.target.value)}
             spellCheck={false}
-            className="h-full w-full resize-none bg-[#1f1f1f] p-4 font-mono text-[13px] leading-5 text-[#c7d3e5] outline-none"
+            className="h-full w-full resize-none bg-[var(--input)] p-4 font-mono text-[13px] leading-5 text-[var(--text)] outline-none"
           />
         )
     }
@@ -818,13 +818,13 @@ function App() {
               <p className="mt-3 truncate text-xs text-[#8c8c8c]">Workspace: {selectedWorkspace.name}</p>
             ) : null}
             {!isTauriRuntime ? (
-              <p className="mt-3 rounded bg-[#322817] px-3 py-2 text-xs text-[#f1d08a]">
+              <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
                 Browser preview mode: data is stored in localStorage. Run the desktop app for SQLite.
               </p>
             ) : null}
-            {error ? <p className="mt-3 rounded bg-[#3a1717] px-3 py-2 text-xs text-[#ffb3b3]">{error}</p> : null}
+            {error ? <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{error}</p> : null}
             {notice ? (
-              <p className="mt-3 rounded bg-[#17321f] px-3 py-2 text-xs text-[#b7e3c4]">{notice}</p>
+              <p className="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{notice}</p>
             ) : null}
           </div>
 
@@ -856,13 +856,13 @@ function App() {
                         <span className="min-w-0 flex-1 truncate">{collection.name}</span>
                       </button>
                       <button
-                        className="rounded px-1 text-[11px] text-[#9d9d9d] opacity-0 hover:bg-[#444] group-hover:opacity-100"
+                        className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100"
                         onClick={() => handleRenameCollection(collection)}
                       >
                         Rename
                       </button>
                       <button
-                        className="rounded px-1 text-[11px] text-[#c18f8f] opacity-0 hover:bg-[#442929] group-hover:opacity-100"
+                        className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100"
                         onClick={() => handleDeleteCollection(collection)}
                       >
                         Delete
@@ -994,15 +994,15 @@ function App() {
                   }}
                 >
                   <div className="flex h-1.5 w-12 items-center justify-between">
-                    <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
+                    <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
                     <span className="text-xs text-[var(--muted)]">⇕</span>
-                    <span className="block h-0.5 w-3 rounded-full bg-[#8b8b8b]" />
+                    <span className="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
                   </div>
                 </div>
 
                 <div className="min-h-0 overflow-auto px-4 py-3" style={{ height: `${responseHeight}px` }}>
                     {sendError ? (
-                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[#5a2626] bg-[#2b1616] p-3 font-mono text-xs leading-5 text-[#ffb3b3]">
+                      <pre className="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">
                         {sendError}
                       </pre>
                     ) : sendResult ? (
@@ -1050,7 +1050,7 @@ function App() {
                             <span className="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
                             <span className="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
                             {selectedResponse?.code ? (
-                              <span className="rounded bg-[#1e3a2a] px-2 py-0.5 text-xs text-[#8de1a6]">
+                              <span className="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">
                                 {selectedResponse.code}
                               </span>
                             ) : null}
