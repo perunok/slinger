@@ -297,6 +297,14 @@ function createFoldersFromPaths(
   return { folders, pathToFolderId }
 }
 
+function normalizeRequestUrl(url: string): string {
+  const trimmed = url.trim()
+  if (!trimmed) return trimmed
+  if (trimmed.startsWith('//')) return trimmed
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed
+  return `http://${trimmed}`
+}
+
 async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseData> {
   if (input.url.includes('{{') || input.url.includes('}}')) {
     throw new Error('request URL contains unresolved variables')
@@ -308,7 +316,7 @@ async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseDa
     return current
   }, {})
   const startedAt = performance.now()
-  const response = await fetch(input.url, {
+  const response = await fetch(normalizeRequestUrl(input.url), {
     method: input.method,
     headers,
     body: input.body || undefined,

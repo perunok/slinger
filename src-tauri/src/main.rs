@@ -165,6 +165,17 @@ async fn import_postman_collection(
         .map_err(|err| err.to_string())
 }
 
+fn normalize_request_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.starts_with("//") {
+        return format!("http:{}", trimmed);
+    }
+    if !trimmed.contains("://") && !trimmed.starts_with("mailto:") {
+        return format!("http://{}", trimmed);
+    }
+    trimmed.to_string()
+}
+
 #[tauri::command]
 async fn execute_http_request(
     input: domain::HttpRequestInput,
@@ -173,7 +184,7 @@ async fn execute_http_request(
         .method
         .parse::<reqwest::Method>()
         .map_err(|err| err.to_string())?;
-    let url = input.url.trim();
+    let url = normalize_request_url(&input.url);
 
     if url.is_empty() {
         return Err("request URL is required".to_string());
@@ -184,7 +195,7 @@ async fn execute_http_request(
     }
 
     let client = reqwest::Client::new();
-    let mut builder = client.request(method, url);
+    let mut builder = client.request(method, &url);
 
     for header in input.headers {
         let key = header.key.trim();
