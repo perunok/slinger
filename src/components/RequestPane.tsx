@@ -183,30 +183,6 @@ export default function RequestPane(props: Props) {
                     </option>
                   ))}
                 </select>
-                <div className="flex overflow-hidden rounded border border-[var(--border)]">
-                  <button
-                    type="button"
-                    onClick={() => setBodyViewMode('edit')}
-                    className={`h-7 px-3 text-xs ${
-                      bodyViewMode === 'edit'
-                        ? 'bg-[var(--surface)] text-[var(--text)]'
-                        : 'text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBodyViewMode('preview')}
-                    className={`h-7 border-l border-[var(--border)] px-3 text-xs ${
-                      bodyViewMode === 'preview'
-                        ? 'bg-[var(--surface)] text-[var(--text)]'
-                        : 'text-[var(--muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    Preview
-                  </button>
-                </div>
                 <button className="secondary-button h-7" type="button" onClick={handleBeautifyBody}>
                   Beautify
                 </button>

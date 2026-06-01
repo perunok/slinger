@@ -916,19 +916,13 @@ function App() {
         ])
       case 'Body':
       default:
-        return bodyViewMode === 'preview' ? (
+        return (
           <PayloadViewer
             value={bodyDraft}
             contentType={requestContentType}
             emptyText="No request body."
             className="payload-viewer-flush"
-          />
-        ) : (
-          <textarea
-            value={bodyDraft}
-            onChange={(event) => setBodyDraft(event.target.value)}
-            spellCheck={false}
-            className="h-full w-full resize-none bg-[var(--input)] p-4 font-mono text-[13px] leading-5 text-[var(--text)] outline-none"
+            onChange={(v) => setBodyDraft(v)}
           />
         )
     }
