@@ -428,6 +428,26 @@
     }
   }
 
+  async function setEnvironmentVariable(key: string, value: string) {
+    if (!selectedEnvironmentId) {
+      error = 'Select an environment first.'
+      return
+    }
+
+    try {
+      const variable = await upsertEnvironmentVariable(selectedEnvironmentId, key, value)
+      const exists = environmentVariables.some((item) => item.id === variable.id)
+      environmentVariables = exists
+        ? environmentVariables.map((item) => (item.id === variable.id ? variable : item))
+        : [...environmentVariables, variable]
+      notice = `Saved {{${variable.key}}}.`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to save environment variable.'
+    }
+  }
+
   async function handleDeleteVariable(variable: EnvironmentVariable) {
     try {
       await deleteEnvironmentVariable(variable.id)
@@ -629,6 +649,9 @@
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedResponseIndex={(index) => (selectedResponseIndex = index)}
       setRequestMethod={setRequestMethod}
+      setEnvironmentVariable={setEnvironmentVariable}
+      environmentVariables={environmentVariables}
+      selectedEnvironmentId={selectedEnvironmentId}
       setUrlDraft={(value) => (urlDraft = value)}
       {urlDraft}
     />

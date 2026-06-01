@@ -146,11 +146,49 @@ export function scriptText(events: ScriptEvent[]): string {
   return lines.join('\n')
 }
 
+export type TemplatePart = {
+  text: string
+  key?: string
+  resolved: boolean
+  value?: string
+}
+
 export function resolveTemplate(value: string, variables: EnvironmentVariable[]): string {
   return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
     const variable = variables.find((item) => item.key === key)
     return variable ? variable.value : match
   })
+}
+
+export function resolveTemplateParts(value: string, variables: EnvironmentVariable[]): TemplatePart[] {
+  const parts: TemplatePart[] = []
+  let lastIndex = 0
+
+  for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+    const raw = match[0]
+    const key = match[1]
+    const index = match.index ?? 0
+
+    if (index > lastIndex) {
+      parts.push({ text: value.slice(lastIndex, index), resolved: false })
+    }
+
+    const variable = variables.find((item) => item.key === key)
+    parts.push({
+      text: raw,
+      key,
+      resolved: Boolean(variable),
+      value: variable?.value,
+    })
+
+    lastIndex = index + raw.length
+  }
+
+  if (lastIndex < value.length) {
+    parts.push({ text: value.slice(lastIndex), resolved: false })
+  }
+
+  return parts
 }
 
 export function unresolvedVariables(values: string[]): string[] {

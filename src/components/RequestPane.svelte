@@ -3,6 +3,7 @@
   import PayloadViewer from './PayloadViewer.svelte'
   import RequestActiveTab from './RequestActiveTab.svelte'
   import { PAYLOAD_CONTENT_TYPE_OPTIONS, type PayloadContentType } from '../lib/payloadFormatters'
+  import { resolveTemplateParts, type TemplatePart } from '../lib/requestDocument'
   import type {
     ActiveTab,
     HeaderDocument,
@@ -10,7 +11,7 @@
     RequestParam,
     ResponseExample,
   } from '../lib/requestDocument'
-  import type { ApiRequest, Collection, HttpResponseData } from '../tauri'
+  import type { ApiRequest, Collection, EnvironmentVariable, HttpResponseData } from '../tauri'
 
   const HTTP_STATUS_CODES = [
     { code: 200, text: 'OK' },
@@ -63,7 +64,6 @@
   export let orientation: 'vertical' | 'horizontal'
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
-  export let resolvedUrlPreview: string
   export let responseContentType: PayloadContentType
   export let responseExamples: ResponseExample[]
   export let responseStatusCode: string
@@ -86,6 +86,9 @@
   export let setSelectedResponseIndex: (index: number) => void
   export let setUrlDraft: (value: string) => void
   export let setRequestMethod: (method: string) => void
+  export let environmentVariables: EnvironmentVariable[]
+  export let setEnvironmentVariable: (key: string, value: string) => Promise<void>
+  export let selectedEnvironmentId: string | null
   export let urlDraft: string
 
   let responseHeight = 260
@@ -111,6 +114,53 @@
   function selectValue(event: Event): string {
     return (event.currentTarget as HTMLSelectElement).value
   }
+
+  let urlParts: TemplatePart[] = []
+  let hoveredEnvKey: string | null = null
+  let hoveredEnvValue = ''
+  let hoveredEnvResolved = false
+  let hoverPopupTimeout: ReturnType<typeof setTimeout> | null = null
+
+  function clearHoverPopupTimeout() {
+    if (hoverPopupTimeout !== null) {
+      clearTimeout(hoverPopupTimeout)
+      hoverPopupTimeout = null
+    }
+  }
+
+  function scheduleHoverPopupHide() {
+    clearHoverPopupTimeout()
+    hoverPopupTimeout = setTimeout(() => {
+      hoveredEnvKey = null
+    }, 120)
+  }
+
+  function handleVariableMouseEnter(part: TemplatePart) {
+    if (!part.key) return
+    clearHoverPopupTimeout()
+    hoveredEnvKey = part.key
+    hoveredEnvValue = part.value ?? ''
+    hoveredEnvResolved = part.resolved
+  }
+
+  function handleVariableMouseLeave() {
+    scheduleHoverPopupHide()
+  }
+
+  function handlePopupMouseEnter() {
+    clearHoverPopupTimeout()
+  }
+
+  function handlePopupMouseLeave() {
+    scheduleHoverPopupHide()
+  }
+
+  async function saveHoveredEnv() {
+    if (!hoveredEnvKey) return
+    await setEnvironmentVariable(hoveredEnvKey, hoveredEnvValue)
+  }
+
+  $: urlParts = resolveTemplateParts(urlDraft, environmentVariables)
 
   function handleRequestContentTypeChange(event: Event) {
     setRequestContentType(selectValue(event) as PayloadContentType)
@@ -194,14 +244,55 @@
               <option value={method}>{method}</option>
             {/each}
           </select>
-          <input value={urlDraft} on:input={(event) => setUrlDraft(inputValue(event))} class="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none" />
+          <div class="relative min-w-0 flex-1">
+            <div class="absolute inset-0 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 py-0.5 font-mono text-sm leading-8 text-[var(--text)] whitespace-pre overflow-hidden" style="pointer-events: none;">
+              {#each urlParts as part}
+                {#if part.key}
+                  <span
+                    role="button"
+                    tabindex="0"
+                    class="inline-block"
+                    style={part.resolved ? 'color: #60a5fa; pointer-events: auto; position: relative; z-index: 10;' : 'color: #f87171; pointer-events: auto; position: relative; z-index: 10;'}
+                    title={part.resolved ? `Resolved value: ${part.value ?? ''}` : `Unresolved variable: ${part.key}`}
+                    on:mouseover={() => handleVariableMouseEnter(part)}
+                    on:mouseout={handleVariableMouseLeave}
+                    on:focus={() => handleVariableMouseEnter(part)}
+                    on:blur={handleVariableMouseLeave}
+                  >
+                    {part.text}
+                  </span>
+                {:else}
+                  <span>{part.text}</span>
+                {/if}
+              {/each}
+            </div>
+            <input
+              value={urlDraft}
+              on:input={(event) => setUrlDraft(inputValue(event))}
+              class="relative h-8 w-full rounded border border-transparent bg-transparent px-3 font-mono text-sm text-transparent caret-[var(--text)] outline-none"
+            />
+            {#if hoveredEnvKey}
+              <div class="absolute left-0 top-full mt-1 z-20 min-w-[180px]">
+                <div
+                  class="rounded border border-[var(--border)] bg-[var(--surface)] p-2 text-sm shadow-lg"
+                  on:mouseenter={handlePopupMouseEnter}
+                  on:mouseleave={handlePopupMouseLeave}
+                >
+                  <input
+                    class="rounded border border-[var(--input-border)] bg-[var(--input)] px-2 py-2 text-sm text-[var(--text)] outline-none"
+                    style="min-width: 180px; width: min-content; max-width: calc(100vw - 3rem);"
+                    bind:value={hoveredEnvValue}
+                    placeholder={selectedEnvironmentId ? 'Enter value' : 'Select an environment first'}
+                    disabled={!selectedEnvironmentId}
+                    on:blur={saveHoveredEnv}
+                    on:keydown={(event) => event.key === 'Enter' && saveHoveredEnv()}
+                  />
+                </div>
+              </div>
+            {/if}
+          </div>
           <button class="primary-button h-8 w-24" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
         </div>
-        {#if resolvedUrlPreview !== urlDraft}
-          <div class="border-b border-[var(--border)] px-3 pb-2 text-xs text-[var(--muted)]">
-            Resolved URL: <span class="font-mono text-[var(--text)]">{resolvedUrlPreview}</span>
-          </div>
-        {/if}
         {#if sending}
           <div class="glow-strip mx-3 rounded-full">
             <div class="glow-slide" />
