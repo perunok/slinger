@@ -43,6 +43,13 @@ function passthrough(value: string): PayloadFormatResult {
 function formatJson(value: string): PayloadFormatResult {
   if (!value.trim()) return { value: '', ok: true }
 
+  // If the payload contains template placeholders like {{...}}, avoid
+  // attempting to parse/format as strict JSON — treat as valid raw payload
+  // so editors don't mark it as invalid.
+  if (/\{\{[^}]+\}\}/.test(value)) {
+    return { value, ok: true }
+  }
+
   try {
     return {
       value: JSON.stringify(JSON.parse(value), null, 2),

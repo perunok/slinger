@@ -72,16 +72,43 @@ export default function PayloadViewer({
             .map((token) => `<span class="${TOKEN_CLASS[token.kind]}">${escapeHtml(token.value)}</span>`)
             .join('')
 
-          return `<div class="payload-line"><span class="payload-line-number">${lineIndex + 1}</span><span class="payload-code">${tokenHtml}</span></div>`
+          return `<div class="payload-line"><span class="payload-line-number" contenteditable="false">${lineIndex + 1}</span><span class="payload-code">${tokenHtml}</span></div>`
         })
         .join('')
 
-      editorRef.current.innerHTML = html
+      const el = editorRef.current
+      el.innerHTML = html
     }, [body, contentType, formatted.ok])
 
+    function extractTextFromEditor(): string {
+      const root = editorRef.current
+      if (!root) return ''
+      const lines = Array.from(root.querySelectorAll('.payload-line')) as HTMLElement[]
+      if (lines.length > 0) {
+        return lines.map((line) => line.querySelector('.payload-code')?.textContent ?? '').join('\n')
+      }
+      return root.textContent ?? ''
+    }
+
     function handleInput(e: React.FormEvent<HTMLDivElement>) {
-      const text = (e.currentTarget.textContent ?? '')
+      const text = extractTextFromEditor()
       onChange?.(text)
+    }
+
+    function handleCopy(e: React.ClipboardEvent<HTMLDivElement>) {
+      e.preventDefault()
+      const text = extractTextFromEditor()
+      e.clipboardData.setData('text/plain', text)
+    }
+
+    function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
+      e.preventDefault()
+      const pasted = e.clipboardData.getData('text/plain')
+      const cleaned = pasted
+        .split('\n')
+        .map((l) => l.replace(/^\s*\d+\s*/, ''))
+        .join('\n')
+      onChange?.(cleaned)
     }
 
     return (
