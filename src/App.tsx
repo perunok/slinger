@@ -773,8 +773,19 @@ function App() {
 
       setSendResult(result)
     } catch (err) {
-      console.error(err)
-      setSendError(err instanceof Error ? err.message : String(err))
+      const rawMessage = err instanceof Error ? err.message : String(err)
+      console.error('Request failed:', rawMessage)
+
+      let message = rawMessage
+      if (message.toLowerCase().includes('connection refused') || message.includes('os error 111')) {
+        message = 'Connection refused'
+      } else if (message.toLowerCase().includes('dns error') || message.toLowerCase().includes('failed to lookup address')) {
+        message = 'DNS resolution failed'
+      } else if (message.toLowerCase().includes('timeout')) {
+        message = 'Request timed out'
+      }
+
+      setSendError(message)
     } finally {
       setSending(false)
     }
