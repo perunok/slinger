@@ -24,7 +24,10 @@
   {@const expanded = collection.id === selectedCollectionId}
   <div class="mb-1">
     <div class={`group flex h-8 w-full items-center gap-2 rounded px-2 text-left text-sm ${expanded ? 'bg-[var(--surface)] text-[var(--text)]' : 'text-[var(--muted)] hover:bg-[var(--panel)]'}`}>
-      <button class="flex min-w-0 flex-1 items-center gap-2 text-left" on:click={() => setSelectedCollectionId(collection.id)}>
+      <button
+        class="flex min-w-0 flex-1 items-center gap-2 text-left"
+        on:click={() => setSelectedCollectionId(expanded ? null : collection.id)}
+      >
         <span class="w-3 shrink-0 text-[var(--muted)]">{expanded ? 'v' : '>'}</span>
         <span class="min-w-0 flex-1 truncate">{collection.name}</span>
       </button>
