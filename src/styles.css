@@ -220,6 +220,44 @@ button:disabled {
   color: var(--syntax-punctuation);
 }
 
+.json-editor-wrapper {
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.json-editor-wrapper .jsoneditor {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.json-editor-wrapper.jse-theme-dark {
+  --jse-background-color: var(--panel);
+  --jse-text-color: var(--text);
+  --jse-main-border: 1px solid var(--border);
+  --jse-panel-background: var(--surface);
+  --jse-panel-background-border: 1px solid var(--border);
+  --jse-panel-border: 1px solid var(--border);
+  --jse-input-background: var(--input);
+  --jse-input-border: 1px solid var(--input-border);
+  --jse-button-background: var(--surface);
+  --jse-button-background-highlight: var(--bg-alt);
+  --jse-button-color: var(--text);
+  --jse-button-secondary-background: var(--surface);
+  --jse-button-secondary-background-highlight: var(--bg-alt);
+  --jse-table-header-background: var(--surface);
+  --jse-key-color: var(--syntax-key);
+  --jse-value-color-string: var(--syntax-string);
+  --jse-value-color-number: var(--syntax-number);
+  --jse-value-color-boolean: var(--syntax-boolean);
+  --jse-value-color-null: var(--syntax-null);
+  --jse-delimiter-color: var(--syntax-punctuation);
+}
+
 .glow-strip {
   background: rgba(96, 165, 250, 0.1);
   height: 4px;

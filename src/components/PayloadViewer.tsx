@@ -44,7 +44,7 @@ export default function PayloadViewer({
   const editorRef = useRef<HTMLDivElement | null>(null)
 
   function escapeHtml(s: string) {
-    return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
   if (!body.trim()) {

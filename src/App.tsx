@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar'
 import Sidebar from './components/Sidebar'
 import RequestPane from './components/RequestPane'
 import PayloadViewer from './components/PayloadViewer'
+import JSONEditorWrapper from './components/JSONEditorWrapper'
 import {
   PayloadContentType,
   formatPayload,
@@ -291,6 +292,9 @@ function App() {
   const headers = useMemo(() => requestHeaders(selectedDocument), [selectedDocument])
   const responseExamples = useMemo(() => requestResponses(selectedDocument), [selectedDocument])
   const selectedResponse = responseExamples[selectedResponseIndex] ?? responseExamples[0] ?? null
+  const bodyFormat = formatPayload(bodyDraft, requestContentType)
+  const bodyHasTemplates = /\{\{[^}]+\}\}/.test(bodyDraft)
+  const bodyIsValid = bodyFormat.ok && !bodyHasTemplates
 
   useEffect(() => {
     function handlePointerMove(event: PointerEvent) {
@@ -916,6 +920,17 @@ function App() {
         ])
       case 'Body':
       default:
+        if (requestContentType === 'json') {
+          return (
+            <JSONEditorWrapper
+              value={bodyDraft}
+              isValidJson={bodyIsValid}
+              onChange={(v) => setBodyDraft(v)}
+              className="payload-viewer-flush"
+            />
+          )
+        }
+
         return (
           <PayloadViewer
             value={bodyDraft}
