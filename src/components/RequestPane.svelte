@@ -40,6 +40,18 @@
     'Scripts',
     'Settings',
   ]
+  const HTTP_METHOD_OPTIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE']
+  const HTTP_METHOD_CLASSES: Record<string, string> = {
+    GET: 'text-[#16a34a]',
+    POST: 'text-[#f59e0b]',
+    PUT: 'text-[#0ea5e9]',
+    PATCH: 'text-[#f97316]',
+    DELETE: 'text-[#ef4444]',
+    HEAD: 'text-[#64748b]',
+    OPTIONS: 'text-[#8b5cf6]',
+    CONNECT: 'text-[#0f766e]',
+    TRACE: 'text-[#14b8a6]',
+  }
 
   export let activeTab: ActiveTab
   export let bodyDraft: string
@@ -73,6 +85,7 @@
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
   export let setSelectedResponseIndex: (index: number) => void
   export let setUrlDraft: (value: string) => void
+  export let setRequestMethod: (method: string) => void
   export let urlDraft: string
 
   let responseHeight = 260
@@ -172,7 +185,15 @@
 
       <div class="flex flex-col gap-2">
         <div class="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
-          <div class="flex h-8 w-24 items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-sm font-bold">{selectedRequest.method}</div>
+          <select
+            value={selectedRequest.method}
+            on:change={(event) => setRequestMethod(selectValue(event).toUpperCase())}
+            class={`h-8 min-w-[108px] rounded border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold outline-none appearance-none ${HTTP_METHOD_CLASSES[selectedRequest.method?.toUpperCase() ?? ''] ?? 'text-[var(--text)]'}`}
+          >
+            {#each HTTP_METHOD_OPTIONS as method}
+              <option value={method}>{method}</option>
+            {/each}
+          </select>
           <input value={urlDraft} on:input={(event) => setUrlDraft(inputValue(event))} class="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm text-[var(--text)] outline-none" />
           <button class="primary-button h-8 w-24" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
         </div>

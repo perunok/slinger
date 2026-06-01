@@ -445,6 +445,14 @@
     variableValue = variable.value
   }
 
+  function setRequestMethod(method: string) {
+    if (!selectedRequest) return
+
+    requests = requests.map((request) =>
+      request.id === selectedRequest.id ? { ...request, method } : request,
+    )
+  }
+
   function handleBeautifyBody() {
     if (!bodyDraft.trim()) return
 
@@ -620,6 +628,7 @@
       setResponseStatusCode={(code) => (responseStatusCode = code)}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedResponseIndex={(index) => (selectedResponseIndex = index)}
+      setRequestMethod={setRequestMethod}
       setUrlDraft={(value) => (urlDraft = value)}
       {urlDraft}
     />
