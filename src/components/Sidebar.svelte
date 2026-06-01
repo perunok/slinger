@@ -30,7 +30,6 @@
   export let handleDeleteVariable: (variable: EnvironmentVariable) => Promise<void>
   export let isTauriRuntime: boolean
   export let error: string | null
-  export let notice: string | null
   export let loadingCollections: boolean
   export let collections: Collection[]
   export let loadingRequests: boolean
@@ -84,9 +83,6 @@
     {/if}
     {#if error}
       <p class="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{error}</p>
-    {/if}
-    {#if notice}
-      <p class="mt-3 rounded bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">{notice}</p>
     {/if}
   </div>
 

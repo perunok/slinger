@@ -4,6 +4,7 @@
   import RequestPane from './components/RequestPane.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Toolbar from './components/Toolbar.svelte'
+  import Toast from './components/Toast.svelte'
   import {
     groupFoldersByParent,
     groupRequestsByFolder,
@@ -600,7 +601,6 @@
       {handleDeleteVariable}
       {isTauriRuntime}
       {error}
-      {notice}
       {loadingCollections}
       {collections}
       {loadingRequests}
@@ -656,4 +656,6 @@
       {urlDraft}
     />
   </div>
+
+  <Toast message={notice} on:dismiss={() => (notice = null)} />
 </main>
