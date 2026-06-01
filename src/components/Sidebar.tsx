@@ -1,40 +1,51 @@
-import React, { useState } from 'react'
+import { ChangeEvent, FormEvent, RefObject, useState } from 'react'
+import CollectionTree from './CollectionTree'
+import type {
+  ApiFolder,
+  ApiRequest,
+  Collection,
+  Environment,
+  EnvironmentVariable,
+  Workspace,
+} from '../tauri'
 
 type Props = {
-  importInputRef: React.RefObject<HTMLInputElement>
-  handleImportFile: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>
-  handleCreateCollection: (e: React.FormEvent<HTMLFormElement>) => Promise<void>
+  importInputRef: RefObject<HTMLInputElement>
+  handleImportFile: (e: ChangeEvent<HTMLInputElement>) => Promise<void>
+  handleCreateCollection: (e: FormEvent<HTMLFormElement>) => Promise<void>
   collectionName: string
   setCollectionName: (v: string) => void
-  selectedWorkspace: any
-  environments: any[]
+  selectedWorkspace: Workspace | null
+  environments: Environment[]
   selectedEnvironmentId: string | null
   setSelectedEnvironmentId: (id: string | null) => void
   environmentName: string
   setEnvironmentName: (v: string) => void
-  handleCreateEnvironment: (e: React.FormEvent<HTMLFormElement>) => Promise<void>
-  environmentVariables: any[]
+  handleCreateEnvironment: (e: FormEvent<HTMLFormElement>) => Promise<void>
+  environmentVariables: EnvironmentVariable[]
   variableKey: string
   setVariableKey: (v: string) => void
   variableValue: string
   setVariableValue: (v: string) => void
-  handleSaveVariable: (e: React.FormEvent<HTMLFormElement>) => Promise<void>
-  handleEditVariable: (variable: any) => void
-  handleDeleteVariable: (variable: any) => Promise<void>
+  handleSaveVariable: (e: FormEvent<HTMLFormElement>) => Promise<void>
+  handleEditVariable: (variable: EnvironmentVariable) => void
+  handleDeleteVariable: (variable: EnvironmentVariable) => Promise<void>
   isTauriRuntime: boolean
   error: string | null
   notice: string | null
   loadingCollections: boolean
-  collections: any[]
+  collections: Collection[]
   loadingRequests: boolean
-  foldersByParent: Map<string, any[]>
-  requestsByFolder: Map<string, any[]>
+  foldersByParent: Map<string, ApiFolder[]>
+  requestsByFolder: Map<string, ApiRequest[]>
   selectedCollectionId: string | null
   setSelectedCollectionId: (id: string | null) => void
-  renderFolder: (folder: any, depth?: number) => JSX.Element
-  renderRequestRow: (request: any, depth?: number) => JSX.Element
-  handleRenameCollection: (c: any) => Promise<void>
-  handleDeleteCollection: (c: any) => Promise<void>
+  selectedRequestId: string | null
+  setSelectedRequestId: (id: string | null) => void
+  openFolderIds: Set<string>
+  toggleFolder: (folderId: string) => void
+  handleRenameCollection: (c: Collection) => Promise<void>
+  handleDeleteCollection: (c: Collection) => Promise<void>
 }
 
 export default function Sidebar(props: Props) {
@@ -70,8 +81,10 @@ export default function Sidebar(props: Props) {
     requestsByFolder,
     selectedCollectionId,
     setSelectedCollectionId,
-    renderFolder,
-    renderRequestRow,
+    selectedRequestId,
+    setSelectedRequestId,
+    openFolderIds,
+    toggleFolder,
     handleRenameCollection,
     handleDeleteCollection,
   } = props
@@ -102,39 +115,20 @@ export default function Sidebar(props: Props) {
         ) : collections.length === 0 ? (
           <div className="px-2 py-4 text-sm text-[#9a9a9a]">Create a collection or import the Postman JSON sample.</div>
         ) : (
-          collections.map((collection) => {
-            const expanded = collection.id === selectedCollectionId
-            const rootFolders = foldersByParent.get('__root__') ?? []
-            const rootRequests = requestsByFolder.get('__root__') ?? []
-
-            return (
-              <div key={collection.id} className="mb-1">
-                <div className={`group flex h-8 w-full items-center gap-2 rounded px-2 text-left text-sm ${expanded ? 'bg-[var(--surface)] text-[var(--text)]' : 'text-[var(--muted)] hover:bg-[var(--panel)]'}`}>
-                  <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setSelectedCollectionId(collection.id)}>
-                    <span className="w-3 shrink-0 text-[var(--muted)]">{expanded ? 'v' : '>'}</span>
-                    <span className="min-w-0 flex-1 truncate">{collection.name}</span>
-                  </button>
-                  <button className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100" onClick={() => handleRenameCollection(collection)}>Rename</button>
-                  <button className="rounded px-1 text-[11px] text-[var(--muted)] opacity-0 hover:bg-[var(--panel)] group-hover:opacity-100" onClick={() => handleDeleteCollection(collection)}>Delete</button>
-                </div>
-
-                {expanded ? (
-                  <div className="ml-3 mt-1 space-y-1">
-                    {loadingRequests ? (
-                      <p className="py-2 text-xs text-[var(--muted)]">Loading requests...</p>
-                    ) : rootFolders.length === 0 && rootRequests.length === 0 ? (
-                      <p className="py-2 text-xs text-[var(--muted)]">No requests yet.</p>
-                    ) : (
-                      <>
-                        {rootFolders.map((folder) => renderFolder(folder))}
-                        {rootRequests.map((request) => renderRequestRow(request))}
-                      </>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            )
-          })
+          <CollectionTree
+            collections={collections}
+            foldersByParent={foldersByParent}
+            handleDeleteCollection={handleDeleteCollection}
+            handleRenameCollection={handleRenameCollection}
+            loadingRequests={loadingRequests}
+            openFolderIds={openFolderIds}
+            requestsByFolder={requestsByFolder}
+            selectedCollectionId={selectedCollectionId}
+            selectedRequestId={selectedRequestId}
+            setSelectedCollectionId={setSelectedCollectionId}
+            setSelectedRequestId={setSelectedRequestId}
+            toggleFolder={toggleFolder}
+          />
         )}
       </div>
 

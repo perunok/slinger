@@ -1,6 +1,13 @@
 import React from 'react'
 import PayloadViewer from './PayloadViewer'
 import { PAYLOAD_CONTENT_TYPE_OPTIONS, PayloadContentType } from '../lib/payloadFormatters'
+import type {
+  ActiveTab,
+  HeaderDocument,
+  RequestDocument,
+  ResponseExample,
+} from '../lib/requestDocument'
+import type { ApiRequest, Collection, HttpResponseData } from '../tauri'
 
 const HTTP_STATUS_CODES = [
   { code: 200, text: 'OK' },
@@ -23,31 +30,27 @@ const HTTP_STATUS_CODES = [
 ]
 
 type Props = {
-  selectedRequest: any
-  selectedCollection: any
+  activeTab: ActiveTab
+  activeTabContent: React.ReactNode
+  selectedRequest: ApiRequest | null
+  selectedCollection: Collection | null
   urlDraft: string
   setUrlDraft: (v: string) => void
   handleSend: () => Promise<void>
   sending: boolean
-  activeTab: string
-  setActiveTab: (t: any) => void
+  setActiveTab: (t: ActiveTab) => void
   resolvedUrlPreview: string
   handleBeautifyBody: () => void
-  REQUEST_TABS: string[]
-  headers: any[]
-  params: any[]
-  scripts: string
-  selectedDocument: any
-  renderActiveTab: () => JSX.Element
+  REQUEST_TABS: ActiveTab[]
+  headers: HeaderDocument[]
+  selectedDocument: RequestDocument
   requestContentType: PayloadContentType
   setRequestContentType: (type: PayloadContentType) => void
-  bodyViewMode: 'edit' | 'preview'
-  setBodyViewMode: (mode: 'edit' | 'preview') => void
-  responseExamples: any[]
+  responseExamples: ResponseExample[]
   selectedResponseIndex: number
   setSelectedResponseIndex: (n: number) => void
-  selectedResponse: any
-  sendResult: any
+  selectedResponse: ResponseExample | null
+  sendResult: HttpResponseData | null
   sendError: string | null
   responseHeight: number
   responseWidth: number
@@ -77,6 +80,7 @@ export default function RequestPane(props: Props) {
   const {
     selectedRequest,
     selectedCollection,
+    activeTabContent,
     urlDraft,
     setUrlDraft,
     handleSend,
@@ -87,14 +91,9 @@ export default function RequestPane(props: Props) {
     handleBeautifyBody,
     REQUEST_TABS,
     headers,
-    params,
-    scripts,
     selectedDocument,
-    renderActiveTab,
     requestContentType,
     setRequestContentType,
-    bodyViewMode,
-    setBodyViewMode,
     responseExamples,
     selectedResponseIndex,
     setSelectedResponseIndex,
@@ -191,7 +190,7 @@ export default function RequestPane(props: Props) {
           ) : null}
 
           <div ref={responseSplitRef} className={`min-h-0 flex flex-1 ${orientation === 'vertical' ? 'flex-col' : 'flex-row'} bg-[var(--bg)]`}>
-            <div className={`min-h-0 flex-1 overflow-auto ${orientation === 'vertical' ? 'border-b' : 'border-r'} border-[var(--border)] bg-[var(--bg)]`}>{renderActiveTab()}</div>
+            <div className={`min-h-0 flex-1 overflow-auto ${orientation === 'vertical' ? 'border-b' : 'border-r'} border-[var(--border)] bg-[var(--bg)]`}>{activeTabContent}</div>
 
             <div className={`${orientation === 'vertical' ? 'flex h-5 cursor-row-resize' : 'flex w-3 cursor-col-resize'} items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]`} onPointerDown={(event) => { event.preventDefault(); setIsResizingResponse(true); event.currentTarget.setPointerCapture(event.pointerId); }}>
               <div className={`${orientation === 'vertical' ? 'flex h-1.5 w-12 items-center justify-between' : 'flex h-6 w-1 items-center justify-between'}`}>
