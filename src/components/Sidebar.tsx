@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 type Props = {
   importInputRef: React.RefObject<HTMLInputElement>
@@ -38,6 +38,7 @@ type Props = {
 }
 
 export default function Sidebar(props: Props) {
+  const [environmentsExpanded, setEnvironmentsExpanded] = useState(true)
   const {
     importInputRef,
     handleImportFile,
@@ -138,93 +139,104 @@ export default function Sidebar(props: Props) {
       </div>
 
       <div className="border-t border-[var(--border)]">
-        <div className="border-b border-[var(--border)] px-3 py-3">
-          <div className="flex items-center justify-between gap-2 text-xs font-bold uppercase text-[var(--text)]">
-            <span>Environments</span>
+        <div className="border-b border-[var(--border)]">
+          <button
+            type="button"
+            onClick={() => setEnvironmentsExpanded(!environmentsExpanded)}
+            className="flex h-10 w-full items-center justify-between gap-2 px-3 text-left text-xs font-bold uppercase text-[var(--text)] hover:bg-[var(--panel)]"
+          >
+            <div className="flex items-center gap-2">
+              <span className="w-3 shrink-0 text-[var(--muted)]">{environmentsExpanded ? 'v' : '>'}</span>
+              <span>Environments</span>
+            </div>
             <span className="text-[10px] font-medium text-[var(--muted)]">
               {environmentVariables.length} vars
             </span>
-          </div>
+          </button>
 
-          <select
-            value={selectedEnvironmentId ?? ''}
-            onChange={(event) => setSelectedEnvironmentId(event.target.value || null)}
-            className="select-field mt-3 h-8 w-full rounded px-2 text-sm outline-none"
-            disabled={!selectedWorkspace || environments.length === 0}
-          >
-            {environments.map((environment) => (
-              <option key={environment.id} value={environment.id}>
-                {environment.name}
-              </option>
-            ))}
-          </select>
+          {environmentsExpanded && (
+            <div className="px-3 pb-3">
+              <select
+                value={selectedEnvironmentId ?? ''}
+                onChange={(event) => setSelectedEnvironmentId(event.target.value || null)}
+                className="select-field mt-3 h-8 w-full rounded px-2 text-sm outline-none"
+                disabled={!selectedWorkspace || environments.length === 0}
+              >
+                {environments.map((environment) => (
+                  <option key={environment.id} value={environment.id}>
+                    {environment.name}
+                  </option>
+                ))}
+              </select>
 
-          <form className="mt-2 flex gap-2" onSubmit={handleCreateEnvironment}>
-            <input
-              value={environmentName}
-              onChange={(event) => setEnvironmentName(event.target.value)}
-              placeholder="New environment"
-              className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-              disabled={!selectedWorkspace}
-            />
-            <button className="secondary-button h-8" disabled={!environmentName.trim() || !selectedWorkspace}>
-              Add
-            </button>
-          </form>
+              <form className="mt-2 flex gap-2" onSubmit={handleCreateEnvironment}>
+                <input
+                  value={environmentName}
+                  onChange={(event) => setEnvironmentName(event.target.value)}
+                  placeholder="New environment"
+                  className="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+                  disabled={!selectedWorkspace}
+                />
+                <button className="secondary-button h-8" disabled={!environmentName.trim() || !selectedWorkspace}>
+                  Add
+                </button>
+              </form>
 
-          <form className="mt-3 space-y-2" onSubmit={handleSaveVariable}>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                value={variableKey}
-                onChange={(event) => setVariableKey(event.target.value)}
-                placeholder="key"
-                className="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                disabled={!selectedEnvironmentId}
-              />
-              <input
-                value={variableValue}
-                onChange={(event) => setVariableValue(event.target.value)}
-                placeholder="value"
-                className="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                disabled={!selectedEnvironmentId}
-              />
-            </div>
-            <button className="secondary-button h-8 w-full" disabled={!selectedEnvironmentId || !variableKey.trim()}>
-              Save Variable
-            </button>
-          </form>
-
-          <div className="mt-3 max-h-40 space-y-1 overflow-auto">
-            {environmentVariables.length === 0 ? (
-              <p className="text-xs font-normal normal-case text-[var(--muted)]">
-                Add `thub_url` to resolve {'{{thub_url}}'}.
-              </p>
-            ) : (
-              environmentVariables.map((variable) => (
-                <div
-                  key={variable.id}
-                  className="group flex items-center gap-2 rounded bg-[var(--panel)] px-2 py-1 text-xs"
-                >
-                  <button
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => handleEditVariable(variable)}
-                    type="button"
-                    title="Edit variable"
-                  >
-                    <span className="font-mono text-[var(--text)]">{`{{${variable.key}}}`}</span>
-                    <span className="ml-2 font-normal text-[var(--muted)]">{variable.value}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[var(--muted)] opacity-0 group-hover:opacity-100"
-                    onClick={() => handleDeleteVariable(variable)}
-                  >
-                    Delete
-                  </button>
+              <form className="mt-3 space-y-2" onSubmit={handleSaveVariable}>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={variableKey}
+                    onChange={(event) => setVariableKey(event.target.value)}
+                    placeholder="key"
+                    className="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+                    disabled={!selectedEnvironmentId}
+                  />
+                  <input
+                    value={variableValue}
+                    onChange={(event) => setVariableValue(event.target.value)}
+                    placeholder="value"
+                    className="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+                    disabled={!selectedEnvironmentId}
+                  />
                 </div>
-              ))
-            )}
-          </div>
+                <button className="secondary-button h-8 w-full" disabled={!selectedEnvironmentId || !variableKey.trim()}>
+                  Save Variable
+                </button>
+              </form>
+
+              <div className="mt-3 max-h-40 space-y-1 overflow-auto">
+                {environmentVariables.length === 0 ? (
+                  <p className="text-xs font-normal normal-case text-[var(--muted)]">
+                    Add `thub_url` to resolve {'{{thub_url}}'}.
+                  </p>
+                ) : (
+                  environmentVariables.map((variable) => (
+                    <div
+                      key={variable.id}
+                      className="group flex items-center gap-2 rounded bg-[var(--panel)] px-2 py-1 text-xs"
+                    >
+                      <button
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => handleEditVariable(variable)}
+                        type="button"
+                        title="Edit variable"
+                      >
+                        <span className="font-mono text-[var(--text)]">{`{{${variable.key}}}`}</span>
+                        <span className="ml-2 font-normal text-[var(--muted)]">{variable.value}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[var(--muted)] opacity-0 group-hover:opacity-100"
+                        onClick={() => handleDeleteVariable(variable)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {['Specs', 'Flows'].map((label) => (
