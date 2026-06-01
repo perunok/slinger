@@ -1,6 +1,6 @@
 # Slinger
 
-> A modern, local-first API development and collaboration platform built with Rust, Tauri, React, and Go.
+> A modern, local-first API development and collaboration platform built with Rust, Tauri, Svelte, and Go.
 
 ---
 
@@ -150,7 +150,7 @@ Secondary Targets:
 
 ### Frontend
 
-- React
+- Svelte
 - TypeScript
 - Vite
 
@@ -295,7 +295,7 @@ SQLite stores references only.
 ┌──────────────────────────────────────────────┐
 │                Desktop Client                │
 ├──────────────────────────────────────────────┤
-│ React                                        │
+│ Svelte                                       │
 │ TypeScript                                   │
 │ TailwindCSS                                  │
 │ shadcn/ui                                    │
