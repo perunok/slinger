@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import Header from './components/Header.svelte'
   import RequestPane from './components/RequestPane.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -79,6 +79,8 @@
   let collectionName = ''
   let loadingWorkspaces = true
   let loadingCollections = false
+  let sidebarWidth = 385
+  let sidebarResizing = false
   let loadingRequests = false
   let error: string | null = null
   let notice: string | null = null
@@ -189,6 +191,31 @@
   onMount(() => {
     void loadWorkspaces()
   })
+
+  onDestroy(() => {
+    stopResize()
+  })
+
+  function startResize(event: PointerEvent) {
+    sidebarResizing = true
+    event.preventDefault()
+    window.addEventListener('pointermove', resize)
+    window.addEventListener('pointerup', stopResize)
+  }
+
+  function resize(event: PointerEvent) {
+    if (!sidebarResizing) return
+
+    const nextWidth = event.clientX
+    sidebarWidth = Math.min(Math.max(nextWidth, 280), 720)
+  }
+
+  function stopResize() {
+    if (!sidebarResizing) return
+    sidebarResizing = false
+    window.removeEventListener('pointermove', resize)
+    window.removeEventListener('pointerup', stopResize)
+  }
 
   async function loadWorkspaces() {
     try {
@@ -578,43 +605,55 @@
     setOrientation={(value) => (orientation = value)}
   />
 
-  <div class="flex h-[calc(100vh-92px)] min-h-0">
-    <Sidebar
-      {handleImportFile}
-      {handleCreateCollection}
-      {collectionName}
-      setCollectionName={(value) => (collectionName = value)}
-      {selectedWorkspace}
-      {environments}
-      {selectedEnvironmentId}
-      setSelectedEnvironmentId={(id) => (selectedEnvironmentId = id)}
-      {environmentName}
-      setEnvironmentName={(value) => (environmentName = value)}
-      {handleCreateEnvironment}
-      {environmentVariables}
-      {variableKey}
-      setVariableKey={(value) => (variableKey = value)}
-      {variableValue}
-      setVariableValue={(value) => (variableValue = value)}
-      {handleSaveVariable}
-      {handleEditVariable}
-      {handleDeleteVariable}
-      {isTauriRuntime}
-      {error}
-      {loadingCollections}
-      {collections}
-      {loadingRequests}
-      {foldersByParent}
-      {requestsByFolder}
-      {selectedCollectionId}
-      setSelectedCollectionId={(id) => (selectedCollectionId = id)}
-      {selectedRequestId}
-      setSelectedRequestId={(id) => (selectedRequestId = id)}
-      {openFolderIds}
-      {toggleFolder}
-      {handleRenameCollection}
-      {handleDeleteCollection}
-    />
+  <div class="flex h-[calc(100vh-92px)] min-h-0 overflow-hidden">
+    <div class="relative flex min-w-0 min-h-0 h-full">
+      <div class="flex-shrink-0 h-full" style="width: {sidebarWidth}px; min-width: 280px; max-width: 720px;">
+        <Sidebar
+          {handleImportFile}
+          {handleCreateCollection}
+          {collectionName}
+          setCollectionName={(value) => (collectionName = value)}
+          {selectedWorkspace}
+          {environments}
+          {selectedEnvironmentId}
+          setSelectedEnvironmentId={(id) => (selectedEnvironmentId = id)}
+          {environmentName}
+          setEnvironmentName={(value) => (environmentName = value)}
+          {handleCreateEnvironment}
+          {environmentVariables}
+          {variableKey}
+          setVariableKey={(value) => (variableKey = value)}
+          {variableValue}
+          setVariableValue={(value) => (variableValue = value)}
+          {handleSaveVariable}
+          {handleEditVariable}
+          {handleDeleteVariable}
+          {isTauriRuntime}
+          {error}
+          {loadingCollections}
+          {collections}
+          {loadingRequests}
+          {foldersByParent}
+          {requestsByFolder}
+          {selectedCollectionId}
+          setSelectedCollectionId={(id) => (selectedCollectionId = id)}
+          {selectedRequestId}
+          setSelectedRequestId={(id) => (selectedRequestId = id)}
+          {openFolderIds}
+          {toggleFolder}
+          {handleRenameCollection}
+          {handleDeleteCollection}
+        />
+      </div>
+
+      <div
+        class="sidebar-resizer"
+        on:pointerdown={startResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize collections pane"
+      />
+    </div>
 
     <RequestPane
       {activeTab}
@@ -659,3 +698,17 @@
 
   <Toast message={notice} on:dismiss={() => (notice = null)} />
 </main>
+
+<style>
+  .sidebar-resizer {
+    width: 9px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background-color 0.15s ease;
+  }
+
+  .sidebar-resizer:hover,
+  .sidebar-resizer:active {
+    background: rgba(148, 163, 184, 0.12);
+  }
+</style>

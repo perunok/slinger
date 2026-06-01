@@ -56,7 +56,7 @@
   }
 </script>
 
-<aside class="flex w-[385px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-alt)]">
+<aside class="flex shrink-0 flex-col min-h-0 h-full border-r border-[var(--border)] bg-[var(--bg-alt)]" style="width: 100%;">
   <div class="border-b border-[var(--border)] p-3">
     <div class="flex items-center justify-between gap-3">
       <h1 class="text-xs font-bold uppercase tracking-wide text-[var(--text)]">Collections</h1>
