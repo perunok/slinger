@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    svelte({
+      preprocess: vitePreprocess(),
+    }),
+  ],
   server: {
     port: 5173,
   },
