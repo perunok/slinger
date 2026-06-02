@@ -13,6 +13,13 @@
   } from '../lib/requestDocument'
   import type { ApiRequest, Collection, EnvironmentVariable, HttpResponseData } from '../tauri'
 
+  type RequestTabItem = {
+    id: string
+    name: string
+    method: string
+    hasChanges: boolean
+  }
+
   const HTTP_STATUS_CODES = [
     { code: 200, text: 'OK' },
     { code: 201, text: 'Created' },
@@ -57,7 +64,7 @@
   export let activeTab: ActiveTab
   export let bodyDraft: string
   export let bodyIsValid: boolean
-  export let closeSelectedRequest: () => void | Promise<void>
+  export let closeRequestTab: (requestId: string) => void | Promise<void>
   export let description: string
   export let handleBeautifyBody: () => void
   export let handleCreateRequestDraft: () => void | Promise<void>
@@ -66,6 +73,7 @@
   export let headers: HeaderDocument[]
   export let methodDraft: string
   export let orientation: 'vertical' | 'horizontal'
+  export let openRequestTabs: RequestTabItem[]
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
   export let responseContentType: PayloadContentType
@@ -77,6 +85,7 @@
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
   export let selectedRequest: ApiRequest | null
+  export let selectedRequestId: string | null
   export let selectedResponse: ResponseExample | null
   export let selectedResponseIndex: number
   export let sendError: string | null
@@ -90,6 +99,7 @@
   export let setResponseStatusCode: (code: string) => void
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
   export let setSelectedResponseIndex: (index: number) => void
+  export let setSelectedRequestId: (id: string | null) => void
   export let setUrlDraft: (value: string) => void
   export let setRequestMethod: (method: string) => void
   export let environmentVariables: EnvironmentVariable[]
@@ -219,27 +229,37 @@
 </script>
 
 <section class="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-  <div class="flex h-9 items-end gap-1 border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
-    {#if selectedRequest}
-      <div class="flex h-7 max-w-[280px] items-center gap-2 rounded-t bg-[var(--surface)] pl-4 pr-2 text-left text-xs text-[var(--text)]">
-        <div class="min-w-0 flex-1 truncate">
-          <span class="mr-2 font-semibold">{methodDraft}</span>
-          {selectedRequest.name}
-        </div>
+  <div class="flex h-9 items-end gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
+    {#each openRequestTabs as requestTab (requestTab.id)}
+      <div
+        class={`flex h-7 max-w-[280px] shrink-0 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
+          requestTab.id === selectedRequestId
+            ? 'bg-[var(--surface)] text-[var(--text)]'
+            : 'bg-transparent text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
+        }`}
+      >
         <button
           type="button"
-          class={`request-tab-close ${requestHasChanges ? 'dirty' : 'clean'}`}
+          class="min-w-0 flex-1 truncate text-left"
+          on:click={() => setSelectedRequestId(requestTab.id)}
+        >
+          <span class="mr-2 font-semibold">{requestTab.method}</span>
+          {requestTab.name}
+        </button>
+        <button
+          type="button"
+          class={`request-tab-close ${requestTab.hasChanges ? 'dirty' : 'clean'}`}
           aria-label="Close request tab"
-          title={requestHasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
-          on:click={closeSelectedRequest}
+          title={requestTab.hasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
+          on:click={() => closeRequestTab(requestTab.id)}
         >
           <span class="request-tab-dot" aria-hidden="true" />
           <span class="request-tab-x" aria-hidden="true">×</span>
         </button>
       </div>
-    {/if}
+    {/each}
     <button
-      class="h-7 px-3 text-lg text-[var(--muted)] hover:text-[var(--text)]"
+      class="h-7 shrink-0 px-3 text-lg text-[var(--muted)] hover:text-[var(--text)]"
       type="button"
       title="New request"
       on:click={handleCreateRequestDraft}

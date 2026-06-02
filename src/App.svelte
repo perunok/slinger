@@ -76,6 +76,16 @@
     selectedCollectionId: string | null
     resolve: (target: SaveRequestTarget | null) => void
   }
+  type RequestTabState = {
+    request: ApiRequest
+    savedRequest: ApiRequest | null
+  }
+  type RequestTabItem = {
+    id: string
+    name: string
+    method: string
+    hasChanges: boolean
+  }
   const REQUEST_CONTENT_TYPE_HEADER: Record<PayloadContentType, string> = {
     json: 'application/json',
     xml: 'application/xml',
@@ -88,7 +98,7 @@
   let collections: Collection[] = []
   let folders: ApiFolder[] = []
   let requests: ApiRequest[] = []
-  let draftRequest: ApiRequest | null = null
+  let openRequestTabs: RequestTabState[] = []
   let environments: Environment[] = []
   let environmentVariables: EnvironmentVariable[] = []
   let selectedWorkspaceId: string | null = null
@@ -139,26 +149,32 @@
 
   $: selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null
   $: selectedCollection = collections.find((collection) => collection.id === selectedCollectionId) ?? null
-  $: selectedStoredRequest = requests.find((request) => request.id === selectedRequestId) ?? null
-  $: isDraftRequest = Boolean(draftRequest && draftRequest.id === selectedRequestId)
-  $: selectedRequest = isDraftRequest ? draftRequest : selectedStoredRequest
+  $: selectedRequestTab = openRequestTabs.find((tab) => tab.request.id === selectedRequestId) ?? null
+  $: isDraftRequest = Boolean(selectedRequestTab && !selectedRequestTab.savedRequest)
+  $: selectedRequest = selectedRequestTab?.request ?? null
+  $: selectedSavedRequest = selectedRequestTab?.savedRequest ?? null
+  $: selectedRequestCollection =
+    collections.find((collection) => collection.id === selectedRequest?.collection_id) ??
+    selectedCollection
   $: selectedDocument = parseDocument(selectedRequest)
   $: headers = requestHeaders(selectedDocument)
   $: responseExamples = requestResponses(selectedDocument)
   $: selectedResponse = responseExamples[selectedResponseIndex] ?? responseExamples[0] ?? null
   $: bodyFormat = formatPayload(bodyDraft, requestContentType)
   $: bodyIsValid = bodyFormat.ok && !/\{\{[^}]+\}\}/.test(bodyDraft)
-  $: savedRequestBody = selectedDocument.body?.raw ?? ''
-  $: savedRequestContentType = payloadContentTypeFromHeaders(headers) ?? 'json'
-  $: savedRequestMethod = selectedDocument.method ?? selectedRequest?.method ?? ''
+  $: selectedSavedDocument = parseDocument(selectedSavedRequest)
+  $: savedRequestBody = selectedSavedDocument.body?.raw ?? ''
+  $: savedRequestContentType = payloadContentTypeFromHeaders(requestHeaders(selectedSavedDocument)) ?? 'json'
+  $: savedRequestMethod = selectedSavedDocument.method ?? selectedSavedRequest?.method ?? ''
   $: requestHasChanges = Boolean(
-    selectedRequest &&
-      (isDraftRequest ||
-        urlDraft !== selectedRequest.url ||
+    selectedRequestTab &&
+      (!selectedSavedRequest ||
+        urlDraft !== selectedSavedRequest.url ||
         bodyDraft !== savedRequestBody ||
         requestContentType !== savedRequestContentType ||
         methodDraft !== savedRequestMethod),
   )
+  $: openRequestTabItems = openRequestTabs.map(tabStateToItem)
   $: params = extractParams(urlDraft, selectedDocument)
   $: scripts = scriptText(requestScripts(selectedDocument))
   $: description =
@@ -188,7 +204,11 @@
         environmentVariables = []
         selectedCollectionId = null
         selectedEnvironmentId = null
+        openRequestTabs = []
+        selectedRequestId = null
       } else {
+        openRequestTabs = []
+        selectedRequestId = null
         void loadCollections(selectedWorkspaceId)
         void loadEnvironments(selectedWorkspaceId)
       }
@@ -214,7 +234,6 @@
         collectionTreeLoadToken += 1
         folders = []
         requests = []
-        selectedRequestId = null
       } else {
         void loadCollectionTree(selectedCollectionId)
       }
@@ -316,6 +335,129 @@
     current.resolve(target)
   }
 
+  function requestTabHasChanges(tab: RequestTabState): boolean {
+    const savedRequest = tab.savedRequest
+    if (!savedRequest) return true
+
+    const draftDocument = parseDocument(tab.request)
+    const savedDocument = parseDocument(savedRequest)
+    const draftBody = draftDocument.body?.raw ?? ''
+    const savedBody = savedDocument.body?.raw ?? ''
+    const draftContentType = payloadContentTypeFromHeaders(requestHeaders(draftDocument)) ?? 'json'
+    const savedContentType = payloadContentTypeFromHeaders(requestHeaders(savedDocument)) ?? 'json'
+    const draftMethod = draftDocument.method ?? tab.request.method
+    const savedMethod = savedDocument.method ?? savedRequest.method
+
+    return (
+      tab.request.url !== savedRequest.url ||
+      draftBody !== savedBody ||
+      draftContentType !== savedContentType ||
+      draftMethod !== savedMethod
+    )
+  }
+
+  function tabStateToItem(tab: RequestTabState): RequestTabItem {
+    return {
+      id: tab.request.id,
+      name: tab.request.name,
+      method: tab.request.method,
+      hasChanges: requestTabHasChanges(tab),
+    }
+  }
+
+  function selectOpenRequestTab(requestId: string | null) {
+    if (!requestId) {
+      selectedRequestId = null
+      return
+    }
+
+    if (openRequestTabs.some((tab) => tab.request.id === requestId)) {
+      selectedRequestId = requestId
+      return
+    }
+
+    const request = requests.find((item) => item.id === requestId)
+    if (!request) return
+
+    openRequestTabs = [
+      ...openRequestTabs,
+      {
+        request,
+        savedRequest: request,
+      },
+    ]
+    selectedRequestId = request.id
+  }
+
+  function updateSelectedRequestTab(request: ApiRequest, savedRequest?: ApiRequest | null) {
+    openRequestTabs = openRequestTabs.map((tab) =>
+      tab.request.id === request.id
+        ? {
+            request,
+            savedRequest: savedRequest === undefined ? tab.savedRequest : savedRequest,
+          }
+        : tab,
+    )
+  }
+
+  function editableRequestDocument(
+    request: ApiRequest,
+    values: {
+      method: string
+      url: string
+      body: string
+      contentType: PayloadContentType
+      name?: string
+    },
+  ): RequestDocument {
+    const document = parseDocument(request)
+
+    return {
+      ...document,
+      name: values.name ?? document.name ?? request.name,
+      method: values.method,
+      url: values.url,
+      headers: headersWithContentType(requestHeaders(document), values.contentType),
+      body: {
+        ...(document.body ?? {}),
+        mode: document.body?.mode ?? 'raw',
+        raw: values.body,
+      },
+    }
+  }
+
+  function updateSelectedRequestDraft(values: {
+    method?: string
+    url?: string
+    body?: string
+    contentType?: PayloadContentType
+    name?: string
+  }) {
+    if (!selectedRequest) return
+
+    const nextMethod = values.method ?? methodDraft
+    const nextUrl = values.url ?? urlDraft
+    const nextBody = values.body ?? bodyDraft
+    const nextContentType = values.contentType ?? requestContentType
+    const nextName = values.name ?? selectedRequest.name
+    const nextDocument = editableRequestDocument(selectedRequest, {
+      method: nextMethod,
+      url: nextUrl,
+      body: nextBody,
+      contentType: nextContentType,
+      name: nextName,
+    })
+    const nextRequest = {
+      ...selectedRequest,
+      name: nextName,
+      method: nextMethod,
+      url: nextUrl,
+      document_json: JSON.stringify(nextDocument),
+    }
+
+    updateSelectedRequestTab(nextRequest)
+  }
+
   async function loadWorkspaces() {
     try {
       const items = await getWorkspaces()
@@ -402,12 +544,15 @@
       folders = folderItems
       requests = requestItems
       openFolderIds = new Set(folderItems.map((folder) => folder.id))
-      selectedRequestId =
-        draftRequest?.id === selectedRequestId
-          ? selectedRequestId
-          : selectedRequestId && requestItems.some((request) => request.id === selectedRequestId)
-            ? selectedRequestId
-            : requestItems[0]?.id ?? null
+      openRequestTabs = openRequestTabs.map((tab) => {
+        const loadedRequest = requestItems.find((request) => request.id === tab.request.id)
+        if (!loadedRequest) return tab
+
+        return {
+          request: tab.savedRequest ? tab.request : loadedRequest,
+          savedRequest: loadedRequest,
+        }
+      })
       error = null
     } catch (err) {
       console.error(err)
@@ -482,7 +627,12 @@
     try {
       await deleteCollection(collection.id)
       const next = collections.filter((item) => item.id !== collection.id)
+      const nextTabs = openRequestTabs.filter((tab) => tab.request.collection_id !== collection.id)
       collections = next
+      openRequestTabs = nextTabs
+      if (selectedRequest?.collection_id === collection.id) {
+        selectedRequestId = nextTabs[0]?.request.id ?? null
+      }
       if (selectedCollectionId === collection.id) {
         selectedCollectionId = next[0]?.id ?? null
       }
@@ -508,7 +658,16 @@
       folders = result.folders
       requests = result.requests
       openFolderIds = new Set(result.folders.map((folder) => folder.id))
-      selectedRequestId = result.requests[0]?.id ?? null
+      if (result.requests[0]) {
+        openRequestTabs = [
+          ...openRequestTabs,
+          {
+            request: result.requests[0],
+            savedRequest: result.requests[0],
+          },
+        ]
+        selectedRequestId = result.requests[0].id
+      }
       notice = `Imported "${result.collection.name}" with ${result.requests.length} requests.`
       error = null
     } catch (err) {
@@ -628,20 +787,10 @@
       return
     }
 
-    if (requestHasChanges) {
-      const requestName = selectedRequest?.name ?? 'this request'
-      const confirmed = await askForConfirmation({
-        message: `Discard unsaved changes to "${requestName}" and create a new request?`,
-        confirmLabel: 'Discard',
-        tone: 'danger',
-      })
-      if (!confirmed) return
-    }
-
     const id = `draft-${createClientId()}`
     const name = 'Untitled Request'
     const document = createInitialRequestDocument(name)
-    draftRequest = {
+    const request = {
       id,
       workspace_id: selectedWorkspaceId,
       collection_id: selectedCollectionId ?? '',
@@ -652,12 +801,35 @@
       document_json: JSON.stringify(document),
       created_at: Math.floor(Date.now() / 1000),
     }
+    openRequestTabs = [
+      ...openRequestTabs,
+      {
+        request,
+        savedRequest: null,
+      },
+    ]
     selectedRequestId = id
     error = null
   }
 
   function setRequestMethod(method: string) {
     methodDraft = method
+    updateSelectedRequestDraft({ method })
+  }
+
+  function setRequestUrlDraft(value: string) {
+    urlDraft = value
+    updateSelectedRequestDraft({ url: value })
+  }
+
+  function setRequestBodyDraft(value: string) {
+    bodyDraft = value
+    updateSelectedRequestDraft({ body: value })
+  }
+
+  function setRequestPayloadContentType(type: PayloadContentType) {
+    requestContentType = type
+    updateSelectedRequestDraft({ contentType: type })
   }
 
   function headersWithContentType(
@@ -725,7 +897,14 @@
         })
         const savedInCurrentCollection = selectedCollectionId === created.collection_id
 
-        draftRequest = null
+        openRequestTabs = openRequestTabs.map((tab) =>
+          tab.request.id === selectedRequest.id
+            ? {
+                request: created,
+                savedRequest: created,
+              }
+            : tab,
+        )
         selectedRequestId = created.id
         if (savedInCurrentCollection) {
           requests = [...requests, created]
@@ -758,6 +937,7 @@
       requests = requests.map((request) =>
         request.id === updated.id ? updated : request,
       )
+      updateSelectedRequestTab(updated, updated)
       notice = `Saved "${updated.name}".`
       error = null
     } catch (err) {
@@ -785,7 +965,7 @@
       return
     }
 
-    bodyDraft = formatted.value
+    setRequestBodyDraft(formatted.value)
     error = null
   }
 
@@ -863,9 +1043,13 @@
     openFolderIds = next
   }
 
-  async function closeSelectedRequest() {
-    if (requestHasChanges) {
-      const requestName = selectedRequest?.name ?? 'this request'
+  async function closeRequestTab(requestId: string) {
+    const tabIndex = openRequestTabs.findIndex((tab) => tab.request.id === requestId)
+    const tab = openRequestTabs[tabIndex]
+    if (!tab) return
+
+    if (requestTabHasChanges(tab)) {
+      const requestName = tab.request.name || 'this request'
       const confirmed = await askForConfirmation({
         message: `Discard unsaved changes to "${requestName}" and close the request tab?`,
         confirmLabel: 'Close',
@@ -874,10 +1058,15 @@
       if (!confirmed) return
     }
 
-    if (isDraftRequest) {
-      draftRequest = null
+    const nextTabs = openRequestTabs.filter((item) => item.request.id !== requestId)
+    openRequestTabs = nextTabs
+
+    if (selectedRequestId === requestId) {
+      selectedRequestId =
+        nextTabs[Math.max(0, tabIndex - 1)]?.request.id ??
+        nextTabs[0]?.request.id ??
+        null
     }
-    selectedRequestId = null
   }
 </script>
 
@@ -930,7 +1119,7 @@
           {selectedCollectionId}
           setSelectedCollectionId={(id) => (selectedCollectionId = id)}
           {selectedRequestId}
-          setSelectedRequestId={(id) => (selectedRequestId = id)}
+          setSelectedRequestId={selectOpenRequestTab}
           {openFolderIds}
           {toggleFolder}
           {handleRenameCollection}
@@ -967,10 +1156,12 @@
       {responseStatusCode}
       {responseViewTab}
       {requestHasChanges}
+      openRequestTabs={openRequestTabItems}
       {scripts}
-      {selectedCollection}
+      selectedCollection={selectedRequestCollection}
       {selectedDocument}
       {selectedRequest}
+      {selectedRequestId}
       {selectedResponse}
       {selectedResponseIndex}
       {sendError}
@@ -978,18 +1169,19 @@
       {sending}
       {savingRequest}
       setActiveTab={(tab) => (activeTab = tab)}
-      setBodyDraft={(value) => (bodyDraft = value)}
-      setRequestContentType={(type) => (requestContentType = type)}
+      setBodyDraft={setRequestBodyDraft}
+      setRequestContentType={setRequestPayloadContentType}
       setResponseContentType={(type) => (responseContentType = type)}
       setResponseStatusCode={(code) => (responseStatusCode = code)}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedResponseIndex={(index) => (selectedResponseIndex = index)}
+      setSelectedRequestId={selectOpenRequestTab}
       setRequestMethod={setRequestMethod}
-      {closeSelectedRequest}
+      {closeRequestTab}
       setEnvironmentVariable={setEnvironmentVariable}
       environmentVariables={environmentVariables}
       selectedEnvironmentId={selectedEnvironmentId}
-      setUrlDraft={(value) => (urlDraft = value)}
+      setUrlDraft={setRequestUrlDraft}
       {urlDraft}
     />
   </div>
