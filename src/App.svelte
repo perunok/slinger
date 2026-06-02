@@ -679,6 +679,14 @@
   }
 
   function closeSelectedRequest() {
+    if (requestHasChanges) {
+      const requestName = selectedRequest?.name ?? 'this request'
+      const confirmed = window.confirm(
+        `Discard unsaved changes to "${requestName}" and close the request tab?`,
+      )
+      if (!confirmed) return
+    }
+
     selectedRequestId = null
   }
 </script>
