@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Header from './components/Header.svelte'
+  import ConfirmDialog from './components/ConfirmDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Toolbar from './components/Toolbar.svelte'
@@ -57,6 +58,13 @@
 
   type Theme = 'dark' | 'light'
   type Orientation = 'vertical' | 'horizontal'
+  type ConfirmationTone = 'default' | 'danger'
+  type ConfirmationRequest = {
+    message: string
+    confirmLabel: string
+    tone: ConfirmationTone
+    resolve: (confirmed: boolean) => void
+  }
   const REQUEST_CONTENT_TYPE_HEADER: Record<PayloadContentType, string> = {
     json: 'application/json',
     xml: 'application/xml',
@@ -94,6 +102,7 @@
   let sidebarWidth = 385
   let sidebarResizing = false
   let loadingRequests = false
+  let confirmation: ConfirmationRequest | null = null
   let error: string | null = null
   let notice: string | null = null
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
@@ -240,6 +249,31 @@
     sidebarResizing = false
     window.removeEventListener('pointermove', resize)
     window.removeEventListener('pointerup', stopResize)
+  }
+
+  function askForConfirmation(options: {
+    message: string
+    confirmLabel?: string
+    tone?: ConfirmationTone
+  }): Promise<boolean> {
+    confirmation?.resolve(false)
+
+    return new Promise((resolve) => {
+      confirmation = {
+        message: options.message,
+        confirmLabel: options.confirmLabel ?? 'Confirm',
+        tone: options.tone ?? 'default',
+        resolve,
+      }
+    })
+  }
+
+  function finishConfirmation(confirmed: boolean) {
+    if (!confirmation) return
+
+    const current = confirmation
+    confirmation = null
+    current.resolve(confirmed)
   }
 
   async function loadWorkspaces() {
@@ -396,7 +430,11 @@
   }
 
   async function handleDeleteCollection(collection: Collection) {
-    const confirmed = window.confirm(`Delete "${collection.name}" and its requests?`)
+    const confirmed = await askForConfirmation({
+      message: `Delete "${collection.name}" and its requests?`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })
     if (!confirmed) return
 
     try {
@@ -678,12 +716,14 @@
     openFolderIds = next
   }
 
-  function closeSelectedRequest() {
+  async function closeSelectedRequest() {
     if (requestHasChanges) {
       const requestName = selectedRequest?.name ?? 'this request'
-      const confirmed = window.confirm(
-        `Discard unsaved changes to "${requestName}" and close the request tab?`,
-      )
+      const confirmed = await askForConfirmation({
+        message: `Discard unsaved changes to "${requestName}" and close the request tab?`,
+        confirmLabel: 'Close',
+        tone: 'danger',
+      })
       if (!confirmed) return
     }
 
@@ -802,6 +842,16 @@
       {urlDraft}
     />
   </div>
+
+  {#if confirmation}
+    <ConfirmDialog
+      message={confirmation.message}
+      confirmLabel={confirmation.confirmLabel}
+      tone={confirmation.tone}
+      on:confirm={() => finishConfirmation(true)}
+      on:cancel={() => finishConfirmation(false)}
+    />
+  {/if}
 
   <Toast message={notice} on:dismiss={() => (notice = null)} />
 </main>

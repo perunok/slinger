@@ -57,7 +57,7 @@
   export let activeTab: ActiveTab
   export let bodyDraft: string
   export let bodyIsValid: boolean
-  export let closeSelectedRequest: () => void
+  export let closeSelectedRequest: () => void | Promise<void>
   export let description: string
   export let handleBeautifyBody: () => void
   export let handleSaveRequest: () => Promise<void>
