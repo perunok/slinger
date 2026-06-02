@@ -9,6 +9,8 @@ mod domain;
 use anyhow::Result;
 use reqwest::header::{HeaderName, HeaderValue};
 use sqlx::SqlitePool;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tauri::State;
 
@@ -185,6 +187,59 @@ async fn import_postman_collection(
         .map_err(|err| err.to_string())
 }
 
+fn default_export_directory() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    let downloads = home.join("Downloads");
+
+    if downloads.is_dir() {
+        Some(downloads)
+    } else {
+        Some(home)
+    }
+}
+
+#[tauri::command]
+fn default_export_path(file_name: String) -> Result<String, String> {
+    let safe_file_name = Path::new(file_name.trim())
+        .file_name()
+        .ok_or_else(|| "export file name is required".to_string())?
+        .to_string_lossy()
+        .to_string();
+
+    if safe_file_name.trim().is_empty() {
+        return Err("export file name is required".to_string());
+    }
+
+    let path = default_export_directory()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(safe_file_name);
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn write_export_file(path: String, contents: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("export path is required".to_string());
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_dir() {
+        return Err("export path must include a file name".to_string());
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err("export folder does not exist".to_string());
+        }
+    }
+
+    fs::write(path, contents).map_err(|err| err.to_string())
+}
+
 fn normalize_request_url(url: &str) -> String {
     let trimmed = url.trim();
     if trimmed.starts_with("//") {
@@ -288,6 +343,8 @@ fn main() -> Result<()> {
             update_request,
             list_folders,
             import_postman_collection,
+            default_export_path,
+            write_export_file,
             execute_http_request,
         ])
         .run(tauri::generate_context!())?;

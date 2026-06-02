@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte'
   import Header from './components/Header.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
+  import ExportCollectionDialog from './components/ExportCollectionDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
   import SaveResponseDialog from './components/SaveResponseDialog.svelte'
   import SaveRequestDialog from './components/SaveRequestDialog.svelte'
@@ -16,6 +17,7 @@
     formatPayload,
     type PayloadContentType,
   } from './lib/payloadFormatters'
+  import { exportPostmanCollection } from './lib/postmanExport'
   import {
     extractParams,
     parseDocument,
@@ -47,6 +49,7 @@
     ensureDefaultEnvironment,
     executeHttpRequest,
     getCollections,
+    getDefaultExportPath,
     getEnvironmentVariables,
     getEnvironments,
     getFolders,
@@ -57,6 +60,7 @@
     renameCollection,
     updateRequest,
     upsertEnvironmentVariable,
+    writeExportFile,
   } from './tauri'
 
   type Theme = 'dark' | 'light'
@@ -81,6 +85,29 @@
     existingNames: string[]
     resolve: (name: string | null) => void
   }
+  type ExportCollectionTarget = {
+    collectionName: string
+    defaultValue: string
+    mode: 'path' | 'file'
+  }
+  type ExportCollectionDialogRequest = ExportCollectionTarget & {
+    resolve: (value: string | null) => void
+  }
+  type BrowserSaveFileWritable = {
+    write: (contents: BlobPart) => void | Promise<void>
+    close: () => void | Promise<void>
+  }
+  type BrowserSaveFileHandle = {
+    name?: string
+    createWritable: () => Promise<BrowserSaveFileWritable>
+  }
+  type BrowserSaveFilePicker = (options: {
+    suggestedName?: string
+    types?: Array<{
+      description: string
+      accept: Record<string, string[]>
+    }>
+  }) => Promise<BrowserSaveFileHandle>
   type RequestTabState = {
     request: ApiRequest
     savedRequest: ApiRequest | null
@@ -133,6 +160,7 @@
   let confirmation: ConfirmationRequest | null = null
   let saveRequestDialog: SaveRequestDialogRequest | null = null
   let saveResponseDialog: SaveResponseDialogRequest | null = null
+  let exportCollectionDialog: ExportCollectionDialogRequest | null = null
   let error: string | null = null
   let notice: string | null = null
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
@@ -368,6 +396,25 @@
     const current = saveResponseDialog
     saveResponseDialog = null
     current.resolve(name)
+  }
+
+  function askForExportDestination(options: ExportCollectionTarget): Promise<string | null> {
+    exportCollectionDialog?.resolve(null)
+
+    return new Promise((resolve) => {
+      exportCollectionDialog = {
+        ...options,
+        resolve,
+      }
+    })
+  }
+
+  function finishExportCollectionDialog(value: string | null) {
+    if (!exportCollectionDialog) return
+
+    const current = exportCollectionDialog
+    exportCollectionDialog = null
+    current.resolve(value)
   }
 
   function requestTabHasChanges(tab: RequestTabState): boolean {
@@ -701,6 +748,126 @@
     } catch (err) {
       console.error(err)
       error = 'Unable to delete collection.'
+    }
+  }
+
+  function safeDownloadName(name: string): string {
+    return (
+      name
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+        .replace(/\s+/g, ' ')
+        .replace(/\.+$/g, '')
+        .slice(0, 80) || 'collection'
+    )
+  }
+
+  function withJsonExtension(value: string): string {
+    return value.toLowerCase().endsWith('.json') ? value : `${value}.json`
+  }
+
+  function defaultCollectionExportFileName(collection: Collection): string {
+    return `${safeDownloadName(collection.name)}.postman_collection.json`
+  }
+
+  function downloadTextFile(fileName: string, contents: string, mimeType: string) {
+    const blob = new Blob([contents], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  function browserSaveFilePicker(): BrowserSaveFilePicker | null {
+    const currentWindow = window as Window & {
+      showSaveFilePicker?: BrowserSaveFilePicker
+    }
+
+    return currentWindow.showSaveFilePicker ?? null
+  }
+
+  function isAbortError(err: unknown): boolean {
+    return err instanceof DOMException && err.name === 'AbortError'
+  }
+
+  async function buildCollectionExportPayload(collection: Collection): Promise<string> {
+    const [folderItems, requestItems] = await Promise.all([
+      getFolders(collection.id),
+      getRequests(collection.id),
+    ])
+
+    return exportPostmanCollection({
+      collection,
+      folders: folderItems,
+      requests: requestItems,
+    })
+  }
+
+  async function handleExportCollection(collection: Collection) {
+    const fileName = defaultCollectionExportFileName(collection)
+
+    try {
+      if (isTauriRuntime) {
+        const defaultPath = await getDefaultExportPath(fileName)
+        const targetPath = await askForExportDestination({
+          collectionName: collection.name,
+          defaultValue: defaultPath,
+          mode: 'path',
+        })
+        if (!targetPath) return
+
+        const exportPath = withJsonExtension(targetPath)
+        const payload = await buildCollectionExportPayload(collection)
+        await writeExportFile(exportPath, payload)
+        notice = `Exported "${collection.name}" to ${exportPath}.`
+        error = null
+        return
+      }
+
+      const saveFilePicker = browserSaveFilePicker()
+      if (saveFilePicker) {
+        const fileHandle = await saveFilePicker({
+          suggestedName: fileName,
+          types: [
+            {
+              description: 'Postman collection JSON',
+              accept: {
+                'application/json': ['.json'],
+              },
+            },
+          ],
+        })
+        const payload = await buildCollectionExportPayload(collection)
+        const writable = await fileHandle.createWritable()
+        await writable.write(payload)
+        await writable.close()
+        notice = `Exported "${collection.name}" to ${fileHandle.name ?? fileName}.`
+        error = null
+        return
+      }
+
+      const targetFileName = await askForExportDestination({
+        collectionName: collection.name,
+        defaultValue: fileName,
+        mode: 'file',
+      })
+      if (!targetFileName) return
+
+      const payload = await buildCollectionExportPayload(collection)
+      const downloadName = withJsonExtension(safeDownloadName(targetFileName))
+      downloadTextFile(downloadName, payload, 'application/json;charset=utf-8')
+      notice = `Exported "${collection.name}" as ${downloadName}.`
+      error = null
+    } catch (err) {
+      if (isAbortError(err)) return
+
+      console.error(err)
+      error = 'Unable to export that collection.'
     }
   }
 
@@ -1320,6 +1487,7 @@
           {toggleFolder}
           {handleRenameCollection}
           {handleDeleteCollection}
+          {handleExportCollection}
         />
       </div>
 
@@ -1404,6 +1572,16 @@
       existingNames={saveResponseDialog.existingNames}
       on:save={(event) => finishResponseSaveDialog(event.detail)}
       on:cancel={() => finishResponseSaveDialog(null)}
+    />
+  {/if}
+
+  {#if exportCollectionDialog}
+    <ExportCollectionDialog
+      collectionName={exportCollectionDialog.collectionName}
+      defaultValue={exportCollectionDialog.defaultValue}
+      mode={exportCollectionDialog.mode}
+      on:export={(event) => finishExportCollectionDialog(event.detail)}
+      on:cancel={() => finishExportCollectionDialog(null)}
     />
   {/if}
 

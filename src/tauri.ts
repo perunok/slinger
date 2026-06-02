@@ -663,6 +663,16 @@ export async function importPostmanCollection(
   }
 }
 
+export async function getDefaultExportPath(fileName: string): Promise<string> {
+  if (isTauriRuntime) return invokeTauri('default_export_path', { fileName })
+  return fileName
+}
+
+export async function writeExportFile(path: string, contents: string): Promise<void> {
+  if (!isTauriRuntime) throw new Error('file writing is only available in the desktop app')
+  return invokeTauri('write_export_file', { path, contents })
+}
+
 export async function executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData> {
   if (isTauriRuntime) return invokeTauri('execute_http_request', { input })
   return executeWithFetch(input)
