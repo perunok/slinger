@@ -18,6 +18,7 @@
   export let bodyIsValid: boolean
   export let description: string
   export let headers: HeaderDocument[]
+  export let methodDraft: string
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
   export let responseExamples: ResponseExample[]
@@ -34,7 +35,7 @@
     source: header.disabled ? 'disabled' : 'enabled',
   }))
   $: settingsRows = [
-    { key: 'Method', value: selectedRequest?.method ?? '' },
+    { key: 'Method', value: methodDraft },
     { key: 'URL', value: urlDraft },
     { key: 'Collection', value: selectedCollection?.name ?? '' },
     { key: 'Request ID', value: selectedRequest?.id ?? '' },

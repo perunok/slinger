@@ -57,10 +57,13 @@
   export let activeTab: ActiveTab
   export let bodyDraft: string
   export let bodyIsValid: boolean
+  export let closeSelectedRequest: () => void
   export let description: string
   export let handleBeautifyBody: () => void
+  export let handleSaveRequest: () => Promise<void>
   export let handleSend: () => Promise<void>
   export let headers: HeaderDocument[]
+  export let methodDraft: string
   export let orientation: 'vertical' | 'horizontal'
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
@@ -68,6 +71,7 @@
   export let responseExamples: ResponseExample[]
   export let responseStatusCode: string
   export let responseViewTab: 'headers' | 'body'
+  export let requestHasChanges: boolean
   export let scripts: string
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
@@ -77,6 +81,7 @@
   export let sendError: string | null
   export let sendResult: HttpResponseData | null
   export let sending: boolean
+  export let savingRequest: boolean
   export let setActiveTab: (tab: ActiveTab) => void
   export let setBodyDraft: (value: string) => void
   export let setRequestContentType: (type: PayloadContentType) => void
@@ -215,10 +220,22 @@
 <section class="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
   <div class="flex h-9 items-end gap-1 border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
     {#if selectedRequest}
-      <button class="h-7 max-w-[260px] truncate rounded-t bg-[var(--surface)] px-4 text-left text-xs text-[var(--text)]">
-        <span class="mr-2 font-semibold">{selectedRequest.method}</span>
-        {selectedRequest.name}
-      </button>
+      <div class="flex h-7 max-w-[280px] items-center gap-2 rounded-t bg-[var(--surface)] pl-4 pr-2 text-left text-xs text-[var(--text)]">
+        <div class="min-w-0 flex-1 truncate">
+          <span class="mr-2 font-semibold">{methodDraft}</span>
+          {selectedRequest.name}
+        </div>
+        <button
+          type="button"
+          class={`request-tab-close ${requestHasChanges ? 'dirty' : 'clean'}`}
+          aria-label="Close request tab"
+          title={requestHasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
+          on:click={closeSelectedRequest}
+        >
+          <span class="request-tab-dot" aria-hidden="true" />
+          <span class="request-tab-x" aria-hidden="true">×</span>
+        </button>
+      </div>
     {:else}
       <button class="h-7 rounded-t bg-[var(--surface)] px-4 text-xs text-[var(--muted)]">No request selected</button>
     {/if}
@@ -236,9 +253,9 @@
       <div class="flex flex-col gap-2">
         <div class="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
           <select
-            value={selectedRequest.method}
+            value={methodDraft}
             on:change={(event) => setRequestMethod(selectValue(event).toUpperCase())}
-            class={`h-8 min-w-[108px] rounded border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold outline-none appearance-none ${HTTP_METHOD_CLASSES[selectedRequest.method?.toUpperCase() ?? ''] ?? 'text-[var(--text)]'}`}
+            class={`h-8 min-w-[108px] rounded border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold outline-none appearance-none ${HTTP_METHOD_CLASSES[methodDraft?.toUpperCase() ?? ''] ?? 'text-[var(--text)]'}`}
           >
             {#each HTTP_METHOD_OPTIONS as method}
               <option value={method}>{method}</option>
@@ -291,7 +308,18 @@
               </div>
             {/if}
           </div>
-          <button class="primary-button h-8 w-24" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
+          <div class="flex w-24 shrink-0 flex-col gap-1">
+            <button
+              class="secondary-button h-7 w-full text-xs"
+              type="button"
+              on:click={handleSaveRequest}
+              disabled={!requestHasChanges || savingRequest}
+              title="Save request (Ctrl+S)"
+            >
+              {savingRequest ? 'Saving' : 'Save'}
+            </button>
+            <button class="primary-button h-8 w-full" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
+          </div>
         </div>
         {#if sending}
           <div class="glow-strip mx-3 rounded-full">
@@ -346,6 +374,7 @@
             {bodyIsValid}
             {description}
             {headers}
+            {methodDraft}
             {params}
             {requestContentType}
             {responseExamples}
@@ -515,3 +544,71 @@
     </div>
   {/if}
 </section>
+
+<style>
+  .request-tab-close {
+    position: relative;
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    color: var(--muted);
+    line-height: 1;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .request-tab-close:hover,
+  .request-tab-close:focus-visible {
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text);
+    outline: none;
+  }
+
+  .request-tab-dot,
+  .request-tab-x {
+    position: absolute;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  .request-tab-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: #f26b3a;
+    box-shadow:
+      0 0 0 3px rgba(242, 107, 58, 0.16),
+      0 0 13px rgba(242, 107, 58, 0.85);
+  }
+
+  .request-tab-x {
+    font-size: 15px;
+    font-weight: 600;
+    transform: scale(0.75);
+    opacity: 0;
+  }
+
+  .request-tab-close.clean .request-tab-dot {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+
+  .request-tab-close.clean .request-tab-x,
+  .request-tab-close.dirty:hover .request-tab-x,
+  .request-tab-close.dirty:focus-visible .request-tab-x {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .request-tab-close.dirty:hover .request-tab-dot,
+  .request-tab-close.dirty:focus-visible .request-tab-dot {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+</style>

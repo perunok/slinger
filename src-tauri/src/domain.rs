@@ -85,3 +85,12 @@ pub struct HttpResponseData {
     pub headers: Vec<RequestHeader>,
     pub body: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRequestInput {
+    pub request_id: String,
+    pub method: String,
+    pub url: String,
+    pub document_json: String,
+}

@@ -75,6 +75,13 @@ export type HttpResponseData = {
   body: string
 }
 
+export type UpdateRequestInput = {
+  requestId: string
+  method: string
+  url: string
+  documentJson: string
+}
+
 type StoredData = {
   workspaces: Workspace[]
   collections: Collection[]
@@ -533,6 +540,32 @@ export async function getFolders(collectionId: string): Promise<ApiFolder[]> {
 export async function getRequests(collectionId: string): Promise<ApiRequest[]> {
   if (isTauriRuntime) return invokeTauri('list_requests', { collectionId })
   return readStore().requests.filter((request) => request.collection_id === collectionId)
+}
+
+export async function updateRequest(input: UpdateRequestInput): Promise<ApiRequest> {
+  if (isTauriRuntime) return invokeTauri('update_request', { input })
+
+  const data = readStore()
+  const existing = data.requests.find((request) => request.id === input.requestId)
+  if (!existing) throw new Error('request not found')
+
+  JSON.parse(input.documentJson)
+
+  const updated = {
+    ...existing,
+    method: input.method.trim().toUpperCase() || 'GET',
+    url: input.url,
+    document_json: input.documentJson,
+  }
+
+  writeStore({
+    ...data,
+    requests: data.requests.map((request) =>
+      request.id === input.requestId ? updated : request,
+    ),
+  })
+
+  return updated
 }
 
 export async function importPostmanCollection(

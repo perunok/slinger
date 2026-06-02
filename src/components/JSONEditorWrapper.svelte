@@ -10,25 +10,27 @@
 
   let containerRef: HTMLDivElement
   let editorRef: JsonEditor | null = null
+  let editorValue = ''
   const mode = Mode.text
 
-  function contentFromValue(): Content {
+  function contentFromValue(nextValue: string): Content {
     if (isValidJson) {
       try {
-        return { json: JSON.parse(value) }
+        return { json: JSON.parse(nextValue) }
       } catch {
-        return { text: value }
+        return { text: nextValue }
       }
     }
 
-    return { text: value }
+    return { text: nextValue }
   }
 
   onMount(() => {
+    editorValue = value
     editorRef = createJSONEditor({
       target: containerRef,
       props: {
-        content: contentFromValue(),
+        content: contentFromValue(editorValue),
         mode,
         mainMenuBar: true,
         navigationBar: true,
@@ -39,7 +41,8 @@
           const nextValue = 'json' in updatedContent
             ? JSON.stringify(updatedContent.json, null, 2)
             : updatedContent.text
-          if (nextValue !== value) {
+          if (nextValue !== editorValue) {
+            editorValue = nextValue
             onChange(nextValue)
           }
         },
@@ -52,8 +55,9 @@
     editorRef = null
   })
 
-  $: if (editorRef) {
-    editorRef.updateProps({ content: contentFromValue(), mode })
+  $: if (editorRef && value !== editorValue) {
+    editorValue = value
+    editorRef.updateProps({ content: contentFromValue(editorValue), mode })
   }
 </script>
 

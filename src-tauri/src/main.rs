@@ -145,6 +145,16 @@ async fn list_requests(
 }
 
 #[tauri::command]
+async fn update_request(
+    state: State<'_, SqlitePool>,
+    input: domain::UpdateRequestInput,
+) -> Result<domain::ApiRequest, String> {
+    db::update_request(&state, input)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn list_folders(
     state: State<'_, SqlitePool>,
     collection_id: String,
@@ -264,6 +274,7 @@ fn main() -> Result<()> {
             rename_collection,
             delete_collection,
             list_requests,
+            update_request,
             list_folders,
             import_postman_collection,
             execute_http_request,

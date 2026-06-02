@@ -24,6 +24,8 @@
     scriptText,
     unresolvedVariables,
     type ActiveTab,
+    type HeaderDocument,
+    type RequestDocument,
   } from './lib/requestDocument'
   import {
     type ApiFolder,
@@ -49,11 +51,19 @@
     importPostmanCollection,
     isTauriRuntime,
     renameCollection,
+    updateRequest,
     upsertEnvironmentVariable,
   } from './tauri'
 
   type Theme = 'dark' | 'light'
   type Orientation = 'vertical' | 'horizontal'
+  const REQUEST_CONTENT_TYPE_HEADER: Record<PayloadContentType, string> = {
+    json: 'application/json',
+    xml: 'application/xml',
+    html: 'text/html',
+    text: 'text/plain',
+    binary: 'application/octet-stream',
+  }
 
   let workspaces: Workspace[] = []
   let collections: Collection[] = []
@@ -67,6 +77,7 @@
   let selectedEnvironmentId: string | null = null
   let openFolderIds = new Set<string>()
   let activeTab: ActiveTab = 'Body'
+  let methodDraft = 'GET'
   let urlDraft = ''
   let bodyDraft = ''
   let environmentName = ''
@@ -75,6 +86,7 @@
   let sendResult: HttpResponseData | null = null
   let sendError: string | null = null
   let sending = false
+  let savingRequest = false
   let workspaceName = ''
   let collectionName = ''
   let loadingWorkspaces = true
@@ -112,6 +124,16 @@
   $: selectedResponse = responseExamples[selectedResponseIndex] ?? responseExamples[0] ?? null
   $: bodyFormat = formatPayload(bodyDraft, requestContentType)
   $: bodyIsValid = bodyFormat.ok && !/\{\{[^}]+\}\}/.test(bodyDraft)
+  $: savedRequestBody = selectedDocument.body?.raw ?? ''
+  $: savedRequestContentType = payloadContentTypeFromHeaders(headers) ?? 'json'
+  $: savedRequestMethod = selectedDocument.method ?? selectedRequest?.method ?? ''
+  $: requestHasChanges = Boolean(
+    selectedRequest &&
+      (urlDraft !== selectedRequest.url ||
+        bodyDraft !== savedRequestBody ||
+        requestContentType !== savedRequestContentType ||
+        methodDraft !== savedRequestMethod),
+  )
   $: params = extractParams(urlDraft, selectedDocument)
   $: scripts = scriptText(requestScripts(selectedDocument))
   $: description =
@@ -179,6 +201,7 @@
     if (requestId !== lastRequestId) {
       lastRequestId = requestId
       const rawBody = selectedDocument.body?.raw ?? ''
+      methodDraft = selectedRequest?.method ?? 'GET'
       urlDraft = selectedRequest?.url ?? ''
       bodyDraft = rawBody
       requestContentType = payloadContentTypeFromHeaders(requestHeaders(selectedDocument)) ?? 'json'
@@ -190,10 +213,12 @@
 
   onMount(() => {
     void loadWorkspaces()
+    window.addEventListener('keydown', handleGlobalKeydown, true)
   })
 
   onDestroy(() => {
     stopResize()
+    window.removeEventListener('keydown', handleGlobalKeydown, true)
   })
 
   function startResize(event: PointerEvent) {
@@ -494,11 +519,76 @@
   }
 
   function setRequestMethod(method: string) {
+    methodDraft = method
+  }
+
+  function headersWithContentType(
+    currentHeaders: HeaderDocument[],
+    contentType: PayloadContentType,
+  ): HeaderDocument[] {
+    const value = REQUEST_CONTENT_TYPE_HEADER[contentType]
+    const contentTypeIndex = currentHeaders.findIndex(
+      (header) => header.key?.toLowerCase() === 'content-type',
+    )
+
+    if (contentTypeIndex < 0) {
+      return [...currentHeaders, { key: 'Content-Type', value }]
+    }
+
+    return currentHeaders.map((header, index) =>
+      index === contentTypeIndex
+        ? { ...header, key: header.key?.trim() || 'Content-Type', value }
+        : header,
+    )
+  }
+
+  function savedRequestDocument(): RequestDocument {
+    return {
+      ...selectedDocument,
+      method: methodDraft,
+      url: urlDraft,
+      headers: headersWithContentType(headers, requestContentType),
+      body: {
+        ...(selectedDocument.body ?? {}),
+        mode: selectedDocument.body?.mode ?? 'raw',
+        raw: bodyDraft,
+      },
+    }
+  }
+
+  async function handleSaveRequest() {
+    if (!selectedRequest || !requestHasChanges || savingRequest) return
+
+    savingRequest = true
+
+    try {
+      const document = savedRequestDocument()
+      const updated = await updateRequest({
+        requestId: selectedRequest.id,
+        method: methodDraft,
+        url: urlDraft,
+        documentJson: JSON.stringify(document),
+      })
+
+      requests = requests.map((request) =>
+        request.id === updated.id ? updated : request,
+      )
+      notice = `Saved "${updated.name}".`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to save request.'
+    } finally {
+      savingRequest = false
+    }
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return
     if (!selectedRequest) return
 
-    requests = requests.map((request) =>
-      request.id === selectedRequest.id ? { ...request, method } : request,
-    )
+    event.preventDefault()
+    void handleSaveRequest()
   }
 
   function handleBeautifyBody() {
@@ -543,7 +633,7 @@
       }
 
       const result = await executeHttpRequest({
-        method: selectedRequest.method,
+        method: methodDraft,
         url: resolvedUrl,
         headers: resolvedHeaders,
         body: resolvedBody,
@@ -586,6 +676,10 @@
     if (next.has(folderId)) next.delete(folderId)
     else next.add(folderId)
     openFolderIds = next
+  }
+
+  function closeSelectedRequest() {
+    selectedRequestId = null
   }
 </script>
 
@@ -662,7 +756,9 @@
       {description}
       {handleBeautifyBody}
       {handleSend}
+      {handleSaveRequest}
       {headers}
+      {methodDraft}
       {orientation}
       {params}
       {requestContentType}
@@ -671,6 +767,7 @@
       {responseExamples}
       {responseStatusCode}
       {responseViewTab}
+      {requestHasChanges}
       {scripts}
       {selectedCollection}
       {selectedDocument}
@@ -680,6 +777,7 @@
       {sendError}
       {sendResult}
       {sending}
+      {savingRequest}
       setActiveTab={(tab) => (activeTab = tab)}
       setBodyDraft={(value) => (bodyDraft = value)}
       setRequestContentType={(type) => (requestContentType = type)}
@@ -688,6 +786,7 @@
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedResponseIndex={(index) => (selectedResponseIndex = index)}
       setRequestMethod={setRequestMethod}
+      {closeSelectedRequest}
       setEnvironmentVariable={setEnvironmentVariable}
       environmentVariables={environmentVariables}
       selectedEnvironmentId={selectedEnvironmentId}
