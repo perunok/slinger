@@ -60,6 +60,11 @@
     CONNECT: 'text-[#0f766e]',
     TRACE: 'text-[#14b8a6]',
   }
+  const REQUEST_TAB_MIN_WIDTH = 84
+  const REQUEST_TAB_GAP = 4
+  const TAB_STRIP_HORIZONTAL_PADDING = 32
+  const OVERFLOW_BUTTON_WIDTH = 34
+  const ADD_BUTTON_WIDTH = 32
 
   export let activeTab: ActiveTab
   export let bodyDraft: string
@@ -112,7 +117,11 @@
   let responseWidth = 420
   let isResizingResponse = false
   let responseSplitRef: HTMLDivElement
+  let tabStripRef: HTMLDivElement
+  let tabStripWidth = 0
+  let tabStripResizeObserver: ResizeObserver | null = null
   let tabContextMenu: { x: number; y: number } | null = null
+  let overflowMenuOpen = false
 
   function payloadBodyToString(value: unknown): string {
     if (typeof value === 'string') return value
@@ -217,6 +226,33 @@
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
+  function calculateVisibleRequestTabCount(): number {
+    if (!tabStripWidth) return openRequestTabs.length
+    if (openRequestTabs.length === 0) return 0
+
+    const contentWidth = Math.max(0, tabStripWidth - TAB_STRIP_HORIZONTAL_PADDING)
+    const requestTabSetFits = (visibleTabCount: number, hasOverflowButton: boolean) => {
+      const fixedWidth = ADD_BUTTON_WIDTH + (hasOverflowButton ? OVERFLOW_BUTTON_WIDTH : 0)
+      const itemCount = visibleTabCount + 1 + (hasOverflowButton ? 1 : 0)
+      const gapWidth = Math.max(0, itemCount - 1) * REQUEST_TAB_GAP
+      const neededWidth = visibleTabCount * REQUEST_TAB_MIN_WIDTH + fixedWidth + gapWidth
+
+      return neededWidth <= contentWidth
+    }
+
+    if (requestTabSetFits(openRequestTabs.length, false)) return openRequestTabs.length
+
+    for (let count = openRequestTabs.length - 1; count > 0; count -= 1) {
+      if (requestTabSetFits(count, true)) return count
+    }
+
+    return 1
+  }
+
+  function updateTabStripWidth() {
+    tabStripWidth = tabStripRef?.clientWidth ?? 0
+  }
+
   function openTabContextMenu(event: MouseEvent) {
     if (openRequestTabs.length === 0) return
 
@@ -231,41 +267,81 @@
     tabContextMenu = null
   }
 
+  function closeOverflowMenu() {
+    overflowMenuOpen = false
+  }
+
   async function handleCloseAllTabs() {
     closeTabContextMenu()
     await closeAllRequestTabs()
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') closeTabContextMenu()
+    if (event.key === 'Escape') {
+      closeTabContextMenu()
+      closeOverflowMenu()
+    }
+  }
+
+  function handleWindowClick() {
+    closeTabContextMenu()
+    closeOverflowMenu()
+  }
+
+  function selectOverflowRequestTab(requestId: string) {
+    closeOverflowMenu()
+    setSelectedRequestId(requestId)
+  }
+
+  async function closeOverflowRequestTab(requestId: string) {
+    closeOverflowMenu()
+    await closeRequestTab(requestId)
+  }
+
+  $: visibleRequestTabCount = calculateVisibleRequestTabCount()
+  $: visibleRequestTabs = openRequestTabs.slice(0, visibleRequestTabCount)
+  $: overflowRequestTabs = openRequestTabs.slice(visibleRequestTabCount)
+  $: overflowHasSelection = overflowRequestTabs.some((requestTab) => requestTab.id === selectedRequestId)
+  $: if (overflowRequestTabs.length === 0) {
+    overflowMenuOpen = false
   }
 
   onMount(() => {
+    updateTabStripWidth()
+    if (typeof ResizeObserver !== 'undefined') {
+      tabStripResizeObserver = new ResizeObserver(updateTabStripWidth)
+      if (tabStripRef) tabStripResizeObserver.observe(tabStripRef)
+    } else {
+      window.addEventListener('resize', updateTabStripWidth)
+    }
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', stopResize)
     window.addEventListener('pointercancel', stopResize)
-    window.addEventListener('click', closeTabContextMenu)
+    window.addEventListener('click', handleWindowClick)
     window.addEventListener('keydown', handleWindowKeydown)
   })
 
   onDestroy(() => {
+    tabStripResizeObserver?.disconnect()
+    window.removeEventListener('resize', updateTabStripWidth)
     window.removeEventListener('pointermove', handlePointerMove)
     window.removeEventListener('pointerup', stopResize)
     window.removeEventListener('pointercancel', stopResize)
-    window.removeEventListener('click', closeTabContextMenu)
+    window.removeEventListener('click', handleWindowClick)
     window.removeEventListener('keydown', handleWindowKeydown)
   })
 </script>
 
-<section class="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
+<section class="relative flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
   <div
-    class="flex h-9 items-end gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-alt)] px-4"
+    bind:this={tabStripRef}
+    class="flex h-9 items-end gap-1 overflow-hidden border-b border-[var(--border)] bg-[var(--bg-alt)] px-4"
     role="presentation"
     on:contextmenu={openTabContextMenu}
   >
-    {#each openRequestTabs as requestTab (requestTab.id)}
+    {#each visibleRequestTabs as requestTab (requestTab.id)}
       <div
-        class={`flex h-7 max-w-[280px] shrink-0 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
+        class={`flex h-7 min-w-[84px] max-w-[280px] flex-1 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
           requestTab.id === selectedRequestId
             ? 'bg-[var(--surface)] text-[var(--text)]'
             : 'bg-transparent text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
@@ -291,8 +367,20 @@
         </button>
       </div>
     {/each}
+    {#if overflowRequestTabs.length > 0}
+      <button
+        class={`request-tab-overflow-trigger ${overflowHasSelection ? 'selected' : ''}`}
+        type="button"
+        title="More request tabs"
+        aria-label={`${overflowRequestTabs.length} more request tabs`}
+        on:click|stopPropagation={() => (overflowMenuOpen = !overflowMenuOpen)}
+      >
+        <span aria-hidden="true">...</span>
+        <span class="request-tab-overflow-count">{overflowRequestTabs.length}</span>
+      </button>
+    {/if}
     <button
-      class="h-7 shrink-0 px-3 text-lg text-[var(--muted)] hover:text-[var(--text)]"
+      class="h-7 w-8 shrink-0 text-lg text-[var(--muted)] hover:text-[var(--text)]"
       type="button"
       title="New request"
       on:click={handleCreateRequestDraft}
@@ -300,6 +388,36 @@
       +
     </button>
   </div>
+  {#if overflowMenuOpen}
+    <div class="request-tab-overflow-menu">
+      {#each overflowRequestTabs as requestTab (requestTab.id)}
+        <div
+          class={`request-tab-overflow-item ${
+            requestTab.id === selectedRequestId ? 'selected' : ''
+          }`}
+        >
+          <button
+            type="button"
+            class="request-tab-overflow-select"
+            on:click={() => selectOverflowRequestTab(requestTab.id)}
+          >
+            <span class="request-tab-overflow-method">{requestTab.method}</span>
+            <span class="request-tab-overflow-name">{requestTab.name}</span>
+          </button>
+          <button
+            type="button"
+            class={`request-tab-close ${requestTab.hasChanges ? 'dirty' : 'clean'}`}
+            aria-label="Close request tab"
+            title={requestTab.hasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
+            on:click={() => closeOverflowRequestTab(requestTab.id)}
+          >
+            <span class="request-tab-dot" aria-hidden="true" />
+            <span class="request-tab-x" aria-hidden="true">×</span>
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
   {#if tabContextMenu}
     <div
       class="request-tab-context-menu"
@@ -713,5 +831,100 @@
   .request-tab-context-menu button:focus-visible {
     background: var(--surface);
     outline: none;
+  }
+
+  .request-tab-overflow-trigger {
+    position: relative;
+    display: inline-flex;
+    width: 34px;
+    height: 26px;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    border-radius: 0.25rem;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1;
+  }
+
+  .request-tab-overflow-trigger:hover,
+  .request-tab-overflow-trigger:focus-visible,
+  .request-tab-overflow-trigger.selected {
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+  }
+
+  .request-tab-overflow-count {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: #f26b3a;
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+  }
+
+  .request-tab-overflow-menu {
+    position: absolute;
+    top: 2.25rem;
+    right: 3.25rem;
+    z-index: 65;
+    display: grid;
+    width: min(19rem, calc(100vw - 2rem));
+    max-height: min(24rem, calc(100vh - 5rem));
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background: var(--bg-alt);
+    box-shadow: 0 18px 54px rgba(0, 0, 0, 0.34);
+    padding: 0.25rem;
+  }
+
+  .request-tab-overflow-item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.25rem;
+    padding: 0.35rem 0.35rem 0.35rem 0.6rem;
+    color: var(--muted);
+  }
+
+  .request-tab-overflow-item:hover,
+  .request-tab-overflow-item.selected {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .request-tab-overflow-select {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 0.5rem;
+    text-align: left;
+  }
+
+  .request-tab-overflow-method {
+    width: 3rem;
+    flex: 0 0 3rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  .request-tab-overflow-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8125rem;
   }
 </style>
