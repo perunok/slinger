@@ -236,8 +236,6 @@
           <span class="request-tab-x" aria-hidden="true">×</span>
         </button>
       </div>
-    {:else}
-      <button class="h-7 rounded-t bg-[var(--surface)] px-4 text-xs text-[var(--muted)]">No request selected</button>
     {/if}
     <button class="h-7 px-3 text-lg text-[var(--muted)]">+</button>
   </div>

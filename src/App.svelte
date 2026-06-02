@@ -209,11 +209,12 @@
 
     if (requestId !== lastRequestId) {
       lastRequestId = requestId
-      const rawBody = selectedDocument.body?.raw ?? ''
+      const currentDocument = parseDocument(selectedRequest)
+      const rawBody = currentDocument.body?.raw ?? ''
       methodDraft = selectedRequest?.method ?? 'GET'
       urlDraft = selectedRequest?.url ?? ''
       bodyDraft = rawBody
-      requestContentType = payloadContentTypeFromHeaders(requestHeaders(selectedDocument)) ?? 'json'
+      requestContentType = payloadContentTypeFromHeaders(requestHeaders(currentDocument)) ?? 'json'
       sendResult = null
       sendError = null
       activeTab = rawBody ? 'Body' : 'Docs'
