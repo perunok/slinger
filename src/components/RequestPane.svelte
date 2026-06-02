@@ -60,11 +60,8 @@
     CONNECT: 'text-[#0f766e]',
     TRACE: 'text-[#14b8a6]',
   }
-  const REQUEST_TAB_MIN_WIDTH = 84
+  const REQUEST_TAB_WIDTH = 176
   const REQUEST_TAB_GAP = 4
-  const TAB_STRIP_HORIZONTAL_PADDING = 32
-  const OVERFLOW_BUTTON_WIDTH = 38
-  const ADD_BUTTON_WIDTH = 32
 
   export let activeTab: ActiveTab
   export let bodyDraft: string
@@ -113,8 +110,8 @@
   let responseWidth = 420
   let isResizingResponse = false
   let responseSplitRef: HTMLDivElement
-  let tabStripRef: HTMLDivElement
-  let tabStripWidth = 0
+  let tabListRef: HTMLDivElement
+  let tabListWidth = 0
   let tabStripResizeObserver: ResizeObserver | null = null
   let tabContextMenu: { x: number; y: number } | null = null
   let overflowMenuOpen = false
@@ -223,31 +220,16 @@
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
-  function calculateVisibleRequestTabCount(stripWidth: number, requestTabCount: number): number {
-    if (!stripWidth) return requestTabCount
+  function calculateVisibleRequestTabCount(listWidth: number, requestTabCount: number): number {
+    if (!listWidth) return requestTabCount
     if (requestTabCount === 0) return 0
 
-    const contentWidth = Math.max(0, stripWidth - TAB_STRIP_HORIZONTAL_PADDING)
-    const requestTabSetFits = (visibleTabCount: number, hasOverflowButton: boolean) => {
-      const fixedWidth = ADD_BUTTON_WIDTH + (hasOverflowButton ? OVERFLOW_BUTTON_WIDTH : 0)
-      const itemCount = visibleTabCount + 1 + (hasOverflowButton ? 1 : 0)
-      const gapWidth = Math.max(0, itemCount - 1) * REQUEST_TAB_GAP
-      const neededWidth = visibleTabCount * REQUEST_TAB_MIN_WIDTH + fixedWidth + gapWidth
-
-      return neededWidth <= contentWidth
-    }
-
-    if (requestTabSetFits(requestTabCount, false)) return requestTabCount
-
-    for (let count = requestTabCount - 1; count > 0; count -= 1) {
-      if (requestTabSetFits(count, true)) return count
-    }
-
-    return 1
+    const visibleSlots = Math.floor((listWidth + REQUEST_TAB_GAP) / (REQUEST_TAB_WIDTH + REQUEST_TAB_GAP))
+    return Math.max(1, Math.min(requestTabCount, visibleSlots))
   }
 
-  function updateTabStripWidth() {
-    tabStripWidth = tabStripRef?.clientWidth ?? 0
+  function updateTabListWidth() {
+    tabListWidth = tabListRef?.clientWidth ?? 0
   }
 
   function openTabContextMenu(event: MouseEvent) {
@@ -295,7 +277,7 @@
     await closeRequestTab(requestId)
   }
 
-  $: visibleRequestTabCount = calculateVisibleRequestTabCount(tabStripWidth, openRequestTabs.length)
+  $: visibleRequestTabCount = calculateVisibleRequestTabCount(tabListWidth, openRequestTabs.length)
   $: visibleRequestTabs = openRequestTabs.slice(0, visibleRequestTabCount)
   $: overflowRequestTabs = openRequestTabs.slice(visibleRequestTabCount)
   $: overflowHasSelection = overflowRequestTabs.some((requestTab) => requestTab.id === selectedRequestId)
@@ -325,12 +307,12 @@
   }
 
   onMount(() => {
-    updateTabStripWidth()
+    updateTabListWidth()
     if (typeof ResizeObserver !== 'undefined') {
-      tabStripResizeObserver = new ResizeObserver(updateTabStripWidth)
-      if (tabStripRef) tabStripResizeObserver.observe(tabStripRef)
+      tabStripResizeObserver = new ResizeObserver(updateTabListWidth)
+      if (tabListRef) tabStripResizeObserver.observe(tabListRef)
     } else {
-      window.addEventListener('resize', updateTabStripWidth)
+      window.addEventListener('resize', updateTabListWidth)
     }
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', stopResize)
@@ -341,7 +323,7 @@
 
   onDestroy(() => {
     tabStripResizeObserver?.disconnect()
-    window.removeEventListener('resize', updateTabStripWidth)
+    window.removeEventListener('resize', updateTabListWidth)
     window.removeEventListener('pointermove', handlePointerMove)
     window.removeEventListener('pointerup', stopResize)
     window.removeEventListener('pointercancel', stopResize)
@@ -352,39 +334,40 @@
 
 <section class="relative flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
   <div
-    bind:this={tabStripRef}
     class="flex h-9 items-end gap-1 overflow-hidden border-b border-[var(--border)] bg-[var(--bg-alt)] px-4"
     role="presentation"
     on:contextmenu={openTabContextMenu}
   >
-    {#each visibleRequestTabs as requestTab (requestTab.id)}
-      <div
-        class={`flex h-7 min-w-[84px] max-w-[280px] flex-1 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
-          requestTab.id === selectedRequestId
-            ? 'bg-[var(--surface)] text-[var(--text)]'
-            : 'bg-transparent text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
-        }`}
-      >
-        <button
-          type="button"
-          class="min-w-0 flex-1 truncate text-left"
-          on:click={() => setSelectedRequestId(requestTab.id)}
+    <div bind:this={tabListRef} class="flex min-w-0 flex-1 items-end gap-1 overflow-hidden">
+      {#each visibleRequestTabs as requestTab (requestTab.id)}
+        <div
+          class={`flex h-7 w-44 shrink-0 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
+            requestTab.id === selectedRequestId
+              ? 'bg-[var(--surface)] text-[var(--text)]'
+              : 'bg-transparent text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
+          }`}
         >
-          <span class="mr-2 font-semibold">{requestTab.method}</span>
-          {requestTab.name}
-        </button>
-        <button
-          type="button"
-          class={`request-tab-close ${requestTab.hasChanges ? 'dirty' : 'clean'}`}
-          aria-label="Close request tab"
-          title={requestTab.hasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
-          on:click={() => closeRequestTab(requestTab.id)}
-        >
-          <span class="request-tab-dot" aria-hidden="true" />
-          <span class="request-tab-x" aria-hidden="true">×</span>
-        </button>
-      </div>
-    {/each}
+          <button
+            type="button"
+            class="min-w-0 flex-1 truncate text-left"
+            on:click={() => setSelectedRequestId(requestTab.id)}
+          >
+            <span class="mr-2 font-semibold">{requestTab.method}</span>
+            {requestTab.name}
+          </button>
+          <button
+            type="button"
+            class={`request-tab-close ${requestTab.hasChanges ? 'dirty' : 'clean'}`}
+            aria-label="Close request tab"
+            title={requestTab.hasChanges ? 'Unsaved changes. Close request tab' : 'Close request tab'}
+            on:click={() => closeRequestTab(requestTab.id)}
+          >
+            <span class="request-tab-dot" aria-hidden="true" />
+            <span class="request-tab-x" aria-hidden="true">×</span>
+          </button>
+        </div>
+      {/each}
+    </div>
     {#if overflowRequestTabs.length > 0}
       <button
         class={`request-tab-overflow-trigger ${overflowHasSelection ? 'selected' : ''}`}
@@ -394,9 +377,7 @@
         on:click|stopPropagation={() => (overflowMenuOpen = !overflowMenuOpen)}
       >
         <span aria-hidden="true">+{overflowRequestTabs.length}</span>
-        <svg class="request-tab-overflow-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
+        <span class="request-tab-overflow-caret" aria-hidden="true">v</span>
       </button>
     {/if}
     <button
@@ -843,8 +824,13 @@
   }
 
   .request-tab-overflow-caret {
+    display: inline-flex;
     width: 0.625rem;
     height: 0.625rem;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.625rem;
+    line-height: 1;
   }
 
   .request-tab-overflow-menu {
