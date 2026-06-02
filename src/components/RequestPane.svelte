@@ -613,57 +613,62 @@
           </div>
         </div>
 
-        <div class="min-h-0 overflow-auto px-4 py-3" style={orientation === 'vertical' ? `height: ${responseHeight}px` : `width: ${responseWidth}px`}>
+        <div
+          class="flex min-h-0 flex-col"
+          style={orientation === 'vertical' ? `height: ${responseHeight}px` : `width: ${responseWidth}px`}
+        >
           {#if sendError}
-            <pre class="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{sendError}</pre>
+            <div class="min-h-0 flex-1 overflow-auto px-4 py-3">
+              <pre class="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{sendError}</pre>
+            </div>
           {:else if hasResponsePanel}
-            <div class="space-y-3">
-              <div class="flex h-10 items-center gap-4 border-b border-[var(--border)] pb-3 text-sm">
-                <button
-                  on:click={() => setResponseViewTab('body')}
-                  class={`h-8 rounded px-3 transition-colors ${
-                    responseViewTab === 'body'
-                      ? 'bg-[var(--surface)] text-[var(--text)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)]'
-                  }`}
-                >
-                  Body
-                </button>
-                <button
-                  on:click={() => setResponseViewTab('headers')}
-                  class={`h-8 rounded px-3 transition-colors ${
-                    responseViewTab === 'headers'
-                      ? 'bg-[var(--surface)] text-[var(--text)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)]'
-                  }`}
-                >
-                  Headers
-                </button>
+            <div class="flex h-12 shrink-0 items-center gap-4 border-b border-[var(--border)] px-4 text-sm">
+              <button
+                on:click={() => setResponseViewTab('body')}
+                class={`h-8 rounded px-3 transition-colors ${
+                  responseViewTab === 'body'
+                    ? 'bg-[var(--surface)] text-[var(--text)]'
+                    : 'text-[var(--muted)] hover:text-[var(--text)]'
+                }`}
+              >
+                Body
+              </button>
+              <button
+                on:click={() => setResponseViewTab('headers')}
+                class={`h-8 rounded px-3 transition-colors ${
+                  responseViewTab === 'headers'
+                    ? 'bg-[var(--surface)] text-[var(--text)]'
+                    : 'text-[var(--muted)] hover:text-[var(--text)]'
+                }`}
+              >
+                Headers
+              </button>
 
-                <div class="ml-auto flex min-w-0 items-center gap-2">
-                  {#if sendResult}
-                    <button
-                      class="secondary-button h-7 shrink-0 px-2 text-xs"
-                      type="button"
-                      on:click={handleSaveResponse}
-                      disabled={savingResponse}
-                      title="Save response"
-                    >
-                      {savingResponse ? 'Saving' : 'Save'}
-                    </button>
-                  {/if}
-                  <span class="max-w-[11rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text)]">
-                    {responsePanelStatus}
-                  </span>
-                  <span
-                    class="max-w-[14rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted)]"
-                    title={responsePanelContentType}
+              <div class="ml-auto flex min-w-0 items-center gap-2">
+                {#if sendResult}
+                  <button
+                    class="secondary-button h-7 shrink-0 px-2 text-xs"
+                    type="button"
+                    on:click={handleSaveResponse}
+                    disabled={savingResponse}
+                    title="Save response"
                   >
-                    {responsePanelContentType}
-                  </span>
-                </div>
+                    {savingResponse ? 'Saving' : 'Save'}
+                  </button>
+                {/if}
+                <span class="max-w-[11rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text)]">
+                  {responsePanelStatus}
+                </span>
+                <span
+                  class="max-w-[14rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted)]"
+                  title={responsePanelContentType}
+                >
+                  {responsePanelContentType}
+                </span>
               </div>
+            </div>
 
+            <div class="min-h-0 flex-1 overflow-auto px-4 py-3">
               {#if responseViewTab === 'headers'}
                 <div class="space-y-3">
                   {#if responsePanelHeaders.length > 0}
@@ -688,7 +693,7 @@
               {/if}
             </div>
           {:else}
-            <div class="flex h-full items-center justify-center text-sm text-[var(--muted)]">Response body will appear here.</div>
+            <div class="flex min-h-0 flex-1 items-center justify-center px-4 py-3 text-sm text-[var(--muted)]">Response body will appear here.</div>
           {/if}
         </div>
       </div>
