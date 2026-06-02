@@ -394,7 +394,9 @@
         on:click|stopPropagation={() => (overflowMenuOpen = !overflowMenuOpen)}
       >
         <span aria-hidden="true">+{overflowRequestTabs.length}</span>
-        <span class="request-tab-overflow-caret" aria-hidden="true">v</span>
+        <svg class="request-tab-overflow-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
       </button>
     {/if}
     <button
@@ -456,21 +458,30 @@
     <div class="flex min-h-0 flex-1 flex-col">
       <div class="flex h-10 items-center gap-2 border-b border-[var(--border)] px-4 text-sm">
         <span class="text-[var(--muted)]">{selectedCollection?.name}</span>
-        <span class="text-[var(--muted)]">&gt;</span>
+        <svg class="h-3 w-3 text-[var(--muted)] opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m9 18 6-6-6-6"/>
+        </svg>
         <span class="font-semibold text-[var(--text)]">{selectedRequest.name}</span>
       </div>
 
       <div class="flex flex-col gap-2">
         <div class="flex items-center gap-2 border-b border-[var(--border)] px-3 py-3">
-          <select
-            value={methodDraft}
-            on:change={(event) => setRequestMethod(selectValue(event).toUpperCase())}
-            class={`h-8 min-w-[108px] rounded border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold outline-none appearance-none ${HTTP_METHOD_CLASSES[methodDraft?.toUpperCase() ?? ''] ?? 'text-[var(--text)]'}`}
-          >
-            {#each HTTP_METHOD_OPTIONS as method}
-              <option value={method}>{method}</option>
-            {/each}
-          </select>
+          <div class="relative flex items-center">
+            <select
+              value={methodDraft}
+              on:change={(event) => setRequestMethod(selectValue(event).toUpperCase())}
+              class={`h-8 min-w-[108px] rounded border border-[var(--border)] bg-[var(--surface)] pl-3 pr-8 text-sm font-bold outline-none appearance-none ${HTTP_METHOD_CLASSES[methodDraft?.toUpperCase() ?? ''] ?? 'text-[var(--text)]'}`}
+            >
+              {#each HTTP_METHOD_OPTIONS as method}
+                <option value={method}>{method}</option>
+              {/each}
+            </select>
+            <div class="pointer-events-none absolute right-2.5 text-[var(--muted)]">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+            </div>
+          </div>
           <div class="relative min-w-0 flex-1">
             <div class="absolute inset-0 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 py-0.5 font-mono text-sm leading-8 text-[var(--text)] whitespace-pre overflow-hidden" style="pointer-events: none;">
               {#each urlParts as part}
@@ -558,17 +569,24 @@
             </div>
           {/each}
           <div class="ml-auto flex shrink-0 items-center gap-2">
-            <select
-              value={requestContentType}
-              on:change={handleRequestContentTypeChange}
-              class="select-field h-7 rounded px-2 text-xs outline-none focus:border-[#5a8fff]"
-            >
-              {#each PAYLOAD_CONTENT_TYPE_OPTIONS as option (option.value)}
-                <option value={option.value}>
-                  {option.label}
-                </option>
-              {/each}
-            </select>
+            <div class="relative flex items-center">
+              <select
+                value={requestContentType}
+                on:change={handleRequestContentTypeChange}
+                class="select-field h-7 rounded pl-2 pr-6 text-xs outline-none focus:border-[#5a8fff] appearance-none"
+              >
+                {#each PAYLOAD_CONTENT_TYPE_OPTIONS as option (option.value)}
+                  <option value={option.value}>
+                    {option.label}
+                  </option>
+                {/each}
+              </select>
+              <div class="pointer-events-none absolute right-1.5 text-[var(--muted)]">
+                <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              </div>
+            </div>
             <button class="secondary-button h-7" type="button" on:click={handleBeautifyBody}>
               Beautify
             </button>
@@ -599,13 +617,17 @@
         <div class={`${orientation === 'vertical' ? 'flex h-5 cursor-row-resize' : 'flex w-3 cursor-col-resize'} items-center justify-center bg-[var(--surface)] hover:bg-[var(--panel)]`} on:pointerdown={startResize}>
           <div class={`${orientation === 'vertical' ? 'flex h-1.5 w-12 items-center justify-between' : 'flex h-6 w-1 items-center justify-between'}`}>
             {#if orientation === 'vertical'}
-              <span class="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
-              <span class="text-xs text-[var(--muted)]">⇕</span>
-              <span class="block h-0.5 w-3 rounded-full bg-[var(--muted)]" />
+              <div class="flex flex-col gap-0.5 items-center">
+                <div class="h-0.5 w-4 rounded-full bg-[var(--muted)] opacity-30"></div>
+                <div class="h-0.5 w-4 rounded-full bg-[var(--muted)] opacity-50"></div>
+                <div class="h-0.5 w-4 rounded-full bg-[var(--muted)] opacity-30"></div>
+              </div>
             {:else}
-              <span class="block h-3 w-0.5 rounded-full bg-[var(--muted)]" />
-              <span class="text-xs text-[var(--muted)]">⇆</span>
-              <span class="block h-3 w-0.5 rounded-full bg-[var(--muted)]" />
+              <div class="flex gap-0.5 items-center">
+                <div class="w-0.5 h-4 rounded-full bg-[var(--muted)] opacity-30"></div>
+                <div class="w-0.5 h-4 rounded-full bg-[var(--muted)] opacity-50"></div>
+                <div class="w-0.5 h-4 rounded-full bg-[var(--muted)] opacity-30"></div>
+              </div>
             {/if}
           </div>
         </div>
@@ -821,8 +843,8 @@
   }
 
   .request-tab-overflow-caret {
-    font-size: 0.625rem;
-    line-height: 1;
+    width: 0.625rem;
+    height: 0.625rem;
   }
 
   .request-tab-overflow-menu {
