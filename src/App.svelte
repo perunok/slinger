@@ -3,6 +3,7 @@
   import Header from './components/Header.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
+  import SaveResponseDialog from './components/SaveResponseDialog.svelte'
   import SaveRequestDialog from './components/SaveRequestDialog.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Toolbar from './components/Toolbar.svelte'
@@ -76,6 +77,10 @@
     selectedCollectionId: string | null
     resolve: (target: SaveRequestTarget | null) => void
   }
+  type SaveResponseDialogRequest = {
+    existingNames: string[]
+    resolve: (name: string | null) => void
+  }
   type RequestTabState = {
     request: ApiRequest
     savedRequest: ApiRequest | null
@@ -116,6 +121,7 @@
   let sendResult: HttpResponseData | null = null
   let sendError: string | null = null
   let sending = false
+  let savingResponse = false
   let savingRequest = false
   let workspaceName = ''
   let collectionName = ''
@@ -126,6 +132,7 @@
   let loadingRequests = false
   let confirmation: ConfirmationRequest | null = null
   let saveRequestDialog: SaveRequestDialogRequest | null = null
+  let saveResponseDialog: SaveResponseDialogRequest | null = null
   let error: string | null = null
   let notice: string | null = null
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
@@ -342,6 +349,25 @@
     const current = saveRequestDialog
     saveRequestDialog = null
     current.resolve(target)
+  }
+
+  function askForResponseName(existingNames: string[]): Promise<string | null> {
+    saveResponseDialog?.resolve(null)
+
+    return new Promise((resolve) => {
+      saveResponseDialog = {
+        existingNames,
+        resolve,
+      }
+    })
+  }
+
+  function finishResponseSaveDialog(name: string | null) {
+    if (!saveResponseDialog) return
+
+    const current = saveResponseDialog
+    saveResponseDialog = null
+    current.resolve(name)
   }
 
   function requestTabHasChanges(tab: RequestTabState): boolean {
@@ -982,6 +1008,99 @@
     }
   }
 
+  function responseNameExists(name: string, responses = responseExamples): boolean {
+    const normalized = name.trim().toLowerCase()
+    return responses.some((response) => (response.name ?? '').trim().toLowerCase() === normalized)
+  }
+
+  async function handleSaveResponse() {
+    const requestToSave = selectedRequest
+    const responseToSave = sendResult
+    const documentSnapshot = selectedDocument
+    const headersSnapshot = headers
+    const methodSnapshot = methodDraft
+    const urlSnapshot = urlDraft
+    const bodySnapshot = bodyDraft
+    const contentTypeSnapshot = requestContentType
+    const existingResponses = responseExamples
+
+    if (!requestToSave || !responseToSave || savingResponse) return
+
+    if (isDraftRequest) {
+      error = 'Save the request before saving a response.'
+      return
+    }
+
+    const responseName = await askForResponseName(
+      existingResponses.flatMap((response) => (response.name ? [response.name] : [])),
+    )
+    if (!responseName) return
+
+    if (responseNameExists(responseName, existingResponses)) {
+      error = 'A response with this name already exists.'
+      return
+    }
+
+    savingResponse = true
+
+    try {
+      const document: RequestDocument = {
+        ...documentSnapshot,
+        name: requestToSave.name,
+        method: methodSnapshot,
+        url: urlSnapshot,
+        headers: headersWithContentType(headersSnapshot, contentTypeSnapshot),
+        body: {
+          ...(documentSnapshot.body ?? {}),
+          mode: documentSnapshot.body?.mode ?? 'raw',
+          raw: bodySnapshot,
+        },
+      }
+      const responses = requestResponses(document)
+
+      if (responseNameExists(responseName, responses)) {
+        error = 'A response with this name already exists.'
+        return
+      }
+
+      const nextResponse = {
+        name: responseName,
+        status: responseToSave.status_text,
+        code: responseToSave.status,
+        header: responseToSave.headers,
+        body: responseToSave.body,
+      }
+      const nextDocument = {
+        ...document,
+        responses: [...responses, nextResponse],
+      }
+      const updated = await updateRequest({
+        requestId: requestToSave.id,
+        method: methodSnapshot,
+        url: urlSnapshot,
+        documentJson: JSON.stringify(nextDocument),
+      })
+
+      requests = requests.map((request) =>
+        request.id === updated.id ? updated : request,
+      )
+      updateSelectedRequestTab(updated, updated)
+      if (selectedRequestId === requestToSave.id) {
+        selectedResponseIndex = responses.length
+        selectedResponseRequestId = updated.id
+        sendResult = null
+        responseViewTab = 'body'
+      }
+      notice = `Saved response "${responseName}".`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to save response.'
+    } finally {
+      savingResponse = false
+    }
+  }
+
   function handleGlobalKeydown(event: KeyboardEvent) {
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return
     if (!selectedRequest) return
@@ -1222,6 +1341,7 @@
       {handleCreateRequestDraft}
       {handleSend}
       {handleSaveRequest}
+      {handleSaveResponse}
       {headers}
       {methodDraft}
       {orientation}
@@ -1242,6 +1362,7 @@
       {sendResult}
       {sending}
       {savingRequest}
+      {savingResponse}
       setActiveTab={(tab) => (activeTab = tab)}
       setBodyDraft={setRequestBodyDraft}
       setRequestContentType={setRequestPayloadContentType}
@@ -1275,6 +1396,14 @@
       selectedCollectionId={saveRequestDialog.selectedCollectionId}
       on:save={(event) => finishRequestSaveDialog(event.detail)}
       on:cancel={() => finishRequestSaveDialog(null)}
+    />
+  {/if}
+
+  {#if saveResponseDialog}
+    <SaveResponseDialog
+      existingNames={saveResponseDialog.existingNames}
+      on:save={(event) => finishResponseSaveDialog(event.detail)}
+      on:cancel={() => finishResponseSaveDialog(null)}
     />
   {/if}
 

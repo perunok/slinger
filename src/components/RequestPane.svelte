@@ -75,6 +75,7 @@
   export let handleBeautifyBody: () => void
   export let handleCreateRequestDraft: () => void | Promise<void>
   export let handleSaveRequest: () => Promise<void>
+  export let handleSaveResponse: () => Promise<void>
   export let handleSend: () => Promise<void>
   export let headers: HeaderDocument[]
   export let methodDraft: string
@@ -95,6 +96,7 @@
   export let sendResult: HttpResponseData | null
   export let sending: boolean
   export let savingRequest: boolean
+  export let savingResponse: boolean
   export let setActiveTab: (tab: ActiveTab) => void
   export let setBodyDraft: (value: string) => void
   export let setRequestContentType: (type: PayloadContentType) => void
@@ -636,6 +638,17 @@
                 </button>
 
                 <div class="ml-auto flex min-w-0 items-center gap-2">
+                  {#if sendResult}
+                    <button
+                      class="secondary-button h-7 shrink-0 px-2 text-xs"
+                      type="button"
+                      on:click={handleSaveResponse}
+                      disabled={savingResponse}
+                      title="Save response"
+                    >
+                      {savingResponse ? 'Saving' : 'Save'}
+                    </button>
+                  {/if}
                   <span class="max-w-[11rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text)]">
                     {responsePanelStatus}
                   </span>
