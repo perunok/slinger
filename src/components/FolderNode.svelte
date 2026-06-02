@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { methodClass } from '../lib/collectionTree'
+  import RequestTreeItem from './RequestTreeItem.svelte'
   import type { ApiFolder, ApiRequest } from '../tauri'
 
   export let folder: ApiFolder
@@ -8,7 +8,10 @@
   export let requestsByFolder: Map<string, ApiRequest[]>
   export let openFolderIds: Set<string>
   export let selectedRequestId: string | null
+  export let selectedResponseRequestId: string | null
+  export let selectedResponseIndex: number
   export let setSelectedRequestId: (id: string | null) => void
+  export let selectResponseExample: (requestId: string, responseIndex: number) => void
   export let toggleFolder: (folderId: string) => void
 
   $: isOpen = openFolderIds.has(folder.id)
@@ -36,25 +39,23 @@
           {requestsByFolder}
           {openFolderIds}
           {selectedRequestId}
+          {selectedResponseRequestId}
+          {selectedResponseIndex}
           {setSelectedRequestId}
+          {selectResponseExample}
           {toggleFolder}
         />
       {/each}
       {#each childRequests as request (request.id)}
-        <button
-          on:click={() => setSelectedRequestId(request.id)}
-          class={`flex h-7 w-full items-center gap-2 rounded px-2 text-left text-xs ${
-            request.id === selectedRequestId
-              ? 'bg-[var(--surface)] text-[var(--text)]'
-              : 'text-[var(--muted)] hover:bg-[var(--panel)]'
-          }`}
-          style={`padding-left: ${8 + (depth + 1) * 14}px`}
-        >
-          <span class={`w-12 shrink-0 font-semibold ${methodClass(request.method)}`}>
-            {request.method}
-          </span>
-          <span class="min-w-0 flex-1 truncate">{request.name}</span>
-        </button>
+        <RequestTreeItem
+          {request}
+          depth={depth + 1}
+          {selectedRequestId}
+          {selectedResponseRequestId}
+          {selectedResponseIndex}
+          {setSelectedRequestId}
+          {selectResponseExample}
+        />
       {/each}
     </div>
   {/if}

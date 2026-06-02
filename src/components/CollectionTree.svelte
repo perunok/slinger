@@ -1,6 +1,7 @@
 <script lang="ts">
   import FolderNode from './FolderNode.svelte'
-  import { methodClass, ROOT_ID } from '../lib/collectionTree'
+  import RequestTreeItem from './RequestTreeItem.svelte'
+  import { ROOT_ID } from '../lib/collectionTree'
   import type { ApiFolder, ApiRequest, Collection } from '../tauri'
 
   export let collections: Collection[]
@@ -12,8 +13,11 @@
   export let requestsByFolder: Map<string, ApiRequest[]>
   export let selectedCollectionId: string | null
   export let selectedRequestId: string | null
+  export let selectedResponseRequestId: string | null
+  export let selectedResponseIndex: number
   export let setSelectedCollectionId: (id: string | null) => void
   export let setSelectedRequestId: (id: string | null) => void
+  export let selectResponseExample: (requestId: string, responseIndex: number) => void
   export let toggleFolder: (folderId: string) => void
 
   $: rootFolders = foldersByParent.get(ROOT_ID) ?? []
@@ -50,25 +54,23 @@
               {requestsByFolder}
               {openFolderIds}
               {selectedRequestId}
+              {selectedResponseRequestId}
+              {selectedResponseIndex}
               {setSelectedRequestId}
+              {selectResponseExample}
               {toggleFolder}
             />
           {/each}
           {#each rootRequests as request (request.id)}
-            <button
-              on:click={() => setSelectedRequestId(request.id)}
-              class={`flex h-7 w-full items-center gap-2 rounded px-2 text-left text-xs ${
-                request.id === selectedRequestId
-                  ? 'bg-[var(--surface)] text-[var(--text)]'
-                  : 'text-[var(--muted)] hover:bg-[var(--panel)]'
-              }`}
-              style="padding-left: 8px"
-            >
-              <span class={`w-12 shrink-0 font-semibold ${methodClass(request.method)}`}>
-                {request.method}
-              </span>
-              <span class="min-w-0 flex-1 truncate">{request.name}</span>
-            </button>
+            <RequestTreeItem
+              {request}
+              depth={0}
+              {selectedRequestId}
+              {selectedResponseRequestId}
+              {selectedResponseIndex}
+              {setSelectedRequestId}
+              {selectResponseExample}
+            />
           {/each}
         {/if}
       </div>

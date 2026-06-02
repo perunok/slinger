@@ -20,25 +20,25 @@
     hasChanges: boolean
   }
 
-  const HTTP_STATUS_CODES = [
-    { code: 200, text: 'OK' },
-    { code: 201, text: 'Created' },
-    { code: 204, text: 'No Content' },
-    { code: 301, text: 'Moved Permanently' },
-    { code: 302, text: 'Found' },
-    { code: 304, text: 'Not Modified' },
-    { code: 400, text: 'Bad Request' },
-    { code: 401, text: 'Unauthorized' },
-    { code: 403, text: 'Forbidden' },
-    { code: 404, text: 'Not Found' },
-    { code: 408, text: 'Request Timeout' },
-    { code: 429, text: 'Too Many Requests' },
-    { code: 500, text: 'Internal Server Error' },
-    { code: 501, text: 'Not Implemented' },
-    { code: 502, text: 'Bad Gateway' },
-    { code: 503, text: 'Service Unavailable' },
-    { code: 504, text: 'Gateway Timeout' },
-  ]
+  const HTTP_STATUS_TEXT: Record<number, string> = {
+    200: 'OK',
+    201: 'Created',
+    204: 'No Content',
+    301: 'Moved Permanently',
+    302: 'Found',
+    304: 'Not Modified',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    408: 'Request Timeout',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error',
+    501: 'Not Implemented',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+  }
   const REQUEST_TABS: ActiveTab[] = [
     'Docs',
     'Params',
@@ -63,7 +63,7 @@
   const REQUEST_TAB_MIN_WIDTH = 84
   const REQUEST_TAB_GAP = 4
   const TAB_STRIP_HORIZONTAL_PADDING = 32
-  const OVERFLOW_BUTTON_WIDTH = 34
+  const OVERFLOW_BUTTON_WIDTH = 38
   const ADD_BUTTON_WIDTH = 32
 
   export let activeTab: ActiveTab
@@ -83,8 +83,6 @@
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
   export let responseContentType: PayloadContentType
-  export let responseExamples: ResponseExample[]
-  export let responseStatusCode: string
   export let responseViewTab: 'headers' | 'body'
   export let requestHasChanges: boolean
   export let scripts: string
@@ -93,7 +91,6 @@
   export let selectedRequest: ApiRequest | null
   export let selectedRequestId: string | null
   export let selectedResponse: ResponseExample | null
-  export let selectedResponseIndex: number
   export let sendError: string | null
   export let sendResult: HttpResponseData | null
   export let sending: boolean
@@ -101,10 +98,7 @@
   export let setActiveTab: (tab: ActiveTab) => void
   export let setBodyDraft: (value: string) => void
   export let setRequestContentType: (type: PayloadContentType) => void
-  export let setResponseContentType: (type: PayloadContentType) => void
-  export let setResponseStatusCode: (code: string) => void
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
-  export let setSelectedResponseIndex: (index: number) => void
   export let setSelectedRequestId: (id: string | null) => void
   export let setUrlDraft: (value: string) => void
   export let setRequestMethod: (method: string) => void
@@ -140,6 +134,11 @@
 
   function selectValue(event: Event): string {
     return (event.currentTarget as HTMLSelectElement).value
+  }
+
+  function contentTypeHeaderValue(headers: Array<{ key?: string; value?: string }>): string | null {
+    const header = headers.find((item) => item.key?.toLowerCase() === 'content-type')
+    return header?.value?.trim() || null
   }
 
   let urlParts: TemplatePart[] = []
@@ -193,10 +192,6 @@
     setRequestContentType(selectValue(event) as PayloadContentType)
   }
 
-  function handleResponseContentTypeChange(event: Event) {
-    setResponseContentType(selectValue(event) as PayloadContentType)
-  }
-
   function handlePointerMove(event: PointerEvent) {
     if (!isResizingResponse || !responseSplitRef) return
     const rect = responseSplitRef.getBoundingClientRect()
@@ -226,11 +221,11 @@
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
-  function calculateVisibleRequestTabCount(): number {
-    if (!tabStripWidth) return openRequestTabs.length
-    if (openRequestTabs.length === 0) return 0
+  function calculateVisibleRequestTabCount(stripWidth: number, requestTabCount: number): number {
+    if (!stripWidth) return requestTabCount
+    if (requestTabCount === 0) return 0
 
-    const contentWidth = Math.max(0, tabStripWidth - TAB_STRIP_HORIZONTAL_PADDING)
+    const contentWidth = Math.max(0, stripWidth - TAB_STRIP_HORIZONTAL_PADDING)
     const requestTabSetFits = (visibleTabCount: number, hasOverflowButton: boolean) => {
       const fixedWidth = ADD_BUTTON_WIDTH + (hasOverflowButton ? OVERFLOW_BUTTON_WIDTH : 0)
       const itemCount = visibleTabCount + 1 + (hasOverflowButton ? 1 : 0)
@@ -240,9 +235,9 @@
       return neededWidth <= contentWidth
     }
 
-    if (requestTabSetFits(openRequestTabs.length, false)) return openRequestTabs.length
+    if (requestTabSetFits(requestTabCount, false)) return requestTabCount
 
-    for (let count = openRequestTabs.length - 1; count > 0; count -= 1) {
+    for (let count = requestTabCount - 1; count > 0; count -= 1) {
       if (requestTabSetFits(count, true)) return count
     }
 
@@ -298,10 +293,31 @@
     await closeRequestTab(requestId)
   }
 
-  $: visibleRequestTabCount = calculateVisibleRequestTabCount()
+  $: visibleRequestTabCount = calculateVisibleRequestTabCount(tabStripWidth, openRequestTabs.length)
   $: visibleRequestTabs = openRequestTabs.slice(0, visibleRequestTabCount)
   $: overflowRequestTabs = openRequestTabs.slice(visibleRequestTabCount)
   $: overflowHasSelection = overflowRequestTabs.some((requestTab) => requestTab.id === selectedRequestId)
+  $: responsePanelBody = sendResult
+    ? payloadBodyToString(sendResult.body)
+    : selectedResponse
+      ? payloadBodyToString(selectedResponse.body ?? '')
+      : ''
+  $: responsePanelHeaders = sendResult?.headers ??
+    (selectedResponse && Array.isArray(selectedResponse.header) ? selectedResponse.header : [])
+  $: responsePanelStatusCode = sendResult?.status ?? selectedResponse?.code ?? null
+  $: responsePanelStatusText =
+    sendResult?.status_text ||
+    selectedResponse?.status ||
+    (responsePanelStatusCode ? HTTP_STATUS_TEXT[responsePanelStatusCode] : '') ||
+    ''
+  $: responsePanelStatus = responsePanelStatusCode
+    ? `${responsePanelStatusCode} ${responsePanelStatusText}`.trim()
+    : responsePanelStatusText || 'Status'
+  $: responseContentTypeLabel =
+    PAYLOAD_CONTENT_TYPE_OPTIONS.find((option) => option.value === responseContentType)?.label ??
+    responseContentType.toUpperCase()
+  $: responsePanelContentType = contentTypeHeaderValue(responsePanelHeaders) ?? responseContentTypeLabel
+  $: hasResponsePanel = Boolean(sendResult || selectedResponse)
   $: if (overflowRequestTabs.length === 0) {
     overflowMenuOpen = false
   }
@@ -375,8 +391,8 @@
         aria-label={`${overflowRequestTabs.length} more request tabs`}
         on:click|stopPropagation={() => (overflowMenuOpen = !overflowMenuOpen)}
       >
-        <span aria-hidden="true">...</span>
-        <span class="request-tab-overflow-count">{overflowRequestTabs.length}</span>
+        <span aria-hidden="true">+{overflowRequestTabs.length}</span>
+        <span class="request-tab-overflow-caret" aria-hidden="true">v</span>
       </button>
     {/if}
     <button
@@ -569,7 +585,6 @@
             {methodDraft}
             {params}
             {requestContentType}
-            {responseExamples}
             {scripts}
             {selectedCollection}
             {selectedDocument}
@@ -596,19 +611,9 @@
         <div class="min-h-0 overflow-auto px-4 py-3" style={orientation === 'vertical' ? `height: ${responseHeight}px` : `width: ${responseWidth}px`}>
           {#if sendError}
             <pre class="overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--panel)] p-3 font-mono text-xs leading-5 text-[var(--text)]">{sendError}</pre>
-          {:else if sendResult}
+          {:else if hasResponsePanel}
             <div class="space-y-3">
               <div class="flex h-10 items-center gap-4 border-b border-[var(--border)] pb-3 text-sm">
-                <button
-                  on:click={() => setResponseViewTab('headers')}
-                  class={`h-8 rounded px-3 transition-colors ${
-                    responseViewTab === 'headers'
-                      ? 'bg-[var(--surface)] text-[var(--text)]'
-                      : 'text-[var(--muted)] hover:text-[var(--text)]'
-                  }`}
-                >
-                  Headers
-                </button>
                 <button
                   on:click={() => setResponseViewTab('body')}
                   class={`h-8 rounded px-3 transition-colors ${
@@ -619,31 +624,38 @@
                 >
                   Body
                 </button>
+                <button
+                  on:click={() => setResponseViewTab('headers')}
+                  class={`h-8 rounded px-3 transition-colors ${
+                    responseViewTab === 'headers'
+                      ? 'bg-[var(--surface)] text-[var(--text)]'
+                      : 'text-[var(--muted)] hover:text-[var(--text)]'
+                  }`}
+                >
+                  Headers
+                </button>
 
-                <div class="ml-auto flex items-center gap-3">
-                  <span class="text-xs font-semibold text-[var(--muted)]">Status Code</span>
-                  <select
-                    value={responseStatusCode}
-                    on:change={(event) => setResponseStatusCode(selectValue(event))}
-                    class="select-field h-8 w-32 rounded px-2 text-xs outline-none focus:border-[#5a8fff]"
+                <div class="ml-auto flex min-w-0 items-center gap-2">
+                  <span class="max-w-[11rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text)]">
+                    {responsePanelStatus}
+                  </span>
+                  <span
+                    class="max-w-[14rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted)]"
+                    title={responsePanelContentType}
                   >
-                    {#each HTTP_STATUS_CODES as status (status.code)}
-                      <option value={String(status.code)}>
-                        {status.code} {status.text}
-                      </option>
-                    {/each}
-                  </select>
+                    {responsePanelContentType}
+                  </span>
                 </div>
               </div>
 
               {#if responseViewTab === 'headers'}
                 <div class="space-y-3">
-                  {#if sendResult.headers.length > 0}
+                  {#if responsePanelHeaders.length > 0}
                     <div class="grid grid-cols-[220px_1fr] gap-0 overflow-hidden rounded border border-[var(--border)] text-xs">
-                      {#each sendResult.headers as header (`${header.key}-${header.value}`)}
+                      {#each responsePanelHeaders as header (`${header.key}-${header.value}`)}
                         <div class="contents">
-                          <div class="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono font-semibold text-[var(--text)]">{header.key}</div>
-                          <div class="break-all border-b border-[var(--border)] px-3 py-2 font-mono text-[var(--muted)]">{header.value}</div>
+                          <div class="border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono font-semibold text-[var(--text)]">{header.key ?? ''}</div>
+                          <div class="break-all border-b border-[var(--border)] px-3 py-2 font-mono text-[var(--muted)]">{header.value ?? ''}</div>
                         </div>
                       {/each}
                     </div>
@@ -652,74 +664,12 @@
                   {/if}
                 </div>
               {:else}
-                <div class="space-y-3">
-                  <div class="flex items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
-                    <span class="text-xs font-semibold text-[var(--muted)]">Content Type</span>
-                    <select
-                      value={responseContentType}
-                      on:change={handleResponseContentTypeChange}
-                      class="select-field min-w-[140px] rounded px-2 py-1 text-xs outline-none focus:border-[#5a8fff]"
-                    >
-                      {#each PAYLOAD_CONTENT_TYPE_OPTIONS as option (option.value)}
-                        <option value={option.value}>
-                          {option.label}
-                        </option>
-                      {/each}
-                    </select>
-                  </div>
-                  <PayloadViewer
-                    value={payloadBodyToString(sendResult.body)}
-                    contentType={responseContentType}
-                    emptyText="No response body."
-                  />
-                </div>
-              {/if}
-            </div>
-          {:else if responseExamples.length > 0}
-            <div class="space-y-3">
-              <div class="flex flex-wrap items-center gap-3 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
-                <div class="flex items-center gap-2 text-sm text-[var(--muted)]">
-                  <span class="font-semibold text-[var(--text)]">Example</span>
-                  <span class="text-[var(--muted)]">▼</span>
-                </div>
-                <select
-                  value={selectedResponseIndex}
-                  on:change={(event) => setSelectedResponseIndex(Number(selectValue(event)))}
-                  class="select-field min-w-[180px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
-                >
-                  {#each responseExamples as response, index (`${response.name ?? 'example'}-${index}`)}
-                    <option value={index}>
-                      {response.name ?? `Example ${index + 1}`} {response.status ? ` — ${response.status}` : ''}
-                    </option>
-                  {/each}
-                </select>
-                <select
-                  value={responseContentType}
-                  on:change={handleResponseContentTypeChange}
-                  class="select-field min-w-[120px] rounded px-3 py-2 text-sm outline-none focus:border-[#5a8fff]"
-                >
-                  {#each PAYLOAD_CONTENT_TYPE_OPTIONS as option (option.value)}
-                    <option value={option.value}>
-                      {option.label}
-                    </option>
-                  {/each}
-                </select>
-              </div>
-
-              <div class="space-y-2 rounded border border-[var(--border)] bg-[var(--panel)] p-4">
-                <div class="flex flex-wrap items-center gap-3 text-sm">
-                  <span class="font-semibold text-[var(--text)]">{selectedResponse?.name ?? 'Example'}</span>
-                  <span class="text-[var(--muted)]">{selectedResponse?.status ?? 'Imported response'}</span>
-                  {#if selectedResponse?.code}
-                    <span class="rounded bg-[var(--panel)] px-2 py-0.5 text-xs text-[var(--muted)]">{selectedResponse.code}</span>
-                  {/if}
-                </div>
                 <PayloadViewer
-                  value={selectedResponse?.body ?? ''}
+                  value={responsePanelBody}
                   contentType={responseContentType}
                   emptyText="No response body."
                 />
-              </div>
+              {/if}
             </div>
           {:else}
             <div class="flex h-full items-center justify-center text-sm text-[var(--muted)]">Response body will appear here.</div>
@@ -836,10 +786,11 @@
   .request-tab-overflow-trigger {
     position: relative;
     display: inline-flex;
-    width: 34px;
+    width: 38px;
     height: 26px;
-    flex: 0 0 34px;
+    flex: 0 0 38px;
     align-items: center;
+    gap: 2px;
     justify-content: center;
     align-self: center;
     border-radius: 0.25rem;
@@ -856,25 +807,15 @@
     outline: none;
   }
 
-  .request-tab-overflow-count {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    min-width: 14px;
-    height: 14px;
-    border-radius: 9999px;
-    background: #f26b3a;
-    color: #ffffff;
-    font-size: 9px;
-    font-weight: 700;
-    line-height: 14px;
-    text-align: center;
+  .request-tab-overflow-caret {
+    font-size: 0.625rem;
+    line-height: 1;
   }
 
   .request-tab-overflow-menu {
     position: absolute;
     top: 2.25rem;
-    right: 3.25rem;
+    right: 3.5rem;
     z-index: 65;
     display: grid;
     width: min(19rem, calc(100vw - 2rem));

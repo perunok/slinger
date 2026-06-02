@@ -9,7 +9,6 @@
     type HeaderDocument,
     type RequestDocument,
     type RequestParam,
-    type ResponseExample,
   } from '../lib/requestDocument'
   import type { ApiRequest, Collection } from '../tauri'
 
@@ -21,7 +20,6 @@
   export let methodDraft: string
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
-  export let responseExamples: ResponseExample[]
   export let scripts: string
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
@@ -46,19 +44,6 @@
   <div class="space-y-4 p-4 text-sm text-[var(--muted)]">
     <h2 class="text-lg font-semibold text-[var(--text)]">{selectedRequest?.name}</h2>
     <p class="max-w-3xl whitespace-pre-wrap text-[var(--muted)]">{description || 'No description'}</p>
-    {#if responseExamples.length > 0}
-      <div>
-        <h3 class="mb-2 font-semibold text-[var(--text)]">Examples</h3>
-        <div class="space-y-2">
-          {#each responseExamples as response, index (`${response.name}-${index}`)}
-            <div class="rounded border border-[var(--border)] bg-[var(--panel)] p-3">
-              <span class="font-semibold text-[var(--text)]">{response.name ?? 'Example'}</span>
-              <span class="ml-3 text-[var(--muted)]">{response.status ?? ''}</span>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
   </div>
 {:else if activeTab === 'Params'}
   <RequestTable rows={params} />

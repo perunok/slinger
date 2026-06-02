@@ -23,6 +23,7 @@ export type ResponseExample = {
   name?: string
   status?: string
   code?: number
+  header?: HeaderDocument[]
   body?: string
 }
 

@@ -38,7 +38,10 @@
   export let selectedCollectionId: string | null
   export let setSelectedCollectionId: (id: string | null) => void
   export let selectedRequestId: string | null
+  export let selectedResponseRequestId: string | null
+  export let selectedResponseIndex: number
   export let setSelectedRequestId: (id: string | null) => void
+  export let selectResponseExample: (requestId: string, responseIndex: number) => void
   export let openFolderIds: Set<string>
   export let toggleFolder: (folderId: string) => void
   export let handleRenameCollection: (collection: Collection) => Promise<void>
@@ -102,8 +105,11 @@
         {requestsByFolder}
         {selectedCollectionId}
         {selectedRequestId}
+        {selectedResponseRequestId}
+        {selectedResponseIndex}
         {setSelectedCollectionId}
         {setSelectedRequestId}
+        {selectResponseExample}
         {toggleFolder}
       />
     {/if}

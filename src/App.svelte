@@ -133,10 +133,10 @@
     : 'vertical'
   let theme: Theme = window.localStorage.getItem('slinger-theme') === 'light' ? 'light' : 'dark'
   let selectedResponseIndex = 0
+  let selectedResponseRequestId: string | null = null
   let responseViewTab: 'headers' | 'body' = 'body'
   let requestContentType: PayloadContentType = 'json'
   let responseContentType: PayloadContentType = 'json'
-  let responseStatusCode = '200'
 
   let collectionsLoadToken = 0
   let environmentsLoadToken = 0
@@ -159,7 +159,10 @@
   $: selectedDocument = parseDocument(selectedRequest)
   $: headers = requestHeaders(selectedDocument)
   $: responseExamples = requestResponses(selectedDocument)
-  $: selectedResponse = responseExamples[selectedResponseIndex] ?? responseExamples[0] ?? null
+  $: selectedResponse =
+    selectedResponseRequestId === selectedRequestId
+      ? responseExamples[selectedResponseIndex] ?? null
+      : null
   $: bodyFormat = formatPayload(bodyDraft, requestContentType)
   $: bodyIsValid = bodyFormat.ok && !/\{\{[^}]+\}\}/.test(bodyDraft)
   $: selectedSavedDocument = parseDocument(selectedSavedRequest)
@@ -184,6 +187,10 @@
   $: requestsByFolder = groupRequestsByFolder(requests)
   $: if (selectedResponseIndex >= responseExamples.length) {
     selectedResponseIndex = 0
+    selectedResponseRequestId = null
+  }
+  $: if (selectedResponseRequestId && selectedResponseRequestId !== selectedRequestId) {
+    selectedResponseRequestId = null
   }
   $: {
     window.localStorage.setItem('slinger-orientation', orientation)
@@ -206,9 +213,11 @@
         selectedEnvironmentId = null
         openRequestTabs = []
         selectedRequestId = null
+        selectedResponseRequestId = null
       } else {
         openRequestTabs = []
         selectedRequestId = null
+        selectedResponseRequestId = null
         void loadCollections(selectedWorkspaceId)
         void loadEnvironments(selectedWorkspaceId)
       }
@@ -387,6 +396,31 @@
       },
     ]
     selectedRequestId = request.id
+  }
+
+  function selectRequest(requestId: string | null) {
+    selectedResponseRequestId = null
+    selectOpenRequestTab(requestId)
+  }
+
+  function selectResponseExample(requestId: string, responseIndex: number) {
+    const request =
+      openRequestTabs.find((tab) => tab.request.id === requestId)?.request ??
+      requests.find((item) => item.id === requestId)
+    const response = requestResponses(parseDocument(request ?? null))[responseIndex]
+
+    if (!request || !response) return
+
+    selectOpenRequestTab(requestId)
+    selectedResponseRequestId = requestId
+    selectedResponseIndex = responseIndex
+    sendResult = null
+    sendError = null
+    responseViewTab = 'body'
+
+    const responseHeaders = Array.isArray(response.header) ? response.header : []
+    const detectedContentType = payloadContentTypeFromHeaders(responseHeaders)
+    responseContentType = detectedContentType ?? responseContentType
   }
 
   function updateSelectedRequestTab(request: ApiRequest, savedRequest?: ApiRequest | null) {
@@ -975,6 +1009,7 @@
     sending = true
     sendResult = null
     sendError = null
+    selectedResponseRequestId = null
 
     try {
       const resolvedUrl = resolveTemplate(urlDraft, environmentVariables)
@@ -1158,7 +1193,10 @@
           {selectedCollectionId}
           setSelectedCollectionId={(id) => (selectedCollectionId = id)}
           {selectedRequestId}
-          setSelectedRequestId={selectOpenRequestTab}
+          {selectedResponseRequestId}
+          {selectedResponseIndex}
+          setSelectedRequestId={selectRequest}
+          {selectResponseExample}
           {openFolderIds}
           {toggleFolder}
           {handleRenameCollection}
@@ -1191,8 +1229,6 @@
       {requestContentType}
       {resolvedUrlPreview}
       {responseContentType}
-      {responseExamples}
-      {responseStatusCode}
       {responseViewTab}
       {requestHasChanges}
       openRequestTabs={openRequestTabItems}
@@ -1202,7 +1238,6 @@
       {selectedRequest}
       {selectedRequestId}
       {selectedResponse}
-      {selectedResponseIndex}
       {sendError}
       {sendResult}
       {sending}
@@ -1210,11 +1245,8 @@
       setActiveTab={(tab) => (activeTab = tab)}
       setBodyDraft={setRequestBodyDraft}
       setRequestContentType={setRequestPayloadContentType}
-      setResponseContentType={(type) => (responseContentType = type)}
-      setResponseStatusCode={(code) => (responseStatusCode = code)}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
-      setSelectedResponseIndex={(index) => (selectedResponseIndex = index)}
-      setSelectedRequestId={selectOpenRequestTab}
+      setSelectedRequestId={selectRequest}
       setRequestMethod={setRequestMethod}
       {closeRequestTab}
       {closeAllRequestTabs}
