@@ -64,6 +64,7 @@
   export let activeTab: ActiveTab
   export let bodyDraft: string
   export let bodyIsValid: boolean
+  export let closeAllRequestTabs: () => void | Promise<void>
   export let closeRequestTab: (requestId: string) => void | Promise<void>
   export let description: string
   export let handleBeautifyBody: () => void
@@ -111,6 +112,7 @@
   let responseWidth = 420
   let isResizingResponse = false
   let responseSplitRef: HTMLDivElement
+  let tabContextMenu: { x: number; y: number } | null = null
 
   function payloadBodyToString(value: unknown): string {
     if (typeof value === 'string') return value
@@ -215,21 +217,52 @@
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
+  function openTabContextMenu(event: MouseEvent) {
+    if (openRequestTabs.length === 0) return
+
+    event.preventDefault()
+    tabContextMenu = {
+      x: event.clientX,
+      y: event.clientY,
+    }
+  }
+
+  function closeTabContextMenu() {
+    tabContextMenu = null
+  }
+
+  async function handleCloseAllTabs() {
+    closeTabContextMenu()
+    await closeAllRequestTabs()
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') closeTabContextMenu()
+  }
+
   onMount(() => {
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', stopResize)
     window.addEventListener('pointercancel', stopResize)
+    window.addEventListener('click', closeTabContextMenu)
+    window.addEventListener('keydown', handleWindowKeydown)
   })
 
   onDestroy(() => {
     window.removeEventListener('pointermove', handlePointerMove)
     window.removeEventListener('pointerup', stopResize)
     window.removeEventListener('pointercancel', stopResize)
+    window.removeEventListener('click', closeTabContextMenu)
+    window.removeEventListener('keydown', handleWindowKeydown)
   })
 </script>
 
 <section class="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
-  <div class="flex h-9 items-end gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-alt)] px-4">
+  <div
+    class="flex h-9 items-end gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-alt)] px-4"
+    role="presentation"
+    on:contextmenu={openTabContextMenu}
+  >
     {#each openRequestTabs as requestTab (requestTab.id)}
       <div
         class={`flex h-7 max-w-[280px] shrink-0 items-center gap-2 rounded-t pl-4 pr-2 text-left text-xs ${
@@ -267,6 +300,21 @@
       +
     </button>
   </div>
+  {#if tabContextMenu}
+    <div
+      class="request-tab-context-menu"
+      role="menu"
+      style={`left: ${tabContextMenu.x}px; top: ${tabContextMenu.y}px;`}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        on:click={handleCloseAllTabs}
+      >
+        Close all
+      </button>
+    </div>
+  {/if}
 
   {#if selectedRequest}
     <div class="flex min-h-0 flex-1 flex-col">
@@ -636,5 +684,34 @@
   .request-tab-close.dirty:focus-visible .request-tab-dot {
     opacity: 0;
     transform: scale(0.4);
+  }
+
+  .request-tab-context-menu {
+    position: fixed;
+    z-index: 70;
+    min-width: 8rem;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background: var(--bg-alt);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.32);
+    padding: 0.25rem;
+  }
+
+  .request-tab-context-menu button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    border-radius: 0.25rem;
+    padding: 0.45rem 0.6rem;
+    color: var(--text);
+    font-size: 0.8125rem;
+    text-align: left;
+  }
+
+  .request-tab-context-menu button:hover,
+  .request-tab-context-menu button:focus-visible {
+    background: var(--surface);
+    outline: none;
   }
 </style>

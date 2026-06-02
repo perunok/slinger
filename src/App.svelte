@@ -1068,6 +1068,45 @@
         null
     }
   }
+
+  async function closeAllRequestTabs() {
+    const tabsToClose = [...openRequestTabs]
+    const modifiedTabs = tabsToClose.filter(requestTabHasChanges)
+    const unmodifiedTabIds = new Set(
+      tabsToClose
+        .filter((tab) => !requestTabHasChanges(tab))
+        .map((tab) => tab.request.id),
+    )
+
+    if (unmodifiedTabIds.size > 0) {
+      const nextTabs = openRequestTabs.filter((tab) => !unmodifiedTabIds.has(tab.request.id))
+      openRequestTabs = nextTabs
+
+      if (selectedRequestId && unmodifiedTabIds.has(selectedRequestId)) {
+        selectedRequestId = nextTabs[0]?.request.id ?? null
+      }
+    }
+
+    for (const tab of modifiedTabs) {
+      const stillOpen = openRequestTabs.some((item) => item.request.id === tab.request.id)
+      if (!stillOpen) continue
+
+      const requestName = tab.request.name || 'this request'
+      const confirmed = await askForConfirmation({
+        message: `Discard unsaved changes to "${requestName}" and close the request tab?`,
+        confirmLabel: 'Close',
+        tone: 'danger',
+      })
+      if (!confirmed) return
+
+      const nextTabs = openRequestTabs.filter((item) => item.request.id !== tab.request.id)
+      openRequestTabs = nextTabs
+
+      if (selectedRequestId === tab.request.id) {
+        selectedRequestId = nextTabs[0]?.request.id ?? null
+      }
+    }
+  }
 </script>
 
 <main class="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
@@ -1178,6 +1217,7 @@
       setSelectedRequestId={selectOpenRequestTab}
       setRequestMethod={setRequestMethod}
       {closeRequestTab}
+      {closeAllRequestTabs}
       setEnvironmentVariable={setEnvironmentVariable}
       environmentVariables={environmentVariables}
       selectedEnvironmentId={selectedEnvironmentId}
