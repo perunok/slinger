@@ -60,6 +60,7 @@
   export let closeSelectedRequest: () => void | Promise<void>
   export let description: string
   export let handleBeautifyBody: () => void
+  export let handleCreateRequestDraft: () => void | Promise<void>
   export let handleSaveRequest: () => Promise<void>
   export let handleSend: () => Promise<void>
   export let headers: HeaderDocument[]
@@ -237,7 +238,14 @@
         </button>
       </div>
     {/if}
-    <button class="h-7 px-3 text-lg text-[var(--muted)]">+</button>
+    <button
+      class="h-7 px-3 text-lg text-[var(--muted)] hover:text-[var(--text)]"
+      type="button"
+      title="New request"
+      on:click={handleCreateRequestDraft}
+    >
+      +
+    </button>
   </div>
 
   {#if selectedRequest}

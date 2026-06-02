@@ -34,6 +34,7 @@ export type ScriptEvent = {
 }
 
 export type RequestDocument = {
+  name?: string
   method?: string
   url?: string
   description?: string | null

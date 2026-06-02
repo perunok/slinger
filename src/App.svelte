@@ -3,6 +3,7 @@
   import Header from './components/Header.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
+  import SaveRequestDialog from './components/SaveRequestDialog.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Toolbar from './components/Toolbar.svelte'
   import Toast from './components/Toast.svelte'
@@ -36,6 +37,7 @@
     type EnvironmentVariable,
     type HttpResponseData,
     type Workspace,
+    createRequest,
     createCollection,
     createEnvironment,
     createWorkspace,
@@ -65,6 +67,15 @@
     tone: ConfirmationTone
     resolve: (confirmed: boolean) => void
   }
+  type SaveRequestTarget = {
+    name: string
+    collectionId: string
+  }
+  type SaveRequestDialogRequest = {
+    requestName: string
+    selectedCollectionId: string | null
+    resolve: (target: SaveRequestTarget | null) => void
+  }
   const REQUEST_CONTENT_TYPE_HEADER: Record<PayloadContentType, string> = {
     json: 'application/json',
     xml: 'application/xml',
@@ -77,6 +88,7 @@
   let collections: Collection[] = []
   let folders: ApiFolder[] = []
   let requests: ApiRequest[] = []
+  let draftRequest: ApiRequest | null = null
   let environments: Environment[] = []
   let environmentVariables: EnvironmentVariable[] = []
   let selectedWorkspaceId: string | null = null
@@ -103,6 +115,7 @@
   let sidebarResizing = false
   let loadingRequests = false
   let confirmation: ConfirmationRequest | null = null
+  let saveRequestDialog: SaveRequestDialogRequest | null = null
   let error: string | null = null
   let notice: string | null = null
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
@@ -126,7 +139,9 @@
 
   $: selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null
   $: selectedCollection = collections.find((collection) => collection.id === selectedCollectionId) ?? null
-  $: selectedRequest = requests.find((request) => request.id === selectedRequestId) ?? null
+  $: selectedStoredRequest = requests.find((request) => request.id === selectedRequestId) ?? null
+  $: isDraftRequest = Boolean(draftRequest && draftRequest.id === selectedRequestId)
+  $: selectedRequest = isDraftRequest ? draftRequest : selectedStoredRequest
   $: selectedDocument = parseDocument(selectedRequest)
   $: headers = requestHeaders(selectedDocument)
   $: responseExamples = requestResponses(selectedDocument)
@@ -138,7 +153,8 @@
   $: savedRequestMethod = selectedDocument.method ?? selectedRequest?.method ?? ''
   $: requestHasChanges = Boolean(
     selectedRequest &&
-      (urlDraft !== selectedRequest.url ||
+      (isDraftRequest ||
+        urlDraft !== selectedRequest.url ||
         bodyDraft !== savedRequestBody ||
         requestContentType !== savedRequestContentType ||
         methodDraft !== savedRequestMethod),
@@ -217,7 +233,7 @@
       requestContentType = payloadContentTypeFromHeaders(requestHeaders(currentDocument)) ?? 'json'
       sendResult = null
       sendError = null
-      activeTab = rawBody ? 'Body' : 'Docs'
+      activeTab = isDraftRequest || rawBody ? 'Body' : 'Docs'
     }
   }
 
@@ -275,6 +291,29 @@
     const current = confirmation
     confirmation = null
     current.resolve(confirmed)
+  }
+
+  function askForRequestSaveTarget(options: {
+    requestName: string
+    selectedCollectionId: string | null
+  }): Promise<SaveRequestTarget | null> {
+    saveRequestDialog?.resolve(null)
+
+    return new Promise((resolve) => {
+      saveRequestDialog = {
+        requestName: options.requestName,
+        selectedCollectionId: options.selectedCollectionId,
+        resolve,
+      }
+    })
+  }
+
+  function finishRequestSaveDialog(target: SaveRequestTarget | null) {
+    if (!saveRequestDialog) return
+
+    const current = saveRequestDialog
+    saveRequestDialog = null
+    current.resolve(target)
   }
 
   async function loadWorkspaces() {
@@ -364,9 +403,11 @@
       requests = requestItems
       openFolderIds = new Set(folderItems.map((folder) => folder.id))
       selectedRequestId =
-        selectedRequestId && requestItems.some((request) => request.id === selectedRequestId)
+        draftRequest?.id === selectedRequestId
           ? selectedRequestId
-          : requestItems[0]?.id ?? null
+          : selectedRequestId && requestItems.some((request) => request.id === selectedRequestId)
+            ? selectedRequestId
+            : requestItems[0]?.id ?? null
       error = null
     } catch (err) {
       console.error(err)
@@ -557,6 +598,64 @@
     variableValue = variable.value
   }
 
+  function createClientId(): string {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID()
+    }
+
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }
+
+  function createInitialRequestDocument(name: string): RequestDocument {
+    return {
+      name,
+      method: 'GET',
+      url: '',
+      headers: [],
+      body: {
+        mode: 'raw',
+        raw: '',
+      },
+      auth: null,
+      scripts: [],
+      responses: [],
+    }
+  }
+
+  async function handleCreateRequestDraft() {
+    if (!selectedWorkspaceId) {
+      error = 'Select a workspace before creating a request.'
+      return
+    }
+
+    if (requestHasChanges) {
+      const requestName = selectedRequest?.name ?? 'this request'
+      const confirmed = await askForConfirmation({
+        message: `Discard unsaved changes to "${requestName}" and create a new request?`,
+        confirmLabel: 'Discard',
+        tone: 'danger',
+      })
+      if (!confirmed) return
+    }
+
+    const id = `draft-${createClientId()}`
+    const name = 'Untitled Request'
+    const document = createInitialRequestDocument(name)
+    draftRequest = {
+      id,
+      workspace_id: selectedWorkspaceId,
+      collection_id: selectedCollectionId ?? '',
+      folder_id: null,
+      name,
+      method: 'GET',
+      url: '',
+      document_json: JSON.stringify(document),
+      created_at: Math.floor(Date.now() / 1000),
+    }
+    selectedRequestId = id
+    error = null
+  }
+
   function setRequestMethod(method: string) {
     methodDraft = method
   }
@@ -581,9 +680,10 @@
     )
   }
 
-  function savedRequestDocument(): RequestDocument {
+  function savedRequestDocument(name = selectedRequest?.name ?? 'Untitled Request'): RequestDocument {
     return {
       ...selectedDocument,
+      name,
       method: methodDraft,
       url: urlDraft,
       headers: headersWithContentType(headers, requestContentType),
@@ -598,10 +698,56 @@
   async function handleSaveRequest() {
     if (!selectedRequest || !requestHasChanges || savingRequest) return
 
+    if (isDraftRequest) {
+      const target = await askForRequestSaveTarget({
+        requestName: selectedRequest.name || 'Untitled Request',
+        selectedCollectionId: selectedCollectionId ?? collections[0]?.id ?? null,
+      })
+      if (!target) return
+
+      const collection = collections.find((item) => item.id === target.collectionId)
+      if (!collection) {
+        error = 'Select a collection to save this request.'
+        return
+      }
+
+      savingRequest = true
+
+      try {
+        const document = savedRequestDocument(target.name)
+        const created = await createRequest({
+          workspaceId: collection.workspace_id,
+          collectionId: target.collectionId,
+          name: target.name,
+          method: methodDraft,
+          url: urlDraft,
+          documentJson: JSON.stringify(document),
+        })
+        const savedInCurrentCollection = selectedCollectionId === created.collection_id
+
+        draftRequest = null
+        selectedRequestId = created.id
+        if (savedInCurrentCollection) {
+          requests = [...requests, created]
+        } else {
+          selectedCollectionId = created.collection_id
+        }
+        notice = `Saved "${created.name}".`
+        error = null
+      } catch (err) {
+        console.error(err)
+        error = 'Unable to save request.'
+      } finally {
+        savingRequest = false
+      }
+
+      return
+    }
+
     savingRequest = true
 
     try {
-      const document = savedRequestDocument()
+      const document = savedRequestDocument(selectedRequest.name)
       const updated = await updateRequest({
         requestId: selectedRequest.id,
         method: methodDraft,
@@ -728,6 +874,9 @@
       if (!confirmed) return
     }
 
+    if (isDraftRequest) {
+      draftRequest = null
+    }
     selectedRequestId = null
   }
 </script>
@@ -804,6 +953,7 @@
       {bodyIsValid}
       {description}
       {handleBeautifyBody}
+      {handleCreateRequestDraft}
       {handleSend}
       {handleSaveRequest}
       {headers}
@@ -851,6 +1001,16 @@
       tone={confirmation.tone}
       on:confirm={() => finishConfirmation(true)}
       on:cancel={() => finishConfirmation(false)}
+    />
+  {/if}
+
+  {#if saveRequestDialog}
+    <SaveRequestDialog
+      {collections}
+      requestName={saveRequestDialog.requestName}
+      selectedCollectionId={saveRequestDialog.selectedCollectionId}
+      on:save={(event) => finishRequestSaveDialog(event.detail)}
+      on:cancel={() => finishRequestSaveDialog(null)}
     />
   {/if}
 

@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiFolder, ApiRequest, Collection, Environment, EnvironmentVariable, PostmanImportResult,
-    UpdateRequestInput, Workspace,
+    ApiFolder, ApiRequest, Collection, CreateRequestInput, Environment, EnvironmentVariable,
+    PostmanImportResult, UpdateRequestInput, Workspace,
 };
 
 fn now_unix_seconds() -> i64 {
@@ -501,6 +501,50 @@ pub async fn list_requests(pool: &SqlitePool, collection_id: String) -> Result<V
     .await?)
 }
 
+pub async fn create_request(pool: &SqlitePool, input: CreateRequestInput) -> Result<ApiRequest> {
+    let workspace_id = Uuid::parse_str(&input.workspace_id)?.to_string();
+    let collection_id = Uuid::parse_str(&input.collection_id)?.to_string();
+    let name = input.name.trim().to_string();
+    let method = input.method.trim().to_uppercase();
+
+    if name.is_empty() {
+        bail!("request name is required");
+    }
+
+    if method.is_empty() {
+        bail!("request method is required");
+    }
+
+    let document: Value = serde_json::from_str(&input.document_json)?;
+    let collection_exists: (i64,) = query_as(
+        r#"
+        SELECT COUNT(*)
+        FROM collections
+        WHERE id = ? AND workspace_id = ?
+        "#,
+    )
+    .bind(&collection_id)
+    .bind(&workspace_id)
+    .fetch_one(pool)
+    .await?;
+
+    if collection_exists.0 == 0 {
+        bail!("collection not found");
+    }
+
+    insert_request(
+        pool,
+        &workspace_id,
+        &collection_id,
+        None,
+        name,
+        method,
+        input.url,
+        document,
+    )
+    .await
+}
+
 pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Result<ApiRequest> {
     let request_id = Uuid::parse_str(&input.request_id)?.to_string();
     let method = input.method.trim().to_uppercase();
@@ -917,6 +961,56 @@ mod tests {
             stored_requests[0].folder_id,
             Some(stored_folders[1].id.clone())
         );
+
+        pool.close().await;
+        let _ = tokio::fs::remove_file(database_path).await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn creates_request_in_collection() -> Result<()> {
+        let database_path =
+            std::env::temp_dir().join(format!("slinger-request-{}.db", Uuid::now_v7()));
+        let database_path = database_path.to_string_lossy().into_owned();
+        let pool = init_database(&database_path).await?;
+        let workspace = create_workspace(&pool, "Request Test".to_string()).await?;
+        let collection = create_collection(
+            &pool,
+            workspace.id.to_string(),
+            "Saved Requests".to_string(),
+        )
+        .await?;
+        let document = json!({
+            "name": "Ping",
+            "method": "POST",
+            "url": "https://example.test/ping",
+            "headers": [],
+            "body": { "mode": "raw", "raw": "{\"ok\":true}" },
+            "auth": null,
+            "scripts": [],
+            "responses": []
+        });
+
+        let request = create_request(
+            &pool,
+            CreateRequestInput {
+                workspace_id: workspace.id.to_string(),
+                collection_id: collection.id.to_string(),
+                name: "Ping".to_string(),
+                method: "post".to_string(),
+                url: "https://example.test/ping".to_string(),
+                document_json: document.to_string(),
+            },
+        )
+        .await?;
+        let stored_requests = list_requests(&pool, collection.id.to_string()).await?;
+
+        assert_eq!(request.name, "Ping");
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.collection_id, collection.id);
+        assert_eq!(stored_requests.len(), 1);
+        assert_eq!(stored_requests[0].id, request.id);
 
         pool.close().await;
         let _ = tokio::fs::remove_file(database_path).await;

@@ -94,3 +94,14 @@ pub struct UpdateRequestInput {
     pub url: String,
     pub document_json: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRequestInput {
+    pub workspace_id: String,
+    pub collection_id: String,
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    pub document_json: String,
+}

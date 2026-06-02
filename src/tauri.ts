@@ -82,6 +82,15 @@ export type UpdateRequestInput = {
   documentJson: string
 }
 
+export type CreateRequestInput = {
+  workspaceId: string
+  collectionId: string
+  name: string
+  method: string
+  url: string
+  documentJson: string
+}
+
 type StoredData = {
   workspaces: Workspace[]
   collections: Collection[]
@@ -540,6 +549,40 @@ export async function getFolders(collectionId: string): Promise<ApiFolder[]> {
 export async function getRequests(collectionId: string): Promise<ApiRequest[]> {
   if (isTauriRuntime) return invokeTauri('list_requests', { collectionId })
   return readStore().requests.filter((request) => request.collection_id === collectionId)
+}
+
+export async function createRequest(input: CreateRequestInput): Promise<ApiRequest> {
+  if (isTauriRuntime) return invokeTauri('create_request', { input })
+
+  const data = readStore()
+  const workspace = data.workspaces.find((item) => item.id === input.workspaceId)
+  if (!workspace) throw new Error('workspace not found')
+
+  const collection = data.collections.find(
+    (item) => item.id === input.collectionId && item.workspace_id === input.workspaceId,
+  )
+  if (!collection) throw new Error('collection not found')
+
+  JSON.parse(input.documentJson)
+
+  const request = {
+    id: createId(),
+    workspace_id: input.workspaceId,
+    collection_id: input.collectionId,
+    folder_id: null,
+    name: requireName(input.name, 'request'),
+    method: input.method.trim().toUpperCase() || 'GET',
+    url: input.url,
+    document_json: input.documentJson,
+    created_at: nowUnixSeconds(),
+  }
+
+  writeStore({
+    ...data,
+    requests: [...data.requests, request],
+  })
+
+  return request
 }
 
 export async function updateRequest(input: UpdateRequestInput): Promise<ApiRequest> {
