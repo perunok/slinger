@@ -143,6 +143,14 @@
     return header?.value?.trim() || null
   }
 
+  function formatResponseDuration(durationMs: number | null | undefined): string {
+    if (durationMs === null || durationMs === undefined) return ''
+    if (durationMs < 1000) return `${Math.round(durationMs)} ms`
+
+    const seconds = durationMs / 1000
+    return `${seconds.toFixed(seconds < 10 ? 2 : 1).replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1')} s`
+  }
+
   let urlParts: TemplatePart[] = []
   let hoveredEnvKey: string | null = null
   let hoveredEnvValue = ''
@@ -323,6 +331,7 @@
     PAYLOAD_CONTENT_TYPE_OPTIONS.find((option) => option.value === responseContentType)?.label ??
     responseContentType.toUpperCase()
   $: responsePanelContentType = contentTypeHeaderValue(responsePanelHeaders) ?? responseContentTypeLabel
+  $: responsePanelDuration = formatResponseDuration(sendResult?.duration_ms)
   $: hasResponsePanel = Boolean(sendResult || selectedResponse)
   $: if (overflowRequestTabs.length === 0) {
     overflowMenuOpen = false
@@ -690,6 +699,11 @@
                 <span class="max-w-[11rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--text)]">
                   {responsePanelStatus}
                 </span>
+                {#if responsePanelDuration}
+                  <span class="shrink-0 rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted)]">
+                    {responsePanelDuration}
+                  </span>
+                {/if}
                 <span
                   class="max-w-[14rem] truncate rounded bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted)]"
                   title={responsePanelContentType}
