@@ -1396,20 +1396,21 @@
     selectedResponseRequestId = null
 
     try {
-      const resolvedUrl = resolveTemplate(urlDraft, environmentVariables)
-      const resolvedBody = resolveTemplate(bodyDraft, environmentVariables)
+      const requestStartedAt = new Date()
+      const resolvedUrl = resolveTemplate(urlDraft, environmentVariables, requestStartedAt)
+      const resolvedBody = resolveTemplate(bodyDraft, environmentVariables, requestStartedAt)
       const resolvedManualHeaders = headers
         .filter((header) => !header.disabled && header.key?.trim())
         .map((header) => ({
-          key: resolveTemplate(header.key?.trim() ?? '', environmentVariables),
-          value: resolveTemplate(header.value ?? '', environmentVariables),
+          key: resolveTemplate(header.key?.trim() ?? '', environmentVariables, requestStartedAt),
+          value: resolveTemplate(header.value ?? '', environmentVariables, requestStartedAt),
         }))
       const resolvedAuthValues = requestAuthTemplateValues(selectedDocument.auth).map((value) =>
-        resolveTemplate(value, environmentVariables),
+        resolveTemplate(value, environmentVariables, requestStartedAt),
       )
       const authParts = requestAuthParts(
         selectedDocument.auth,
-        (value) => resolveTemplate(value, environmentVariables),
+        (value) => resolveTemplate(value, environmentVariables, requestStartedAt),
         encodeBase64,
       )
       const resolvedUrlWithAuth = appendQueryParams(resolvedUrl, authParts.queryParams)

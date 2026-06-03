@@ -147,6 +147,7 @@
   let hoveredEnvKey: string | null = null
   let hoveredEnvValue = ''
   let hoveredEnvResolved = false
+  let hoveredVariableSource: TemplatePart['source'] | null = null
   let hoverPopupTimeout: ReturnType<typeof setTimeout> | null = null
 
   function clearHoverPopupTimeout() {
@@ -156,10 +157,27 @@
     }
   }
 
+  function variablePartStyle(part: TemplatePart): string {
+    const color =
+      part.source === 'builtin'
+        ? 'var(--variable-builtin)'
+        : part.resolved
+          ? 'var(--variable-env)'
+          : 'var(--variable-unresolved)'
+
+    return `color: ${color}; pointer-events: auto; position: relative; z-index: 10;`
+  }
+
+  function variablePartTitle(part: TemplatePart): string {
+    if (part.source === 'builtin') return `Built-in value: ${part.value ?? ''}`
+    return part.resolved ? `Resolved value: ${part.value ?? ''}` : `Unresolved variable: ${part.key}`
+  }
+
   function scheduleHoverPopupHide() {
     clearHoverPopupTimeout()
     hoverPopupTimeout = setTimeout(() => {
       hoveredEnvKey = null
+      hoveredVariableSource = null
     }, 120)
   }
 
@@ -169,6 +187,7 @@
     hoveredEnvKey = part.key
     hoveredEnvValue = part.value ?? ''
     hoveredEnvResolved = part.resolved
+    hoveredVariableSource = part.source ?? null
   }
 
   function handleVariableMouseLeave() {
@@ -184,7 +203,7 @@
   }
 
   async function saveHoveredEnv() {
-    if (!hoveredEnvKey) return
+    if (!hoveredEnvKey || hoveredVariableSource === 'builtin') return
     await setEnvironmentVariable(hoveredEnvKey, hoveredEnvValue)
   }
 
@@ -474,8 +493,8 @@
                     role="button"
                     tabindex="0"
                     class="inline-block"
-                    style={part.resolved ? 'color: #60a5fa; pointer-events: auto; position: relative; z-index: 10;' : 'color: #f87171; pointer-events: auto; position: relative; z-index: 10;'}
-                    title={part.resolved ? `Resolved value: ${part.value ?? ''}` : `Unresolved variable: ${part.key}`}
+                    style={variablePartStyle(part)}
+                    title={variablePartTitle(part)}
                     on:mouseover={() => handleVariableMouseEnter(part)}
                     on:mouseout={handleVariableMouseLeave}
                     on:focus={() => handleVariableMouseEnter(part)}
@@ -500,15 +519,22 @@
                   on:mouseenter={handlePopupMouseEnter}
                   on:mouseleave={handlePopupMouseLeave}
                 >
-                  <input
-                    class="rounded border border-[var(--input-border)] bg-[var(--input)] px-2 py-2 text-sm text-[var(--text)] outline-none"
-                    style="min-width: 180px; width: min-content; max-width: calc(100vw - 3rem);"
-                    bind:value={hoveredEnvValue}
-                    placeholder={selectedEnvironmentId ? 'Enter value' : 'Select an environment first'}
-                    disabled={!selectedEnvironmentId}
-                    on:blur={saveHoveredEnv}
-                    on:keydown={(event) => event.key === 'Enter' && saveHoveredEnv()}
-                  />
+                  {#if hoveredVariableSource === 'builtin'}
+                    <div class="grid min-w-[180px] gap-1">
+                      <div class="font-mono text-xs" style="color: var(--variable-builtin);">{'{{'}{hoveredEnvKey}{'}}'}</div>
+                      <div class="break-all text-xs text-[var(--muted)]">{hoveredEnvValue}</div>
+                    </div>
+                  {:else}
+                    <input
+                      class="rounded border border-[var(--input-border)] bg-[var(--input)] px-2 py-2 text-sm text-[var(--text)] outline-none"
+                      style="min-width: 180px; width: min-content; max-width: calc(100vw - 3rem);"
+                      bind:value={hoveredEnvValue}
+                      placeholder={selectedEnvironmentId ? 'Enter value' : 'Select an environment first'}
+                      disabled={!selectedEnvironmentId}
+                      on:blur={saveHoveredEnv}
+                      on:keydown={(event) => event.key === 'Enter' && saveHoveredEnv()}
+                    />
+                  {/if}
                 </div>
               </div>
             {/if}

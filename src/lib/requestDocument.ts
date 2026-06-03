@@ -1,5 +1,10 @@
 import type { ApiRequest, EnvironmentVariable } from '../tauri'
 import {
+  isBuiltinVariable,
+  previewBuiltinVariable,
+  resolveBuiltinVariable,
+} from './builtinVariables'
+import {
   type PayloadContentType,
   normalizePayloadContentType,
 } from './payloadFormatters'
@@ -154,13 +159,16 @@ export type TemplatePart = {
   text: string
   key?: string
   resolved: boolean
+  source?: 'environment' | 'builtin' | 'unresolved'
   value?: string
 }
 
-export function resolveTemplate(value: string, variables: EnvironmentVariable[]): string {
+export function resolveTemplate(value: string, variables: EnvironmentVariable[], now = new Date()): string {
   return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
     const variable = variables.find((item) => item.key === key)
-    return variable ? variable.value : match
+    if (variable) return variable.value
+
+    return resolveBuiltinVariable(key, now) ?? match
   })
 }
 
@@ -178,11 +186,13 @@ export function resolveTemplateParts(value: string, variables: EnvironmentVariab
     }
 
     const variable = variables.find((item) => item.key === key)
+    const builtinValue = variable ? null : previewBuiltinVariable(key)
     parts.push({
       text: raw,
       key,
-      resolved: Boolean(variable),
-      value: variable?.value,
+      resolved: Boolean(variable || builtinValue !== null),
+      source: variable ? 'environment' : builtinValue !== null ? 'builtin' : 'unresolved',
+      value: variable?.value ?? builtinValue ?? undefined,
     })
 
     lastIndex = index + raw.length
@@ -200,7 +210,7 @@ export function unresolvedVariables(values: string[]): string[] {
 
   for (const value of values) {
     for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
-      names.add(match[1])
+      if (!isBuiltinVariable(match[1])) names.add(match[1])
     }
   }
 

@@ -22,6 +22,9 @@
   --syntax-punctuation: #b8b8b8;
   --line-number: #777777;
   --line-number-border: #343434;
+  --variable-env: #60a5fa;
+  --variable-builtin: #c084fc;
+  --variable-unresolved: #f87171;
 }
 
 :root[data-theme='light'] {
@@ -44,6 +47,13 @@
   --syntax-punctuation: #57606a;
   --line-number: #64748b;
   --line-number-border: #d7dde6;
+  --variable-env: #2563eb;
+  --variable-builtin: #9333ea;
+  --variable-unresolved: #dc2626;
+}
+
+::highlight(slinger-builtin-variable) {
+  color: var(--variable-builtin);
 }
 
 body {
