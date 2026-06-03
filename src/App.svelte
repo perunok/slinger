@@ -126,7 +126,7 @@
     method: string
     hasChanges: boolean
   }
-  type UtilityTab = 'copy-request'
+  type UtilityTab = 'copy-request' | 'environment'
   type CopyFormat = 'curl'
   type BuiltRequest = {
     method: string
@@ -1068,6 +1068,12 @@
     variableValue = variable.value
   }
 
+  function selectEnvironmentFromSidebar(id: string | null) {
+    selectedEnvironmentId = id
+    rightUtilityTab = 'environment'
+    rightSidebarOpen = true
+  }
+
   function createClientId(): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
       return crypto.randomUUID()
@@ -1690,18 +1696,7 @@
           {selectedWorkspace}
           {environments}
           {selectedEnvironmentId}
-          setSelectedEnvironmentId={(id) => (selectedEnvironmentId = id)}
-          {environmentName}
-          setEnvironmentName={(value) => (environmentName = value)}
-          {handleCreateEnvironment}
-          {environmentVariables}
-          {variableKey}
-          setVariableKey={(value) => (variableKey = value)}
-          {variableValue}
-          setVariableValue={(value) => (variableValue = value)}
-          {handleSaveVariable}
-          {handleEditVariable}
-          {handleDeleteVariable}
+          setSelectedEnvironmentId={selectEnvironmentFromSidebar}
           {isTauriRuntime}
           {error}
           {loadingCollections}
@@ -1792,6 +1787,21 @@
       curlCommand={copyRequestCurl}
       missingVariables={copyRequestMissingVariables}
       {copyBuiltRequest}
+      {selectedWorkspace}
+      {environments}
+      {selectedEnvironmentId}
+      setSelectedEnvironmentId={(id) => (selectedEnvironmentId = id)}
+      {environmentName}
+      setEnvironmentName={(value) => (environmentName = value)}
+      {handleCreateEnvironment}
+      {environmentVariables}
+      {variableKey}
+      setVariableKey={(value) => (variableKey = value)}
+      {variableValue}
+      setVariableValue={(value) => (variableValue = value)}
+      {handleSaveVariable}
+      {handleEditVariable}
+      {handleDeleteVariable}
     />
   </div>
 

@@ -5,7 +5,6 @@
     ApiRequest,
     Collection,
     Environment,
-    EnvironmentVariable,
     Workspace,
   } from '../tauri'
 
@@ -17,17 +16,6 @@
   export let environments: Environment[]
   export let selectedEnvironmentId: string | null
   export let setSelectedEnvironmentId: (id: string | null) => void
-  export let environmentName: string
-  export let setEnvironmentName: (value: string) => void
-  export let handleCreateEnvironment: (event: SubmitEvent) => Promise<void>
-  export let environmentVariables: EnvironmentVariable[]
-  export let variableKey: string
-  export let setVariableKey: (value: string) => void
-  export let variableValue: string
-  export let setVariableValue: (value: string) => void
-  export let handleSaveVariable: (event: SubmitEvent) => Promise<void>
-  export let handleEditVariable: (variable: EnvironmentVariable) => void
-  export let handleDeleteVariable: (variable: EnvironmentVariable) => Promise<void>
   export let isTauriRuntime: boolean
   export let error: string | null
   export let loadingCollections: boolean
@@ -51,13 +39,12 @@
   let environmentsExpanded = true
   let importInputRef: HTMLInputElement
 
+  $: environmentCountLabel = `${environments.length} ${environments.length === 1 ? 'env' : 'envs'}`
+
   function inputValue(event: Event): string {
     return (event.currentTarget as HTMLInputElement).value
   }
 
-  function selectValue(event: Event): string {
-    return (event.currentTarget as HTMLSelectElement).value
-  }
 </script>
 
 <aside class="flex shrink-0 flex-col min-h-0 h-full border-r border-[var(--border)] bg-[var(--bg-alt)]" style="width: 100%;">
@@ -129,88 +116,35 @@
           <span>Environments</span>
         </div>
         <span class="text-[10px] font-medium text-[var(--muted)]">
-          {environmentVariables.length} vars
+          {environmentCountLabel}
         </span>
       </button>
 
       {#if environmentsExpanded}
-        <div class="px-3 pb-3">
-          <select
-            value={selectedEnvironmentId ?? ''}
-            on:change={(event) => setSelectedEnvironmentId(selectValue(event) || null)}
-            class="select-field mt-3 h-8 w-full rounded px-2 text-sm outline-none"
-            disabled={!selectedWorkspace || environments.length === 0}
-          >
-            {#each environments as environment (environment.id)}
-              <option value={environment.id}>
-                {environment.name}
-              </option>
-            {/each}
-          </select>
-
-          <form class="mt-2 flex gap-2" on:submit={handleCreateEnvironment}>
-            <input
-              value={environmentName}
-              on:input={(event) => setEnvironmentName(inputValue(event))}
-              placeholder="New environment"
-              class="h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-              disabled={!selectedWorkspace}
-            />
-            <button class="secondary-button h-8" disabled={!environmentName.trim() || !selectedWorkspace}>
-              Add
-            </button>
-          </form>
-
-          <form class="mt-3 space-y-2" on:submit={handleSaveVariable}>
-            <div class="grid grid-cols-2 gap-2">
-              <input
-                value={variableKey}
-                on:input={(event) => setVariableKey(inputValue(event))}
-                placeholder="key"
-                class="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                disabled={!selectedEnvironmentId}
-              />
-              <input
-                value={variableValue}
-                on:input={(event) => setVariableValue(inputValue(event))}
-                placeholder="value"
-                class="h-8 rounded border border-[var(--input-border)] bg-[var(--input)] px-2 text-xs text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-                disabled={!selectedEnvironmentId}
-              />
-            </div>
-            <button class="secondary-button h-8 w-full" disabled={!selectedEnvironmentId || !variableKey.trim()}>
-              Save Variable
-            </button>
-          </form>
-
-          <div class="mt-3 max-h-40 space-y-1 overflow-auto">
-            {#if environmentVariables.length === 0}
-              <p class="text-xs font-normal normal-case text-[var(--muted)]">
-                Add `thub_url` to resolve {'{{thub_url}}'}.
-              </p>
-            {:else}
-              {#each environmentVariables as variable (variable.id)}
-                <div class="group flex items-center gap-2 rounded bg-[var(--panel)] px-2 py-1 text-xs">
-                  <button
-                    class="min-w-0 flex-1 text-left"
-                    on:click={() => handleEditVariable(variable)}
-                    type="button"
-                    title="Edit variable"
-                  >
-                    <span class="font-mono text-[var(--text)]">{`{{${variable.key}}}`}</span>
-                    <span class="ml-2 font-normal text-[var(--muted)]">{variable.value}</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="text-[var(--muted)] opacity-0 group-hover:opacity-100"
-                    on:click={() => handleDeleteVariable(variable)}
-                  >
-                    Delete
-                  </button>
-                </div>
+        <div class="px-2 py-2">
+          {#if !selectedWorkspace}
+            <p class="px-2 py-2 text-xs text-[var(--muted)]">Select a workspace first.</p>
+          {:else if environments.length === 0}
+            <p class="px-2 py-2 text-xs text-[var(--muted)]">No environments available.</p>
+          {:else}
+            <div class="max-h-48 space-y-1 overflow-auto">
+              {#each environments as environment (environment.id)}
+                <button
+                  type="button"
+                  class={`flex h-8 w-full items-center gap-2 rounded px-2 text-left text-sm ${
+                    environment.id === selectedEnvironmentId
+                      ? 'bg-[var(--surface)] text-[var(--text)]'
+                      : 'text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
+                  }`}
+                  title={environment.name}
+                  aria-pressed={environment.id === selectedEnvironmentId}
+                  on:click={() => setSelectedEnvironmentId(environment.id)}
+                >
+                  <span class="min-w-0 flex-1 truncate">{environment.name}</span>
+                </button>
               {/each}
-            {/if}
-          </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
