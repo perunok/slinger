@@ -210,6 +210,7 @@
         urlDraft !== selectedSavedRequest.url ||
         bodyDraft !== savedRequestBody ||
         requestContentType !== savedRequestContentType ||
+        !headersAreEqual(headers, requestHeaders(selectedSavedDocument)) ||
         methodDraft !== savedRequestMethod),
   )
   $: openRequestTabItems = openRequestTabs.map(tabStateToItem)
@@ -417,6 +418,18 @@
     current.resolve(value)
   }
 
+  function comparableHeaders(headers: HeaderDocument[]) {
+    return headers.map((header) => ({
+      key: header.key ?? '',
+      value: header.value ?? '',
+      disabled: Boolean(header.disabled),
+    }))
+  }
+
+  function headersAreEqual(left: HeaderDocument[], right: HeaderDocument[]): boolean {
+    return JSON.stringify(comparableHeaders(left)) === JSON.stringify(comparableHeaders(right))
+  }
+
   function requestTabHasChanges(tab: RequestTabState): boolean {
     const savedRequest = tab.savedRequest
     if (!savedRequest) return true
@@ -434,6 +447,7 @@
       tab.request.url !== savedRequest.url ||
       draftBody !== savedBody ||
       draftContentType !== savedContentType ||
+      !headersAreEqual(requestHeaders(draftDocument), requestHeaders(savedDocument)) ||
       draftMethod !== savedMethod
     )
   }
@@ -514,6 +528,7 @@
       url: string
       body: string
       contentType: PayloadContentType
+      headers?: HeaderDocument[]
       name?: string
     },
   ): RequestDocument {
@@ -524,7 +539,7 @@
       name: values.name ?? document.name ?? request.name,
       method: values.method,
       url: values.url,
-      headers: headersWithContentType(requestHeaders(document), values.contentType),
+      headers: values.headers ?? headersWithContentType(requestHeaders(document), values.contentType),
       body: {
         ...(document.body ?? {}),
         mode: document.body?.mode ?? 'raw',
@@ -538,6 +553,7 @@
     url?: string
     body?: string
     contentType?: PayloadContentType
+    headers?: HeaderDocument[]
     name?: string
   }) {
     if (!selectedRequest) return
@@ -552,6 +568,7 @@
       url: nextUrl,
       body: nextBody,
       contentType: nextContentType,
+      headers: values.headers,
       name: nextName,
     })
     const nextRequest = {
@@ -1059,6 +1076,13 @@
     updateSelectedRequestDraft({ contentType: type })
   }
 
+  function setRequestHeaders(nextHeaders: HeaderDocument[]) {
+    const detectedContentType = payloadContentTypeFromHeaders(nextHeaders)
+    if (detectedContentType) requestContentType = detectedContentType
+
+    updateSelectedRequestDraft({ headers: nextHeaders })
+  }
+
   function headersWithContentType(
     currentHeaders: HeaderDocument[],
     contentType: PayloadContentType,
@@ -1085,7 +1109,7 @@
       name,
       method: methodDraft,
       url: urlDraft,
-      headers: headersWithContentType(headers, requestContentType),
+      headers,
       body: {
         ...(selectedDocument.body ?? {}),
         mode: selectedDocument.body?.mode ?? 'raw',
@@ -1188,7 +1212,6 @@
     const methodSnapshot = methodDraft
     const urlSnapshot = urlDraft
     const bodySnapshot = bodyDraft
-    const contentTypeSnapshot = requestContentType
     const existingResponses = responseExamples
 
     if (!requestToSave || !responseToSave || savingResponse) return
@@ -1216,7 +1239,7 @@
         name: requestToSave.name,
         method: methodSnapshot,
         url: urlSnapshot,
-        headers: headersWithContentType(headersSnapshot, contentTypeSnapshot),
+        headers: headersSnapshot,
         body: {
           ...(documentSnapshot.body ?? {}),
           mode: documentSnapshot.body?.mode ?? 'raw',
@@ -1533,6 +1556,7 @@
       {savingResponse}
       setActiveTab={(tab) => (activeTab = tab)}
       setBodyDraft={setRequestBodyDraft}
+      setHeaders={setRequestHeaders}
       setRequestContentType={setRequestPayloadContentType}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedRequestId={selectRequest}

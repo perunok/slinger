@@ -1,6 +1,7 @@
 <script lang="ts">
   import JSONEditorWrapper from './JSONEditorWrapper.svelte'
   import PayloadViewer from './PayloadViewer.svelte'
+  import RequestHeadersTable from './RequestHeadersTable.svelte'
   import RequestTable, { type TableRow } from './RequestTable.svelte'
   import type { PayloadContentType } from '../lib/payloadFormatters'
   import {
@@ -25,13 +26,9 @@
   export let selectedDocument: RequestDocument
   export let selectedRequest: ApiRequest | null
   export let setBodyDraft: (value: string) => void
+  export let setHeaders: (headers: HeaderDocument[]) => void
   export let urlDraft: string
 
-  $: headerRows = headers.map((header) => ({
-    key: header.key ?? '',
-    value: header.value ?? '',
-    source: header.disabled ? 'disabled' : 'enabled',
-  }))
   $: settingsRows = [
     { key: 'Method', value: methodDraft },
     { key: 'URL', value: urlDraft },
@@ -52,7 +49,7 @@
     {stringifyUnknown(selectedDocument.auth)}
   </pre>
 {:else if activeTab === 'Headers'}
-  <RequestTable rows={headerRows} />
+  <RequestHeadersTable {headers} {setHeaders} />
 {:else if activeTab === 'Scripts'}
   <pre class="h-full overflow-auto p-4 font-mono text-sm text-[#cbd5e1]">
     {scripts || 'No scripts'}

@@ -96,6 +96,7 @@
   export let savingResponse: boolean
   export let setActiveTab: (tab: ActiveTab) => void
   export let setBodyDraft: (value: string) => void
+  export let setHeaders: (headers: HeaderDocument[]) => void
   export let setRequestContentType: (type: PayloadContentType) => void
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
   export let setSelectedRequestId: (id: string | null) => void
@@ -591,6 +592,7 @@
             {selectedDocument}
             {selectedRequest}
             {setBodyDraft}
+            {setHeaders}
             {urlDraft}
           />
         </div>
