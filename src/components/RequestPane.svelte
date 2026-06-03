@@ -621,6 +621,7 @@
             {bodyIsValid}
             {description}
             {headers}
+            {environmentVariables}
             {methodDraft}
             {params}
             {requestContentType}

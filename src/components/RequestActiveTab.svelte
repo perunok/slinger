@@ -12,13 +12,14 @@
     type RequestParam,
   } from '../lib/requestDocument'
   import type { RequestAuthDocument } from '../lib/authDocument'
-  import type { ApiRequest, Collection } from '../tauri'
+  import type { ApiRequest, Collection, EnvironmentVariable } from '../tauri'
 
   export let activeTab: ActiveTab
   export let bodyDraft: string
   export let bodyIsValid: boolean
   export let description: string
   export let headers: HeaderDocument[]
+  export let environmentVariables: EnvironmentVariable[]
   export let methodDraft: string
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
@@ -47,7 +48,7 @@
 {:else if activeTab === 'Params'}
   <RequestTable rows={params} />
 {:else if activeTab === 'Authorization'}
-  <RequestAuthorizationTab auth={selectedDocument.auth} {setAuth} />
+  <RequestAuthorizationTab auth={selectedDocument.auth} {setAuth} {environmentVariables} />
 {:else if activeTab === 'Headers'}
   <RequestHeadersTable {headers} {setHeaders} />
 {:else if activeTab === 'Scripts'}

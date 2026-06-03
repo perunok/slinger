@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AuthTemplateInput from './AuthTemplateInput.svelte'
   import {
     authDocumentFromEditable,
     normalizeRequestAuth,
@@ -7,9 +8,11 @@
     type RequestAuthDocument,
     type SupportedAuthMethod,
   } from '../lib/authDocument'
+  import type { EnvironmentVariable } from '../tauri'
 
   export let auth: unknown
   export let setAuth: (auth: RequestAuthDocument | null) => void
+  export let environmentVariables: EnvironmentVariable[] = []
 
   const AUTH_METHODS: Array<{ value: SupportedAuthMethod; label: string }> = [
     { value: 'noauth', label: 'No Auth' },
@@ -18,10 +21,6 @@
     { value: 'basic', label: 'Basic Auth' },
     { value: 'oauth2', label: 'OAuth 2.0' },
   ]
-
-  function inputValue(event: Event): string {
-    return (event.currentTarget as HTMLInputElement).value
-  }
 
   function selectValue(event: Event): string {
     return (event.currentTarget as HTMLSelectElement).value
@@ -125,23 +124,27 @@
 
     {#if editableAuth.method === 'apikey'}
       <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Key</span>
-          <input
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-api-key-key">Key</label>
+          <AuthTemplateInput
+            id="auth-api-key-key"
             value={editableAuth.apiKey.key}
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateApiKey({ key: inputValue(event) })}
+            setValue={(key) => updateApiKey({ key })}
+            {environmentVariables}
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Value</span>
-          <input
+        </div>
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-api-key-value">Value</label>
+          <AuthTemplateInput
+            id="auth-api-key-value"
             value={editableAuth.apiKey.value}
-            type="password"
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateApiKey({ value: inputValue(event) })}
+            setValue={(value) => updateApiKey({ value })}
+            {environmentVariables}
+            sensitive
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
+        </div>
         <label class="grid max-w-xs gap-1.5">
           <span class="text-xs font-semibold uppercase text-[var(--muted)]">Add To</span>
           <select
@@ -155,54 +158,64 @@
         </label>
       </div>
     {:else if editableAuth.method === 'bearer'}
-      <label class="grid max-w-xl gap-1.5">
-        <span class="text-xs font-semibold uppercase text-[var(--muted)]">Token</span>
-        <input
+      <div class="grid max-w-xl gap-1.5">
+        <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-bearer-token">Token</label>
+        <AuthTemplateInput
+          id="auth-bearer-token"
           value={editableAuth.bearer.token}
-          type="password"
-          class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-          on:input={(event) => updateBearer({ token: inputValue(event) })}
+          setValue={(token) => updateBearer({ token })}
+          {environmentVariables}
+          sensitive
+          className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
         />
-      </label>
+      </div>
     {:else if editableAuth.method === 'basic'}
       <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Username</span>
-          <input
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-basic-username">Username</label>
+          <AuthTemplateInput
+            id="auth-basic-username"
             value={editableAuth.basic.username}
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateBasic({ username: inputValue(event) })}
+            setValue={(username) => updateBasic({ username })}
+            {environmentVariables}
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Password</span>
-          <input
+        </div>
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-basic-password">Password</label>
+          <AuthTemplateInput
+            id="auth-basic-password"
             value={editableAuth.basic.password}
-            type="password"
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateBasic({ password: inputValue(event) })}
+            setValue={(password) => updateBasic({ password })}
+            {environmentVariables}
+            sensitive
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
+        </div>
       </div>
     {:else if editableAuth.method === 'oauth2'}
       <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Access Token</span>
-          <input
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-oauth2-access-token">Access Token</label>
+          <AuthTemplateInput
+            id="auth-oauth2-access-token"
             value={editableAuth.oauth2.accessToken}
-            type="password"
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateOAuth2({ accessToken: inputValue(event) })}
+            setValue={(accessToken) => updateOAuth2({ accessToken })}
+            {environmentVariables}
+            sensitive
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
-        <label class="grid gap-1.5">
-          <span class="text-xs font-semibold uppercase text-[var(--muted)]">Token Type</span>
-          <input
+        </div>
+        <div class="grid gap-1.5">
+          <label class="text-xs font-semibold uppercase text-[var(--muted)]" for="auth-oauth2-token-type">Token Type</label>
+          <AuthTemplateInput
+            id="auth-oauth2-token-type"
             value={editableAuth.oauth2.tokenType}
-            class="h-9 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm outline-none focus:border-[#5a8fff]"
-            on:input={(event) => updateOAuth2({ tokenType: inputValue(event) })}
+            setValue={(tokenType) => updateOAuth2({ tokenType })}
+            {environmentVariables}
+            className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
           />
-        </label>
+        </div>
       </div>
     {:else if editableAuth.method === 'unsupported'}
       <div class="rounded border border-[var(--border)] bg-[var(--panel)] px-3 py-3 text-sm text-[var(--muted)]">
