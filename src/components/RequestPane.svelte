@@ -549,7 +549,7 @@
             {/if}
           </div>
           <div class="flex w-24 shrink-0 flex-col gap-1">
-            <button
+            <!-- <button
               class="secondary-button h-7 w-full text-xs"
               type="button"
               on:click={handleSaveRequest}
@@ -557,7 +557,7 @@
               title="Save request (Ctrl+S)"
             >
               {savingRequest ? 'Saving' : 'Save'}
-            </button>
+            </button> -->
             <button class="primary-button h-8 w-full" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
           </div>
         </div>
