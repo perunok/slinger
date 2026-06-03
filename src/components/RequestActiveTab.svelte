@@ -1,16 +1,17 @@
 <script lang="ts">
   import JSONEditorWrapper from './JSONEditorWrapper.svelte'
   import PayloadViewer from './PayloadViewer.svelte'
+  import RequestAuthorizationTab from './RequestAuthorizationTab.svelte'
   import RequestHeadersTable from './RequestHeadersTable.svelte'
   import RequestTable, { type TableRow } from './RequestTable.svelte'
   import type { PayloadContentType } from '../lib/payloadFormatters'
   import {
-    stringifyUnknown,
     type ActiveTab,
     type HeaderDocument,
     type RequestDocument,
     type RequestParam,
   } from '../lib/requestDocument'
+  import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection } from '../tauri'
 
   export let activeTab: ActiveTab
@@ -25,6 +26,7 @@
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
   export let selectedRequest: ApiRequest | null
+  export let setAuth: (auth: RequestAuthDocument | null) => void
   export let setBodyDraft: (value: string) => void
   export let setHeaders: (headers: HeaderDocument[]) => void
   export let urlDraft: string
@@ -45,9 +47,7 @@
 {:else if activeTab === 'Params'}
   <RequestTable rows={params} />
 {:else if activeTab === 'Authorization'}
-  <pre class="h-full overflow-auto p-4 font-mono text-sm text-[#cbd5e1]">
-    {stringifyUnknown(selectedDocument.auth)}
-  </pre>
+  <RequestAuthorizationTab auth={selectedDocument.auth} {setAuth} />
 {:else if activeTab === 'Headers'}
   <RequestHeadersTable {headers} {setHeaders} />
 {:else if activeTab === 'Scripts'}

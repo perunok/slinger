@@ -11,6 +11,7 @@
     RequestParam,
     ResponseExample,
   } from '../lib/requestDocument'
+  import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection, EnvironmentVariable, HttpResponseData } from '../tauri'
 
   type RequestTabItem = {
@@ -95,6 +96,7 @@
   export let savingRequest: boolean
   export let savingResponse: boolean
   export let setActiveTab: (tab: ActiveTab) => void
+  export let setAuth: (auth: RequestAuthDocument | null) => void
   export let setBodyDraft: (value: string) => void
   export let setHeaders: (headers: HeaderDocument[]) => void
   export let setRequestContentType: (type: PayloadContentType) => void
@@ -591,6 +593,7 @@
             {selectedCollection}
             {selectedDocument}
             {selectedRequest}
+            {setAuth}
             {setBodyDraft}
             {setHeaders}
             {urlDraft}

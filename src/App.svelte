@@ -17,6 +17,13 @@
     formatPayload,
     type PayloadContentType,
   } from './lib/payloadFormatters'
+  import {
+    requestAuthParts,
+    requestAuthsAreEqual,
+    requestAuthTemplateValues,
+    type AuthQueryParam,
+    type RequestAuthDocument,
+  } from './lib/authDocument'
   import { exportPostmanCollection } from './lib/postmanExport'
   import {
     extractParams,
@@ -211,6 +218,7 @@
         bodyDraft !== savedRequestBody ||
         requestContentType !== savedRequestContentType ||
         !headersAreEqual(headers, requestHeaders(selectedSavedDocument)) ||
+        !requestAuthsAreEqual(selectedDocument.auth, selectedSavedDocument.auth) ||
         methodDraft !== savedRequestMethod),
   )
   $: openRequestTabItems = openRequestTabs.map(tabStateToItem)
@@ -448,6 +456,7 @@
       draftBody !== savedBody ||
       draftContentType !== savedContentType ||
       !headersAreEqual(requestHeaders(draftDocument), requestHeaders(savedDocument)) ||
+      !requestAuthsAreEqual(draftDocument.auth, savedDocument.auth) ||
       draftMethod !== savedMethod
     )
   }
@@ -529,10 +538,12 @@
       body: string
       contentType: PayloadContentType
       headers?: HeaderDocument[]
+      auth?: RequestAuthDocument | null
       name?: string
     },
   ): RequestDocument {
     const document = parseDocument(request)
+    const hasAuth = Object.prototype.hasOwnProperty.call(values, 'auth')
 
     return {
       ...document,
@@ -540,6 +551,7 @@
       method: values.method,
       url: values.url,
       headers: values.headers ?? headersWithContentType(requestHeaders(document), values.contentType),
+      auth: hasAuth ? values.auth : document.auth,
       body: {
         ...(document.body ?? {}),
         mode: document.body?.mode ?? 'raw',
@@ -554,6 +566,7 @@
     body?: string
     contentType?: PayloadContentType
     headers?: HeaderDocument[]
+    auth?: RequestAuthDocument | null
     name?: string
   }) {
     if (!selectedRequest) return
@@ -563,14 +576,28 @@
     const nextBody = values.body ?? bodyDraft
     const nextContentType = values.contentType ?? requestContentType
     const nextName = values.name ?? selectedRequest.name
-    const nextDocument = editableRequestDocument(selectedRequest, {
+    const nextValues: {
+      method: string
+      url: string
+      body: string
+      contentType: PayloadContentType
+      headers?: HeaderDocument[]
+      auth?: RequestAuthDocument | null
+      name: string
+    } = {
       method: nextMethod,
       url: nextUrl,
       body: nextBody,
       contentType: nextContentType,
       headers: values.headers,
       name: nextName,
-    })
+    }
+
+    if (Object.prototype.hasOwnProperty.call(values, 'auth')) {
+      nextValues.auth = values.auth
+    }
+
+    const nextDocument = editableRequestDocument(selectedRequest, nextValues)
     const nextRequest = {
       ...selectedRequest,
       name: nextName,
@@ -1083,6 +1110,10 @@
     updateSelectedRequestDraft({ headers: nextHeaders })
   }
 
+  function setRequestAuth(auth: RequestAuthDocument | null) {
+    updateSelectedRequestDraft({ auth, headers })
+  }
+
   function headersWithContentType(
     currentHeaders: HeaderDocument[],
     contentType: PayloadContentType,
@@ -1312,6 +1343,50 @@
     error = null
   }
 
+  function encodeBase64(value: string): string {
+    const bytes = new TextEncoder().encode(value)
+    let binary = ''
+
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte)
+    }
+
+    return btoa(binary)
+  }
+
+  function appendQueryParams(url: string, params: AuthQueryParam[]): string {
+    const queryParams = params.filter((param) => param.key.trim())
+    if (queryParams.length === 0) return url
+
+    const hashIndex = url.indexOf('#')
+    const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+    const hash = hashIndex >= 0 ? url.slice(hashIndex) : ''
+    const separator = base.includes('?') ? (/[?&]$/.test(base) ? '' : '&') : '?'
+    const query = queryParams
+      .map((param) => `${encodeURIComponent(param.key.trim())}=${encodeURIComponent(param.value)}`)
+      .join('&')
+
+    return `${base}${separator}${query}${hash}`
+  }
+
+  function mergeRequestHeaders(
+    baseHeaders: Array<{ key: string; value: string }>,
+    authHeaders: HeaderDocument[],
+  ): Array<{ key: string; value: string }> {
+    const normalizedAuthHeaders = authHeaders
+      .filter((header) => header.key?.trim())
+      .map((header) => ({
+        key: header.key?.trim() ?? '',
+        value: header.value ?? '',
+      }))
+    const authHeaderKeys = new Set(normalizedAuthHeaders.map((header) => header.key.toLowerCase()))
+
+    return [
+      ...baseHeaders.filter((header) => !authHeaderKeys.has(header.key.toLowerCase())),
+      ...normalizedAuthHeaders,
+    ]
+  }
+
   async function handleSend() {
     if (!selectedRequest) return
 
@@ -1323,15 +1398,26 @@
     try {
       const resolvedUrl = resolveTemplate(urlDraft, environmentVariables)
       const resolvedBody = resolveTemplate(bodyDraft, environmentVariables)
-      const resolvedHeaders = headers
+      const resolvedManualHeaders = headers
         .filter((header) => !header.disabled && header.key?.trim())
         .map((header) => ({
           key: resolveTemplate(header.key?.trim() ?? '', environmentVariables),
           value: resolveTemplate(header.value ?? '', environmentVariables),
         }))
+      const resolvedAuthValues = requestAuthTemplateValues(selectedDocument.auth).map((value) =>
+        resolveTemplate(value, environmentVariables),
+      )
+      const authParts = requestAuthParts(
+        selectedDocument.auth,
+        (value) => resolveTemplate(value, environmentVariables),
+        encodeBase64,
+      )
+      const resolvedUrlWithAuth = appendQueryParams(resolvedUrl, authParts.queryParams)
+      const resolvedHeaders = mergeRequestHeaders(resolvedManualHeaders, authParts.headers)
       const missingVariables = unresolvedVariables([
-        resolvedUrl,
+        resolvedUrlWithAuth,
         resolvedBody,
+        ...resolvedAuthValues,
         ...resolvedHeaders.flatMap((header) => [header.key, header.value]),
       ])
 
@@ -1343,7 +1429,7 @@
 
       const result = await executeHttpRequest({
         method: methodDraft,
-        url: resolvedUrl,
+        url: resolvedUrlWithAuth,
         headers: resolvedHeaders,
         body: resolvedBody,
       })
@@ -1555,6 +1641,7 @@
       {savingRequest}
       {savingResponse}
       setActiveTab={(tab) => (activeTab = tab)}
+      setAuth={setRequestAuth}
       setBodyDraft={setRequestBodyDraft}
       setHeaders={setRequestHeaders}
       setRequestContentType={setRequestPayloadContentType}
