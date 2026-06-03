@@ -4,6 +4,7 @@
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import ExportCollectionDialog from './components/ExportCollectionDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
+  import RightUtilitySidebar from './components/RightUtilitySidebar.svelte'
   import SaveResponseDialog from './components/SaveResponseDialog.svelte'
   import SaveRequestDialog from './components/SaveRequestDialog.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -125,6 +126,24 @@
     method: string
     hasChanges: boolean
   }
+  type UtilityTab = 'copy-request'
+  type CopyFormat = 'curl'
+  type BuiltRequest = {
+    method: string
+    url: string
+    headers: Array<{ key: string; value: string }>
+    body: string
+    missingVariables: string[]
+  }
+  type BuildResolvedRequestInput = {
+    method: string
+    url: string
+    body: string
+    headers: HeaderDocument[]
+    auth: unknown
+    variables: EnvironmentVariable[]
+    now?: Date
+  }
   const REQUEST_CONTENT_TYPE_HEADER: Record<PayloadContentType, string> = {
     json: 'application/json',
     xml: 'application/xml',
@@ -179,6 +198,12 @@
   let responseViewTab: 'headers' | 'body' = 'body'
   let requestContentType: PayloadContentType = 'json'
   let responseContentType: PayloadContentType = 'json'
+  let rightSidebarOpen = window.localStorage.getItem('slinger-right-sidebar-open') === 'true'
+  let rightUtilityTab: UtilityTab = 'copy-request'
+  let copyRequestFormat: CopyFormat = 'curl'
+  let builtCopyRequest: BuiltRequest | null = null
+  let copyRequestCurl = ''
+  let copyRequestMissingVariables: string[] = []
 
   let collectionsLoadToken = 0
   let environmentsLoadToken = 0
@@ -227,6 +252,18 @@
   $: description =
     typeof selectedDocument.description === 'string' ? selectedDocument.description.trim() : ''
   $: resolvedUrlPreview = resolveTemplate(urlDraft, environmentVariables)
+  $: builtCopyRequest = selectedRequest
+    ? buildResolvedRequest({
+        method: methodDraft,
+        url: urlDraft,
+        body: bodyDraft,
+        headers,
+        auth: selectedDocument.auth,
+        variables: environmentVariables,
+      })
+    : null
+  $: copyRequestCurl = builtCopyRequest ? curlCommandFromBuiltRequest(builtCopyRequest) : ''
+  $: copyRequestMissingVariables = builtCopyRequest?.missingVariables ?? []
   $: foldersByParent = groupFoldersByParent(folders)
   $: requestsByFolder = groupRequestsByFolder(requests)
   $: if (selectedResponseIndex >= responseExamples.length) {
@@ -242,6 +279,9 @@
   $: {
     document.documentElement.dataset.theme = theme
     window.localStorage.setItem('slinger-theme', theme)
+  }
+  $: {
+    window.localStorage.setItem('slinger-right-sidebar-open', String(rightSidebarOpen))
   }
   $: {
     if (selectedWorkspaceId !== lastWorkspaceId) {
@@ -1387,6 +1427,102 @@
     ]
   }
 
+  function buildResolvedRequest(input: BuildResolvedRequestInput): BuiltRequest {
+    const requestStartedAt = input.now ?? new Date()
+    const resolvedUrl = resolveTemplate(input.url, input.variables, requestStartedAt)
+    const resolvedBody = resolveTemplate(input.body, input.variables, requestStartedAt)
+    const resolvedManualHeaders = input.headers
+      .filter((header) => !header.disabled && header.key?.trim())
+      .map((header) => ({
+        key: resolveTemplate(header.key?.trim() ?? '', input.variables, requestStartedAt),
+        value: resolveTemplate(header.value ?? '', input.variables, requestStartedAt),
+      }))
+    const resolvedAuthValues = requestAuthTemplateValues(input.auth).map((value) =>
+      resolveTemplate(value, input.variables, requestStartedAt),
+    )
+    const authParts = requestAuthParts(
+      input.auth,
+      (value) => resolveTemplate(value, input.variables, requestStartedAt),
+      encodeBase64,
+    )
+    const resolvedUrlWithAuth = appendQueryParams(resolvedUrl, authParts.queryParams)
+    const resolvedHeaders = mergeRequestHeaders(resolvedManualHeaders, authParts.headers)
+    const missingVariables = unresolvedVariables([
+      resolvedUrlWithAuth,
+      resolvedBody,
+      ...resolvedAuthValues,
+      ...resolvedHeaders.flatMap((header) => [header.key, header.value]),
+    ])
+
+    return {
+      method: input.method,
+      url: resolvedUrlWithAuth,
+      headers: resolvedHeaders,
+      body: resolvedBody,
+      missingVariables,
+    }
+  }
+
+  function shellQuote(value: string): string {
+    return `'${value.replace(/'/g, "'\\''")}'`
+  }
+
+  function curlCommandFromBuiltRequest(request: BuiltRequest): string {
+    const parts = [
+      `curl --request ${request.method.trim().toUpperCase() || 'GET'} ${shellQuote(request.url)}`,
+      ...request.headers.map((header) => `  --header ${shellQuote(`${header.key}: ${header.value}`)}`),
+    ]
+
+    if (request.body) {
+      parts.push(`  --data ${shellQuote(request.body)}`)
+    }
+
+    return parts.join(' \\\n')
+  }
+
+  function fallbackCopyText(value: string): boolean {
+    const textArea = document.createElement('textarea')
+    textArea.value = value
+    textArea.style.position = 'fixed'
+    textArea.style.left = '-9999px'
+    textArea.style.top = '0'
+    document.body.appendChild(textArea)
+    textArea.focus()
+    textArea.select()
+
+    try {
+      return document.execCommand('copy')
+    } finally {
+      document.body.removeChild(textArea)
+    }
+  }
+
+  async function copyText(value: string) {
+    if (!value) return
+
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return
+    }
+
+    if (!fallbackCopyText(value)) {
+      throw new Error('Clipboard copy failed')
+    }
+  }
+
+  async function copyBuiltRequest(): Promise<boolean> {
+    try {
+      await copyText(copyRequestCurl)
+      notice = 'Copied request as cURL.'
+      error = null
+      return true
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to copy request.'
+      return false
+    }
+  }
+
   async function handleSend() {
     if (!selectedRequest) return
 
@@ -1396,43 +1532,26 @@
     selectedResponseRequestId = null
 
     try {
-      const requestStartedAt = new Date()
-      const resolvedUrl = resolveTemplate(urlDraft, environmentVariables, requestStartedAt)
-      const resolvedBody = resolveTemplate(bodyDraft, environmentVariables, requestStartedAt)
-      const resolvedManualHeaders = headers
-        .filter((header) => !header.disabled && header.key?.trim())
-        .map((header) => ({
-          key: resolveTemplate(header.key?.trim() ?? '', environmentVariables, requestStartedAt),
-          value: resolveTemplate(header.value ?? '', environmentVariables, requestStartedAt),
-        }))
-      const resolvedAuthValues = requestAuthTemplateValues(selectedDocument.auth).map((value) =>
-        resolveTemplate(value, environmentVariables, requestStartedAt),
-      )
-      const authParts = requestAuthParts(
-        selectedDocument.auth,
-        (value) => resolveTemplate(value, environmentVariables, requestStartedAt),
-        encodeBase64,
-      )
-      const resolvedUrlWithAuth = appendQueryParams(resolvedUrl, authParts.queryParams)
-      const resolvedHeaders = mergeRequestHeaders(resolvedManualHeaders, authParts.headers)
-      const missingVariables = unresolvedVariables([
-        resolvedUrlWithAuth,
-        resolvedBody,
-        ...resolvedAuthValues,
-        ...resolvedHeaders.flatMap((header) => [header.key, header.value]),
-      ])
+      const builtRequest = buildResolvedRequest({
+        method: methodDraft,
+        url: urlDraft,
+        body: bodyDraft,
+        headers,
+        auth: selectedDocument.auth,
+        variables: environmentVariables,
+      })
 
-      if (missingVariables.length > 0) {
+      if (builtRequest.missingVariables.length > 0) {
         throw new Error(
-          `Unresolved variables: ${missingVariables.map((name) => `{{${name}}}`).join(', ')}`,
+          `Unresolved variables: ${builtRequest.missingVariables.map((name) => `{{${name}}}`).join(', ')}`,
         )
       }
 
       const result = await executeHttpRequest({
-        method: methodDraft,
-        url: resolvedUrlWithAuth,
-        headers: resolvedHeaders,
-        body: resolvedBody,
+        method: builtRequest.method,
+        url: builtRequest.url,
+        headers: builtRequest.headers,
+        body: builtRequest.body,
       })
       const detectedContentType = payloadContentTypeFromHeaders(result.headers)
       if (detectedContentType) responseContentType = detectedContentType
@@ -1541,7 +1660,11 @@
 </script>
 
 <main class="h-screen overflow-hidden bg-[var(--bg)] text-[var(--text)]">
-  <Header selectedRequest={selectedRequest} />
+  <Header
+    selectedRequest={selectedRequest}
+    {rightSidebarOpen}
+    toggleRightSidebar={() => (rightSidebarOpen = !rightSidebarOpen)}
+  />
   <Toolbar
     {workspaces}
     {selectedWorkspaceId}
@@ -1656,6 +1779,19 @@
       selectedEnvironmentId={selectedEnvironmentId}
       setUrlDraft={setRequestUrlDraft}
       {urlDraft}
+    />
+
+    <RightUtilitySidebar
+      open={rightSidebarOpen}
+      setOpen={(open) => (rightSidebarOpen = open)}
+      activeTab={rightUtilityTab}
+      setActiveTab={(tab) => (rightUtilityTab = tab)}
+      {selectedRequest}
+      copyFormat={copyRequestFormat}
+      setCopyFormat={(format) => (copyRequestFormat = format)}
+      curlCommand={copyRequestCurl}
+      missingVariables={copyRequestMissingVariables}
+      {copyBuiltRequest}
     />
   </div>
 
