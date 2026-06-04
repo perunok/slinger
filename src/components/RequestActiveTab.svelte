@@ -1,5 +1,4 @@
 <script lang="ts">
-  import JSONEditorWrapper from './JSONEditorWrapper.svelte'
   import PayloadViewer from './PayloadViewer.svelte'
   import RequestAuthorizationTab from './RequestAuthorizationTab.svelte'
   import RequestHeadersTable from './RequestHeadersTable.svelte'
@@ -21,6 +20,8 @@
     label: string
     caption: string
   }
+
+  type JSONEditorWrapperComponent = typeof import('./JSONEditorWrapper.svelte').default
 
   const SCRIPT_NAV_ITEMS: ScriptNavItem[] = [
     { id: 'prerequest', label: 'Pre-request', caption: 'Before send' },
@@ -47,9 +48,27 @@
   export let urlDraft: string
 
   let activeScriptNav: ScriptListener = 'prerequest'
+  let jsonEditorWrapperComponent: JSONEditorWrapperComponent | null = null
+  let jsonEditorWrapperPromise: Promise<void> | null = null
 
   function textAreaValue(event: Event): string {
     return (event.currentTarget as HTMLTextAreaElement).value
+  }
+
+  async function loadJsonEditorWrapper() {
+    if (jsonEditorWrapperComponent) return
+
+    if (!jsonEditorWrapperPromise) {
+      jsonEditorWrapperPromise = import('./JSONEditorWrapper.svelte')
+        .then((module) => {
+          jsonEditorWrapperComponent = module.default
+        })
+        .finally(() => {
+          jsonEditorWrapperPromise = null
+        })
+    }
+
+    await jsonEditorWrapperPromise
   }
 
   $: settingsRows = [
@@ -58,6 +77,9 @@
     { key: 'Collection', value: selectedCollection?.name ?? '' },
     { key: 'Request ID', value: selectedRequest?.id ?? '' },
   ] satisfies TableRow[]
+  $: if (activeTab === 'Body' && requestContentType === 'json' && !jsonEditorWrapperComponent) {
+    void loadJsonEditorWrapper()
+  }
 </script>
 
 {#if activeTab === 'Docs'}
@@ -114,12 +136,19 @@
 {:else if activeTab === 'Settings'}
   <RequestTable rows={settingsRows} />
 {:else if requestContentType === 'json'}
-  <JSONEditorWrapper
-    value={bodyDraft}
-    isValidJson={bodyIsValid}
-    onChange={setBodyDraft}
-    className="payload-viewer-flush"
-  />
+  {#if jsonEditorWrapperComponent}
+    <svelte:component
+      this={jsonEditorWrapperComponent}
+      value={bodyDraft}
+      isValidJson={bodyIsValid}
+      onChange={setBodyDraft}
+      className="payload-viewer-flush"
+    />
+  {:else}
+    <div class="flex h-full items-center justify-center bg-[var(--bg)] px-4 text-sm text-[var(--muted)]">
+      Loading JSON editor...
+    </div>
+  {/if}
 {:else}
   <PayloadViewer
     value={bodyDraft}

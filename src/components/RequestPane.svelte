@@ -75,7 +75,6 @@
   export let handleBeautifyBody: () => void
   export let handleCancelSend: () => void
   export let handleCreateRequestDraft: () => void | Promise<void>
-  export let handleSaveRequest: () => Promise<void>
   export let handleSaveResponse: () => Promise<void>
   export let handleSend: () => Promise<void>
   export let headers: HeaderDocument[]
@@ -86,7 +85,6 @@
   export let requestContentType: PayloadContentType
   export let responseContentType: PayloadContentType
   export let responseViewTab: 'headers' | 'body'
-  export let requestHasChanges: boolean
   export let scripts: RequestScriptState
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
@@ -96,7 +94,6 @@
   export let sendError: string | null
   export let sendResult: HttpResponseData | null
   export let sending: boolean
-  export let savingRequest: boolean
   export let savingResponse: boolean
   export let setActiveTab: (tab: ActiveTab) => void
   export let setAuth: (auth: RequestAuthDocument | null) => void
@@ -609,9 +606,10 @@
               class="relative h-8 w-full rounded border border-transparent bg-transparent px-3 font-mono text-sm text-transparent caret-[var(--text)] outline-none"
             />
             {#if hoveredEnvKey}
-              <div class="absolute left-0 top-full mt-1 z-20 min-w-[180px]">
+              <div class="absolute left-0 top-full mt-1 z-20 min-w-[180px]" role="presentation">
                 <div
                   class="rounded border border-[var(--border)] bg-[var(--surface)] p-2 text-sm shadow-lg"
+                  role="presentation"
                   on:mouseenter={handlePopupMouseEnter}
                   on:mouseleave={handlePopupMouseLeave}
                 >
@@ -636,15 +634,6 @@
             {/if}
           </div>
           <div class="flex w-24 shrink-0 flex-col gap-1">
-            <!-- <button
-              class="secondary-button h-7 w-full text-xs"
-              type="button"
-              on:click={handleSaveRequest}
-              disabled={!requestHasChanges || savingRequest}
-              title="Save request (Ctrl+S)"
-            >
-              {savingRequest ? 'Saving' : 'Save'}
-            </button> -->
             <button
               class="primary-button h-8 w-full"
               on:click={sending ? handleCancelSend : handleSend}

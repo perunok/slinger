@@ -2315,17 +2315,14 @@
       handleCancelSend={() => selectedRequestId && cancelRequest(selectedRequestId)}
       {handleCreateRequestDraft}
       {handleSend}
-      {handleSaveRequest}
       {handleSaveResponse}
       {headers}
       {methodDraft}
       {orientation}
       {params}
       {requestContentType}
-      {resolvedUrlPreview}
       {responseContentType}
       {responseViewTab}
-      {requestHasChanges}
       openRequestTabs={openRequestTabItems}
       {scripts}
       selectedCollection={selectedRequestCollection}
@@ -2336,7 +2333,6 @@
       {sendError}
       {sendResult}
       {sending}
-      {savingRequest}
       {savingResponse}
       setActiveTab={(tab) => (activeTab = tab)}
       setAuth={setRequestAuth}
