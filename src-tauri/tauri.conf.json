@@ -7,7 +7,7 @@
   },
   "productName": "Slinger",
   "version": "0.1.0",
-  "identifier": "com.gear.fang.app",
+  "identifier": "com.gear.fang.slinger",
   "app": {
     "windows": [
       {
