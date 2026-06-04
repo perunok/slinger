@@ -638,6 +638,19 @@ export async function updateRequest(input: UpdateRequestInput): Promise<ApiReque
   return updated
 }
 
+export async function deleteRequest(requestId: string): Promise<void> {
+  if (isTauriRuntime) return invokeTauri('delete_request', { requestId })
+
+  const data = readStore()
+  const existing = data.requests.find((request) => request.id === requestId)
+  if (!existing) throw new Error('request not found')
+
+  writeStore({
+    ...data,
+    requests: data.requests.filter((request) => request.id !== requestId),
+  })
+}
+
 export async function importPostmanCollection(
   workspaceId: string,
   payload: string,

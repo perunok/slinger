@@ -34,6 +34,7 @@
   export let toggleFolder: (folderId: string) => void
   export let handleRenameCollection: (collection: Collection) => Promise<void>
   export let handleDeleteCollection: (collection: Collection) => Promise<void>
+  export let handleDeleteRequest: (request: ApiRequest) => Promise<void>
   export let handleExportCollection: (collection: Collection) => Promise<void>
 
   let environmentsExpanded = true
@@ -100,6 +101,7 @@
         {setSelectedRequestId}
         {selectResponseExample}
         {toggleFolder}
+        {handleDeleteRequest}
       />
     {/if}
   </div>

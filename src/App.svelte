@@ -55,6 +55,7 @@
     createWorkspace,
     deleteCollection,
     deleteEnvironmentVariable,
+    deleteRequest,
     ensureDefaultEnvironment,
     executeHttpRequest,
     getCollections,
@@ -952,6 +953,47 @@
     } catch (err) {
       console.error(err)
       error = 'Unable to delete collection.'
+    }
+  }
+
+  async function handleDeleteRequest(request: ApiRequest) {
+    const openTab = openRequestTabs.find((tab) => tab.request.id === request.id)
+    const hasUnsavedChanges = openTab ? requestTabHasChanges(openTab) : false
+    const confirmed = await askForConfirmation({
+      message: hasUnsavedChanges
+        ? `Delete "${request.name}" and discard its unsaved changes?`
+        : `Delete "${request.name}"?`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+
+    try {
+      await deleteRequest(request.id)
+      const tabIndex = openRequestTabs.findIndex((tab) => tab.request.id === request.id)
+      const nextTabs = openRequestTabs.filter((tab) => tab.request.id !== request.id)
+
+      cancelRequest(request.id)
+      requests = requests.filter((item) => item.id !== request.id)
+      openRequestTabs = nextTabs
+
+      if (selectedResponseRequestId === request.id) {
+        selectedResponseRequestId = null
+        selectedResponseIndex = -1
+      }
+
+      if (selectedRequestId === request.id) {
+        selectedRequestId =
+          nextTabs[Math.max(0, tabIndex - 1)]?.request.id ??
+          nextTabs[0]?.request.id ??
+          null
+      }
+
+      notice = `Request "${request.name}" deleted.`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to delete request.'
     }
   }
 
@@ -2055,6 +2097,7 @@
           {toggleFolder}
           {handleRenameCollection}
           {handleDeleteCollection}
+          {handleDeleteRequest}
           {handleExportCollection}
         />
       </div>

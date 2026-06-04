@@ -583,6 +583,20 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
     .await?)
 }
 
+pub async fn delete_request(pool: &SqlitePool, request_id: String) -> Result<()> {
+    let request_id = Uuid::parse_str(&request_id)?.to_string();
+    let result = query("DELETE FROM requests WHERE id = ?")
+        .bind(request_id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        bail!("request not found");
+    }
+
+    Ok(())
+}
+
 pub async fn list_folders(pool: &SqlitePool, collection_id: String) -> Result<Vec<ApiFolder>> {
     Ok(query_as::<_, ApiFolder>(
         r#"
