@@ -166,6 +166,8 @@
           setValue={(token) => updateBearer({ token })}
           {environmentVariables}
           sensitive
+          showVisibilityToggle
+          visibleByDefault
           className="h-9 w-full rounded border border-[var(--input-border)] bg-[var(--input)] px-3 font-mono text-sm leading-9 text-[var(--text)] outline-none focus:border-[#5a8fff]"
         />
       </div>
