@@ -28,18 +28,23 @@
   import { exportPostmanCollection } from './lib/postmanExport'
   import {
     extractParams,
+    normalizeScriptListener,
     parseDocument,
     payloadContentTypeFromHeaders,
+    requestScriptState,
     requestHeaders,
     requestResponses,
     requestScripts,
     resolveTemplate,
-    scriptsFromText,
-    scriptText,
+    scriptEventsEqual,
+    scriptTextForListener,
+    updateScriptListener,
     unresolvedVariables,
     type ActiveTab,
     type HeaderDocument,
     type RequestDocument,
+    type RequestScriptState,
+    type ScriptListener,
   } from './lib/requestDocument'
   import {
     type ApiFolder,
@@ -268,7 +273,7 @@
   )
   $: openRequestTabItems = openRequestTabs.map(tabStateToItem)
   $: params = extractParams(urlDraft, selectedDocument)
-  $: scripts = scriptText(requestScripts(selectedDocument))
+  $: scripts = requestScriptState(selectedDocument)
   $: description =
     typeof selectedDocument.description === 'string' ? selectedDocument.description.trim() : ''
   $: sending = selectedRequestId ? sendingRequestIds.has(selectedRequestId) : false
@@ -517,7 +522,7 @@
   }
 
   function scriptsAreEqual(left: RequestDocument, right: RequestDocument): boolean {
-    return scriptText(requestScripts(left)) === scriptText(requestScripts(right))
+    return scriptEventsEqual(requestScripts(left), requestScripts(right))
   }
 
   function createRequestTabState(
@@ -687,13 +692,33 @@
       contentType: PayloadContentType
       headers?: HeaderDocument[]
       auth?: RequestAuthDocument | null
-      scripts?: string
+      scripts?: Partial<RequestScriptState>
       name?: string
     },
   ): RequestDocument {
     const document = parseDocument(request)
     const hasAuth = Object.prototype.hasOwnProperty.call(values, 'auth')
     const hasScripts = Object.prototype.hasOwnProperty.call(values, 'scripts')
+    const nextScriptState = hasScripts
+      ? {
+          ...requestScriptState(document),
+          ...(values.scripts ?? {}),
+        }
+      : null
+    const nextScripts = nextScriptState
+      ? (
+          [
+            ['prerequest', nextScriptState.prerequest],
+            ['test', nextScriptState.test],
+          ] as const
+        ).reduce(
+          (events, [listener, value]) =>
+            updateScriptListener(events, listener, value),
+          requestScripts(document).filter(
+            (event) => !['prerequest', 'test'].includes(normalizeScriptListener(event.listen)),
+          ),
+        )
+      : document.scripts
 
     return {
       ...document,
@@ -702,7 +727,7 @@
       url: values.url,
       headers: values.headers ?? headersWithContentType(headersWithDefaultPresets(requestHeaders(document)), values.contentType),
       auth: hasAuth ? values.auth : document.auth,
-      scripts: hasScripts ? scriptsFromText(values.scripts ?? '') : document.scripts,
+      scripts: nextScripts,
       body: {
         ...(document.body ?? {}),
         mode: document.body?.mode ?? 'raw',
@@ -718,7 +743,7 @@
     contentType?: PayloadContentType
     headers?: HeaderDocument[]
     auth?: RequestAuthDocument | null
-    scripts?: string
+    scripts?: Partial<RequestScriptState>
     name?: string
   }) {
     if (!selectedRequest) return
@@ -735,7 +760,7 @@
       contentType: PayloadContentType
       headers?: HeaderDocument[]
       auth?: RequestAuthDocument | null
-      scripts?: string
+      scripts?: Partial<RequestScriptState>
       name: string
     } = {
       method: nextMethod,
@@ -1365,8 +1390,8 @@
     updateSelectedRequestDraft({ body: value })
   }
 
-  function setRequestScripts(value: string) {
-    updateSelectedRequestDraft({ scripts: value })
+  function setRequestScript(listener: ScriptListener, value: string) {
+    updateSelectedRequestDraft({ scripts: { [listener]: value } })
   }
 
   function setRequestPayloadContentType(type: PayloadContentType) {
@@ -1418,6 +1443,21 @@
         raw: bodyDraft,
       },
     }
+  }
+
+  function requestHeadersSnapshot(headersToSave: HeaderDocument[]): HeaderDocument[] {
+    return headersToSave
+      .filter((header) => header.key?.trim())
+      .map((header) => ({
+        ...header,
+        key: header.key?.trim() ?? '',
+        value: header.value ?? '',
+      }))
+  }
+
+  function responseStatusLabel(response: HttpResponseData): string {
+    const statusText = response.status_text.trim()
+    return statusText ? `${response.status} ${statusText}` : String(response.status)
   }
 
   async function handleSaveRequest() {
@@ -1559,7 +1599,16 @@
 
       const nextResponse = {
         name: responseName,
-        status: responseToSave.status_text,
+        originalRequest: {
+          method: methodSnapshot,
+          header: requestHeadersSnapshot(headersSnapshot),
+          url: urlSnapshot,
+          body: document.body ?? null,
+          auth: document.auth ?? null,
+          description: document.description ?? null,
+        },
+        responseTime: responseToSave.duration_ms,
+        status: responseStatusLabel(responseToSave),
         code: responseToSave.status,
         header: responseToSave.headers,
         body: responseToSave.body,
@@ -1820,81 +1869,162 @@
     }
   }
 
-  function responseHeaderValue(headers: Array<{ key: string; value: string }>, key: string): string | null {
+  function headerValue(headers: Array<{ key: string; value: string }>, key: string): string | null {
     const match = headers.find((header) => header.key.toLowerCase() === key.toLowerCase())
     return match?.value ?? null
   }
 
-  function responseHeadersObject(headers: Array<{ key: string; value: string }>): Record<string, string> {
+  function headersObject(headers: Array<{ key: string; value: string }>): Record<string, string> {
     return headers.reduce<Record<string, string>>((result, header) => {
       result[header.key] = header.value
       return result
     }, {})
   }
 
-  async function runResponseScripts(options: {
-    document: RequestDocument
-    response: HttpResponseData
-    environmentId: string | null
-    variables: EnvironmentVariable[]
+  function scriptRequestHeaders(
+    headers: Array<{ key?: string; value?: string }>,
+  ): Array<{ key: string; value: string }> {
+    return headers
+      .map((header) => {
+        const key = header.key?.trim() ?? ''
+        if (!key) return null
+
+        return {
+          key,
+          value: header.value ?? '',
+        }
+      })
+      .filter((header): header is { key: string; value: string } => header !== null)
+  }
+
+  function createScriptRequestContext(request: {
+    method: string
+    url: string
+    body: string
+    headers: Array<{ key: string; value: string }>
   }) {
-    const script = scriptText(
-      requestScripts(options.document).filter((event) => (event.listen ?? 'test') === 'test'),
-    )
-    if (!script.trim()) return
+    return {
+      method: request.method,
+      url: request.url,
+      body: request.body,
+      headers: {
+        all: () => headersObject(request.headers),
+        get: (key: string) => headerValue(request.headers, key),
+      },
+    }
+  }
+
+  function withRuntimeEnvironmentVariable(
+    variables: EnvironmentVariable[],
+    environmentId: string | null,
+    key: string,
+    value: unknown,
+  ): EnvironmentVariable[] {
+    const nextValue = String(value ?? '')
+    const existing = variables.find((variable) => variable.key === key)
+
+    if (existing) {
+      return variables.map((variable) =>
+        variable.key === key ? { ...variable, value: nextValue } : variable,
+      )
+    }
+
+    return [
+      ...variables,
+      {
+        id: `runtime-${key}`,
+        environment_id: environmentId ?? '',
+        key,
+        value: nextValue,
+        created_at: 0,
+      },
+    ]
+  }
+
+  async function runRequestScripts(options: {
+    document: RequestDocument
+    listener: ScriptListener
+    environmentId: string | null
+    request?: {
+      method: string
+      url: string
+      body: string
+      headers: Array<{ key: string; value: string }>
+    }
+    response?: HttpResponseData
+    variables: EnvironmentVariable[]
+  }): Promise<EnvironmentVariable[]> {
+    const script = scriptTextForListener(requestScripts(options.document), options.listener)
+    if (!script.trim()) return options.variables
 
     let parsedJson: unknown
     let hasParsedJson = false
     const pendingEnvironmentWrites: Array<Promise<void>> = []
+    let runtimeVariables = [...options.variables]
+    const request = options.request ? createScriptRequestContext(options.request) : null
     const response = {
-      status: options.response.status,
-      statusText: options.response.status_text,
-      duration: options.response.duration_ms,
-      body: options.response.body,
-      text: () => options.response.body,
+      status: options.response?.status ?? 0,
+      statusText: options.response?.status_text ?? '',
+      duration: options.response?.duration_ms ?? 0,
+      body: options.response?.body ?? '',
+      text: () => options.response?.body ?? '',
       json: () => {
         if (!hasParsedJson) {
-          parsedJson = JSON.parse(options.response.body || 'null')
+          parsedJson = JSON.parse(options.response?.body || 'null')
           hasParsedJson = true
         }
 
         return parsedJson
       },
       headers: {
-        all: () => responseHeadersObject(options.response.headers),
-        get: (key: string) => responseHeaderValue(options.response.headers, key),
+        all: () => headersObject(options.response?.headers ?? []),
+        get: (key: string) => headerValue(options.response?.headers ?? [], key),
       },
     }
     const env = {
       get: (key: string) =>
-        options.variables.find((variable) => variable.key === key)?.value ?? null,
+        runtimeVariables.find((variable) => variable.key === key)?.value ?? null,
       set: (key: string, value: unknown) => {
+        const trimmedKey = key.trim()
+        if (trimmedKey) {
+          runtimeVariables = withRuntimeEnvironmentVariable(
+            runtimeVariables,
+            options.environmentId,
+            trimmedKey,
+            value,
+          )
+        }
+
         const write = setScriptEnvironmentVariable(options.environmentId, key, value)
         pendingEnvironmentWrites.push(write)
         return write
       },
     }
     const pm = {
+      request,
       response,
       environment: env,
       variables: env,
       test: (_name: string, assertion: () => void) => assertion(),
     }
     const runner = new Function(
+      'request',
       'response',
       'env',
       'pm',
       'console',
       '"use strict"; return (async () => {\n' + script + '\n})()',
     ) as (
+      request: typeof request,
       response: typeof response,
       env: typeof env,
       pm: typeof pm,
       consoleApi: Console,
     ) => Promise<unknown>
 
-    await runner(response, env, pm, console)
+    await runner(request, response, env, pm, console)
     await Promise.all(pendingEnvironmentWrites)
+    return runtimeVariables
   }
 
   async function handleSend() {
@@ -1920,13 +2050,33 @@
     })
 
     try {
+      let variablesAfterPreRequest = variablesAtSend
+      try {
+        variablesAfterPreRequest = await runRequestScripts({
+          document: documentAtSend,
+          listener: 'prerequest',
+          environmentId: environmentIdAtSend,
+          request: {
+            method: methodDraft,
+            url: urlDraft,
+            body: bodyDraft,
+            headers: scriptRequestHeaders(headers),
+          },
+          variables: variablesAtSend,
+        })
+      } catch (scriptErr) {
+        const message = scriptErr instanceof Error ? scriptErr.message : String(scriptErr)
+        throw new Error(`Pre-request script failed: ${message}`)
+      }
+      if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
+
       const builtRequest = buildResolvedRequest({
         method: methodDraft,
         url: urlDraft,
         body: bodyDraft,
         headers,
         auth: selectedDocument.auth,
-        variables: environmentVariables,
+        variables: variablesAfterPreRequest,
       })
 
       if (builtRequest.missingVariables.length > 0) {
@@ -1957,19 +2107,21 @@
       }
 
       try {
-        await runResponseScripts({
+        await runRequestScripts({
           document: documentAtSend,
+          listener: 'test',
+          request: builtRequest,
           response: result,
           environmentId: environmentIdAtSend,
-          variables: variablesAtSend,
+          variables: variablesAfterPreRequest,
         })
         if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
         error = null
       } catch (scriptErr) {
         if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
         const message = scriptErr instanceof Error ? scriptErr.message : String(scriptErr)
-        console.error('Response script failed:', message)
-        error = `Response script failed: ${message}`
+        console.error('Post-request script failed:', message)
+        error = `Post-request script failed: ${message}`
       }
     } catch (err) {
       if (isAbortError(err) || abortController.signal.aborted) return
@@ -2193,7 +2345,7 @@
       setRequestContentType={setRequestPayloadContentType}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedRequestId={selectRequest}
-      setScripts={setRequestScripts}
+      setScript={setRequestScript}
       setRequestMethod={setRequestMethod}
       {closeRequestTab}
       {closeAllRequestTabs}

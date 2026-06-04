@@ -22,23 +22,37 @@ export type HeaderDocument = {
   key?: string
   value?: string
   disabled?: boolean
+  description?: unknown
 }
 
 export type ResponseExample = {
+  id?: string
   name?: string
+  originalRequest?: unknown
+  responseTime?: string | number | null
+  timings?: Record<string, unknown> | null
+  cookie?: unknown[]
   status?: string
   code?: number
-  header?: HeaderDocument[]
-  body?: string
+  header?: HeaderDocument[] | string | null
+  body?: string | null
 }
 
 export type ScriptEvent = {
+  id?: string
   listen?: string
+  disabled?: boolean
   script?: {
     type?: string
     exec?: string[] | string
   }
 }
+
+export type ScriptListener = 'prerequest' | 'test'
+
+export type RequestScriptState = Record<ScriptListener, string>
+
+const POSTMAN_SCRIPT_LISTENERS = new Set<ScriptListener>(['prerequest', 'test'])
 
 export type RequestDocument = {
   name?: string
@@ -89,15 +103,179 @@ export function parseDocument(request: ApiRequest | null): RequestDocument {
 }
 
 export function requestHeaders(document: RequestDocument): HeaderDocument[] {
-  return Array.isArray(document.headers) ? document.headers : []
+  if (!Array.isArray(document.headers)) return []
+
+  return document.headers
+    .map(sanitizeHeaderDocument)
+    .filter((header): header is HeaderDocument => header !== null)
 }
 
 export function requestResponses(document: RequestDocument): ResponseExample[] {
-  return Array.isArray(document.responses) ? document.responses : []
+  if (!Array.isArray(document.responses)) return []
+
+  return document.responses
+    .map(sanitizeResponseExample)
+    .filter((response): response is ResponseExample => response !== null)
+}
+
+export function normalizeScriptListener(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase() ?? ''
+
+  if (normalized === 'pre-request') return 'prerequest'
+  if (normalized === 'post-request') return 'test'
+
+  return normalized
+}
+
+export function sanitizeScriptEvent(event: ScriptEvent): ScriptEvent | null {
+  const listener = normalizeScriptListener(event.listen)
+  if (!POSTMAN_SCRIPT_LISTENERS.has(listener as ScriptListener)) return null
+
+  const nextEvent: ScriptEvent & { id?: string; disabled?: boolean } = {
+    ...event,
+    listen: listener,
+    disabled: Boolean(event.disabled),
+  }
+
+  if (event.script) {
+    const exec = Array.isArray(event.script.exec)
+      ? event.script.exec.map((line) => String(line))
+      : typeof event.script.exec === 'string'
+        ? event.script.exec
+        : undefined
+    nextEvent.script = {
+      ...event.script,
+      type: event.script.type?.trim() || 'text/javascript',
+      exec,
+    }
+  }
+
+  return nextEvent
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function headerFromString(value: string): HeaderDocument {
+  const separatorIndex = value.indexOf(':')
+  if (separatorIndex < 0) {
+    return {
+      key: value.trim(),
+      value: '',
+    }
+  }
+
+  return {
+    key: value.slice(0, separatorIndex).trim(),
+    value: value.slice(separatorIndex + 1).trim(),
+  }
+}
+
+export function sanitizeHeaderDocument(header: unknown): HeaderDocument | null {
+  if (typeof header === 'string') {
+    const parsed = headerFromString(header)
+    return parsed.key ? parsed : null
+  }
+
+  if (!isRecord(header)) return null
+
+  const key =
+    typeof header.key === 'string'
+      ? header.key.trim()
+      : header.key === undefined || header.key === null
+        ? ''
+        : String(header.key)
+  if (!key) return null
+
+  const value =
+    typeof header.value === 'string'
+      ? header.value
+      : header.value === undefined || header.value === null
+        ? ''
+        : String(header.value)
+
+  return {
+    ...header,
+    key,
+    value,
+    disabled: Boolean(header.disabled),
+  }
+}
+
+function sanitizeResponseHeaders(headers: unknown): HeaderDocument[] | string | null {
+  if (headers === null || headers === undefined) return null
+  if (typeof headers === 'string') {
+    const normalized = headers
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map(sanitizeHeaderDocument)
+      .filter((header): header is HeaderDocument => header !== null)
+
+    return normalized.length > 0 ? normalized : headers
+  }
+  if (!Array.isArray(headers)) return null
+
+  return headers
+    .map(sanitizeHeaderDocument)
+    .filter((header): header is HeaderDocument => header !== null)
+}
+
+export function sanitizeResponseExample(response: unknown): ResponseExample | null {
+  if (!isRecord(response)) return null
+
+  const codeValue = response.code
+  const code =
+    typeof codeValue === 'number'
+      ? Number.isFinite(codeValue)
+        ? Math.trunc(codeValue)
+        : undefined
+      : typeof codeValue === 'string' && codeValue.trim()
+        ? Number.parseInt(codeValue, 10)
+        : undefined
+  const status =
+    typeof response.status === 'string'
+      ? response.status
+      : code !== undefined
+        ? String(code)
+        : undefined
+  const body =
+    typeof response.body === 'string'
+      ? response.body
+      : response.body === null || response.body === undefined
+        ? null
+        : String(response.body)
+
+  return {
+    ...response,
+    id: typeof response.id === 'string' ? response.id : undefined,
+    name: typeof response.name === 'string' ? response.name : undefined,
+    status,
+    code: Number.isNaN(code ?? NaN) ? undefined : code,
+    header: sanitizeResponseHeaders(response.header),
+    body,
+    responseTime:
+      response.responseTime === null ||
+      typeof response.responseTime === 'string' ||
+      typeof response.responseTime === 'number'
+        ? (response.responseTime as string | number | null | undefined)
+        : undefined,
+    timings: isRecord(response.timings) || response.timings === null
+      ? (response.timings as Record<string, unknown> | null | undefined)
+      : undefined,
+    cookie: Array.isArray(response.cookie) ? response.cookie : undefined,
+    originalRequest: response.originalRequest,
+  }
 }
 
 export function requestScripts(document: RequestDocument): ScriptEvent[] {
-  return Array.isArray(document.scripts) ? document.scripts : []
+  if (!Array.isArray(document.scripts)) return []
+
+  return document.scripts
+    .filter((event): event is ScriptEvent => Boolean(event && typeof event === 'object'))
+    .map(sanitizeScriptEvent)
+    .filter((event): event is ScriptEvent => event !== null)
 }
 
 export function extractParams(url: string, document: RequestDocument): RequestParam[] {
@@ -143,31 +321,86 @@ export function stringifyUnknown(value: unknown): string {
   }
 }
 
-export function scriptText(events: ScriptEvent[]): string {
-  const lines: string[] = []
+export function scriptEventText(event: ScriptEvent): string {
+  const exec = event.script?.exec
+  if (!exec) return ''
 
-  for (const event of events) {
-    const exec = event.script?.exec
-    if (!exec) continue
-    lines.push(`// ${event.listen ?? 'script'}`)
-    lines.push(...(Array.isArray(exec) ? exec : [exec]))
-  }
-
-  return lines.join('\n')
+  return Array.isArray(exec) ? exec.join('\n') : exec
 }
 
-export function scriptsFromText(value: string): ScriptEvent[] {
-  if (!value.trim()) return []
+export function scriptTextForListener(events: ScriptEvent[], listener: ScriptListener): string {
+  const normalizedListener = normalizeScriptListener(listener)
 
-  return [
-    {
-      listen: 'test',
-      script: {
-        type: 'text/javascript',
-        exec: value.split('\n'),
-      },
-    },
-  ]
+  return events
+    .filter((event) => normalizeScriptListener(event.listen) === normalizedListener)
+    .map(scriptEventText)
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+export function requestScriptState(document: RequestDocument): RequestScriptState {
+  const events = requestScripts(document)
+
+  return {
+    prerequest: scriptTextForListener(events, 'prerequest'),
+    test: scriptTextForListener(events, 'test'),
+  }
+}
+
+export function updateScriptListener(
+  events: ScriptEvent[],
+  listener: ScriptListener,
+  value: string,
+): ScriptEvent[] {
+  const normalizedListener = normalizeScriptListener(listener)
+  const hasContent = value.trim().length > 0
+  const nextScript = hasContent
+    ? {
+        listen: normalizedListener,
+        script: {
+          type: 'text/javascript',
+          exec: value.split('\n'),
+        },
+      }
+    : null
+  const nextEvents: ScriptEvent[] = []
+  let inserted = false
+
+  for (const event of events) {
+    if (normalizeScriptListener(event.listen) !== normalizedListener) {
+      nextEvents.push(event)
+      continue
+    }
+
+    if (!inserted && nextScript) {
+      nextEvents.push({
+        ...event,
+        ...nextScript,
+        script: {
+          ...(event.script ?? {}),
+          ...(nextScript.script ?? {}),
+        },
+      })
+      inserted = true
+    }
+  }
+
+  if (!inserted && nextScript) {
+    return listener === 'prerequest' ? [nextScript, ...nextEvents] : [...nextEvents, nextScript]
+  }
+
+  return nextEvents
+}
+
+export function scriptEventsEqual(left: ScriptEvent[], right: ScriptEvent[]): boolean {
+  const comparable = (events: ScriptEvent[]) =>
+    events.map((event) => ({
+      listen: normalizeScriptListener(event.listen) || event.listen?.trim() || '',
+      type: event.script?.type?.trim() || '',
+      exec: scriptEventText(event),
+    }))
+
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right))
 }
 
 export type TemplatePart = {

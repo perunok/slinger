@@ -106,7 +106,22 @@ type PostmanItem = {
   item?: PostmanItem[]
   request?: {
     method?: string
-    url?: string | { raw?: string; host?: string[]; path?: string[] }
+    url?:
+      | string
+      | {
+          raw?: string
+          protocol?: string
+          host?: string | string[]
+          path?: string | Array<string | { type?: string; value?: string }>
+          port?: string
+          query?: Array<{
+            key?: string | null
+            value?: string | null
+            disabled?: boolean
+          }>
+          hash?: string
+          variable?: Array<{ key?: string; value?: unknown }>
+        }
     description?: unknown
     header?: unknown
     body?: unknown
@@ -217,19 +232,63 @@ function requireName(name: string, label: string): string {
 }
 
 function postmanUrlToString(
-  url: string | { raw?: string; host?: string[]; path?: string[] } | undefined,
+  url:
+    | string
+    | {
+        raw?: string
+        protocol?: string
+        host?: string | string[]
+        path?: string | Array<string | { type?: string; value?: string }>
+        port?: string
+        query?: Array<{ key?: string | null; value?: string | null; disabled?: boolean }>
+        hash?: string
+      }
+    | undefined,
 ): string {
   if (!url) return ''
   if (typeof url === 'string') return url
 
   if (typeof url.raw === 'string' && url.raw.trim()) return url.raw
 
-  const host = Array.isArray(url.host) ? url.host.join('.') : ''
-  const path = Array.isArray(url.path) ? url.path.join('/') : ''
+  const protocol = typeof url.protocol === 'string' && url.protocol.trim() ? `${url.protocol.trim()}://` : ''
+  const host =
+    typeof url.host === 'string'
+      ? url.host
+      : Array.isArray(url.host)
+        ? url.host.join('.')
+        : ''
+  const port = typeof url.port === 'string' && url.port.trim() ? `:${url.port.trim()}` : ''
+  const pathSegments = Array.isArray(url.path)
+    ? url.path.map((segment) =>
+        typeof segment === 'string' ? segment : (segment?.value ?? ''),
+      )
+    : typeof url.path === 'string'
+      ? [url.path]
+      : []
+  const normalizedPath = pathSegments
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join('/')
+  const path = normalizedPath ? `/${normalizedPath.replace(/^\/+/, '')}` : ''
+  const queryEntries = Array.isArray(url.query)
+    ? url.query
+        .filter((entry) => !entry?.disabled)
+        .map((entry) => {
+          const key = entry?.key ?? ''
+          const value = entry?.value ?? ''
+          if (!key && value === '') return ''
+          if (value === '') return encodeURIComponent(String(key))
+          return `${encodeURIComponent(String(key))}=${encodeURIComponent(String(value))}`
+        })
+        .filter(Boolean)
+    : []
+  const query = queryEntries.length > 0 ? `?${queryEntries.join('&')}` : ''
+  const hash = typeof url.hash === 'string' && url.hash.length > 0 ? `#${url.hash.replace(/^#/, '')}` : ''
+  const authority = `${host}${port}`
 
-  if (!host) return path
-  if (!path) return host
-  return `${host.replace(/\/$/, '')}/${path}`
+  if (!authority) return `${path}${query}${hash}`
+
+  return `${protocol}${authority}${path}${query}${hash}`
 }
 
 function collectPostmanRequests(items: PostmanItem[] | undefined): RequestDraft[] {

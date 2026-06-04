@@ -9,7 +9,9 @@
     HeaderDocument,
     RequestDocument,
     RequestParam,
+    RequestScriptState,
     ResponseExample,
+    ScriptListener,
   } from '../lib/requestDocument'
   import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection, EnvironmentVariable, HttpResponseData } from '../tauri'
@@ -85,7 +87,7 @@
   export let responseContentType: PayloadContentType
   export let responseViewTab: 'headers' | 'body'
   export let requestHasChanges: boolean
-  export let scripts: string
+  export let scripts: RequestScriptState
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
   export let selectedRequest: ApiRequest | null
@@ -103,7 +105,7 @@
   export let setRequestContentType: (type: PayloadContentType) => void
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
   export let setSelectedRequestId: (id: string | null) => void
-  export let setScripts: (value: string) => void
+  export let setScript: (listener: ScriptListener, value: string) => void
   export let setUrlDraft: (value: string) => void
   export let setRequestMethod: (method: string) => void
   export let environmentVariables: EnvironmentVariable[]
@@ -722,7 +724,7 @@
             {setAuth}
             {setBodyDraft}
             {setHeaders}
-            {setScripts}
+            {setScript}
             {urlDraft}
           />
         </div>

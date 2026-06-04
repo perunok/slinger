@@ -10,9 +10,22 @@
     type HeaderDocument,
     type RequestDocument,
     type RequestParam,
+    type RequestScriptState,
+    type ScriptListener,
   } from '../lib/requestDocument'
   import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection, EnvironmentVariable } from '../tauri'
+
+  type ScriptNavItem = {
+    id: ScriptListener
+    label: string
+    caption: string
+  }
+
+  const SCRIPT_NAV_ITEMS: ScriptNavItem[] = [
+    { id: 'prerequest', label: 'Pre-request', caption: 'Before send' },
+    { id: 'test', label: 'Post-request', caption: 'After response' },
+  ]
 
   export let activeTab: ActiveTab
   export let bodyDraft: string
@@ -23,15 +36,17 @@
   export let methodDraft: string
   export let params: RequestParam[]
   export let requestContentType: PayloadContentType
-  export let scripts: string
+  export let scripts: RequestScriptState
   export let selectedCollection: Collection | null
   export let selectedDocument: RequestDocument
   export let selectedRequest: ApiRequest | null
   export let setAuth: (auth: RequestAuthDocument | null) => void
   export let setBodyDraft: (value: string) => void
   export let setHeaders: (headers: HeaderDocument[]) => void
-  export let setScripts: (value: string) => void
+  export let setScript: (listener: ScriptListener, value: string) => void
   export let urlDraft: string
+
+  let activeScriptNav: ScriptListener = 'prerequest'
 
   function textAreaValue(event: Event): string {
     return (event.currentTarget as HTMLTextAreaElement).value
@@ -57,13 +72,45 @@
 {:else if activeTab === 'Headers'}
   <RequestHeadersTable {headers} {setHeaders} />
 {:else if activeTab === 'Scripts'}
-  <textarea
-    class="h-full w-full resize-none bg-[var(--bg)] p-4 font-mono text-sm leading-6 text-[#cbd5e1] outline-none"
-    spellcheck="false"
-    aria-label="Response script"
-    value={scripts}
-    on:input={(event) => setScripts(textAreaValue(event))}
-  />
+  <div class="flex h-full min-h-0 bg-[var(--bg)]">
+    <aside class="flex w-40 shrink-0 flex-col gap-2 border-r border-[var(--border)] bg-[var(--surface)] p-2">
+      {#each SCRIPT_NAV_ITEMS as item (item.id)}
+        <button
+          type="button"
+          class={`rounded-xl border px-3 py-3 text-left transition-colors ${
+            activeScriptNav === item.id
+              ? 'border-[#5a8fff] bg-[#5a8fff1a] text-[var(--text)]'
+              : 'border-transparent bg-transparent text-[var(--muted)] hover:border-[var(--border)] hover:bg-[var(--panel)] hover:text-[var(--text)]'
+          }`}
+          on:click={() => (activeScriptNav = item.id)}
+        >
+          <div class="text-sm font-semibold">{item.label}</div>
+          <div class="mt-1 text-xs opacity-80">{item.caption}</div>
+        </button>
+      {/each}
+    </aside>
+
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div class="border-b border-[var(--border)] px-4 py-3">
+        <div class="text-sm font-semibold text-[var(--text)]">
+          {activeScriptNav === 'prerequest' ? 'Pre-request script' : 'Post-request script'}
+        </div>
+        <p class="mt-1 text-xs text-[var(--muted)]">
+          {activeScriptNav === 'prerequest'
+            ? 'Runs before the request is built and sent. Use it to prepare environment variables.'
+            : 'Runs after a response is received. Use it to inspect the payload and store values.'}
+        </p>
+      </div>
+
+      <textarea
+        class="min-h-0 flex-1 resize-none bg-[var(--bg)] p-4 font-mono text-sm leading-6 text-[#cbd5e1] outline-none"
+        spellcheck="false"
+        aria-label={activeScriptNav === 'prerequest' ? 'Pre-request script' : 'Post-request script'}
+        value={scripts[activeScriptNav]}
+        on:input={(event) => setScript(activeScriptNav, textAreaValue(event))}
+      />
+    </div>
+  </div>
 {:else if activeTab === 'Settings'}
   <RequestTable rows={settingsRows} />
 {:else if requestContentType === 'json'}

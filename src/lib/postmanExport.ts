@@ -14,7 +14,7 @@ import {
 } from './requestDocument'
 
 const POSTMAN_COLLECTION_SCHEMA =
-  'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+  'https://schema.postman.com/json/collection/v2.1.0/collection.json'
 
 type PostmanHeader = HeaderDocument & {
   key: string
@@ -22,8 +22,10 @@ type PostmanHeader = HeaderDocument & {
 }
 
 type PostmanQueryParam = {
-  key: string
-  value: string
+  key: string | null
+  value: string | null
+  disabled?: boolean
+  description?: unknown
 }
 
 type PostmanUrlVariable = {
@@ -35,9 +37,11 @@ type PostmanUrlVariable = {
 type PostmanUrl = {
   raw: string
   protocol?: string
-  host?: string[]
-  path?: string[]
+  host?: string | string[]
+  path?: string | string[]
+  port?: string
   query?: PostmanQueryParam[]
+  hash?: string
   variable?: PostmanUrlVariable[]
 }
 
@@ -120,9 +124,9 @@ function shouldParseHost(base: string, hasProtocol: boolean, hasProtocolSlashes:
   return firstSegment.includes('.') || firstSegment.includes(':') || firstSegment.includes('{{')
 }
 
-function hostParts(host: string): string[] {
+function hostParts(host: string): string | string[] {
   if (!host) return []
-  if (host.includes('{{') || host.includes(':')) return [decodeUrlPart(host)]
+  if (host.includes('{{') || host.includes(':')) return decodeUrlPart(host)
   return host.split('.').filter(Boolean).map(decodeUrlPart)
 }
 
@@ -154,9 +158,12 @@ function postmanUrl(rawUrl: string, document: RequestDocument): PostmanUrl {
 
   if (!raw) return url
 
+  const hashIndex = raw.indexOf('#')
+  const hash = hashIndex >= 0 ? raw.slice(hashIndex + 1) : ''
   const { base, queryText } = splitUrlQuery(raw)
   const query = parseQuery(queryText)
   if (query.length > 0) url.query = query
+  if (hash) url.hash = hash
 
   const protocolMatch = base.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//)
   const hasProtocol = Boolean(protocolMatch)
@@ -172,12 +179,27 @@ function postmanUrl(rawUrl: string, document: RequestDocument): PostmanUrl {
 
   if (shouldParseHost(base, hasProtocol, hasProtocolSlashes)) {
     const slashIndex = workingBase.indexOf('/')
-    const host = slashIndex >= 0 ? workingBase.slice(0, slashIndex) : workingBase
+    const hostWithPort = slashIndex >= 0 ? workingBase.slice(0, slashIndex) : workingBase
     const path = slashIndex >= 0 ? workingBase.slice(slashIndex + 1) : ''
+    let host = hostWithPort
+    let port = ''
+    const lastColonIndex = hostWithPort.lastIndexOf(':')
+    const shouldSplitPort =
+      lastColonIndex > 0 &&
+      !hostWithPort.includes('{{') &&
+      !hostWithPort.startsWith('[') &&
+      /^\d+$/.test(hostWithPort.slice(lastColonIndex + 1))
+
+    if (shouldSplitPort) {
+      host = hostWithPort.slice(0, lastColonIndex)
+      port = hostWithPort.slice(lastColonIndex + 1)
+    }
+
     const hostValues = hostParts(host)
     const pathValues = pathParts(path)
 
     if (hostValues.length > 0) url.host = hostValues
+    if (port) url.port = port
     if (pathValues.length > 0) url.path = pathValues
     return url
   }
