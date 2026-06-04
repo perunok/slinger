@@ -9,10 +9,14 @@ mod domain;
 use anyhow::Result;
 use reqwest::header::{HeaderName, HeaderValue};
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tauri::State;
+use tokio::sync::{oneshot, Mutex};
+
+type RequestCancelRegistry = Mutex<HashMap<String, oneshot::Sender<()>>>;
 
 #[tauri::command]
 async fn create_workspace(
@@ -254,6 +258,8 @@ fn normalize_request_url(url: &str) -> String {
 #[tauri::command]
 async fn execute_http_request(
     input: domain::HttpRequestInput,
+    request_run_id: Option<String>,
+    cancel_registry: State<'_, RequestCancelRegistry>,
 ) -> Result<domain::HttpResponseData, String> {
     let method = input
         .method
@@ -291,27 +297,60 @@ async fn execute_http_request(
         }
     }
 
-    let started_at = Instant::now();
-    let response = builder.send().await.map_err(|err| err.to_string())?;
-    let duration_ms = started_at.elapsed().as_millis();
-    let status = response.status();
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(key, value)| domain::RequestHeader {
-            key: key.to_string(),
-            value: value.to_str().unwrap_or("").to_string(),
-        })
-        .collect();
-    let body = response.text().await.map_err(|err| err.to_string())?;
+    let request_run_id = request_run_id.filter(|id| !id.is_empty());
+    let request_future = async move {
+        let started_at = Instant::now();
+        let response = builder.send().await.map_err(|err| err.to_string())?;
+        let duration_ms = started_at.elapsed().as_millis();
+        let status = response.status();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(key, value)| domain::RequestHeader {
+                key: key.to_string(),
+                value: value.to_str().unwrap_or("").to_string(),
+            })
+            .collect();
+        let body = response.text().await.map_err(|err| err.to_string())?;
 
-    Ok(domain::HttpResponseData {
-        status: status.as_u16(),
-        status_text: status.canonical_reason().unwrap_or("").to_string(),
-        duration_ms,
-        headers,
-        body,
-    })
+        Ok(domain::HttpResponseData {
+            status: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or("").to_string(),
+            duration_ms,
+            headers,
+            body,
+        })
+    };
+
+    if let Some(request_run_id) = request_run_id {
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        cancel_registry
+            .lock()
+            .await
+            .insert(request_run_id.clone(), cancel_tx);
+
+        let result = tokio::select! {
+            result = request_future => result,
+            _ = cancel_rx => Err("request canceled".to_string()),
+        };
+
+        cancel_registry.lock().await.remove(&request_run_id);
+        return result;
+    }
+
+    request_future.await
+}
+
+#[tauri::command]
+async fn cancel_http_request(
+    request_run_id: String,
+    cancel_registry: State<'_, RequestCancelRegistry>,
+) -> Result<(), String> {
+    if let Some(cancel_tx) = cancel_registry.lock().await.remove(&request_run_id) {
+        let _ = cancel_tx.send(());
+    }
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -325,6 +364,7 @@ fn main() -> Result<()> {
 
     tauri::Builder::default()
         .manage(pool)
+        .manage(RequestCancelRegistry::default())
         .invoke_handler(tauri::generate_handler![
             create_workspace,
             list_workspaces,
@@ -346,6 +386,7 @@ fn main() -> Result<()> {
             default_export_path,
             write_export_file,
             execute_http_request,
+            cancel_http_request,
         ])
         .run(tauri::generate_context!())?;
 

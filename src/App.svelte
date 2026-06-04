@@ -188,6 +188,8 @@
   let sendResult: HttpResponseData | null = null
   let sendError: string | null = null
   let sending = false
+  let sendingRequestIds = new Set<string>()
+  let requestAbortControllers = new Map<string, AbortController>()
   let savingResponse = false
   let savingRequest = false
   let workspaceName = ''
@@ -267,6 +269,7 @@
   $: scripts = scriptText(requestScripts(selectedDocument))
   $: description =
     typeof selectedDocument.description === 'string' ? selectedDocument.description.trim() : ''
+  $: sending = selectedRequestId ? sendingRequestIds.has(selectedRequestId) : false
   $: resolvedUrlPreview = resolveTemplate(urlDraft, environmentVariables)
   $: builtCopyRequest = selectedRequest
     ? buildResolvedRequest({
@@ -306,6 +309,7 @@
       if (!selectedWorkspaceId) {
         collectionsLoadToken += 1
         environmentsLoadToken += 1
+        cancelAllRequests()
         collections = []
         environments = []
         environmentVariables = []
@@ -315,6 +319,7 @@
         selectedRequestId = null
         selectedResponseRequestId = null
       } else {
+        cancelAllRequests()
         openRequestTabs = []
         selectedRequestId = null
         selectedResponseRequestId = null
@@ -373,6 +378,7 @@
 
   onDestroy(() => {
     stopResize()
+    cancelAllRequests()
     window.removeEventListener('keydown', handleGlobalKeydown, true)
   })
 
@@ -644,6 +650,32 @@
     )
   }
 
+  function setRequestSending(requestId: string, value: boolean) {
+    const next = new Set(sendingRequestIds)
+    if (value) next.add(requestId)
+    else next.delete(requestId)
+    sendingRequestIds = next
+  }
+
+  function cancelRequest(requestId: string) {
+    const controller = requestAbortControllers.get(requestId)
+    if (!controller) return
+
+    controller.abort()
+    requestAbortControllers.delete(requestId)
+    setRequestSending(requestId, false)
+  }
+
+  function cancelRequests(requestIds: string[]) {
+    for (const requestId of requestIds) {
+      cancelRequest(requestId)
+    }
+  }
+
+  function cancelAllRequests() {
+    cancelRequests([...requestAbortControllers.keys()])
+  }
+
   function editableRequestDocument(
     request: ApiRequest,
     values: {
@@ -902,6 +934,11 @@
       await deleteCollection(collection.id)
       const next = collections.filter((item) => item.id !== collection.id)
       const nextTabs = openRequestTabs.filter((tab) => tab.request.collection_id !== collection.id)
+      cancelRequests(
+        openRequestTabs
+          .filter((tab) => tab.request.collection_id === collection.id)
+          .map((tab) => tab.request.id),
+      )
       collections = next
       openRequestTabs = nextTabs
       if (selectedRequest?.collection_id === collection.id) {
@@ -959,7 +996,7 @@
   }
 
   function isAbortError(err: unknown): boolean {
-    return err instanceof DOMException && err.name === 'AbortError'
+    return err instanceof Error && err.name === 'AbortError'
   }
 
   async function buildCollectionExportPayload(collection: Collection): Promise<string> {
@@ -1780,11 +1817,16 @@
     if (!selectedRequest) return
 
     const requestId = selectedRequest.id
+    if (requestAbortControllers.has(requestId)) return
+
+    const abortController = new AbortController()
+    const requestRunId = createClientId()
+    requestAbortControllers.set(requestId, abortController)
     const responseContentTypeAtSend = responseContentType
     const documentAtSend = selectedDocument
     const environmentIdAtSend = selectedEnvironmentId
     const variablesAtSend = environmentVariables
-    sending = true
+    setRequestSending(requestId, true)
     sendResult = null
     sendError = null
     selectedResponseRequestId = null
@@ -1814,7 +1856,9 @@
         url: builtRequest.url,
         headers: builtRequest.headers,
         body: builtRequest.body,
-      })
+      }, abortController.signal, requestRunId)
+      if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
+
       const detectedContentType = payloadContentTypeFromHeaders(result.headers)
       const nextResponseContentType = detectedContentType ?? responseContentTypeAtSend
 
@@ -1835,13 +1879,17 @@
           environmentId: environmentIdAtSend,
           variables: variablesAtSend,
         })
+        if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
         error = null
       } catch (scriptErr) {
+        if (abortController.signal.aborted || requestAbortControllers.get(requestId) !== abortController) return
         const message = scriptErr instanceof Error ? scriptErr.message : String(scriptErr)
         console.error('Response script failed:', message)
         error = `Response script failed: ${message}`
       }
     } catch (err) {
+      if (isAbortError(err) || abortController.signal.aborted) return
+
       const nextSendError = normalizeRequestError(err)
       updateRequestTabResponse(requestId, {
         sendResult: null,
@@ -1851,7 +1899,10 @@
         sendError = nextSendError
       }
     } finally {
-      sending = false
+      if (requestAbortControllers.get(requestId) === abortController) {
+        requestAbortControllers.delete(requestId)
+        setRequestSending(requestId, false)
+      }
     }
   }
 
@@ -1899,6 +1950,8 @@
       if (!confirmed) return
     }
 
+    cancelRequest(requestId)
+
     const nextTabs = openRequestTabs.filter((item) => item.request.id !== requestId)
     openRequestTabs = nextTabs
 
@@ -1920,6 +1973,7 @@
     )
 
     if (unmodifiedTabIds.size > 0) {
+      cancelRequests([...unmodifiedTabIds])
       const nextTabs = openRequestTabs.filter((tab) => !unmodifiedTabIds.has(tab.request.id))
       openRequestTabs = nextTabs
 
@@ -1940,6 +1994,7 @@
       })
       if (!confirmed) return
 
+      cancelRequest(tab.request.id)
       const nextTabs = openRequestTabs.filter((item) => item.request.id !== tab.request.id)
       openRequestTabs = nextTabs
 
@@ -2019,6 +2074,7 @@
       {bodyIsValid}
       {description}
       {handleBeautifyBody}
+      handleCancelSend={() => selectedRequestId && cancelRequest(selectedRequestId)}
       {handleCreateRequestDraft}
       {handleSend}
       {handleSaveRequest}

@@ -329,7 +329,25 @@ const FETCH_FORBIDDEN_HEADERS = new Set([
   'user-agent',
 ])
 
-async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseData> {
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') return new DOMException('The operation was aborted.', 'AbortError')
+  const error = new Error('The operation was aborted.')
+  error.name = 'AbortError'
+  return error
+}
+
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(createAbortError())
+
+  return new Promise((resolve, reject) => {
+    const handleAbort = () => reject(createAbortError())
+    signal.addEventListener('abort', handleAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', handleAbort))
+  })
+}
+
+async function executeWithFetch(input: HttpRequestInput, signal?: AbortSignal): Promise<HttpResponseData> {
   if (input.url.includes('{{') || input.url.includes('}}')) {
     throw new Error('request URL contains unresolved variables')
   }
@@ -344,6 +362,7 @@ async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseDa
     method: input.method,
     headers,
     body: input.body || undefined,
+    signal,
   })
   const body = await response.text()
   const durationMs = Math.round(performance.now() - startedAt)
@@ -681,7 +700,27 @@ export async function writeExportFile(path: string, contents: string): Promise<v
   return invokeTauri('write_export_file', { path, contents })
 }
 
-export async function executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData> {
-  if (isTauriRuntime) return invokeTauri('execute_http_request', { input })
-  return executeWithFetch(input)
+async function cancelHttpRequest(requestRunId: string): Promise<void> {
+  if (!isTauriRuntime) return
+  await invokeTauri('cancel_http_request', { requestRunId })
+}
+
+export async function executeHttpRequest(
+  input: HttpRequestInput,
+  signal?: AbortSignal,
+  requestRunId?: string,
+): Promise<HttpResponseData> {
+  if (isTauriRuntime) {
+    const request = invokeTauri<HttpResponseData>('execute_http_request', { input, requestRunId })
+    if (!signal || !requestRunId) return request
+
+    const handleAbort = () => {
+      void cancelHttpRequest(requestRunId).catch(() => undefined)
+    }
+    signal.addEventListener('abort', handleAbort, { once: true })
+
+    return abortable(request, signal).finally(() => signal.removeEventListener('abort', handleAbort))
+  }
+
+  return executeWithFetch(input, signal)
 }

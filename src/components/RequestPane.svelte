@@ -71,6 +71,7 @@
   export let closeRequestTab: (requestId: string) => void | Promise<void>
   export let description: string
   export let handleBeautifyBody: () => void
+  export let handleCancelSend: () => void
   export let handleCreateRequestDraft: () => void | Promise<void>
   export let handleSaveRequest: () => Promise<void>
   export let handleSaveResponse: () => Promise<void>
@@ -559,7 +560,12 @@
             >
               {savingRequest ? 'Saving' : 'Save'}
             </button> -->
-            <button class="primary-button h-8 w-full" on:click={handleSend} disabled={sending}>{sending ? 'Sending' : 'Send'}</button>
+            <button
+              class="primary-button h-8 w-full"
+              on:click={sending ? handleCancelSend : handleSend}
+            >
+              {sending ? 'Cancel' : 'Send'}
+            </button>
           </div>
         </div>
         {#if sending}
