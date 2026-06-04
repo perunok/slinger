@@ -321,6 +321,14 @@ function normalizeRequestUrl(url: string): string {
   return `http://${trimmed}`
 }
 
+const FETCH_FORBIDDEN_HEADERS = new Set([
+  'accept-encoding',
+  'connection',
+  'content-length',
+  'host',
+  'user-agent',
+])
+
 async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseData> {
   if (input.url.includes('{{') || input.url.includes('}}')) {
     throw new Error('request URL contains unresolved variables')
@@ -328,7 +336,7 @@ async function executeWithFetch(input: HttpRequestInput): Promise<HttpResponseDa
 
   const headers = input.headers.reduce<Record<string, string>>((current, header) => {
     const key = header.key.trim()
-    if (key) current[key] = header.value
+    if (key && !FETCH_FORBIDDEN_HEADERS.has(key.toLowerCase())) current[key] = header.value
     return current
   }, {})
   const startedAt = performance.now()

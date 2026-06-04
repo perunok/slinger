@@ -53,7 +53,7 @@
 
   function variableMatch(value: string, caretIndex: number): { query: string; start: number; end: number } | null {
     const beforeCaret = value.slice(0, caretIndex)
-    const match = beforeCaret.match(/\{\{\s*([\w.-]*)$/)
+    const match = beforeCaret.match(/\{\{\s*(\$?[\w.-]*)$/)
     if (!match) return null
 
     return {
@@ -123,7 +123,7 @@
     for (const textNode of textNodes(containerRef)) {
       const text = textNode.textContent ?? ''
 
-      for (const match of text.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+      for (const match of text.matchAll(/\{\{\s*(\$?[\w.-]+)\s*\}\}/g)) {
         if (!isBuiltinVariable(match[1])) continue
 
         const start = match.index ?? 0

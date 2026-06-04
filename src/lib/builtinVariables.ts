@@ -54,6 +54,10 @@ export const BUILTIN_VARIABLES: BuiltinVariable[] = [
 
 const BUILTIN_VARIABLE_NAMES = new Set(BUILTIN_VARIABLES.map((variable) => variable.name))
 
+export function normalizeBuiltinVariableName(name: string): string {
+  return name.trim().replace(/^\$/, '')
+}
+
 function randomString(length = 12): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   let value = ''
@@ -78,15 +82,15 @@ function randomUUID(): string {
 }
 
 export function builtinVariableToken(name: string): string {
-  return `{{${name}}}`
+  return `{{${'$'}${normalizeBuiltinVariableName(name)}}}`
 }
 
 export function isBuiltinVariable(name: string): boolean {
-  return BUILTIN_VARIABLE_NAMES.has(name)
+  return BUILTIN_VARIABLE_NAMES.has(normalizeBuiltinVariableName(name))
 }
 
 export function builtinVariableSuggestions(query: string): BuiltinVariable[] {
-  const normalizedQuery = query.trim().toLowerCase()
+  const normalizedQuery = normalizeBuiltinVariableName(query).toLowerCase()
 
   if (!normalizedQuery) return BUILTIN_VARIABLES
 
@@ -96,7 +100,7 @@ export function builtinVariableSuggestions(query: string): BuiltinVariable[] {
 }
 
 export function resolveBuiltinVariable(name: string, now = new Date()): string | null {
-  switch (name) {
+  switch (normalizeBuiltinVariableName(name)) {
     case 'randomUUID':
       return randomUUID()
     case 'timestamp':
@@ -121,5 +125,6 @@ export function resolveBuiltinVariable(name: string, now = new Date()): string |
 }
 
 export function previewBuiltinVariable(name: string): string | null {
-  return BUILTIN_VARIABLES.find((variable) => variable.name === name)?.preview ?? null
+  const normalizedName = normalizeBuiltinVariableName(name)
+  return BUILTIN_VARIABLES.find((variable) => variable.name === normalizedName)?.preview ?? null
 }

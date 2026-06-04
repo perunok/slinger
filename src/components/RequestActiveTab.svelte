@@ -30,7 +30,12 @@
   export let setAuth: (auth: RequestAuthDocument | null) => void
   export let setBodyDraft: (value: string) => void
   export let setHeaders: (headers: HeaderDocument[]) => void
+  export let setScripts: (value: string) => void
   export let urlDraft: string
+
+  function textAreaValue(event: Event): string {
+    return (event.currentTarget as HTMLTextAreaElement).value
+  }
 
   $: settingsRows = [
     { key: 'Method', value: methodDraft },
@@ -52,9 +57,13 @@
 {:else if activeTab === 'Headers'}
   <RequestHeadersTable {headers} {setHeaders} />
 {:else if activeTab === 'Scripts'}
-  <pre class="h-full overflow-auto p-4 font-mono text-sm text-[#cbd5e1]">
-    {scripts || 'No scripts'}
-  </pre>
+  <textarea
+    class="h-full w-full resize-none bg-[var(--bg)] p-4 font-mono text-sm leading-6 text-[#cbd5e1] outline-none"
+    spellcheck="false"
+    aria-label="Response script"
+    value={scripts}
+    on:input={(event) => setScripts(textAreaValue(event))}
+  />
 {:else if activeTab === 'Settings'}
   <RequestTable rows={settingsRows} />
 {:else if requestContentType === 'json'}

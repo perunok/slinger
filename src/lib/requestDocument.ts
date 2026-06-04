@@ -35,6 +35,7 @@ export type ResponseExample = {
 export type ScriptEvent = {
   listen?: string
   script?: {
+    type?: string
     exec?: string[] | string
   }
 }
@@ -155,6 +156,20 @@ export function scriptText(events: ScriptEvent[]): string {
   return lines.join('\n')
 }
 
+export function scriptsFromText(value: string): ScriptEvent[] {
+  if (!value.trim()) return []
+
+  return [
+    {
+      listen: 'test',
+      script: {
+        type: 'text/javascript',
+        exec: value.split('\n'),
+      },
+    },
+  ]
+}
+
 export type TemplatePart = {
   text: string
   key?: string
@@ -163,8 +178,10 @@ export type TemplatePart = {
   value?: string
 }
 
+const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*(\$?[\w.-]+)\s*\}\}/g
+
 export function resolveTemplate(value: string, variables: EnvironmentVariable[], now = new Date()): string {
-  return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key: string) => {
+  return value.replace(TEMPLATE_VARIABLE_PATTERN, (match, key: string) => {
     const variable = variables.find((item) => item.key === key)
     if (variable) return variable.value
 
@@ -176,7 +193,7 @@ export function resolveTemplateParts(value: string, variables: EnvironmentVariab
   const parts: TemplatePart[] = []
   let lastIndex = 0
 
-  for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+  for (const match of value.matchAll(TEMPLATE_VARIABLE_PATTERN)) {
     const raw = match[0]
     const key = match[1]
     const index = match.index ?? 0
@@ -209,7 +226,7 @@ export function unresolvedVariables(values: string[]): string[] {
   const names = new Set<string>()
 
   for (const value of values) {
-    for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+    for (const match of value.matchAll(TEMPLATE_VARIABLE_PATTERN)) {
       if (!isBuiltinVariable(match[1])) names.add(match[1])
     }
   }

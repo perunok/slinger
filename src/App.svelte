@@ -34,6 +34,7 @@
     requestResponses,
     requestScripts,
     resolveTemplate,
+    scriptsFromText,
     scriptText,
     unresolvedVariables,
     type ActiveTab,
@@ -119,6 +120,9 @@
   type RequestTabState = {
     request: ApiRequest
     savedRequest: ApiRequest | null
+    sendResult: HttpResponseData | null
+    sendError: string | null
+    responseContentType: PayloadContentType
   }
   type RequestTabItem = {
     id: string
@@ -151,6 +155,16 @@
     text: 'text/plain',
     binary: 'application/octet-stream',
   }
+  const DEFAULT_REQUEST_HEADERS: HeaderDocument[] = [
+    { key: 'Content-Type', value: REQUEST_CONTENT_TYPE_HEADER.json },
+    { key: 'Content-Length', value: '<auto>' },
+    { key: 'Host', value: '<auto>' },
+    { key: 'User-Agent', value: 'Slinger' },
+    { key: 'Accept', value: '*/*' },
+    { key: 'Accept-Encoding', value: 'gzip,deflate,br' },
+    { key: 'Connection', value: 'keep-alive' },
+  ]
+  const AUTO_REQUEST_HEADER_KEYS = new Set(['host', 'content-length'])
 
   let workspaces: Workspace[] = []
   let collections: Collection[] = []
@@ -224,7 +238,7 @@
     collections.find((collection) => collection.id === selectedRequest?.collection_id) ??
     selectedCollection
   $: selectedDocument = parseDocument(selectedRequest)
-  $: headers = requestHeaders(selectedDocument)
+  $: headers = headersWithDefaultPresets(requestHeaders(selectedDocument))
   $: responseExamples = requestResponses(selectedDocument)
   $: selectedResponse =
     selectedResponseRequestId === selectedRequestId
@@ -234,7 +248,8 @@
   $: bodyIsValid = bodyFormat.ok && !/\{\{[^}]+\}\}/.test(bodyDraft)
   $: selectedSavedDocument = parseDocument(selectedSavedRequest)
   $: savedRequestBody = selectedSavedDocument.body?.raw ?? ''
-  $: savedRequestContentType = payloadContentTypeFromHeaders(requestHeaders(selectedSavedDocument)) ?? 'json'
+  $: savedRequestHeaders = headersWithDefaultPresets(requestHeaders(selectedSavedDocument))
+  $: savedRequestContentType = payloadContentTypeFromHeaders(savedRequestHeaders) ?? 'json'
   $: savedRequestMethod = selectedSavedDocument.method ?? selectedSavedRequest?.method ?? ''
   $: requestHasChanges = Boolean(
     selectedRequestTab &&
@@ -242,7 +257,8 @@
         urlDraft !== selectedSavedRequest.url ||
         bodyDraft !== savedRequestBody ||
         requestContentType !== savedRequestContentType ||
-        !headersAreEqual(headers, requestHeaders(selectedSavedDocument)) ||
+        !headersAreEqual(headers, savedRequestHeaders) ||
+        !scriptsAreEqual(selectedDocument, selectedSavedDocument) ||
         !requestAuthsAreEqual(selectedDocument.auth, selectedSavedDocument.auth) ||
         methodDraft !== savedRequestMethod),
   )
@@ -343,8 +359,9 @@
       urlDraft = selectedRequest?.url ?? ''
       bodyDraft = rawBody
       requestContentType = payloadContentTypeFromHeaders(requestHeaders(currentDocument)) ?? 'json'
-      sendResult = null
-      sendError = null
+      sendResult = selectedRequestTab?.sendResult ?? null
+      sendError = selectedRequestTab?.sendError ?? null
+      responseContentType = selectedRequestTab?.responseContentType ?? 'json'
       activeTab = isDraftRequest || rawBody ? 'Body' : 'Docs'
     }
   }
@@ -478,6 +495,36 @@
     return JSON.stringify(comparableHeaders(left)) === JSON.stringify(comparableHeaders(right))
   }
 
+  function normalizedHeaderKey(header: { key?: string }): string {
+    return header.key?.trim().toLowerCase() ?? ''
+  }
+
+  function headersWithDefaultPresets(headers: HeaderDocument[]): HeaderDocument[] {
+    const existingKeys = new Set(headers.map(normalizedHeaderKey).filter(Boolean))
+    const missingHeaders = DEFAULT_REQUEST_HEADERS
+      .filter((header) => !existingKeys.has(normalizedHeaderKey(header)))
+      .map((header) => ({ ...header }))
+
+    return [...headers, ...missingHeaders]
+  }
+
+  function scriptsAreEqual(left: RequestDocument, right: RequestDocument): boolean {
+    return scriptText(requestScripts(left)) === scriptText(requestScripts(right))
+  }
+
+  function createRequestTabState(
+    request: ApiRequest,
+    savedRequest: ApiRequest | null,
+  ): RequestTabState {
+    return {
+      request,
+      savedRequest,
+      sendResult: null,
+      sendError: null,
+      responseContentType: 'json',
+    }
+  }
+
   function requestTabHasChanges(tab: RequestTabState): boolean {
     const savedRequest = tab.savedRequest
     if (!savedRequest) return true
@@ -486,8 +533,10 @@
     const savedDocument = parseDocument(savedRequest)
     const draftBody = draftDocument.body?.raw ?? ''
     const savedBody = savedDocument.body?.raw ?? ''
-    const draftContentType = payloadContentTypeFromHeaders(requestHeaders(draftDocument)) ?? 'json'
-    const savedContentType = payloadContentTypeFromHeaders(requestHeaders(savedDocument)) ?? 'json'
+    const draftHeaders = headersWithDefaultPresets(requestHeaders(draftDocument))
+    const savedHeaders = headersWithDefaultPresets(requestHeaders(savedDocument))
+    const draftContentType = payloadContentTypeFromHeaders(draftHeaders) ?? 'json'
+    const savedContentType = payloadContentTypeFromHeaders(savedHeaders) ?? 'json'
     const draftMethod = draftDocument.method ?? tab.request.method
     const savedMethod = savedDocument.method ?? savedRequest.method
 
@@ -495,7 +544,8 @@
       tab.request.url !== savedRequest.url ||
       draftBody !== savedBody ||
       draftContentType !== savedContentType ||
-      !headersAreEqual(requestHeaders(draftDocument), requestHeaders(savedDocument)) ||
+      !headersAreEqual(draftHeaders, savedHeaders) ||
+      !scriptsAreEqual(draftDocument, savedDocument) ||
       !requestAuthsAreEqual(draftDocument.auth, savedDocument.auth) ||
       draftMethod !== savedMethod
     )
@@ -526,10 +576,7 @@
 
     openRequestTabs = [
       ...openRequestTabs,
-      {
-        request,
-        savedRequest: request,
-      },
+      createRequestTabState(request, request),
     ]
     selectedRequestId = request.id
   }
@@ -552,19 +599,46 @@
     selectedResponseIndex = responseIndex
     sendResult = null
     sendError = null
+    updateRequestTabResponse(requestId, {
+      sendResult: null,
+      sendError: null,
+    })
     responseViewTab = 'body'
 
     const responseHeaders = Array.isArray(response.header) ? response.header : []
     const detectedContentType = payloadContentTypeFromHeaders(responseHeaders)
-    responseContentType = detectedContentType ?? responseContentType
+    const nextResponseContentType = detectedContentType ?? responseContentType
+    responseContentType = nextResponseContentType
+    updateRequestTabResponse(requestId, {
+      responseContentType: nextResponseContentType,
+    })
   }
 
   function updateSelectedRequestTab(request: ApiRequest, savedRequest?: ApiRequest | null) {
     openRequestTabs = openRequestTabs.map((tab) =>
       tab.request.id === request.id
         ? {
+            ...tab,
             request,
             savedRequest: savedRequest === undefined ? tab.savedRequest : savedRequest,
+          }
+        : tab,
+    )
+  }
+
+  function updateRequestTabResponse(
+    requestId: string,
+    values: {
+      sendResult?: HttpResponseData | null
+      sendError?: string | null
+      responseContentType?: PayloadContentType
+    },
+  ) {
+    openRequestTabs = openRequestTabs.map((tab) =>
+      tab.request.id === requestId
+        ? {
+            ...tab,
+            ...values,
           }
         : tab,
     )
@@ -579,19 +653,22 @@
       contentType: PayloadContentType
       headers?: HeaderDocument[]
       auth?: RequestAuthDocument | null
+      scripts?: string
       name?: string
     },
   ): RequestDocument {
     const document = parseDocument(request)
     const hasAuth = Object.prototype.hasOwnProperty.call(values, 'auth')
+    const hasScripts = Object.prototype.hasOwnProperty.call(values, 'scripts')
 
     return {
       ...document,
       name: values.name ?? document.name ?? request.name,
       method: values.method,
       url: values.url,
-      headers: values.headers ?? headersWithContentType(requestHeaders(document), values.contentType),
+      headers: values.headers ?? headersWithContentType(headersWithDefaultPresets(requestHeaders(document)), values.contentType),
       auth: hasAuth ? values.auth : document.auth,
+      scripts: hasScripts ? scriptsFromText(values.scripts ?? '') : document.scripts,
       body: {
         ...(document.body ?? {}),
         mode: document.body?.mode ?? 'raw',
@@ -607,6 +684,7 @@
     contentType?: PayloadContentType
     headers?: HeaderDocument[]
     auth?: RequestAuthDocument | null
+    scripts?: string
     name?: string
   }) {
     if (!selectedRequest) return
@@ -623,6 +701,7 @@
       contentType: PayloadContentType
       headers?: HeaderDocument[]
       auth?: RequestAuthDocument | null
+      scripts?: string
       name: string
     } = {
       method: nextMethod,
@@ -635,6 +714,9 @@
 
     if (Object.prototype.hasOwnProperty.call(values, 'auth')) {
       nextValues.auth = values.auth
+    }
+    if (Object.prototype.hasOwnProperty.call(values, 'scripts')) {
+      nextValues.scripts = values.scripts
     }
 
     const nextDocument = editableRequestDocument(selectedRequest, nextValues)
@@ -740,6 +822,7 @@
         if (!loadedRequest) return tab
 
         return {
+          ...tab,
           request: tab.savedRequest ? tab.request : loadedRequest,
           savedRequest: loadedRequest,
         }
@@ -972,10 +1055,7 @@
       if (result.requests[0]) {
         openRequestTabs = [
           ...openRequestTabs,
-          {
-            request: result.requests[0],
-            savedRequest: result.requests[0],
-          },
+          createRequestTabState(result.requests[0], result.requests[0]),
         ]
         selectedRequestId = result.requests[0].id
       }
@@ -1051,6 +1131,30 @@
     }
   }
 
+  async function setScriptEnvironmentVariable(
+    environmentId: string | null,
+    key: string,
+    value: unknown,
+  ): Promise<void> {
+    if (!environmentId) {
+      throw new Error('Select an environment before setting variables from a response script.')
+    }
+
+    const trimmedKey = key.trim()
+    if (!trimmedKey) {
+      throw new Error('Environment variable name cannot be empty.')
+    }
+
+    const variable = await upsertEnvironmentVariable(environmentId, trimmedKey, String(value ?? ''))
+
+    if (selectedEnvironmentId === environmentId) {
+      const exists = environmentVariables.some((item) => item.id === variable.id)
+      environmentVariables = exists
+        ? environmentVariables.map((item) => (item.id === variable.id ? variable : item))
+        : [...environmentVariables, variable]
+    }
+  }
+
   async function handleDeleteVariable(variable: EnvironmentVariable) {
     try {
       await deleteEnvironmentVariable(variable.id)
@@ -1087,7 +1191,7 @@
       name,
       method: 'GET',
       url: '',
-      headers: [],
+      headers: headersWithDefaultPresets([]),
       body: {
         mode: 'raw',
         raw: '',
@@ -1120,10 +1224,7 @@
     }
     openRequestTabs = [
       ...openRequestTabs,
-      {
-        request,
-        savedRequest: null,
-      },
+      createRequestTabState(request, null),
     ]
     selectedRequestId = id
     error = null
@@ -1142,6 +1243,10 @@
   function setRequestBodyDraft(value: string) {
     bodyDraft = value
     updateSelectedRequestDraft({ body: value })
+  }
+
+  function setRequestScripts(value: string) {
+    updateSelectedRequestDraft({ scripts: value })
   }
 
   function setRequestPayloadContentType(type: PayloadContentType) {
@@ -1228,6 +1333,7 @@
         openRequestTabs = openRequestTabs.map((tab) =>
           tab.request.id === selectedRequest.id
             ? {
+                ...tab,
                 request: created,
                 savedRequest: created,
               }
@@ -1356,6 +1462,10 @@
         selectedResponseIndex = responses.length
         selectedResponseRequestId = updated.id
         sendResult = null
+        updateRequestTabResponse(updated.id, {
+          sendResult: null,
+          sendError: null,
+        })
         responseViewTab = 'body'
       }
       notice = `Saved response "${responseName}".`
@@ -1415,6 +1525,61 @@
     return `${base}${separator}${query}${hash}`
   }
 
+  function normalizeRequestUrlForHeaders(url: string): string {
+    const trimmed = url.trim()
+    if (!trimmed) return trimmed
+    if (trimmed.startsWith('//')) return `http:${trimmed}`
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return trimmed
+    return `http://${trimmed}`
+  }
+
+  function requestHostHeader(url: string): string | null {
+    try {
+      return new URL(normalizeRequestUrlForHeaders(url)).host
+    } catch {
+      return null
+    }
+  }
+
+  function byteLength(value: string): number {
+    return new TextEncoder().encode(value).length
+  }
+
+  function addMissingPresetHeaders(
+    headers: Array<{ key: string; value: string }>,
+    existingHeaders: HeaderDocument[],
+  ): Array<{ key: string; value: string }> {
+    const existingKeys = new Set(existingHeaders.map(normalizedHeaderKey).filter(Boolean))
+    const missingHeaders = DEFAULT_REQUEST_HEADERS
+      .filter((header) => !existingKeys.has(normalizedHeaderKey(header)))
+      .map((header) => ({
+        key: header.key ?? '',
+        value: header.value ?? '',
+      }))
+
+    return [...headers, ...missingHeaders]
+  }
+
+  function isAutoHeaderValue(value: string): boolean {
+    return value.trim().toLowerCase() === '<auto>' || value.trim().toLowerCase() === 'auto'
+  }
+
+  function applyAutoHeaders(
+    headers: Array<{ key: string; value: string }>,
+    url: string,
+    body: string,
+  ): Array<{ key: string; value: string }> {
+    const host = requestHostHeader(url)
+
+    return headers.flatMap((header) => {
+      const key = header.key.toLowerCase()
+      if (!AUTO_REQUEST_HEADER_KEYS.has(key) || !isAutoHeaderValue(header.value)) return [header]
+      if (key === 'host') return host ? [{ ...header, value: host }] : []
+      if (key === 'content-length') return [{ ...header, value: byteLength(body).toString() }]
+      return [header]
+    })
+  }
+
   function mergeRequestHeaders(
     baseHeaders: Array<{ key: string; value: string }>,
     authHeaders: HeaderDocument[],
@@ -1452,7 +1617,12 @@
       encodeBase64,
     )
     const resolvedUrlWithAuth = appendQueryParams(resolvedUrl, authParts.queryParams)
-    const resolvedHeaders = mergeRequestHeaders(resolvedManualHeaders, authParts.headers)
+    const presetHeaders = addMissingPresetHeaders(resolvedManualHeaders, input.headers)
+    const resolvedHeaders = applyAutoHeaders(
+      mergeRequestHeaders(presetHeaders, authParts.headers),
+      resolvedUrlWithAuth,
+      resolvedBody,
+    )
     const missingVariables = unresolvedVariables([
       resolvedUrlWithAuth,
       resolvedBody,
@@ -1529,13 +1699,99 @@
     }
   }
 
+  function responseHeaderValue(headers: Array<{ key: string; value: string }>, key: string): string | null {
+    const match = headers.find((header) => header.key.toLowerCase() === key.toLowerCase())
+    return match?.value ?? null
+  }
+
+  function responseHeadersObject(headers: Array<{ key: string; value: string }>): Record<string, string> {
+    return headers.reduce<Record<string, string>>((result, header) => {
+      result[header.key] = header.value
+      return result
+    }, {})
+  }
+
+  async function runResponseScripts(options: {
+    document: RequestDocument
+    response: HttpResponseData
+    environmentId: string | null
+    variables: EnvironmentVariable[]
+  }) {
+    const script = scriptText(
+      requestScripts(options.document).filter((event) => (event.listen ?? 'test') === 'test'),
+    )
+    if (!script.trim()) return
+
+    let parsedJson: unknown
+    let hasParsedJson = false
+    const pendingEnvironmentWrites: Array<Promise<void>> = []
+    const response = {
+      status: options.response.status,
+      statusText: options.response.status_text,
+      duration: options.response.duration_ms,
+      body: options.response.body,
+      text: () => options.response.body,
+      json: () => {
+        if (!hasParsedJson) {
+          parsedJson = JSON.parse(options.response.body || 'null')
+          hasParsedJson = true
+        }
+
+        return parsedJson
+      },
+      headers: {
+        all: () => responseHeadersObject(options.response.headers),
+        get: (key: string) => responseHeaderValue(options.response.headers, key),
+      },
+    }
+    const env = {
+      get: (key: string) =>
+        options.variables.find((variable) => variable.key === key)?.value ?? null,
+      set: (key: string, value: unknown) => {
+        const write = setScriptEnvironmentVariable(options.environmentId, key, value)
+        pendingEnvironmentWrites.push(write)
+        return write
+      },
+    }
+    const pm = {
+      response,
+      environment: env,
+      variables: env,
+      test: (_name: string, assertion: () => void) => assertion(),
+    }
+    const runner = new Function(
+      'response',
+      'env',
+      'pm',
+      'console',
+      '"use strict"; return (async () => {\n' + script + '\n})()',
+    ) as (
+      response: typeof response,
+      env: typeof env,
+      pm: typeof pm,
+      consoleApi: Console,
+    ) => Promise<unknown>
+
+    await runner(response, env, pm, console)
+    await Promise.all(pendingEnvironmentWrites)
+  }
+
   async function handleSend() {
     if (!selectedRequest) return
 
+    const requestId = selectedRequest.id
+    const responseContentTypeAtSend = responseContentType
+    const documentAtSend = selectedDocument
+    const environmentIdAtSend = selectedEnvironmentId
+    const variablesAtSend = environmentVariables
     sending = true
     sendResult = null
     sendError = null
     selectedResponseRequestId = null
+    updateRequestTabResponse(requestId, {
+      sendResult: null,
+      sendError: null,
+    })
 
     try {
       const builtRequest = buildResolvedRequest({
@@ -1560,11 +1816,40 @@
         body: builtRequest.body,
       })
       const detectedContentType = payloadContentTypeFromHeaders(result.headers)
-      if (detectedContentType) responseContentType = detectedContentType
+      const nextResponseContentType = detectedContentType ?? responseContentTypeAtSend
 
-      sendResult = result
+      updateRequestTabResponse(requestId, {
+        sendResult: result,
+        sendError: null,
+        responseContentType: nextResponseContentType,
+      })
+      if (selectedRequestId === requestId) {
+        sendResult = result
+        responseContentType = nextResponseContentType
+      }
+
+      try {
+        await runResponseScripts({
+          document: documentAtSend,
+          response: result,
+          environmentId: environmentIdAtSend,
+          variables: variablesAtSend,
+        })
+        error = null
+      } catch (scriptErr) {
+        const message = scriptErr instanceof Error ? scriptErr.message : String(scriptErr)
+        console.error('Response script failed:', message)
+        error = `Response script failed: ${message}`
+      }
     } catch (err) {
-      sendError = normalizeRequestError(err)
+      const nextSendError = normalizeRequestError(err)
+      updateRequestTabResponse(requestId, {
+        sendResult: null,
+        sendError: nextSendError,
+      })
+      if (selectedRequestId === requestId) {
+        sendError = nextSendError
+      }
     } finally {
       sending = false
     }
@@ -1766,6 +2051,7 @@
       setRequestContentType={setRequestPayloadContentType}
       setResponseViewTab={(tab) => (responseViewTab = tab)}
       setSelectedRequestId={selectRequest}
+      setScripts={setRequestScripts}
       setRequestMethod={setRequestMethod}
       {closeRequestTab}
       {closeAllRequestTabs}

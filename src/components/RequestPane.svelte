@@ -102,6 +102,7 @@
   export let setRequestContentType: (type: PayloadContentType) => void
   export let setResponseViewTab: (tab: 'headers' | 'body') => void
   export let setSelectedRequestId: (id: string | null) => void
+  export let setScripts: (value: string) => void
   export let setUrlDraft: (value: string) => void
   export let setRequestMethod: (method: string) => void
   export let environmentVariables: EnvironmentVariable[]
@@ -632,6 +633,7 @@
             {setAuth}
             {setBodyDraft}
             {setHeaders}
+            {setScripts}
             {urlDraft}
           />
         </div>

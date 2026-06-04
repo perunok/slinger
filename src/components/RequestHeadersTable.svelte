@@ -83,7 +83,7 @@
 
   function variableMatch(value: string, caretIndex: number): { query: string; start: number; end: number } | null {
     const beforeCaret = value.slice(0, caretIndex)
-    const match = beforeCaret.match(/\{\{\s*([\w.-]*)$/)
+    const match = beforeCaret.match(/\{\{\s*(\$?[\w.-]*)$/)
     if (!match) return null
 
     return {
@@ -97,7 +97,7 @@
     const parts: HeaderValuePart[] = []
     let lastIndex = 0
 
-    for (const match of value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+    for (const match of value.matchAll(/\{\{\s*(\$?[\w.-]+)\s*\}\}/g)) {
       const index = match.index ?? 0
       if (index > lastIndex) {
         parts.push({ text: value.slice(lastIndex, index), builtin: false })
