@@ -116,6 +116,7 @@
   let responseSplitRef: HTMLDivElement
   let tabListRef: HTMLDivElement
   let urlInputRef: HTMLInputElement
+  let urlVariableRefs: Array<HTMLSpanElement | null> = []
   let tabListWidth = 0
   let tabStripResizeObserver: ResizeObserver | null = null
   let tabContextMenu: { x: number; y: number } | null = null
@@ -289,6 +290,37 @@
 
   function handlePopupMouseLeave() {
     scheduleHoverPopupHide()
+  }
+
+  function rectContainsPoint(rect: DOMRect, clientX: number, clientY: number): boolean {
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+  }
+
+  function partAtPoint(clientX: number, clientY: number): TemplatePart | null {
+    for (const [index, part] of urlParts.entries()) {
+      if (!part.key) continue
+
+      const ref = urlVariableRefs[index]
+      if (!ref) continue
+
+      const rect = ref.getBoundingClientRect()
+      if (rectContainsPoint(rect, clientX, clientY)) return part
+    }
+
+    return null
+  }
+
+  function handleUrlFieldMouseMove(event: MouseEvent) {
+    const part = partAtPoint(event.clientX, event.clientY)
+    if (part) {
+      handleVariableMouseEnter(part)
+    } else if (hoveredEnvKey) {
+      scheduleHoverPopupHide()
+    }
+  }
+
+  function handleUrlFieldMouseLeave() {
+    if (hoveredEnvKey) scheduleHoverPopupHide()
   }
 
   async function saveHoveredEnv() {
@@ -576,34 +608,30 @@
               </svg>
             </div>
           </div>
-          <div class="relative min-w-0 flex-1">
-            <div class="absolute inset-0 rounded border border-[var(--input-border)] bg-[var(--input)] px-3 py-0.5 font-mono text-sm leading-8 text-[var(--text)] whitespace-pre overflow-hidden" style="pointer-events: none;">
-              {#each urlParts as part}
-                {#if part.key}
-                  <span
-                    role="button"
-                    tabindex="0"
-                    class="inline-block"
-                    style={variablePartStyle(part)}
-                    title={variablePartTitle(part)}
-                    on:mouseover={() => handleVariableMouseEnter(part)}
-                    on:mouseout={handleVariableMouseLeave}
-                    on:focus={() => handleVariableMouseEnter(part)}
-                    on:blur={handleVariableMouseLeave}
-                  >
-                    {part.text}
-                  </span>
-                {:else}
-                  <span>{part.text}</span>
-                {/if}
-              {/each}
+          <div
+            class="relative h-8 min-w-0 flex-1 rounded border border-[var(--input-border)] bg-[var(--input)]"
+            role="presentation"
+            on:mousemove={handleUrlFieldMouseMove}
+            on:mouseleave={handleUrlFieldMouseLeave}
+          >
+            <div
+              class="absolute inset-0 overflow-hidden whitespace-pre px-3 py-0.5 font-mono text-sm leading-8 text-[var(--text)]"
+              style="pointer-events: none;"
+              aria-hidden="true"
+            >
+              {#each urlParts as part, index}{#if part.key}<span
+                bind:this={urlVariableRefs[index]}
+                class="url-variable-token"
+                style={variablePartStyle(part)}
+                title={variablePartTitle(part)}
+              >{part.text}</span>{:else}<span>{part.text}</span>{/if}{/each}
             </div>
             <input
               bind:this={urlInputRef}
               value={urlDraft}
               on:input={handleUrlInput}
               on:keydown={handleUrlKeydown}
-              class="relative h-8 w-full rounded border border-transparent bg-transparent px-3 font-mono text-sm text-transparent caret-[var(--text)] outline-none"
+              class="relative h-full w-full appearance-none bg-transparent px-3 py-0.5 font-mono text-sm leading-8 text-transparent caret-[var(--text)] outline-none"
             />
             {#if hoveredEnvKey}
               <div class="absolute left-0 top-full mt-1 z-20 min-w-[180px]" role="presentation">
@@ -838,6 +866,17 @@
 </section>
 
 <style>
+  .url-variable-token {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    line-height: inherit;
+    text-align: inherit;
+    pointer-events: none;
+  }
+
   .request-tab-close {
     position: relative;
     display: inline-flex;
