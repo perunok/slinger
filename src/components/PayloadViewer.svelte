@@ -12,6 +12,7 @@
   export let emptyText = 'No body.'
   export let className = ''
   export let editable = false
+  export let wrap = false
   export let onChange: ((value: string) => void) | undefined = undefined
 
   const TOKEN_CLASS: Record<PayloadTokenKind, string> = {
@@ -95,6 +96,7 @@
   $: formatted = formatPayload(value, normalizedContentType)
   $: body = formatted.value
   $: isEditable = editable || typeof onChange === 'function'
+  $: viewerClass = `payload-viewer${wrap ? ' payload-viewer-wrap' : ''} ${className}`.trim()
   $: if (isEditable && editorRef && body.trim()) {
     const html = editorHtml()
     if (editorRef.innerHTML !== html) {
@@ -104,11 +106,11 @@
 </script>
 
 {#if !body.trim()}
-  <div class={`payload-viewer payload-viewer-empty ${className}`}>
+  <div class={`${viewerClass} payload-viewer-empty`}>
     <span>{emptyText}</span>
   </div>
 {:else if isEditable}
-  <div class={`payload-viewer ${className}`}>
+  <div class={viewerClass}>
     {#if !formatted.ok}
       <div class="payload-viewer-notice">Invalid JSON. Showing raw payload.</div>
     {/if}
@@ -124,7 +126,7 @@
     ></div>
   </div>
 {:else}
-  <div class={`payload-viewer ${className}`}>
+  <div class={viewerClass}>
     {#if !formatted.ok}
       <div class="payload-viewer-notice">Invalid JSON. Showing raw payload.</div>
     {/if}

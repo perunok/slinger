@@ -735,6 +735,7 @@
                   value={responsePanelBody}
                   contentType={responseContentType}
                   emptyText="No response body."
+                  wrap
                 />
               {/if}
             </div>
