@@ -20,6 +20,7 @@
   export let setSelectedRequestId: (id: string | null) => void
   export let selectResponseExample: (requestId: string, responseIndex: number) => void
   export let toggleFolder: (folderId: string) => void
+  export let handleRenameRequest: (request: ApiRequest) => Promise<void>
   export let handleDeleteRequest: (request: ApiRequest) => Promise<void>
 
   $: rootFolders = foldersByParent.get(ROOT_ID) ?? []
@@ -96,6 +97,7 @@
               {setSelectedRequestId}
               {selectResponseExample}
               {toggleFolder}
+              {handleRenameRequest}
               {handleDeleteRequest}
             />
           {/each}
@@ -108,6 +110,7 @@
               {selectedResponseIndex}
               {setSelectedRequestId}
               {selectResponseExample}
+              {handleRenameRequest}
               {handleDeleteRequest}
             />
           {/each}

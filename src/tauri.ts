@@ -77,6 +77,7 @@ export type HttpResponseData = {
 
 export type UpdateRequestInput = {
   requestId: string
+  name: string
   method: string
   url: string
   documentJson: string
@@ -623,6 +624,7 @@ export async function updateRequest(input: UpdateRequestInput): Promise<ApiReque
 
   const updated = {
     ...existing,
+    name: requireName(input.name, 'request'),
     method: input.method.trim().toUpperCase() || 'GET',
     url: input.url,
     document_json: input.documentJson,
@@ -636,6 +638,33 @@ export async function updateRequest(input: UpdateRequestInput): Promise<ApiReque
   })
 
   return updated
+}
+
+export async function renameRequest(requestId: string, name: string): Promise<ApiRequest> {
+  if (isTauriRuntime) return invokeTauri('rename_request', { requestId, name })
+
+  const nextName = requireName(name, 'request')
+  const data = readStore()
+  const existing = data.requests.find((request) => request.id === requestId)
+  if (!existing) throw new Error('request not found')
+
+  const document = JSON.parse(existing.document_json) as Record<string, unknown>
+  document.name = nextName
+
+  const renamed = {
+    ...existing,
+    name: nextName,
+    document_json: JSON.stringify(document),
+  }
+
+  writeStore({
+    ...data,
+    requests: data.requests.map((request) =>
+      request.id === requestId ? renamed : request,
+    ),
+  })
+
+  return renamed
 }
 
 export async function deleteRequest(requestId: string): Promise<void> {

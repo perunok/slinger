@@ -10,6 +10,7 @@
   export let selectedResponseIndex: number
   export let setSelectedRequestId: (id: string | null) => void
   export let selectResponseExample: (requestId: string, responseIndex: number) => void
+  export let handleRenameRequest: (request: ApiRequest) => Promise<void>
   export let handleDeleteRequest: (request: ApiRequest) => Promise<void>
 
   let examplesOpen = false
@@ -71,6 +72,17 @@
         ...
       </button>
       <div class="request-actions-menu">
+        <button
+          type="button"
+          title="Rename request"
+          on:click|stopPropagation={() => handleRenameRequest(request)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m4 20 4.5-1 10-10-3.5-3.5-10 10L4 20Z" />
+            <path d="m13.5 7.5 3.5 3.5" />
+          </svg>
+          <span>Rename</span>
+        </button>
         <button
           type="button"
           title="Delete request"

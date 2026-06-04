@@ -90,6 +90,7 @@ pub struct HttpResponseData {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRequestInput {
     pub request_id: String,
+    pub name: String,
     pub method: String,
     pub url: String,
     pub document_json: String,

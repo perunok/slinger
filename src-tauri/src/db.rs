@@ -547,7 +547,11 @@ pub async fn create_request(pool: &SqlitePool, input: CreateRequestInput) -> Res
 
 pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Result<ApiRequest> {
     let request_id = Uuid::parse_str(&input.request_id)?.to_string();
+    let name = input.name.trim().to_string();
     let method = input.method.trim().to_uppercase();
+    if name.is_empty() {
+        bail!("request name is required");
+    }
     if method.is_empty() {
         bail!("request method is required");
     }
@@ -556,10 +560,11 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
     let result = query(
         r#"
         UPDATE requests
-        SET method = ?, url = ?, document_json = ?
+        SET name = ?, method = ?, url = ?, document_json = ?
         WHERE id = ?
         "#,
     )
+    .bind(name)
     .bind(method)
     .bind(input.url)
     .bind(input.document_json)
@@ -570,6 +575,65 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
     if result.rows_affected() == 0 {
         bail!("request not found");
     }
+
+    Ok(query_as::<_, ApiRequest>(
+        r#"
+        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at
+        FROM requests
+        WHERE id = ?
+        "#,
+    )
+    .bind(request_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+pub async fn rename_request(
+    pool: &SqlitePool,
+    request_id: String,
+    name: String,
+) -> Result<ApiRequest> {
+    let request_id = Uuid::parse_str(&request_id)?.to_string();
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        bail!("request name is required");
+    }
+
+    let document_json: (String,) = query_as(
+        r#"
+        SELECT document_json
+        FROM requests
+        WHERE id = ?
+        "#,
+    )
+    .bind(&request_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("request not found"))?;
+
+    let mut document: Value = serde_json::from_str(&document_json.0)?;
+    match &mut document {
+        Value::Object(map) => {
+            map.insert("name".to_string(), Value::String(name.clone()));
+        }
+        _ => {
+            document = json!({ "name": name });
+        }
+    }
+    let document_json = serde_json::to_string(&document)?;
+
+    query(
+        r#"
+        UPDATE requests
+        SET name = ?, document_json = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&name)
+    .bind(document_json)
+    .bind(&request_id)
+    .execute(pool)
+    .await?;
 
     Ok(query_as::<_, ApiRequest>(
         r#"

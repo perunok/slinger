@@ -68,6 +68,7 @@
     importPostmanCollection,
     isTauriRuntime,
     renameCollection,
+    renameRequest,
     updateRequest,
     upsertEnvironmentVariable,
     writeExportFile,
@@ -764,6 +765,19 @@
     updateSelectedRequestTab(nextRequest)
   }
 
+  function requestWithName(request: ApiRequest, name: string): ApiRequest {
+    const document = parseDocument(request)
+
+    return {
+      ...request,
+      name,
+      document_json: JSON.stringify({
+        ...document,
+        name,
+      }),
+    }
+  }
+
   async function loadWorkspaces() {
     try {
       const items = await getWorkspaces()
@@ -994,6 +1008,33 @@
     } catch (err) {
       console.error(err)
       error = 'Unable to delete request.'
+    }
+  }
+
+  async function handleRenameRequest(request: ApiRequest) {
+    const nextName = window.prompt('Request name', request.name)
+    if (nextName === null) return
+
+    const trimmed = nextName.trim()
+    if (!trimmed || trimmed === request.name) return
+
+    try {
+      const renamed = await renameRequest(request.id, trimmed)
+      requests = requests.map((item) => (item.id === renamed.id ? renamed : item))
+      openRequestTabs = openRequestTabs.map((tab) => {
+        if (tab.request.id !== renamed.id) return tab
+
+        return {
+          ...tab,
+          request: requestWithName(tab.request, renamed.name),
+          savedRequest: tab.savedRequest ? renamed : tab.savedRequest,
+        }
+      })
+      notice = `Request renamed to "${renamed.name}".`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = 'Unable to rename request.'
     }
   }
 
@@ -1442,6 +1483,7 @@
       const document = savedRequestDocument(selectedRequest.name)
       const updated = await updateRequest({
         requestId: selectedRequest.id,
+        name: selectedRequest.name,
         method: methodDraft,
         url: urlDraft,
         documentJson: JSON.stringify(document),
@@ -2097,6 +2139,7 @@
           {toggleFolder}
           {handleRenameCollection}
           {handleDeleteCollection}
+          {handleRenameRequest}
           {handleDeleteRequest}
           {handleExportCollection}
         />

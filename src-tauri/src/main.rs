@@ -171,10 +171,18 @@ async fn update_request(
 }
 
 #[tauri::command]
-async fn delete_request(
+async fn rename_request(
     state: State<'_, SqlitePool>,
     request_id: String,
-) -> Result<(), String> {
+    name: String,
+) -> Result<domain::ApiRequest, String> {
+    db::rename_request(&state, request_id, name)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn delete_request(state: State<'_, SqlitePool>, request_id: String) -> Result<(), String> {
     db::delete_request(&state, request_id)
         .await
         .map_err(|err| err.to_string())
@@ -391,6 +399,7 @@ fn main() -> Result<()> {
             list_requests,
             create_request,
             update_request,
+            rename_request,
             delete_request,
             list_folders,
             import_postman_collection,
