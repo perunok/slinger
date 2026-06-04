@@ -116,10 +116,15 @@
   let isResizingResponse = false
   let responseSplitRef: HTMLDivElement
   let tabListRef: HTMLDivElement
+  let urlInputRef: HTMLInputElement
   let tabListWidth = 0
   let tabStripResizeObserver: ResizeObserver | null = null
   let tabContextMenu: { x: number; y: number } | null = null
   let overflowMenuOpen = false
+  let urlHistoryRequestId: string | null = null
+  let urlUndoStack: string[] = []
+  let urlRedoStack: string[] = []
+  let urlHistoryValue = ''
 
   function payloadBodyToString(value: unknown): string {
     if (typeof value === 'string') return value
@@ -134,6 +139,81 @@
 
   function inputValue(event: Event): string {
     return (event.currentTarget as HTMLInputElement).value
+  }
+
+  function resetUrlHistory(requestId: string | null, value: string) {
+    urlHistoryRequestId = requestId
+    urlUndoStack = []
+    urlRedoStack = []
+    urlHistoryValue = value
+  }
+
+  function syncUrlHistory(requestId: string | null, value: string) {
+    if (requestId !== urlHistoryRequestId) {
+      resetUrlHistory(requestId, value)
+      return
+    }
+
+    if (
+      value !== urlHistoryValue &&
+      (typeof document === 'undefined' || document.activeElement !== urlInputRef)
+    ) {
+      urlHistoryValue = value
+      urlUndoStack = []
+      urlRedoStack = []
+    }
+  }
+
+  function rememberUrlEdit(value: string) {
+    if (value === urlHistoryValue) return
+
+    urlUndoStack = [...urlUndoStack, urlHistoryValue]
+    urlRedoStack = []
+    urlHistoryValue = value
+  }
+
+  function setUrlDraftFromHistory(value: string, selectionIndex: number) {
+    urlHistoryValue = value
+    setUrlDraft(value)
+
+    requestAnimationFrame(() => {
+      urlInputRef?.focus()
+      urlInputRef?.setSelectionRange(selectionIndex, selectionIndex)
+    })
+  }
+
+  function handleUrlInput(event: Event) {
+    const value = inputValue(event)
+    rememberUrlEdit(value)
+    setUrlDraft(value)
+  }
+
+  function handleUrlKeydown(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+
+    const key = event.key.toLowerCase()
+    const isUndo = key === 'z' && !event.shiftKey
+    const isRedo = key === 'y' || (key === 'z' && event.shiftKey)
+    if (!isUndo && !isRedo) return
+
+    event.preventDefault()
+
+    if (isUndo) {
+      const previous = urlUndoStack[urlUndoStack.length - 1]
+      if (previous === undefined) return
+
+      urlUndoStack = urlUndoStack.slice(0, -1)
+      urlRedoStack = [...urlRedoStack, urlHistoryValue]
+      setUrlDraftFromHistory(previous, previous.length)
+      return
+    }
+
+    const next = urlRedoStack[urlRedoStack.length - 1]
+    if (next === undefined) return
+
+    urlRedoStack = urlRedoStack.slice(0, -1)
+    urlUndoStack = [...urlUndoStack, urlHistoryValue]
+    setUrlDraftFromHistory(next, next.length)
   }
 
   function selectValue(event: Event): string {
@@ -218,6 +298,7 @@
   }
 
   $: urlParts = resolveTemplateParts(urlDraft, environmentVariables)
+  $: syncUrlHistory(selectedRequestId, urlDraft)
 
   function handleRequestContentTypeChange(event: Event) {
     setRequestContentType(selectValue(event) as PayloadContentType)
@@ -519,8 +600,10 @@
               {/each}
             </div>
             <input
+              bind:this={urlInputRef}
               value={urlDraft}
-              on:input={(event) => setUrlDraft(inputValue(event))}
+              on:input={handleUrlInput}
+              on:keydown={handleUrlKeydown}
               class="relative h-8 w-full rounded border border-transparent bg-transparent px-3 font-mono text-sm text-transparent caret-[var(--text)] outline-none"
             />
             {#if hoveredEnvKey}
