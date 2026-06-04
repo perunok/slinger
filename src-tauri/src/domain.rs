@@ -6,6 +6,8 @@ pub struct Workspace {
     pub id: String,
     pub name: String,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -14,6 +16,8 @@ pub struct Collection {
     pub workspace_id: String,
     pub name: String,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -24,6 +28,8 @@ pub struct ApiFolder {
     pub parent_folder_id: Option<String>,
     pub name: String,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -37,6 +43,8 @@ pub struct ApiRequest {
     pub url: String,
     pub document_json: String,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -45,6 +53,8 @@ pub struct Environment {
     pub workspace_id: String,
     pub name: String,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -53,7 +63,11 @@ pub struct EnvironmentVariable {
     pub environment_id: String,
     pub key: String,
     pub value: String,
+    pub is_secret: bool,
+    pub masked_value: Option<String>,
     pub created_at: i64,
+    pub updated_at: i64,
+    pub version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

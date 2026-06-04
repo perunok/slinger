@@ -53,7 +53,9 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
         CREATE TABLE IF NOT EXISTS workspaces (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1
         );
         "#,
     )
@@ -67,6 +69,8 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
             workspace_id TEXT NOT NULL,
             name TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         );
         "#,
@@ -83,6 +87,8 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
             parent_folder_id TEXT,
             name TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
             FOREIGN KEY(collection_id) REFERENCES collections(id),
             FOREIGN KEY(parent_folder_id) REFERENCES folders(id)
@@ -104,6 +110,8 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
             url TEXT NOT NULL,
             document_json TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
             FOREIGN KEY(collection_id) REFERENCES collections(id),
             FOREIGN KEY(folder_id) REFERENCES folders(id)
@@ -120,6 +128,8 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
             workspace_id TEXT NOT NULL,
             name TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
         );
         "#,
@@ -134,7 +144,11 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
             environment_id TEXT NOT NULL,
             key TEXT NOT NULL,
             value TEXT NOT NULL,
+            is_secret INTEGER NOT NULL DEFAULT 0,
+            masked_value TEXT,
             created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
             UNIQUE(environment_id, key),
             FOREIGN KEY(environment_id) REFERENCES environments(id)
         );
@@ -143,25 +157,96 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
-    ensure_requests_folder_column(&pool).await?;
+    ensure_legacy_schema(&pool).await?;
 
     Ok(pool)
 }
 
-async fn ensure_requests_folder_column(pool: &SqlitePool) -> Result<()> {
-    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
-        query_as("PRAGMA table_info(requests)")
-            .fetch_all(pool)
-            .await?;
-    let has_folder_id = columns
-        .iter()
-        .any(|(_, name, _, _, _, _)| name == "folder_id");
+async fn ensure_legacy_schema(pool: &SqlitePool) -> Result<()> {
+    ensure_column(pool, "workspaces", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "workspaces", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    backfill_mutable_metadata(pool, "workspaces").await?;
 
-    if !has_folder_id {
-        query("ALTER TABLE requests ADD COLUMN folder_id TEXT")
-            .execute(pool)
-            .await?;
+    ensure_column(pool, "collections", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "collections", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    backfill_mutable_metadata(pool, "collections").await?;
+
+    ensure_column(pool, "folders", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "folders", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    backfill_mutable_metadata(pool, "folders").await?;
+
+    ensure_column(pool, "requests", "folder_id", "TEXT").await?;
+    ensure_column(pool, "requests", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "requests", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    backfill_mutable_metadata(pool, "requests").await?;
+
+    ensure_column(pool, "environments", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "environments", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    backfill_mutable_metadata(pool, "environments").await?;
+
+    ensure_column(
+        pool,
+        "environment_variables",
+        "is_secret",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_column(pool, "environment_variables", "masked_value", "TEXT").await?;
+    ensure_column(
+        pool,
+        "environment_variables",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        "environment_variables",
+        "version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
+    .await?;
+    backfill_mutable_metadata(pool, "environment_variables").await?;
+
+    Ok(())
+}
+
+async fn ensure_column(
+    pool: &SqlitePool,
+    table_name: &str,
+    column_name: &str,
+    definition: &str,
+) -> Result<()> {
+    let pragma = format!("PRAGMA table_info({})", table_name);
+    let columns: Vec<(i64, String, String, i64, Option<String>, i64)> =
+        query_as(&pragma).fetch_all(pool).await?;
+    let has_column = columns
+        .iter()
+        .any(|(_, name, _, _, _, _)| name == column_name);
+
+    if !has_column {
+        let statement = format!(
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            table_name, column_name, definition
+        );
+        query(&statement).execute(pool).await?;
     }
+
+    Ok(())
+}
+
+async fn backfill_mutable_metadata(pool: &SqlitePool, table_name: &str) -> Result<()> {
+    let update_updated_at = format!(
+        "UPDATE {} SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = 0",
+        table_name
+    );
+    query(&update_updated_at).execute(pool).await?;
+
+    let update_version = format!(
+        "UPDATE {} SET version = 1 WHERE version IS NULL OR version <= 0",
+        table_name
+    );
+    query(&update_version).execute(pool).await?;
 
     Ok(())
 }
@@ -181,7 +266,7 @@ pub async fn ensure_default_workspace(pool: &SqlitePool) -> Result<()> {
 pub async fn list_workspaces(pool: &SqlitePool) -> Result<Vec<Workspace>> {
     Ok(query_as::<_, Workspace>(
         r#"
-        SELECT id, name, created_at
+        SELECT id, name, created_at, updated_at, version
         FROM workspaces
         ORDER BY created_at, id
         "#,
@@ -196,21 +281,26 @@ pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspa
         bail!("workspace name is required");
     }
 
+    let now = now_unix_seconds();
     let workspace = Workspace {
         id: Uuid::now_v7().to_string(),
         name,
-        created_at: now_unix_seconds(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
-        INSERT INTO workspaces (id, name, created_at)
-        VALUES (?, ?, ?)
+        INSERT INTO workspaces (id, name, created_at, updated_at, version)
+        VALUES (?, ?, ?, ?, ?)
         "#,
     )
     .bind(&workspace.id)
     .bind(&workspace.name)
     .bind(workspace.created_at)
+    .bind(workspace.updated_at)
+    .bind(workspace.version)
     .execute(pool)
     .await?;
 
@@ -225,7 +315,7 @@ pub async fn list_environments(
 ) -> Result<Vec<Environment>> {
     Ok(query_as::<_, Environment>(
         r#"
-        SELECT id, workspace_id, name, created_at
+        SELECT id, workspace_id, name, created_at, updated_at, version
         FROM environments
         WHERE workspace_id = ?
         ORDER BY created_at, id
@@ -248,23 +338,28 @@ pub async fn create_environment(
         bail!("environment name is required");
     }
 
+    let now = now_unix_seconds();
     let environment = Environment {
         id: Uuid::now_v7().to_string(),
         workspace_id,
         name,
-        created_at: now_unix_seconds(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
-        INSERT INTO environments (id, workspace_id, name, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO environments (id, workspace_id, name, created_at, updated_at, version)
+        VALUES (?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&environment.id)
     .bind(&environment.workspace_id)
     .bind(&environment.name)
     .bind(environment.created_at)
+    .bind(environment.updated_at)
+    .bind(environment.version)
     .execute(pool)
     .await?;
 
@@ -278,7 +373,7 @@ pub async fn ensure_default_environment(
     let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
     let existing = query_as::<_, Environment>(
         r#"
-        SELECT id, workspace_id, name, created_at
+        SELECT id, workspace_id, name, created_at, updated_at, version
         FROM environments
         WHERE workspace_id = ?
         ORDER BY created_at, id
@@ -301,7 +396,7 @@ pub async fn list_environment_variables(
 ) -> Result<Vec<EnvironmentVariable>> {
     Ok(query_as::<_, EnvironmentVariable>(
         r#"
-        SELECT id, environment_id, key, value, created_at
+        SELECT id, environment_id, key, value, is_secret, masked_value, created_at, updated_at, version
         FROM environment_variables
         WHERE environment_id = ?
         ORDER BY key COLLATE NOCASE, created_at, id
@@ -337,6 +432,7 @@ pub async fn upsert_environment_variable(
     .fetch_optional(pool)
     .await?;
 
+    let now = now_unix_seconds();
     let variable = EnvironmentVariable {
         id: existing_id
             .map(|(id,)| id)
@@ -344,28 +440,43 @@ pub async fn upsert_environment_variable(
         environment_id,
         key,
         value,
-        created_at: now_unix_seconds(),
+        is_secret: false,
+        masked_value: None,
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
-        INSERT INTO environment_variables (id, environment_id, key, value, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO environment_variables (
+            id, environment_id, key, value, is_secret, masked_value, created_at, updated_at, version
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(environment_id, key)
-        DO UPDATE SET value = excluded.value
+        DO UPDATE SET
+            value = excluded.value,
+            is_secret = excluded.is_secret,
+            masked_value = excluded.masked_value,
+            updated_at = excluded.updated_at,
+            version = environment_variables.version + 1
         "#,
     )
     .bind(&variable.id)
     .bind(&variable.environment_id)
     .bind(&variable.key)
     .bind(&variable.value)
+    .bind(variable.is_secret)
+    .bind(&variable.masked_value)
     .bind(variable.created_at)
+    .bind(variable.updated_at)
+    .bind(variable.version)
     .execute(pool)
     .await?;
 
     Ok(query_as::<_, EnvironmentVariable>(
         r#"
-        SELECT id, environment_id, key, value, created_at
+        SELECT id, environment_id, key, value, is_secret, masked_value, created_at, updated_at, version
         FROM environment_variables
         WHERE environment_id = ? AND key = ?
         "#,
@@ -388,7 +499,7 @@ pub async fn delete_environment_variable(pool: &SqlitePool, variable_id: String)
 pub async fn list_collections(pool: &SqlitePool, workspace_id: String) -> Result<Vec<Collection>> {
     Ok(query_as::<_, Collection>(
         r#"
-        SELECT id, workspace_id, name, created_at
+        SELECT id, workspace_id, name, created_at, updated_at, version
         FROM collections
         WHERE workspace_id = ?
         ORDER BY created_at, id
@@ -411,23 +522,28 @@ pub async fn create_collection(
         bail!("collection name is required");
     }
 
+    let now = now_unix_seconds();
     let collection = Collection {
         id: Uuid::now_v7().to_string(),
         workspace_id,
         name,
-        created_at: now_unix_seconds(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
-        INSERT INTO collections (id, workspace_id, name, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO collections (id, workspace_id, name, created_at, updated_at, version)
+        VALUES (?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&collection.id)
     .bind(&collection.workspace_id)
     .bind(&collection.name)
     .bind(collection.created_at)
+    .bind(collection.updated_at)
+    .bind(collection.version)
     .execute(pool)
     .await?;
 
@@ -445,15 +561,17 @@ pub async fn rename_collection(
         bail!("collection name is required");
     }
 
-    query("UPDATE collections SET name = ? WHERE id = ?")
+    let now = now_unix_seconds();
+    query("UPDATE collections SET name = ?, updated_at = ?, version = version + 1 WHERE id = ?")
         .bind(&name)
+        .bind(now)
         .bind(&collection_id)
         .execute(pool)
         .await?;
 
     let collection = query_as::<_, Collection>(
         r#"
-        SELECT id, workspace_id, name, created_at
+        SELECT id, workspace_id, name, created_at, updated_at, version
         FROM collections
         WHERE id = ?
         "#,
@@ -490,7 +608,7 @@ pub async fn delete_collection(pool: &SqlitePool, collection_id: String) -> Resu
 pub async fn list_requests(pool: &SqlitePool, collection_id: String) -> Result<Vec<ApiRequest>> {
     Ok(query_as::<_, ApiRequest>(
         r#"
-        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at
+        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version
         FROM requests
         WHERE collection_id = ?
         ORDER BY created_at, id
@@ -557,10 +675,11 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
     }
     let _: Value = serde_json::from_str(&input.document_json)?;
 
+    let now = now_unix_seconds();
     let result = query(
         r#"
         UPDATE requests
-        SET name = ?, method = ?, url = ?, document_json = ?
+        SET name = ?, method = ?, url = ?, document_json = ?, updated_at = ?, version = version + 1
         WHERE id = ?
         "#,
     )
@@ -568,6 +687,7 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
     .bind(method)
     .bind(input.url)
     .bind(input.document_json)
+    .bind(now)
     .bind(&request_id)
     .execute(pool)
     .await?;
@@ -578,7 +698,7 @@ pub async fn update_request(pool: &SqlitePool, input: UpdateRequestInput) -> Res
 
     Ok(query_as::<_, ApiRequest>(
         r#"
-        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at
+        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version
         FROM requests
         WHERE id = ?
         "#,
@@ -622,22 +742,24 @@ pub async fn rename_request(
     }
     let document_json = serde_json::to_string(&document)?;
 
+    let now = now_unix_seconds();
     query(
         r#"
         UPDATE requests
-        SET name = ?, document_json = ?
+        SET name = ?, document_json = ?, updated_at = ?, version = version + 1
         WHERE id = ?
         "#,
     )
     .bind(&name)
     .bind(document_json)
+    .bind(now)
     .bind(&request_id)
     .execute(pool)
     .await?;
 
     Ok(query_as::<_, ApiRequest>(
         r#"
-        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at
+        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version
         FROM requests
         WHERE id = ?
         "#,
@@ -664,7 +786,7 @@ pub async fn delete_request(pool: &SqlitePool, request_id: String) -> Result<()>
 pub async fn list_folders(pool: &SqlitePool, collection_id: String) -> Result<Vec<ApiFolder>> {
     Ok(query_as::<_, ApiFolder>(
         r#"
-        SELECT id, workspace_id, collection_id, parent_folder_id, name, created_at
+        SELECT id, workspace_id, collection_id, parent_folder_id, name, created_at, updated_at, version
         FROM folders
         WHERE collection_id = ?
         ORDER BY created_at, id
@@ -851,19 +973,24 @@ async fn insert_folder(
     parent_folder_id: Option<String>,
     name: String,
 ) -> Result<ApiFolder> {
+    let now = now_unix_seconds();
     let folder = ApiFolder {
         id: Uuid::now_v7().to_string(),
         workspace_id: workspace_id.to_string(),
         collection_id: collection_id.to_string(),
         parent_folder_id,
         name,
-        created_at: now_unix_seconds(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
-        INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO folders (
+            id, workspace_id, collection_id, parent_folder_id, name, created_at, updated_at, version
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&folder.id)
@@ -872,6 +999,8 @@ async fn insert_folder(
     .bind(&folder.parent_folder_id)
     .bind(&folder.name)
     .bind(folder.created_at)
+    .bind(folder.updated_at)
+    .bind(folder.version)
     .execute(pool)
     .await?;
 
@@ -888,6 +1017,7 @@ async fn insert_request(
     url: String,
     document: Value,
 ) -> Result<ApiRequest> {
+    let now = now_unix_seconds();
     let request = ApiRequest {
         id: Uuid::now_v7().to_string(),
         workspace_id: workspace_id.to_string(),
@@ -897,15 +1027,18 @@ async fn insert_request(
         method,
         url,
         document_json: serde_json::to_string(&document)?,
-        created_at: now_unix_seconds(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
     };
 
     query(
         r#"
         INSERT INTO requests (
-            id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at
+            id, workspace_id, collection_id, folder_id, name, method, url, document_json,
+            created_at, updated_at, version
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&request.id)
@@ -917,6 +1050,8 @@ async fn insert_request(
     .bind(&request.url)
     .bind(&request.document_json)
     .bind(request.created_at)
+    .bind(request.updated_at)
+    .bind(request.version)
     .execute(pool)
     .await?;
 

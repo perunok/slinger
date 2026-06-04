@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import CloudToolsPanel from './CloudToolsPanel.svelte'
   import EnvironmentToolsPanel from './EnvironmentToolsPanel.svelte'
   import type {
     ApiRequest,
@@ -7,8 +8,22 @@
     EnvironmentVariable,
     Workspace,
   } from '../tauri'
+  import type {
+    CloudDeviceFlowState,
+    CloudHostBinding,
+    CloudHostKind,
+    CloudInvite,
+    CloudJoinRequest,
+    CloudRealtimeTokenResponse,
+    CloudSyncPullResponse,
+    CloudSyncPushResponse,
+    CloudUser,
+    CloudWorkspace,
+    CloudWorkspaceMember,
+    CloudWorkspaceRole,
+  } from '../cloud'
 
-  type UtilityTab = 'copy-request' | 'environment'
+  type UtilityTab = 'copy-request' | 'environment' | 'cloud'
   type CopyFormat = 'curl'
 
   export let open: boolean
@@ -36,6 +51,60 @@
   export let handleSaveVariable: (event: SubmitEvent) => Promise<void>
   export let handleEditVariable: (variable: EnvironmentVariable) => void
   export let handleDeleteVariable: (variable: EnvironmentVariable) => Promise<void>
+  export let cloudApiBaseUrl: string
+  export let setCloudApiBaseUrl: (value: string) => void
+  export let cloudDeviceName: string
+  export let setCloudDeviceName: (value: string) => void
+  export let saveCloudConfig: () => void
+  export let cloudUser: CloudUser | null
+  export let cloudWorkspaces: CloudWorkspace[]
+  export let cloudBusy: boolean
+  export let cloudPublishBusy: boolean
+  export let cloudDeviceFlow: CloudDeviceFlowState | null
+  export let selectedCloudWorkspaceId: string | null
+  export let setSelectedCloudWorkspaceId: (id: string | null) => void
+  export let selectedCloudWorkspace: CloudWorkspace | null
+  export let cloudWorkspaceMembers: CloudWorkspaceMember[]
+  export let cloudWorkspaceHosts: CloudHostBinding[]
+  export let cloudSyncClientId: string | null
+  export let cloudSyncCheckpoint: number
+  export let cloudLastInvite: CloudInvite | null
+  export let cloudLastJoinRequest: CloudJoinRequest | null
+  export let cloudLastPush: CloudSyncPushResponse | null
+  export let cloudLastPull: CloudSyncPullResponse | null
+  export let cloudLastRealtimeToken: CloudRealtimeTokenResponse | null
+  export let startCloudSignIn: () => Promise<void>
+  export let pollCloudSignIn: () => Promise<void>
+  export let refreshCloudState: () => Promise<void>
+  export let refreshCloudWorkspaceDetails: () => Promise<void>
+  export let signOutCloud: () => Promise<void>
+  export let createCloudWorkspace: (input: {
+    name: string
+    slug: string
+    description: string
+  }) => Promise<void>
+  export let ensureCloudSyncClient: () => Promise<unknown>
+  export let pushWorkspaceSync: () => Promise<void>
+  export let pullWorkspaceSync: () => Promise<void>
+  export let requestRealtimeToken: () => Promise<void>
+  export let inviteCloudMember: (input: {
+    email: string
+    role: CloudWorkspaceRole
+  }) => Promise<void>
+  export let createCloudJoinRequest: (input: {
+    message: string
+    requestedRole: CloudWorkspaceRole
+  }) => Promise<void>
+  export let addCloudHost: (input: {
+    host: string
+    kind: CloudHostKind
+  }) => Promise<void>
+  export let changeCloudMemberRole: (input: {
+    memberId: string
+    role: CloudWorkspaceRole
+    version: number
+  }) => Promise<void>
+  export let publishWorkspaceToCloud: () => Promise<void>
 
   let copied = false
   let copiedTimeout: ReturnType<typeof setTimeout> | null = null
@@ -92,6 +161,26 @@
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
           </svg>
           <span>Copy</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class={`flex h-6 items-center gap-1.5 rounded px-2 text-xs transition-colors ${
+            activeTab === 'cloud'
+              ? 'bg-[var(--surface)] text-[var(--text)]'
+              : 'text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]'
+          }`}
+          title="Cloud"
+          aria-label="Cloud"
+          aria-selected={activeTab === 'cloud'}
+          on:click={() => openTab('cloud')}
+        >
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17.5 19a4.5 4.5 0 1 0-.9-8.91A6 6 0 1 0 6 17.5" />
+            <path d="M12 12v9" />
+            <path d="m8.5 14.5 3.5-3.5 3.5 3.5" />
+          </svg>
+          <span>Cloud</span>
         </button>
         <button
           type="button"
@@ -198,6 +287,47 @@
           {handleSaveVariable}
           {handleEditVariable}
           {handleDeleteVariable}
+        />
+      {:else if activeTab === 'cloud'}
+        <CloudToolsPanel
+          apiBaseUrl={cloudApiBaseUrl}
+          setApiBaseUrl={setCloudApiBaseUrl}
+          deviceName={cloudDeviceName}
+          setDeviceName={setCloudDeviceName}
+          {saveCloudConfig}
+          {cloudUser}
+          {cloudWorkspaces}
+          {cloudBusy}
+          publishBusy={cloudPublishBusy}
+          deviceFlow={cloudDeviceFlow}
+          {selectedCloudWorkspaceId}
+          {setSelectedCloudWorkspaceId}
+          {selectedCloudWorkspace}
+          {cloudWorkspaceMembers}
+          {cloudWorkspaceHosts}
+          {cloudSyncClientId}
+          {cloudSyncCheckpoint}
+          {cloudLastInvite}
+          {cloudLastJoinRequest}
+          {cloudLastPush}
+          {cloudLastPull}
+          cloudLastRealtimeToken={cloudLastRealtimeToken}
+          {startCloudSignIn}
+          {pollCloudSignIn}
+          {refreshCloudState}
+          {refreshCloudWorkspaceDetails}
+          {signOutCloud}
+          {createCloudWorkspace}
+          {ensureCloudSyncClient}
+          {pushWorkspaceSync}
+          {pullWorkspaceSync}
+          {requestRealtimeToken}
+          {inviteCloudMember}
+          {createCloudJoinRequest}
+          {addCloudHost}
+          {changeCloudMemberRole}
+          {publishWorkspaceToCloud}
+          {selectedWorkspace}
         />
       {/if}
     </div>

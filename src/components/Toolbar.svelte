@@ -12,6 +12,7 @@
   export let setTheme: (theme: 'dark' | 'light') => void
   export let orientation: 'vertical' | 'horizontal'
   export let setOrientation: (orientation: 'vertical' | 'horizontal') => void
+  export let openCloudPanel: () => void
 
   function selectValue(event: Event): string {
     return (event.currentTarget as HTMLSelectElement).value
@@ -88,5 +89,5 @@
     <span class="text-[var(--muted)]">{orientation === 'vertical' ? '⇆' : '⇕'}</span>
   </button>
   <button class="secondary-button">Save</button>
-  <button class="secondary-button">Share</button>
+  <button class="secondary-button" type="button" on:click={openCloudPanel}>Cloud</button>
 </div>

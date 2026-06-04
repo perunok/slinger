@@ -1,17 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
 
+type MutableEntity = {
+  created_at: number
+  updated_at: number
+  version: number
+}
+
 export type Workspace = {
   id: string
   name: string
-  created_at: number
-}
+} & MutableEntity
 
 export type Collection = {
   id: string
   workspace_id: string
   name: string
-  created_at: number
-}
+} & MutableEntity
 
 export type ApiFolder = {
   id: string
@@ -19,8 +23,7 @@ export type ApiFolder = {
   collection_id: string
   parent_folder_id: string | null
   name: string
-  created_at: number
-}
+} & MutableEntity
 
 export type ApiRequest = {
   id: string
@@ -31,23 +34,22 @@ export type ApiRequest = {
   method: string
   url: string
   document_json: string
-  created_at: number
-}
+} & MutableEntity
 
 export type Environment = {
   id: string
   workspace_id: string
   name: string
-  created_at: number
-}
+} & MutableEntity
 
 export type EnvironmentVariable = {
   id: string
   environment_id: string
   key: string
   value: string
-  created_at: number
-}
+  is_secret: boolean
+  masked_value?: string | null
+} & MutableEntity
 
 export type PostmanImportResult = {
   collection: Collection
@@ -155,6 +157,31 @@ function nowUnixSeconds(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+function withMutableDefaults<T extends { created_at?: number; updated_at?: number; version?: number }>(
+  entity: T,
+  fallbackCreatedAt = nowUnixSeconds(),
+): T & MutableEntity {
+  const createdAt = entity.created_at ?? fallbackCreatedAt
+
+  return {
+    ...entity,
+    created_at: createdAt,
+    updated_at: entity.updated_at ?? createdAt,
+    version: entity.version ?? 1,
+  }
+}
+
+function withVariableDefaults(
+  variable: Partial<EnvironmentVariable> & Pick<EnvironmentVariable, 'id' | 'environment_id' | 'key' | 'value'>,
+): EnvironmentVariable {
+  const normalized = withMutableDefaults(variable)
+  return {
+    ...normalized,
+    is_secret: variable.is_secret ?? false,
+    masked_value: variable.masked_value ?? null,
+  }
+}
+
 function createId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID()
@@ -179,15 +206,26 @@ function readStore(): StoredData {
 
     const parsed = JSON.parse(raw) as Partial<StoredData>
     return ensurePersonalWorkspace({
-      workspaces: parsed.workspaces ?? [],
-      collections: parsed.collections ?? [],
-      folders: parsed.folders ?? [],
-      requests: (parsed.requests ?? []).map((request) => ({
-        ...request,
-        folder_id: request.folder_id ?? null,
-      })),
-      environments: parsed.environments ?? [],
-      environmentVariables: parsed.environmentVariables ?? [],
+      workspaces: (parsed.workspaces ?? []).map((workspace) => withMutableDefaults(workspace)),
+      collections: (parsed.collections ?? []).map((collection) => withMutableDefaults(collection)),
+      folders: (parsed.folders ?? []).map((folder) =>
+        withMutableDefaults({
+          ...folder,
+          parent_folder_id: folder.parent_folder_id ?? null,
+        }),
+      ),
+      requests: (parsed.requests ?? []).map((request) =>
+        withMutableDefaults({
+          ...request,
+          folder_id: request.folder_id ?? null,
+        }),
+      ),
+      environments: (parsed.environments ?? []).map((environment) =>
+        withMutableDefaults(environment),
+      ),
+      environmentVariables: (parsed.environmentVariables ?? []).map((variable) =>
+        withVariableDefaults(variable),
+      ),
     })
   } catch {
     return ensurePersonalWorkspace(fallback)
@@ -201,10 +239,13 @@ function writeStore(data: StoredData): void {
 function ensurePersonalWorkspace(data: StoredData): StoredData {
   if (data.workspaces.length > 0) return data
 
-  const personal = {
+  const createdAt = nowUnixSeconds()
+  const personal: Workspace = {
     id: createId(),
     name: 'Personal',
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   const next = {
@@ -216,7 +257,9 @@ function ensurePersonalWorkspace(data: StoredData): StoredData {
         id: createId(),
         workspace_id: personal.id,
         name: 'Local',
-        created_at: nowUnixSeconds(),
+        created_at: createdAt,
+        updated_at: createdAt,
+        version: 1,
       },
     ],
   }
@@ -355,13 +398,16 @@ function createFoldersFromPaths(
         continue
       }
 
+      const createdAt = nowUnixSeconds()
       const folder = {
         id: createId(),
         workspace_id: workspaceId,
         collection_id: collectionId,
         parent_folder_id: parentFolderId,
         name,
-        created_at: nowUnixSeconds(),
+        created_at: createdAt,
+        updated_at: createdAt,
+        version: 1,
       }
 
       folders.push(folder)
@@ -449,10 +495,13 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   if (isTauriRuntime) return invokeTauri('create_workspace', { name })
 
   const data = readStore()
-  const workspace = {
+  const createdAt = nowUnixSeconds()
+  const workspace: Workspace = {
     id: createId(),
     name: requireName(name, 'workspace'),
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   writeStore({
@@ -464,7 +513,9 @@ export async function createWorkspace(name: string): Promise<Workspace> {
         id: createId(),
         workspace_id: workspace.id,
         name: 'Local',
-        created_at: nowUnixSeconds(),
+        created_at: createdAt,
+        updated_at: createdAt,
+        version: 1,
       },
     ],
   })
@@ -480,11 +531,14 @@ export async function ensureDefaultEnvironment(workspaceId: string): Promise<Env
 
   if (existing) return existing
 
-  const environment = {
+  const createdAt = nowUnixSeconds()
+  const environment: Environment = {
     id: createId(),
     workspace_id: workspaceId,
     name: 'Local',
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   writeStore({
@@ -504,11 +558,14 @@ export async function createEnvironment(workspaceId: string, name: string): Prom
   if (isTauriRuntime) return invokeTauri('create_environment', { workspaceId, name })
 
   const data = readStore()
-  const environment = {
+  const createdAt = nowUnixSeconds()
+  const environment: Environment = {
     id: createId(),
     workspace_id: workspaceId,
     name: requireName(name, 'environment'),
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   writeStore({
@@ -542,12 +599,17 @@ export async function upsertEnvironmentVariable(
   const existing = data.environmentVariables.find(
     (variable) => variable.environment_id === environmentId && variable.key === trimmedKey,
   )
-  const variable = {
+  const now = nowUnixSeconds()
+  const variable: EnvironmentVariable = {
     id: existing?.id ?? createId(),
     environment_id: environmentId,
     key: trimmedKey,
     value,
-    created_at: existing?.created_at ?? nowUnixSeconds(),
+    is_secret: existing?.is_secret ?? false,
+    masked_value: existing?.masked_value ?? null,
+    created_at: existing?.created_at ?? now,
+    updated_at: now,
+    version: existing ? existing.version + 1 : 1,
   }
 
   writeStore({
@@ -579,11 +641,14 @@ export async function createCollection(workspaceId: string, name: string): Promi
   if (isTauriRuntime) return invokeTauri('create_collection', { workspaceId, name })
 
   const data = readStore()
-  const collection = {
+  const createdAt = nowUnixSeconds()
+  const collection: Collection = {
     id: createId(),
     workspace_id: workspaceId,
     name: requireName(name, 'collection'),
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   writeStore({
@@ -604,6 +669,8 @@ export async function renameCollection(collectionId: string, name: string): Prom
   const renamed = {
     ...existing,
     name: requireName(name, 'collection'),
+    updated_at: nowUnixSeconds(),
+    version: existing.version + 1,
   }
 
   writeStore({
@@ -652,7 +719,8 @@ export async function createRequest(input: CreateRequestInput): Promise<ApiReque
 
   JSON.parse(input.documentJson)
 
-  const request = {
+  const createdAt = nowUnixSeconds()
+  const request: ApiRequest = {
     id: createId(),
     workspace_id: input.workspaceId,
     collection_id: input.collectionId,
@@ -661,7 +729,9 @@ export async function createRequest(input: CreateRequestInput): Promise<ApiReque
     method: input.method.trim().toUpperCase() || 'GET',
     url: input.url,
     document_json: input.documentJson,
-    created_at: nowUnixSeconds(),
+    created_at: createdAt,
+    updated_at: createdAt,
+    version: 1,
   }
 
   writeStore({
@@ -687,6 +757,8 @@ export async function updateRequest(input: UpdateRequestInput): Promise<ApiReque
     method: input.method.trim().toUpperCase() || 'GET',
     url: input.url,
     document_json: input.documentJson,
+    updated_at: nowUnixSeconds(),
+    version: existing.version + 1,
   }
 
   writeStore({
@@ -714,6 +786,8 @@ export async function renameRequest(requestId: string, name: string): Promise<Ap
     ...existing,
     name: nextName,
     document_json: JSON.stringify(document),
+    updated_at: nowUnixSeconds(),
+    version: existing.version + 1,
   }
 
   writeStore({
@@ -754,28 +828,36 @@ export async function importPostmanCollection(
   }
 
   const data = readStore()
-  const collection = {
+  const collectionCreatedAt = nowUnixSeconds()
+  const collection: Collection = {
     id: createId(),
     workspace_id: workspaceId,
     name: collectionName,
-    created_at: nowUnixSeconds(),
+    created_at: collectionCreatedAt,
+    updated_at: collectionCreatedAt,
+    version: 1,
   }
   const { folders, pathToFolderId } = createFoldersFromPaths(
     workspaceId,
     collection.id,
     requestDrafts.map((request) => request.folderPath),
   )
-  const requests = requestDrafts.map((request) => ({
-    id: createId(),
-    workspace_id: workspaceId,
-    collection_id: collection.id,
-    folder_id: pathToFolderId.get(request.folderPath.join(PATH_SEPARATOR)) ?? null,
-    name: request.name,
-    method: request.method,
-    url: request.url,
-    document_json: request.document_json,
-    created_at: nowUnixSeconds(),
-  }))
+  const requests = requestDrafts.map((request) => {
+    const createdAt = nowUnixSeconds()
+    return {
+      id: createId(),
+      workspace_id: workspaceId,
+      collection_id: collection.id,
+      folder_id: pathToFolderId.get(request.folderPath.join(PATH_SEPARATOR)) ?? null,
+      name: request.name,
+      method: request.method,
+      url: request.url,
+      document_json: request.document_json,
+      created_at: createdAt,
+      updated_at: createdAt,
+      version: 1,
+    }
+  })
 
   writeStore({
     ...data,
