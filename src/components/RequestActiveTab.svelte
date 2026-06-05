@@ -3,6 +3,7 @@
   import RequestAuthorizationTab from './RequestAuthorizationTab.svelte'
   import RequestHeadersTable from './RequestHeadersTable.svelte'
   import RequestTable, { type TableRow } from './RequestTable.svelte'
+  import CodeSnippetTab from './CodeSnippetTab.svelte'
   import type { PayloadContentType } from '../lib/payloadFormatters'
   import {
     type ActiveTab,
@@ -14,6 +15,7 @@
   } from '../lib/requestDocument'
   import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection, EnvironmentVariable } from '../tauri'
+  import type { SnippetRequest } from '../lib/codeSnippets'
 
   type ScriptNavItem = {
     id: ScriptListener
@@ -46,6 +48,7 @@
   export let setHeaders: (headers: HeaderDocument[]) => void
   export let setScript: (listener: ScriptListener, value: string) => void
   export let urlDraft: string
+  export let builtRequest: SnippetRequest | null = null
 
   let activeScriptNav: ScriptListener = 'prerequest'
   let jsonEditorWrapperComponent: JSONEditorWrapperComponent | null = null
@@ -135,6 +138,8 @@
   </div>
 {:else if activeTab === 'Settings'}
   <RequestTable rows={settingsRows} />
+{:else if activeTab === 'Code'}
+  <CodeSnippetTab {builtRequest} />
 {:else if requestContentType === 'json'}
   {#if jsonEditorWrapperComponent}
     <svelte:component

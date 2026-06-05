@@ -381,6 +381,7 @@ fn main() -> Result<()> {
     runtime.block_on(db::ensure_default_workspace(&pool))?;
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(pool)
         .manage(RequestCancelRegistry::default())
         .invoke_handler(tauri::generate_handler![

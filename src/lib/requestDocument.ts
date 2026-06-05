@@ -17,6 +17,7 @@ export type ActiveTab =
   | 'Body'
   | 'Scripts'
   | 'Settings'
+  | 'Code'
 
 export type HeaderDocument = {
   key?: string
@@ -90,6 +91,7 @@ export const REQUEST_TABS: ActiveTab[] = [
   'Body',
   'Scripts',
   'Settings',
+  'Code',
 ]
 
 export function parseDocument(request: ApiRequest | null): RequestDocument {

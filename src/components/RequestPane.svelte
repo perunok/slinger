@@ -15,6 +15,7 @@
   } from '../lib/requestDocument'
   import type { RequestAuthDocument } from '../lib/authDocument'
   import type { ApiRequest, Collection, EnvironmentVariable, HttpResponseData } from '../tauri'
+  import type { SnippetRequest } from '../lib/codeSnippets'
 
   type RequestTabItem = {
     id: string
@@ -109,6 +110,7 @@
   export let setEnvironmentVariable: (key: string, value: string) => Promise<void>
   export let selectedEnvironmentId: string | null
   export let urlDraft: string
+  export let builtRequest: SnippetRequest | null = null
 
   let responseHeight = 260
   let responseWidth = 420
@@ -743,6 +745,7 @@
             {setHeaders}
             {setScript}
             {urlDraft}
+            {builtRequest}
           />
         </div>
 
