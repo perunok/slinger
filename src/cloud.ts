@@ -1,3 +1,5 @@
+import { executeHttpRequest, isTauriRuntime } from './tauri'
+
 export type CloudPlatformRole = 'super_admin' | 'platform_admin' | 'user'
 export type CloudWorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer'
 export type CloudWorkspaceVisibility = 'private' | 'discoverable' | 'public'
@@ -79,6 +81,12 @@ export type CloudWorkspaceDetailResponse = {
   workspace: CloudWorkspace
   role?: CloudWorkspaceRole
   effective_role?: CloudWorkspaceRole
+}
+
+export type CloudWorkspaceResolveInput = {
+  workspaceId?: string
+  slug?: string
+  host?: string
 }
 
 export type CloudWorkspaceCreateResponse = {
@@ -274,11 +282,27 @@ export type CloudDeviceFlowState = DeviceAuthStartResponse & {
   startedAt: number
 }
 
+export class CloudApiError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, options: { status: number; code?: string }) {
+    super(message)
+    this.name = 'CloudApiError'
+    this.status = options.status
+    this.code = options.code
+  }
+}
+
 type CloudSyncClientRegistry = Record<string, string>
+type CloudWorkspaceLinkRegistry = Record<string, string>
+type CloudWorkspaceCheckpointRegistry = Record<string, number>
 
 const CLOUD_CONFIG_KEY = 'slinger.cloud.config.v1'
 const CLOUD_SESSION_KEY = 'slinger.cloud.session.v1'
 const CLOUD_SYNC_CLIENT_KEY = 'slinger.cloud.sync-client.v1'
+const CLOUD_WORKSPACE_LINK_KEY = 'slinger.cloud.workspace-link.v1'
+const CLOUD_WORKSPACE_CHECKPOINT_KEY = 'slinger.cloud.workspace-checkpoint.v1'
 
 const DEFAULT_API_BASE_URL = 'http://localhost:8787'
 
@@ -393,6 +417,64 @@ function writeSyncClientRegistry(registry: CloudSyncClientRegistry): void {
   localStorage.setItem(CLOUD_SYNC_CLIENT_KEY, JSON.stringify(registry))
 }
 
+function workspaceLinkRegistryKey(apiBaseUrl: string, localWorkspaceId: string): string {
+  return `${syncClientRegistryKey(apiBaseUrl)}::${localWorkspaceId}`
+}
+
+function readWorkspaceLinkRegistry(): CloudWorkspaceLinkRegistry {
+  try {
+    const raw = localStorage.getItem(CLOUD_WORKSPACE_LINK_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as CloudWorkspaceLinkRegistry
+  } catch {
+    return {}
+  }
+}
+
+function writeWorkspaceLinkRegistry(registry: CloudWorkspaceLinkRegistry): void {
+  localStorage.setItem(CLOUD_WORKSPACE_LINK_KEY, JSON.stringify(registry))
+}
+
+export function readCloudWorkspaceLink(apiBaseUrl: string, localWorkspaceId: string): string | null {
+  const registry = readWorkspaceLinkRegistry()
+  return registry[workspaceLinkRegistryKey(apiBaseUrl, localWorkspaceId)] ?? null
+}
+
+export function writeCloudWorkspaceLink(apiBaseUrl: string, localWorkspaceId: string, remoteWorkspaceId: string): void {
+  const registry = readWorkspaceLinkRegistry()
+  registry[workspaceLinkRegistryKey(apiBaseUrl, localWorkspaceId)] = remoteWorkspaceId
+  writeWorkspaceLinkRegistry(registry)
+}
+
+function workspaceCheckpointRegistryKey(apiBaseUrl: string, remoteWorkspaceId: string): string {
+  return `${syncClientRegistryKey(apiBaseUrl)}::${remoteWorkspaceId}`
+}
+
+function readWorkspaceCheckpointRegistry(): CloudWorkspaceCheckpointRegistry {
+  try {
+    const raw = localStorage.getItem(CLOUD_WORKSPACE_CHECKPOINT_KEY)
+    if (!raw) return {}
+    return JSON.parse(raw) as CloudWorkspaceCheckpointRegistry
+  } catch {
+    return {}
+  }
+}
+
+function writeWorkspaceCheckpointRegistry(registry: CloudWorkspaceCheckpointRegistry): void {
+  localStorage.setItem(CLOUD_WORKSPACE_CHECKPOINT_KEY, JSON.stringify(registry))
+}
+
+export function readCloudWorkspaceCheckpoint(apiBaseUrl: string, remoteWorkspaceId: string): number {
+  const registry = readWorkspaceCheckpointRegistry()
+  return registry[workspaceCheckpointRegistryKey(apiBaseUrl, remoteWorkspaceId)] ?? 0
+}
+
+export function writeCloudWorkspaceCheckpoint(apiBaseUrl: string, remoteWorkspaceId: string, checkpoint: number): void {
+  const registry = readWorkspaceCheckpointRegistry()
+  registry[workspaceCheckpointRegistryKey(apiBaseUrl, remoteWorkspaceId)] = checkpoint
+  writeWorkspaceCheckpointRegistry(registry)
+}
+
 export function readCloudSyncClientId(apiBaseUrl: string): string | null {
   const registry = readSyncClientRegistry()
   return registry[syncClientRegistryKey(apiBaseUrl)] ?? null
@@ -426,26 +508,40 @@ export function sessionFromTokenResponse(
   }
 }
 
+function parseErrorDetails(payload: unknown): { message: string; code?: string } | null {
+  if (!payload || typeof payload !== 'object') return null
+
+  const error = (payload as { error?: { message?: unknown; code?: unknown } }).error
+  if (!error || typeof error !== 'object') return null
+
+  const code = typeof error.code === 'string' && error.code.trim() ? error.code : undefined
+  const message =
+    typeof error.message === 'string' && error.message.trim()
+      ? error.message
+      : code ?? null
+
+  return message ? { message, code } : null
+}
+
 async function parseError(response: Response): Promise<never> {
   let message = `Request failed with status ${response.status}`
+  let code: string | undefined
 
   try {
-    const payload = await response.json() as {
-      error?: {
-        message?: string
-        code?: string
-      }
-    }
-    if (payload.error?.message) {
-      message = payload.error.message
-    } else if (payload.error?.code) {
-      message = payload.error.code
+    const details = parseErrorDetails(await response.json() as unknown)
+    if (details) {
+      message = details.message
+      code = details.code
     }
   } catch {
     // Ignore JSON parse issues and fall back to status text.
   }
 
-  throw new Error(message)
+  throw new CloudApiError(message, { status: response.status, code })
+}
+
+function parseErrorPayload(payload: unknown): string | null {
+  return parseErrorDetails(payload)?.message ?? null
 }
 
 async function apiRequest<T>(
@@ -469,6 +565,43 @@ async function apiRequest<T>(
     headers.Authorization = `Bearer ${options.accessToken}`
   }
 
+  if (isTauriRuntime) {
+    const response = await executeHttpRequest({
+      method: options.method ?? 'GET',
+      url: `${normalizeApiBaseUrl(apiBaseUrl)}${path}`,
+      headers: Object.entries(headers).map(([key, value]) => ({ key, value })),
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    })
+
+    if (response.status < 200 || response.status >= 300) {
+      let message = `Request failed with status ${response.status}`
+      let code: string | undefined
+
+      try {
+        const payload = JSON.parse(response.body) as unknown
+        const details = parseErrorDetails(payload)
+        if (details) {
+          message = details.message
+          code = details.code
+        }
+      } catch {
+        // Ignore JSON parse issues and fall back to status text.
+      }
+
+      throw new CloudApiError(message, { status: response.status, code })
+    }
+
+    if (response.status === 204) {
+      return undefined as T
+    }
+
+    try {
+      return JSON.parse(response.body) as T
+    } catch {
+      throw new Error('Invalid JSON response from cloud API.')
+    }
+  }
+
   const response = await fetch(`${normalizeApiBaseUrl(apiBaseUrl)}${path}`, {
     method: options.method ?? 'GET',
     headers,
@@ -490,7 +623,7 @@ export async function startDeviceAuth(
   apiBaseUrl: string,
   deviceName: string,
 ): Promise<DeviceAuthStartResponse> {
-  return apiRequest<DeviceAuthStartResponse>(apiBaseUrl, '/v1/auth/device/start', {
+  return apiRequest<DeviceAuthStartResponse>(apiBaseUrl, '/v1/account/device/start', {
     method: 'POST',
     body: {
       client_name: 'slinger-desktop',
@@ -503,7 +636,7 @@ export async function pollDeviceAuth(
   apiBaseUrl: string,
   deviceCode: string,
 ): Promise<DeviceAuthPollResponse> {
-  return apiRequest<DeviceAuthPollResponse>(apiBaseUrl, '/v1/auth/device/poll', {
+  return apiRequest<DeviceAuthPollResponse>(apiBaseUrl, '/v1/account/device/poll', {
     method: 'POST',
     body: {
       device_code: deviceCode,
@@ -515,7 +648,7 @@ export async function refreshCloudSession(
   apiBaseUrl: string,
   refreshToken: string,
 ): Promise<RefreshSessionResponse> {
-  return apiRequest<RefreshSessionResponse>(apiBaseUrl, '/v1/auth/refresh', {
+  return apiRequest<RefreshSessionResponse>(apiBaseUrl, '/v1/account/refresh', {
     method: 'POST',
     body: {
       refresh_token: refreshToken,
@@ -527,7 +660,7 @@ export async function logoutCloudSession(
   apiBaseUrl: string,
   refreshToken: string,
 ): Promise<{ ok: boolean }> {
-  return apiRequest<{ ok: boolean }>(apiBaseUrl, '/v1/auth/logout', {
+  return apiRequest<{ ok: boolean }>(apiBaseUrl, '/v1/account/logout', {
     method: 'POST',
     body: {
       refresh_token: refreshToken,
@@ -539,7 +672,7 @@ export async function getCloudMe(
   apiBaseUrl: string,
   accessToken: string,
 ): Promise<CloudMeResponse> {
-  return apiRequest<CloudMeResponse>(apiBaseUrl, '/v1/me', {
+  return apiRequest<CloudMeResponse>(apiBaseUrl, '/v1/account/me', {
     accessToken,
   })
 }
@@ -583,6 +716,22 @@ export async function getCloudWorkspace(
   })
 }
 
+export async function resolveCloudWorkspace(
+  apiBaseUrl: string,
+  accessToken: string,
+  input: CloudWorkspaceResolveInput,
+): Promise<{ workspace: CloudWorkspace }> {
+  const search = new URLSearchParams()
+  if (input.workspaceId?.trim()) search.set('workspace_id', input.workspaceId.trim())
+  if (input.slug?.trim()) search.set('slug', input.slug.trim())
+  if (input.host?.trim()) search.set('host', input.host.trim())
+  return apiRequest<{ workspace: CloudWorkspace }>(
+    apiBaseUrl,
+    `/v1/workspaces/resolve?${search.toString()}`,
+    { accessToken },
+  )
+}
+
 export async function listCloudWorkspaceMembers(
   apiBaseUrl: string,
   accessToken: string,
@@ -590,7 +739,7 @@ export async function listCloudWorkspaceMembers(
 ): Promise<CloudWorkspaceMemberListResponse> {
   return apiRequest<CloudWorkspaceMemberListResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/members`,
+    `/v1/workspaces/${workspaceId}/settings/members`,
     { accessToken },
   )
 }
@@ -604,7 +753,7 @@ export async function inviteCloudWorkspaceMember(
     role: CloudWorkspaceRole
   },
 ): Promise<CloudInviteResponse> {
-  return apiRequest<CloudInviteResponse>(apiBaseUrl, `/v1/workspaces/${workspaceId}/invites`, {
+  return apiRequest<CloudInviteResponse>(apiBaseUrl, `/v1/workspaces/${workspaceId}/settings/invites`, {
     method: 'POST',
     accessToken,
     body: {
@@ -640,7 +789,7 @@ export async function submitCloudJoinRequest(
 ): Promise<CloudJoinRequestResponse> {
   return apiRequest<CloudJoinRequestResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/join-requests`,
+    `/v1/workspaces/${workspaceId}/settings/join-requests`,
     {
       method: 'POST',
       accessToken,
@@ -664,7 +813,7 @@ export async function approveCloudJoinRequest(
 ): Promise<CloudJoinRequestApprovalResponse> {
   return apiRequest<CloudJoinRequestApprovalResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/join-requests/${joinRequestId}/approve`,
+    `/v1/workspaces/${workspaceId}/settings/join-requests/${joinRequestId}/approve`,
     {
       method: 'POST',
       accessToken,
@@ -685,7 +834,7 @@ export async function updateCloudWorkspaceMemberRole(
 ): Promise<CloudWorkspaceMemberUpdateResponse> {
   return apiRequest<CloudWorkspaceMemberUpdateResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/members/${memberId}`,
+    `/v1/workspaces/${workspaceId}/settings/members/${memberId}`,
     {
       method: 'PATCH',
       accessToken,
@@ -701,7 +850,7 @@ export async function listCloudWorkspaceHosts(
 ): Promise<CloudWorkspaceHostListResponse> {
   return apiRequest<CloudWorkspaceHostListResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/hosts`,
+    `/v1/workspaces/${workspaceId}/settings/hosts`,
     { accessToken },
   )
 }
@@ -717,7 +866,7 @@ export async function createCloudWorkspaceHost(
 ): Promise<CloudWorkspaceHostCreateResponse> {
   return apiRequest<CloudWorkspaceHostCreateResponse>(
     apiBaseUrl,
-    `/v1/workspaces/${workspaceId}/hosts`,
+    `/v1/workspaces/${workspaceId}/settings/hosts`,
     {
       method: 'POST',
       accessToken,
@@ -756,6 +905,7 @@ export async function publishCloudWorkspace(
   input: {
     workspaceName: string
     proposedSlug: string
+    remoteWorkspaceId?: string
     publishMode?: 'create' | 'attach_existing'
     clientId: string
     deviceName: string
@@ -769,6 +919,7 @@ export async function publishCloudWorkspace(
         name: input.workspaceName,
         proposed_slug: input.proposedSlug,
       },
+      remote_workspace_id: input.remoteWorkspaceId,
       publish_mode: input.publishMode ?? 'create',
       client: {
         client_id: input.clientId,

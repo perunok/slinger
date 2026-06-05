@@ -19,6 +19,32 @@ use tokio::sync::{oneshot, Mutex};
 type RequestCancelRegistry = Mutex<HashMap<String, oneshot::Sender<()>>>;
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("url is required".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.arg("/C").arg("start").arg("").arg(trimmed);
+        command
+    };
+    #[cfg(not(target_os = "windows"))]
+    command.arg(trimmed);
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to open browser: {err}"))
+}
+
+#[tauri::command]
 async fn create_workspace(
     state: State<'_, SqlitePool>,
     name: String,
@@ -205,6 +231,16 @@ async fn import_postman_collection(
     payload: String,
 ) -> Result<domain::PostmanImportResult, String> {
     db::import_postman_collection(&state, workspace_id, payload)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn apply_cloud_workspace(
+    state: State<'_, SqlitePool>,
+    input: domain::ApplyCloudWorkspaceInput,
+) -> Result<(), String> {
+    db::apply_cloud_workspace(&state, input)
         .await
         .map_err(|err| err.to_string())
 }
@@ -404,8 +440,10 @@ fn main() -> Result<()> {
             delete_request,
             list_folders,
             import_postman_collection,
+            apply_cloud_workspace,
             default_export_path,
             write_export_file,
+            open_external_url,
             execute_http_request,
             cancel_http_request,
         ])

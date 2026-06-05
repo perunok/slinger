@@ -57,6 +57,18 @@ export type PostmanImportResult = {
   requests: ApiRequest[]
 }
 
+export type CloudSyncOperationInput = {
+  operation_id: string
+  workspace_id?: string
+  resource_type: string
+  resource_id: string
+  op: string
+  base_version?: number
+  resulting_version?: number
+  payload: Record<string, unknown>
+  occurred_at: string
+}
+
 export type RequestHeader = {
   key: string
   value: string
@@ -75,6 +87,15 @@ export type HttpResponseData = {
   duration_ms: number
   headers: RequestHeader[]
   body: string
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isTauriRuntime) {
+    await invoke('open_external_url', { url })
+    return
+  }
+
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 export type UpdateRequestInput = {
@@ -871,6 +892,17 @@ export async function importPostmanCollection(
     folders,
     requests,
   }
+}
+
+export async function applyCloudWorkspace(
+  localWorkspaceId: string,
+  operations: CloudSyncOperationInput[],
+): Promise<void> {
+  if (!isTauriRuntime) {
+    throw new Error('cloud workspace pull is only available in the desktop app')
+  }
+
+  return invokeTauri('apply_cloud_workspace', { input: { localWorkspaceId, operations } })
 }
 
 export async function getDefaultExportPath(fileName: string): Promise<string> {

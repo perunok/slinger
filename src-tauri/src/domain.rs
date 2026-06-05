@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CloudSyncOperationInput {
+    pub operation_id: String,
+    pub workspace_id: Option<String>,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub op: String,
+    pub base_version: Option<i64>,
+    pub resulting_version: Option<i64>,
+    pub payload: serde_json::Value,
+    pub occurred_at: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyCloudWorkspaceInput {
+    pub local_workspace_id: String,
+    pub operations: Vec<CloudSyncOperationInput>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 pub struct Workspace {
     pub id: String,

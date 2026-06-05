@@ -60,6 +60,7 @@
     createCollection,
     createEnvironment,
     createWorkspace,
+    applyCloudWorkspace,
     deleteCollection,
     deleteEnvironmentVariable,
     deleteRequest,
@@ -74,6 +75,7 @@
     getWorkspaces,
     importPostmanCollection,
     isTauriRuntime,
+    openExternalUrl,
     renameCollection,
     renameRequest,
     updateRequest,
@@ -81,6 +83,7 @@
     writeExportFile,
   } from './tauri'
   import {
+    CloudApiError,
     clearCloudSession,
     clearCloudSyncClientId,
     createCloudRealtimeToken,
@@ -91,6 +94,7 @@
     getCloudMe,
     getCloudWorkspace,
     getCloudWorkspaces,
+    resolveCloudWorkspace,
     inviteCloudWorkspaceMember,
     isCloudSessionExpired,
     listCloudWorkspaceHosts,
@@ -103,6 +107,8 @@
     readCloudConfig,
     readCloudSession,
     readCloudSyncClientId,
+    readCloudWorkspaceCheckpoint,
+    readCloudWorkspaceLink,
     refreshCloudSession as refreshRemoteCloudSession,
     registerCloudSyncClient,
     sessionFromTokenResponse,
@@ -126,7 +132,9 @@
     updateCloudWorkspaceMemberRole,
     writeCloudConfig,
     writeCloudSession,
+    writeCloudWorkspaceCheckpoint,
     writeCloudSyncClientId,
+    writeCloudWorkspaceLink,
   } from './cloud'
 
   type Theme = 'dark' | 'light'
@@ -304,6 +312,7 @@
   let variablesLoadToken = 0
   let collectionTreeLoadToken = 0
   let cloudWorkspaceDetailsLoadToken = 0
+  let cloudWorkspaceSelectionToken = 0
   let lastWorkspaceId: string | null | undefined
   let lastEnvironmentId: string | null | undefined
   let lastCollectionId: string | null | undefined
@@ -438,8 +447,22 @@
     cloudSyncClientId = readCloudSyncClientId(cloudApiBaseUrl)
   }
   $: {
+    const linkedWorkspaceId = selectedWorkspace ? readCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id) : null
+    if (
+      linkedWorkspaceId &&
+      linkedWorkspaceId !== selectedCloudWorkspaceId &&
+      cloudWorkspaces.some((workspace) => workspace.id === linkedWorkspaceId)
+    ) {
+      selectedCloudWorkspaceId = linkedWorkspaceId
+    }
+  }
+  $: {
     if (selectedCloudWorkspaceId !== lastCloudWorkspaceId) {
       lastCloudWorkspaceId = selectedCloudWorkspaceId
+
+      if (selectedCloudWorkspaceId) {
+        cloudSyncCheckpoint = readCloudWorkspaceCheckpoint(cloudApiBaseUrl, selectedCloudWorkspaceId)
+      }
 
       if (!selectedCloudWorkspaceId) {
         cloudWorkspaceDetailsLoadToken += 1
@@ -971,24 +994,29 @@
 
     try {
       const session = await ensureCloudSession()
-      const [detail, membersResponse, hostsResponse] = await Promise.all([
-        getCloudWorkspace(cloudApiBaseUrl, session.accessToken, workspaceId),
-        listCloudWorkspaceMembers(cloudApiBaseUrl, session.accessToken, workspaceId),
-        listCloudWorkspaceHosts(cloudApiBaseUrl, session.accessToken, workspaceId),
-      ])
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId,
+        slug: cloudWorkspaces.find((workspace) => workspace.id === workspaceId)?.slug,
+      })
+      const resolvedWorkspaceId = resolved.workspace.id
+      const detail = await getCloudWorkspace(cloudApiBaseUrl, session.accessToken, resolvedWorkspaceId)
       if (token !== cloudWorkspaceDetailsLoadToken) return
 
+      selectedCloudWorkspaceId = resolvedWorkspaceId
+      cloudWorkspaces = [
+        resolved.workspace,
+        ...cloudWorkspaces.filter((workspace) => workspace.id !== resolvedWorkspaceId),
+      ]
       cloudWorkspaces = cloudWorkspaces.map((workspace) =>
-        workspace.id === workspaceId
+        workspace.id === resolvedWorkspaceId
           ? {
               ...workspace,
+              ...resolved.workspace,
               ...detail.workspace,
               role: detail.role ?? detail.effective_role ?? workspace.role,
             }
           : workspace,
       )
-      cloudWorkspaceMembers = membersResponse.items
-      cloudWorkspaceHosts = hostsResponse.items
     } catch (err) {
       console.error(err)
       if (token === cloudWorkspaceDetailsLoadToken) {
@@ -1009,10 +1037,13 @@
 
       cloudUser = me.user
       cloudWorkspaces = workspaceResponse.items
+      const linkedWorkspaceId = selectedWorkspace ? readCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id) : null
       selectedCloudWorkspaceId =
-        selectedCloudWorkspaceId && workspaceResponse.items.some((workspace) => workspace.id === selectedCloudWorkspaceId)
-          ? selectedCloudWorkspaceId
-          : workspaceResponse.items[0]?.id ?? null
+        linkedWorkspaceId && workspaceResponse.items.some((workspace) => workspace.id === linkedWorkspaceId)
+          ? linkedWorkspaceId
+          : selectedCloudWorkspaceId && workspaceResponse.items.some((workspace) => workspace.id === selectedCloudWorkspaceId)
+            ? selectedCloudWorkspaceId
+            : workspaceResponse.items[0]?.id ?? null
       cloudSyncClientId = readCloudSyncClientId(cloudApiBaseUrl)
 
       if (selectedCloudWorkspaceId) {
@@ -1054,7 +1085,8 @@
         ...response,
         startedAt: Date.now(),
       }
-      notice = 'Device sign-in started. Complete it in your browser, then continue here.'
+      await openExternalUrl(response.verification_uri_complete)
+      notice = 'Device sign-in started. Your browser was opened for login and password change if required.'
       error = null
     } catch (err) {
       console.error(err)
@@ -1081,9 +1113,19 @@
       writeCloudSession(session)
       cloudUser = response.user
       cloudDeviceFlow = null
-      notice = `Signed in as ${response.user.display_name}.`
-      error = null
       await refreshCloudState(true)
+      if (selectedCloudWorkspaceId) {
+        const remoteWorkspace = cloudWorkspaces.find((workspace) => workspace.id === selectedCloudWorkspaceId)
+        if (remoteWorkspace) {
+          await hydrateLocalWorkspaceFromRemote(remoteWorkspace)
+          notice = `Signed in as ${response.user.display_name} and synced "${remoteWorkspace.name}".`
+        } else {
+          notice = `Signed in as ${response.user.display_name}.`
+        }
+      } else {
+        notice = `Signed in as ${response.user.display_name}.`
+      }
+      error = null
     } catch (err) {
       console.error(err)
       error = err instanceof Error ? err.message : 'Unable to complete cloud sign-in.'
@@ -1121,6 +1163,107 @@
     cloudSyncClientId = response.client.client_id
     writeCloudSyncClientId(cloudApiBaseUrl, response.client.client_id)
     return response.client.client_id
+  }
+
+  function findLinkedLocalWorkspaceId(remoteWorkspaceId: string): string | null {
+    for (const workspace of workspaces) {
+      if (readCloudWorkspaceLink(cloudApiBaseUrl, workspace.id) === remoteWorkspaceId) {
+        return workspace.id
+      }
+    }
+    return null
+  }
+
+  async function syncSelectedLocalWorkspaceForCloudWorkspace(
+    workspaceId: string,
+    selectionToken: number,
+  ) {
+    const linkedLocalWorkspaceId = findLinkedLocalWorkspaceId(workspaceId)
+    if (
+      linkedLocalWorkspaceId &&
+      workspaces.some((workspace) => workspace.id === linkedLocalWorkspaceId)
+    ) {
+      if (selectionToken === cloudWorkspaceSelectionToken) {
+        selectedWorkspaceId = linkedLocalWorkspaceId
+      }
+      return
+    }
+
+    const remoteWorkspace = cloudWorkspaces.find((workspace) => workspace.id === workspaceId)
+    if (!remoteWorkspace || !cloudUser) return
+
+    try {
+      await hydrateLocalWorkspaceFromRemote(remoteWorkspace)
+    } catch (err) {
+      console.error(err)
+      if (selectionToken === cloudWorkspaceSelectionToken) {
+        error = err instanceof Error ? err.message : 'Unable to switch to that cloud workspace.'
+      }
+    }
+  }
+
+  function setSelectedCloudWorkspaceSelection(workspaceId: string | null) {
+    selectedCloudWorkspaceId = workspaceId
+    cloudWorkspaceSelectionToken += 1
+    const selectionToken = cloudWorkspaceSelectionToken
+
+    if (!workspaceId) return
+
+    void syncSelectedLocalWorkspaceForCloudWorkspace(workspaceId, selectionToken)
+  }
+
+  async function ensureLocalWorkspaceForRemote(remoteWorkspace: CloudWorkspace): Promise<string> {
+    const linkedWorkspaceId = findLinkedLocalWorkspaceId(remoteWorkspace.id)
+    if (linkedWorkspaceId && workspaces.some((workspace) => workspace.id === linkedWorkspaceId)) {
+      selectedWorkspaceId = linkedWorkspaceId
+      return linkedWorkspaceId
+    }
+
+    const matchedByName = workspaces.find(
+      (workspace) => workspace.name.trim().toLowerCase() === remoteWorkspace.name.trim().toLowerCase(),
+    )
+    if (matchedByName) {
+      writeCloudWorkspaceLink(cloudApiBaseUrl, matchedByName.id, remoteWorkspace.id)
+      selectedWorkspaceId = matchedByName.id
+      return matchedByName.id
+    }
+
+    const created = await createWorkspace(remoteWorkspace.name)
+    await loadWorkspaces()
+    writeCloudWorkspaceLink(cloudApiBaseUrl, created.id, remoteWorkspace.id)
+    selectedWorkspaceId = created.id
+    return created.id
+  }
+
+  async function hydrateLocalWorkspaceFromRemote(remoteWorkspace: CloudWorkspace, forceFullPull = false) {
+    const localWorkspaceId = await ensureLocalWorkspaceForRemote(remoteWorkspace)
+    const session = await ensureCloudSession()
+    const clientId = await ensureCloudSyncClientRegistered()
+    const checkpoint = forceFullPull ? 0 : readCloudWorkspaceCheckpoint(cloudApiBaseUrl, remoteWorkspace.id)
+    const response = await pullCloudWorkspaceOperations(
+      cloudApiBaseUrl,
+      session.accessToken,
+      remoteWorkspace.id,
+      {
+        clientId,
+        afterCheckpoint: checkpoint,
+      },
+    )
+
+    if (response.operations.length > 0) {
+      await applyCloudWorkspace(localWorkspaceId, response.operations)
+      await loadWorkspaces()
+    }
+
+    await loadCollections(localWorkspaceId)
+    await loadEnvironments(localWorkspaceId)
+
+    selectedWorkspaceId = localWorkspaceId
+    selectedCloudWorkspaceId = remoteWorkspace.id
+    cloudLastPull = response
+    cloudSyncCheckpoint = response.checkpoint
+    writeCloudWorkspaceCheckpoint(cloudApiBaseUrl, remoteWorkspace.id, response.checkpoint)
+    return response
   }
 
   async function buildWorkspaceSyncOperations(workspaceId: string): Promise<CloudSyncOperation[]> {
@@ -1258,12 +1401,16 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const clientId = await ensureCloudSyncClientRegistered()
       const operations = await buildWorkspaceSyncOperations(selectedWorkspace.id)
       const response = await pushCloudWorkspaceOperations(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         {
           clientId,
           baseCheckpoint: cloudSyncCheckpoint,
@@ -1273,18 +1420,21 @@
 
       cloudLastPush = response
       cloudSyncCheckpoint = response.checkpoint
+      selectedCloudWorkspaceId = resolved.workspace.id
+      writeCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id, resolved.workspace.id)
+      writeCloudWorkspaceCheckpoint(cloudApiBaseUrl, resolved.workspace.id, response.checkpoint)
       notice = `Pushed ${response.accepted.length} operation${response.accepted.length === 1 ? '' : 's'} to the cloud.`
       error = null
     } catch (err) {
       console.error(err)
-      error = err instanceof Error ? err.message : 'Unable to push local data to the cloud.'
+      error = cloudPushErrorMessage(err, selectedCloudWorkspace)
     } finally {
       cloudBusy = false
     }
   }
 
   async function pullWorkspaceSync() {
-    if (!selectedCloudWorkspaceId) {
+    if (!selectedCloudWorkspaceId || !selectedCloudWorkspace) {
       error = 'Select a remote cloud workspace first.'
       return
     }
@@ -1292,20 +1442,7 @@
     cloudBusy = true
 
     try {
-      const session = await ensureCloudSession()
-      const clientId = await ensureCloudSyncClientRegistered()
-      const response = await pullCloudWorkspaceOperations(
-        cloudApiBaseUrl,
-        session.accessToken,
-        selectedCloudWorkspaceId,
-        {
-          clientId,
-          afterCheckpoint: cloudSyncCheckpoint,
-        },
-      )
-
-      cloudLastPull = response
-      cloudSyncCheckpoint = response.checkpoint
+      const response = await hydrateLocalWorkspaceFromRemote(selectedCloudWorkspace)
       notice = `Pulled ${response.operations.length} operation${response.operations.length === 1 ? '' : 's'} from the cloud.`
       error = null
     } catch (err) {
@@ -1326,17 +1463,22 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const response = await createCloudRealtimeToken(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         [
-          `workspace:${selectedCloudWorkspaceId}:presence`,
-          `workspace:${selectedCloudWorkspaceId}:events`,
+          `workspace:${resolved.workspace.id}:presence`,
+          `workspace:${resolved.workspace.id}:events`,
         ],
       )
 
       cloudLastRealtimeToken = response
+      selectedCloudWorkspaceId = resolved.workspace.id
       notice = 'Realtime token requested successfully.'
       error = null
     } catch (err) {
@@ -1376,14 +1518,19 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const response = await inviteCloudWorkspaceMember(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         input,
       )
 
       cloudLastInvite = response.invite
+      selectedCloudWorkspaceId = resolved.workspace.id
       notice = `Invite queued for ${response.invite.email}.`
       error = null
     } catch (err) {
@@ -1407,14 +1554,19 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const response = await submitCloudJoinRequest(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         input,
       )
 
       cloudLastJoinRequest = response.join_request
+      selectedCloudWorkspaceId = resolved.workspace.id
       notice = 'Join request submitted.'
       error = null
     } catch (err) {
@@ -1435,14 +1587,19 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const response = await createCloudWorkspaceHost(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         input,
       )
 
       cloudWorkspaceHosts = [...cloudWorkspaceHosts.filter((host) => host.id !== response.host.id), response.host]
+      selectedCloudWorkspaceId = resolved.workspace.id
       notice = response.verification
         ? `Host added. Create ${response.verification.dns_record_type} ${response.verification.dns_record_name}.`
         : 'Host added to the remote workspace.'
@@ -1469,10 +1626,14 @@
 
     try {
       const session = await ensureCloudSession()
+      const resolved = await resolveCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
+        workspaceId: selectedCloudWorkspaceId,
+        slug: selectedCloudWorkspace?.slug,
+      })
       const response = await updateCloudWorkspaceMemberRole(
         cloudApiBaseUrl,
         session.accessToken,
-        selectedCloudWorkspaceId,
+        resolved.workspace.id,
         input.memberId,
         {
           role: input.role,
@@ -1490,6 +1651,7 @@
             }
           : member,
       )
+      selectedCloudWorkspaceId = resolved.workspace.id
       notice = 'Workspace member role updated.'
       error = null
     } catch (err) {
@@ -1505,6 +1667,10 @@
       error = 'Select a local workspace first.'
       return
     }
+    if (!selectedCloudWorkspaceId || !selectedCloudWorkspace) {
+      error = 'Select an existing remote cloud workspace first.'
+      return
+    }
 
     cloudPublishBusy = true
 
@@ -1513,7 +1679,9 @@
       const clientId = await ensureCloudSyncClientRegistered()
       const response = await publishCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
         workspaceName: selectedWorkspace.name,
-        proposedSlug: slugifyCloudWorkspaceName(selectedWorkspace.name),
+        proposedSlug: selectedCloudWorkspace.slug,
+        remoteWorkspaceId: selectedCloudWorkspace.id,
+        publishMode: 'attach_existing',
         clientId,
         deviceName: cloudDeviceName,
       })
@@ -1521,11 +1689,13 @@
       cloudSyncClientId = response.sync_bootstrap.client_id
       writeCloudSyncClientId(cloudApiBaseUrl, response.sync_bootstrap.client_id)
       cloudSyncCheckpoint = response.sync_bootstrap.checkpoint
+      writeCloudWorkspaceCheckpoint(cloudApiBaseUrl, response.workspace.id, response.sync_bootstrap.checkpoint)
       cloudWorkspaces = [
         response.workspace,
         ...cloudWorkspaces.filter((workspace) => workspace.id !== response.workspace.id),
       ]
       selectedCloudWorkspaceId = response.workspace.id
+      writeCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id, response.workspace.id)
 
       const operations = await buildWorkspaceSyncOperations(selectedWorkspace.id)
       if (operations.length > 0) {
@@ -1565,6 +1735,19 @@
     } finally {
       loadingWorkspaces = false
     }
+  }
+
+  function cloudPushErrorMessage(err: unknown, remoteWorkspace: CloudWorkspace | null): string {
+    if (
+      err instanceof CloudApiError &&
+      err.status === 403 &&
+      (err.code === 'workspace_access_denied' || err.code === 'forbidden')
+    ) {
+      const targetName = remoteWorkspace?.name ?? 'the selected remote workspace'
+      return `You are not authorized to push to ${targetName}. Ask a workspace owner or admin for editor access or higher.`
+    }
+
+    return err instanceof Error ? err.message : 'Unable to push local data to the cloud.'
   }
 
   async function loadCollections(workspaceId: string) {
@@ -3180,17 +3363,8 @@
       cloudPublishBusy={cloudPublishBusy}
       cloudDeviceFlow={cloudDeviceFlow}
       {selectedCloudWorkspaceId}
-      setSelectedCloudWorkspaceId={(id) => (selectedCloudWorkspaceId = id)}
+      setSelectedCloudWorkspaceId={setSelectedCloudWorkspaceSelection}
       {selectedCloudWorkspace}
-      {cloudWorkspaceMembers}
-      {cloudWorkspaceHosts}
-      {cloudSyncClientId}
-      {cloudSyncCheckpoint}
-      {cloudLastInvite}
-      {cloudLastJoinRequest}
-      {cloudLastPush}
-      {cloudLastPull}
-      cloudLastRealtimeToken={cloudLastRealtimeToken}
       {startCloudSignIn}
       {pollCloudSignIn}
       refreshCloudState={() => refreshCloudState(false)}
@@ -3198,15 +3372,9 @@
         selectedCloudWorkspaceId ? loadCloudWorkspaceDetails(selectedCloudWorkspaceId) : Promise.resolve()
       }
       {signOutCloud}
-      createCloudWorkspace={createRemoteWorkspace}
-      ensureCloudSyncClient={ensureCloudSyncClientRegistered}
+      openAdminUiHint="Admins create users, assign workspace access, and create remote workspaces from the admin UI before desktop sign-in."
       {pushWorkspaceSync}
       {pullWorkspaceSync}
-      {requestRealtimeToken}
-      {inviteCloudMember}
-      createCloudJoinRequest={createCloudJoinRequestAction}
-      addCloudHost={addCloudHostAction}
-      changeCloudMemberRole={changeCloudMemberRole}
       {publishWorkspaceToCloud}
     />
   </div>

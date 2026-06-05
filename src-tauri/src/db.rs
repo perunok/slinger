@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiFolder, ApiRequest, Collection, CreateRequestInput, Environment, EnvironmentVariable,
-    PostmanImportResult, UpdateRequestInput, Workspace,
+    ApiFolder, ApiRequest, ApplyCloudWorkspaceInput, CloudSyncOperationInput, Collection,
+    CreateRequestInput, Environment, EnvironmentVariable, PostmanImportResult, UpdateRequestInput,
+    Workspace,
 };
 
 fn now_unix_seconds() -> i64 {
@@ -163,11 +164,23 @@ pub async fn init_database(path: &str) -> Result<SqlitePool> {
 }
 
 async fn ensure_legacy_schema(pool: &SqlitePool) -> Result<()> {
-    ensure_column(pool, "workspaces", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(
+        pool,
+        "workspaces",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
     ensure_column(pool, "workspaces", "version", "INTEGER NOT NULL DEFAULT 1").await?;
     backfill_mutable_metadata(pool, "workspaces").await?;
 
-    ensure_column(pool, "collections", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(
+        pool,
+        "collections",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
     ensure_column(pool, "collections", "version", "INTEGER NOT NULL DEFAULT 1").await?;
     backfill_mutable_metadata(pool, "collections").await?;
 
@@ -180,8 +193,20 @@ async fn ensure_legacy_schema(pool: &SqlitePool) -> Result<()> {
     ensure_column(pool, "requests", "version", "INTEGER NOT NULL DEFAULT 1").await?;
     backfill_mutable_metadata(pool, "requests").await?;
 
-    ensure_column(pool, "environments", "updated_at", "INTEGER NOT NULL DEFAULT 0").await?;
-    ensure_column(pool, "environments", "version", "INTEGER NOT NULL DEFAULT 1").await?;
+    ensure_column(
+        pool,
+        "environments",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        "environments",
+        "version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
+    .await?;
     backfill_mutable_metadata(pool, "environments").await?;
 
     ensure_column(
@@ -307,6 +332,264 @@ pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspa
     ensure_default_environment(pool, workspace.id.clone()).await?;
 
     Ok(workspace)
+}
+
+pub async fn apply_cloud_workspace(
+    pool: &SqlitePool,
+    input: ApplyCloudWorkspaceInput,
+) -> Result<()> {
+    let local_workspace_id = input.local_workspace_id;
+
+    let workspace_exists: Option<(String,)> = query_as("SELECT id FROM workspaces WHERE id = ?")
+        .bind(&local_workspace_id)
+        .fetch_optional(pool)
+        .await?;
+    if workspace_exists.is_none() {
+        bail!("workspace not found");
+    }
+
+    for operation in input.operations {
+        apply_cloud_operation(pool, &local_workspace_id, operation).await?;
+    }
+
+    Ok(())
+}
+
+async fn apply_cloud_operation(
+    pool: &SqlitePool,
+    local_workspace_id: &str,
+    operation: CloudSyncOperationInput,
+) -> Result<()> {
+    if operation.op != "upsert" {
+        return Ok(());
+    }
+
+    match operation.resource_type.as_str() {
+        "workspace" => Ok(()),
+        "collection" => {
+            let name = operation
+                .payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled Collection")
+                .trim()
+                .to_string();
+            let now = now_unix_seconds();
+            query(
+                r#"
+                INSERT INTO collections (id, workspace_id, name, created_at, updated_at, version)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    workspace_id = excluded.workspace_id,
+                    name = excluded.name,
+                    updated_at = excluded.updated_at,
+                    version = collections.version + 1
+                "#,
+            )
+            .bind(&operation.resource_id)
+            .bind(local_workspace_id)
+            .bind(name)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+        "folder" => {
+            let name = operation
+                .payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled Folder")
+                .trim()
+                .to_string();
+            let collection_id = operation
+                .payload
+                .get("collection_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("folder collection_id is required"))?;
+            let parent_folder_id = operation
+                .payload
+                .get("parent_folder_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let now = now_unix_seconds();
+            query(
+                r#"
+                INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, created_at, updated_at, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    workspace_id = excluded.workspace_id,
+                    collection_id = excluded.collection_id,
+                    parent_folder_id = excluded.parent_folder_id,
+                    name = excluded.name,
+                    updated_at = excluded.updated_at,
+                    version = folders.version + 1
+                "#,
+            )
+            .bind(&operation.resource_id)
+            .bind(local_workspace_id)
+            .bind(collection_id)
+            .bind(parent_folder_id)
+            .bind(name)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+        "request" => {
+            let name = operation
+                .payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled Request")
+                .trim()
+                .to_string();
+            let method = operation
+                .payload
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("GET")
+                .trim()
+                .to_uppercase();
+            let url = operation
+                .payload
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let document_json = operation
+                .payload
+                .get("document_json")
+                .and_then(Value::as_str)
+                .unwrap_or("{}")
+                .to_string();
+            let collection_id = operation
+                .payload
+                .get("collection_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("request collection_id is required"))?;
+            let folder_id = operation
+                .payload
+                .get("folder_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let now = now_unix_seconds();
+            query(
+                r#"
+                INSERT INTO requests (id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    workspace_id = excluded.workspace_id,
+                    collection_id = excluded.collection_id,
+                    folder_id = excluded.folder_id,
+                    name = excluded.name,
+                    method = excluded.method,
+                    url = excluded.url,
+                    document_json = excluded.document_json,
+                    updated_at = excluded.updated_at,
+                    version = requests.version + 1
+                "#,
+            )
+            .bind(&operation.resource_id)
+            .bind(local_workspace_id)
+            .bind(collection_id)
+            .bind(folder_id)
+            .bind(name)
+            .bind(method)
+            .bind(url)
+            .bind(document_json)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+        "environment" => {
+            let name = operation
+                .payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Local")
+                .trim()
+                .to_string();
+            let now = now_unix_seconds();
+            query(
+                r#"
+                INSERT INTO environments (id, workspace_id, name, created_at, updated_at, version)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    workspace_id = excluded.workspace_id,
+                    name = excluded.name,
+                    updated_at = excluded.updated_at,
+                    version = environments.version + 1
+                "#,
+            )
+            .bind(&operation.resource_id)
+            .bind(local_workspace_id)
+            .bind(name)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+        "environment_variable" => {
+            let environment_id = operation
+                .payload
+                .get("environment_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("environment_variable environment_id is required")
+                })?;
+            let key = operation
+                .payload
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let value = operation
+                .payload
+                .get("value")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let is_secret = operation
+                .payload
+                .get("is_secret")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let now = now_unix_seconds();
+            query(
+                r#"
+                INSERT INTO environment_variables (id, environment_id, key, value, is_secret, masked_value, created_at, updated_at, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    environment_id = excluded.environment_id,
+                    key = excluded.key,
+                    value = excluded.value,
+                    is_secret = excluded.is_secret,
+                    masked_value = excluded.masked_value,
+                    updated_at = excluded.updated_at,
+                    version = environment_variables.version + 1
+                "#,
+            )
+            .bind(&operation.resource_id)
+            .bind(environment_id)
+            .bind(key)
+            .bind(value)
+            .bind(is_secret)
+            .bind(Option::<String>::None)
+            .bind(now)
+            .bind(now)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }
 
 pub async fn list_environments(

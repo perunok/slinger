@@ -89,5 +89,4 @@
     <span class="text-[var(--muted)]">{orientation === 'vertical' ? '⇆' : '⇕'}</span>
   </button>
   <button class="secondary-button">Save</button>
-  <button class="secondary-button" type="button" on:click={openCloudPanel}>Cloud</button>
 </div>
