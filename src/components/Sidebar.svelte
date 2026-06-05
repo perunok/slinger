@@ -37,6 +37,7 @@
   export let handleRenameRequest: (request: ApiRequest) => Promise<void>
   export let handleDeleteRequest: (request: ApiRequest) => Promise<void>
   export let handleExportCollection: (collection: Collection) => Promise<void>
+  export let handleRunCollection: (collection: Collection) => Promise<void>
 
   let environmentsExpanded = true
   let importInputRef: HTMLInputElement
@@ -91,6 +92,7 @@
         {handleDeleteCollection}
         {handleExportCollection}
         {handleRenameCollection}
+        {handleRunCollection}
         {loadingRequests}
         {openFolderIds}
         {requestsByFolder}

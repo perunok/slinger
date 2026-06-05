@@ -9,6 +9,7 @@
   export let handleDeleteCollection: (collection: Collection) => Promise<void>
   export let handleExportCollection: (collection: Collection) => Promise<void>
   export let handleRenameCollection: (collection: Collection) => Promise<void>
+  export let handleRunCollection: (collection: Collection) => Promise<void>
   export let loadingRequests: boolean
   export let openFolderIds: Set<string>
   export let requestsByFolder: Map<string, ApiRequest[]>
@@ -48,6 +49,12 @@
           ...
         </button>
         <div class="collection-actions-menu">
+          <button type="button" title="Run collection" on:click={() => handleRunCollection(collection)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            <span>Run</span>
+          </button>
           <button type="button" title="Export Postman collection" on:click={() => handleExportCollection(collection)}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3v11" />

@@ -3,6 +3,7 @@
   import Header from './components/Header.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import ExportCollectionDialog from './components/ExportCollectionDialog.svelte'
+  import CollectionRunnerDialog from './components/CollectionRunnerDialog.svelte'
   import RequestPane from './components/RequestPane.svelte'
   import RightUtilitySidebar from './components/RightUtilitySidebar.svelte'
   import SaveResponseDialog from './components/SaveResponseDialog.svelte'
@@ -26,6 +27,7 @@
     type RequestAuthDocument,
   } from './lib/authDocument'
   import { exportPostmanCollection } from './lib/postmanExport'
+  import { save as showSaveDialog } from '@tauri-apps/plugin-dialog'
   import {
     extractParams,
     normalizeScriptListener,
@@ -258,6 +260,7 @@
   let saveRequestDialog: SaveRequestDialogRequest | null = null
   let saveResponseDialog: SaveResponseDialogRequest | null = null
   let exportCollectionDialog: ExportCollectionDialogRequest | null = null
+  let collectionRunner: { collection: Collection; requests: ApiRequest[] } | null = null
   let error: string | null = null
   let notice: string | null = null
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
@@ -1873,14 +1876,13 @@
     try {
       if (isTauriRuntime) {
         const defaultPath = await getDefaultExportPath(fileName)
-        const targetPath = await askForExportDestination({
-          collectionName: collection.name,
-          defaultValue: defaultPath,
-          mode: 'path',
+        const chosen = await showSaveDialog({
+          defaultPath,
+          filters: [{ name: 'JSON', extensions: ['json'] }],
         })
-        if (!targetPath) return
+        if (!chosen) return
 
-        const exportPath = withJsonExtension(targetPath)
+        const exportPath = withJsonExtension(chosen)
         const payload = await buildCollectionExportPayload(collection)
         await writeExportFile(exportPath, payload)
         notice = `Exported "${collection.name}" to ${exportPath}.`
@@ -1927,6 +1929,46 @@
 
       console.error(err)
       error = 'Unable to export that collection.'
+    }
+  }
+
+  async function handleRunCollection(collection: Collection) {
+    try {
+      const allRequests = await getRequests(collection.id)
+      collectionRunner = { collection, requests: allRequests }
+    } catch {
+      error = 'Unable to load collection requests.'
+    }
+  }
+
+  async function runRequestForCollection(request: ApiRequest): Promise<{ status?: number; duration_ms?: number; error?: string }> {
+    const doc = parseDocument(request)
+    const body = typeof doc.body?.raw === 'string' ? doc.body.raw : ''
+    const hdrs = requestHeaders(doc)
+
+    const built = buildResolvedRequest({
+      method: request.method,
+      url: request.url,
+      body,
+      headers: hdrs,
+      auth: doc.auth,
+      variables: environmentVariables,
+    })
+
+    if (built.missingVariables.length > 0) {
+      return { error: `Unresolved: ${built.missingVariables.map((n) => `{{${n}}}`).join(', ')}` }
+    }
+
+    try {
+      const result = await executeHttpRequest({
+        method: built.method,
+        url: built.url,
+        headers: built.headers,
+        body: built.body || null,
+      })
+      return { status: result.status, duration_ms: result.duration_ms }
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) }
     }
   }
 
@@ -3041,6 +3083,7 @@
           {handleRenameRequest}
           {handleDeleteRequest}
           {handleExportCollection}
+          {handleRunCollection}
         />
       </div>
 
@@ -3097,6 +3140,7 @@
       selectedEnvironmentId={selectedEnvironmentId}
       setUrlDraft={setRequestUrlDraft}
       {urlDraft}
+      builtRequest={builtCopyRequest}
     />
 
     <RightUtilitySidebar
@@ -3202,6 +3246,15 @@
       mode={exportCollectionDialog.mode}
       on:export={(event) => finishExportCollectionDialog(event.detail)}
       on:cancel={() => finishExportCollectionDialog(null)}
+    />
+  {/if}
+
+  {#if collectionRunner}
+    <CollectionRunnerDialog
+      collection={collectionRunner.collection}
+      requests={collectionRunner.requests}
+      runRequest={runRequestForCollection}
+      onClose={() => (collectionRunner = null)}
     />
   {/if}
 
