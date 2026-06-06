@@ -572,6 +572,26 @@ export async function createWorkspace(name: string): Promise<Workspace> {
   return workspace
 }
 
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
+  if (isTauriRuntime) return invokeTauri('delete_workspace', { workspaceId })
+
+  const data = readStore()
+  const nextData: StoredData = {
+    workspaces: data.workspaces.filter((workspace) => workspace.id !== workspaceId),
+    collections: data.collections.filter((collection) => collection.workspace_id !== workspaceId),
+    folders: data.folders.filter((folder) => folder.workspace_id !== workspaceId),
+    requests: data.requests.filter((request) => request.workspace_id !== workspaceId),
+    environments: data.environments.filter((environment) => environment.workspace_id !== workspaceId),
+    environmentVariables: data.environmentVariables.filter((variable) =>
+      data.environments.some(
+        (environment) => environment.id === variable.environment_id && environment.workspace_id !== workspaceId,
+      ),
+    ),
+  }
+
+  writeStore(nextData)
+}
+
 export async function ensureDefaultEnvironment(workspaceId: string): Promise<Environment> {
   if (isTauriRuntime) return invokeTauri('ensure_default_environment', { workspaceId })
 

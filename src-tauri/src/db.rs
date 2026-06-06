@@ -334,6 +334,41 @@ pub async fn create_workspace(pool: &SqlitePool, name: String) -> Result<Workspa
     Ok(workspace)
 }
 
+pub async fn delete_workspace(pool: &SqlitePool, workspace_id: String) -> Result<()> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+
+    query("DELETE FROM environment_variables WHERE environment_id IN (SELECT id FROM environments WHERE workspace_id = ?)")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+    query("DELETE FROM requests WHERE workspace_id = ?")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+    query("DELETE FROM folders WHERE workspace_id = ?")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+    query("DELETE FROM collections WHERE workspace_id = ?")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+    query("DELETE FROM environments WHERE workspace_id = ?")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+    let result = query("DELETE FROM workspaces WHERE id = ?")
+        .bind(&workspace_id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        bail!("workspace not found");
+    }
+
+    Ok(())
+}
+
 pub async fn apply_cloud_workspace(
     pool: &SqlitePool,
     input: ApplyCloudWorkspaceInput,
@@ -365,7 +400,45 @@ async fn apply_cloud_operation(
     }
 
     match operation.resource_type.as_str() {
-        "workspace" => Ok(()),
+        "workspace" => {
+            let name = operation
+                .payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Workspace")
+                .trim()
+                .to_string();
+            let now = now_unix_seconds();
+            let current_version: Option<(i64,)> =
+                query_as("SELECT version FROM workspaces WHERE id = ?")
+                    .bind(local_workspace_id)
+                    .fetch_optional(pool)
+                    .await?;
+            let explicit_version = operation
+                .payload
+                .get("resource_version")
+                .and_then(Value::as_i64);
+            let version = explicit_version.unwrap_or_else(|| {
+                next_sync_version(
+                    current_version.map(|entry| entry.0).unwrap_or_default(),
+                    operation.base_version.unwrap_or_default(),
+                )
+            });
+            query(
+                r#"
+                UPDATE workspaces
+                SET name = ?, updated_at = ?, version = ?
+                WHERE id = ?
+                "#,
+            )
+            .bind(name)
+            .bind(now)
+            .bind(version)
+            .bind(local_workspace_id)
+            .execute(pool)
+            .await?;
+            Ok(())
+        }
         "collection" => {
             let name = operation
                 .payload
@@ -590,6 +663,21 @@ async fn apply_cloud_operation(
         }
         _ => Ok(()),
     }
+}
+
+fn next_sync_version(current_version: i64, base_version: i64) -> i64 {
+    if current_version <= 0 {
+        if base_version > 0 {
+            return base_version + 1;
+        }
+        return 1;
+    }
+
+    if base_version >= current_version {
+        return base_version + 1;
+    }
+
+    current_version + 1
 }
 
 pub async fn list_environments(

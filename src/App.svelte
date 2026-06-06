@@ -64,6 +64,7 @@
     deleteCollection,
     deleteEnvironmentVariable,
     deleteRequest,
+    deleteWorkspace,
     ensureDefaultEnvironment,
     executeHttpRequest,
     getCollections,
@@ -935,6 +936,82 @@
     return new Date(value * 1000).toISOString()
   }
 
+  async function sha256Hex(value: string): Promise<string> {
+    const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+    return Array.from(new Uint8Array(buffer))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+  }
+
+  async function workspaceSyncSHA(input: {
+    workspace: Workspace
+    collections: Collection[]
+    collectionTrees: Array<{
+      collection: Collection
+      folders: ApiFolder[]
+      requests: ApiRequest[]
+    }>
+    environmentPayloads: Array<{
+      environment: Environment
+      variables: EnvironmentVariable[]
+    }>
+  }): Promise<string> {
+    const snapshot = {
+      workspace: {
+        id: input.workspace.id,
+        name: input.workspace.name,
+      },
+      collections: [...input.collections]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((collection) => ({
+          id: collection.id,
+          name: collection.name,
+        })),
+      folders: input.collectionTrees
+        .flatMap((tree) =>
+          tree.folders.map((folder) => ({
+            id: folder.id,
+            collection_id: tree.collection.id,
+            parent_folder_id: folder.parent_folder_id,
+            name: folder.name,
+          })),
+        )
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      requests: input.collectionTrees
+        .flatMap((tree) =>
+          tree.requests.map((request) => ({
+            id: request.id,
+            collection_id: tree.collection.id,
+            folder_id: request.folder_id,
+            name: request.name,
+            method: request.method,
+            url: request.url,
+            document_json: request.document_json,
+          })),
+        )
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      environments: input.environmentPayloads
+        .map((entry) => ({
+          id: entry.environment.id,
+          name: entry.environment.name,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+      environment_variables: input.environmentPayloads
+        .flatMap((entry) =>
+          entry.variables.map((variable) => ({
+            id: variable.id,
+            environment_id: entry.environment.id,
+            key: variable.key,
+            value: variable.value,
+            is_secret: variable.is_secret,
+          })),
+        )
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    }
+
+    return sha256Hex(JSON.stringify(snapshot))
+  }
+
   function createCloudOperationId(): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
       return crypto.randomUUID()
@@ -1317,6 +1394,12 @@
         variables: await getEnvironmentVariables(environment.id),
       })),
     )
+    const syncSHA = await workspaceSyncSHA({
+      workspace,
+      collections: workspaceCollections,
+      collectionTrees,
+      environmentPayloads,
+    })
 
     const operations: CloudSyncOperation[] = [
       {
@@ -1328,6 +1411,7 @@
         base_version: Math.max(workspace.version - 1, 0),
         payload: {
           name: workspace.name,
+          sync_sha: syncSHA,
         },
         occurred_at: cloudIsoFromUnixSeconds(workspace.updated_at),
       },
@@ -1423,6 +1507,27 @@
     return operations
   }
 
+  async function syncLocalWorkspaceVersionFromPush(
+    localWorkspaceId: string,
+    operations: CloudSyncOperation[],
+    remoteWorkspaceVersion: number,
+  ) {
+    const workspaceOperation = operations.find((operation) => operation.resource_type === 'workspace')
+    if (!workspaceOperation) return
+
+    await applyCloudWorkspace(localWorkspaceId, [
+      {
+        ...workspaceOperation,
+        base_version: Math.max(remoteWorkspaceVersion - 1, 0),
+        payload: {
+          ...workspaceOperation.payload,
+          resource_version: remoteWorkspaceVersion,
+        },
+      },
+    ])
+    await loadWorkspaces()
+  }
+
   async function pushWorkspaceSync() {
     if (!selectedWorkspace || !selectedCloudWorkspaceId) {
       error = 'Select both a local workspace and a remote cloud workspace first.'
@@ -1450,12 +1555,48 @@
         },
       )
 
+      const noChangeOnly =
+        response.accepted.length === 0 &&
+        response.rejected.length > 0 &&
+        response.rejected.every((entry) => (entry.reason ?? entry.code) === 'no_changes')
+
+      if (noChangeOnly) {
+        const remoteDetail = await getCloudWorkspace(cloudApiBaseUrl, session.accessToken, resolved.workspace.id)
+        await syncLocalWorkspaceVersionFromPush(selectedWorkspace.id, operations, remoteDetail.workspace.version)
+        selectedCloudWorkspaceId = resolved.workspace.id
+        cloudWorkspaces = cloudWorkspaces.map((workspace) =>
+          workspace.id === resolved.workspace.id
+            ? {
+                ...workspace,
+                ...remoteDetail.workspace,
+              }
+            : workspace,
+        )
+        writeCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id, resolved.workspace.id)
+        notice = response.rejected[0]?.message ?? 'No changes to push. Local workspace already matches the remote.'
+        error = null
+        return
+      }
+
+      const remoteDetail = await getCloudWorkspace(cloudApiBaseUrl, session.accessToken, resolved.workspace.id)
+      await syncLocalWorkspaceVersionFromPush(selectedWorkspace.id, operations, remoteDetail.workspace.version)
       cloudLastPush = response
       cloudSyncCheckpoint = response.checkpoint
       selectedCloudWorkspaceId = resolved.workspace.id
+      cloudWorkspaces = cloudWorkspaces.map((workspace) =>
+        workspace.id === resolved.workspace.id
+          ? {
+              ...workspace,
+              ...remoteDetail.workspace,
+            }
+          : workspace,
+      )
       writeCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id, resolved.workspace.id)
       writeCloudWorkspaceCheckpoint(cloudApiBaseUrl, resolved.workspace.id, response.checkpoint)
-      notice = `Pushed ${response.accepted.length} operation${response.accepted.length === 1 ? '' : 's'} to the cloud.`
+      notice =
+        response.rejected.length > 0
+          ? `Pushed ${response.accepted.length} operation${response.accepted.length === 1 ? '' : 's'} to the cloud with ${response.rejected.length} warning${response.rejected.length === 1 ? '' : 's'}.`
+          : `Pushed ${response.accepted.length} operation${response.accepted.length === 1 ? '' : 's'} to the cloud.`
       error = null
     } catch (err) {
       console.error(err)
@@ -1699,21 +1840,19 @@
       error = 'Select a local workspace first.'
       return
     }
-    if (!selectedCloudWorkspaceId || !selectedCloudWorkspace) {
-      error = 'Select an existing remote cloud workspace first.'
-      return
-    }
 
     cloudPublishBusy = true
 
     try {
       const session = await ensureCloudSession()
       const clientId = await ensureCloudSyncClientRegistered()
+      const publishMode = selectedCloudWorkspaceId && selectedCloudWorkspace ? 'attach_existing' : 'create'
+      const proposedSlug = selectedCloudWorkspace?.slug ?? (slugifyCloudWorkspaceName(selectedWorkspace.name) || 'workspace')
       const response = await publishCloudWorkspace(cloudApiBaseUrl, session.accessToken, {
         workspaceName: selectedWorkspace.name,
-        proposedSlug: selectedCloudWorkspace.slug,
-        remoteWorkspaceId: selectedCloudWorkspace.id,
-        publishMode: 'attach_existing',
+        proposedSlug,
+        remoteWorkspaceId: selectedCloudWorkspace?.id,
+        publishMode,
         clientId,
         deviceName: cloudDeviceName,
       })
@@ -1742,9 +1881,14 @@
           },
         )
         cloudSyncCheckpoint = cloudLastPush.checkpoint
+        const remoteDetail = await getCloudWorkspace(cloudApiBaseUrl, session.accessToken, response.workspace.id)
+        await syncLocalWorkspaceVersionFromPush(selectedWorkspace.id, operations, remoteDetail.workspace.version)
       }
 
-      notice = `Published "${selectedWorkspace.name}" to Slinger Cloud.`
+      notice =
+        publishMode === 'create'
+          ? `Published "${selectedWorkspace.name}" and created remote workspace "${response.workspace.name}".`
+          : `Published "${selectedWorkspace.name}" to Slinger Cloud.`
       error = null
       await loadCloudWorkspaceDetails(response.workspace.id)
     } catch (err) {
@@ -1759,7 +1903,10 @@
     try {
       const items = await getWorkspaces()
       workspaces = items
-      selectedWorkspaceId = selectedWorkspaceId ?? items[0]?.id ?? null
+      selectedWorkspaceId =
+        selectedWorkspaceId && items.some((workspace) => workspace.id === selectedWorkspaceId)
+          ? selectedWorkspaceId
+          : items[0]?.id ?? null
       error = null
     } catch (err) {
       console.error(err)
@@ -1888,6 +2035,40 @@
     } catch (err) {
       console.error(err)
       error = 'Unable to create workspace.'
+    }
+  }
+
+  async function handleDeleteWorkspace() {
+    if (!selectedWorkspace) return
+
+    const confirmed = await askForConfirmation({
+      message: `Delete workspace "${selectedWorkspace.name}"? This removes its collections, requests, and environments from this app.`,
+      confirmLabel: 'Delete Workspace',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+
+    const deletingWorkspaceId = selectedWorkspace.id
+    const deletingWorkspaceName = selectedWorkspace.name
+
+    try {
+      await deleteWorkspace(deletingWorkspaceId)
+      if (selectedCloudWorkspaceId && selectedWorkspaceId === deletingWorkspaceId) {
+        selectedCloudWorkspaceId = null
+      }
+      await loadWorkspaces()
+      if (workspaces.length === 0) {
+        const fallbackWorkspace = await createWorkspace('Personal')
+        workspaces = [fallbackWorkspace]
+        selectedWorkspaceId = fallbackWorkspace.id
+      } else if (selectedWorkspaceId === deletingWorkspaceId) {
+        selectedWorkspaceId = workspaces[0]?.id ?? null
+      }
+      notice = `Workspace "${deletingWorkspaceName}" deleted.`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = err instanceof Error ? err.message : 'Unable to delete workspace.'
     }
   }
 
@@ -3259,6 +3440,7 @@
     {workspaceName}
     setWorkspaceName={(value) => (workspaceName = value)}
     {handleCreateWorkspace}
+    {handleDeleteWorkspace}
     {theme}
     setTheme={(value) => (theme = value)}
     {orientation}

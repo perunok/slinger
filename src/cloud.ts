@@ -253,6 +253,7 @@ export type CloudSyncRejectedOperation = {
   resource_id?: string
   code?: string
   message?: string
+  reason?: string
 }
 
 export type CloudSyncPushResponse = {

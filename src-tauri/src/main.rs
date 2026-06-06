@@ -213,6 +213,16 @@ async fn create_workspace(
 }
 
 #[tauri::command]
+async fn delete_workspace(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<(), String> {
+    db::delete_workspace(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn list_workspaces(state: State<'_, SqlitePool>) -> Result<Vec<domain::Workspace>, String> {
     db::list_workspaces(&state)
         .await
@@ -605,6 +615,7 @@ fn main() -> Result<()> {
             open_external_url,
             prepare_browser_auth_callback,
             wait_for_browser_auth_callback,
+            delete_workspace,
             execute_http_request,
             cancel_http_request,
         ])

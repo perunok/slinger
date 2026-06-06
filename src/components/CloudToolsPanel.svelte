@@ -177,7 +177,7 @@
     <div class="mb-3 flex items-start justify-between gap-3">
       <div>
         <div class="text-sm font-semibold text-[var(--text)]">Workspace Link</div>
-        <p class="mt-1 text-xs text-[var(--muted)]">Select an existing remote workspace, then link the selected local workspace to it.</p>
+        <p class="mt-1 text-xs text-[var(--muted)]">Select an existing remote workspace to link it, or publish an unbound local workspace to create the remote workspace during publish.</p>
       </div>
       <button type="button" class="secondary-button" on:click={refreshCloudWorkspaceDetails} disabled={!cloudUser || !selectedCloudWorkspaceId || cloudBusy}>
         Refresh Details
@@ -238,9 +238,9 @@
           type="button"
           class="primary-button"
           on:click={publishWorkspaceToCloud}
-          disabled={!cloudUser || !selectedWorkspace || !selectedCloudWorkspace || publishBusy}
+          disabled={!cloudUser || !selectedWorkspace || publishBusy}
         >
-          {publishBusy ? 'Publishing...' : 'Publish Selected Local Workspace'}
+          {publishBusy ? 'Publishing...' : selectedCloudWorkspace ? 'Publish Selected Local Workspace' : 'Publish And Create Remote Workspace'}
         </button>
         <button
           type="button"

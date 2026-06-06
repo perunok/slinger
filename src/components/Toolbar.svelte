@@ -8,6 +8,7 @@
   export let workspaceName: string
   export let setWorkspaceName: (value: string) => void
   export let handleCreateWorkspace: (event: SubmitEvent) => Promise<void>
+  export let handleDeleteWorkspace: () => Promise<void>
   export let theme: 'dark' | 'light'
   export let setTheme: (theme: 'dark' | 'light') => void
   export let orientation: 'vertical' | 'horizontal'
@@ -57,6 +58,16 @@
       Add
     </button>
   </form>
+
+  <button
+    class="secondary-button"
+    type="button"
+    on:click={handleDeleteWorkspace}
+    disabled={!selectedWorkspaceId}
+    title="Delete selected workspace"
+  >
+    Delete
+  </button>
 
   <div class="mx-auto flex h-8 w-[320px] items-center rounded border border-[var(--border)] bg-[var(--panel)] px-3 text-sm text-[var(--muted)]">
     Search
