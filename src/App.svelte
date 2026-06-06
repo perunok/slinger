@@ -76,10 +76,12 @@
     importPostmanCollection,
     isTauriRuntime,
     openExternalUrl,
+    prepareBrowserAuthCallback,
     renameCollection,
     renameRequest,
     updateRequest,
     upsertEnvironmentVariable,
+    waitForBrowserAuthCallback,
     writeExportFile,
   } from './tauri'
   import {
@@ -291,6 +293,7 @@
   let cloudApiBaseUrl = initialCloudConfig.apiBaseUrl
   let cloudDeviceName = initialCloudConfig.deviceName
   let cloudSession: CloudSession | null = readCloudSession()
+  let cloudSignInAttempt = 0
   let cloudUser: CloudUser | null = null
   let cloudWorkspaces: CloudWorkspace[] = []
   let cloudBusy = false
@@ -448,12 +451,13 @@
   }
   $: {
     const linkedWorkspaceId = selectedWorkspace ? readCloudWorkspaceLink(cloudApiBaseUrl, selectedWorkspace.id) : null
-    if (
-      linkedWorkspaceId &&
-      linkedWorkspaceId !== selectedCloudWorkspaceId &&
-      cloudWorkspaces.some((workspace) => workspace.id === linkedWorkspaceId)
-    ) {
-      selectedCloudWorkspaceId = linkedWorkspaceId
+    const nextSelectedCloudWorkspaceId =
+      linkedWorkspaceId && cloudWorkspaces.some((workspace) => workspace.id === linkedWorkspaceId)
+        ? linkedWorkspaceId
+        : null
+
+    if (nextSelectedCloudWorkspaceId !== selectedCloudWorkspaceId) {
+      selectedCloudWorkspaceId = nextSelectedCloudWorkspaceId
     }
   }
   $: {
@@ -1041,9 +1045,7 @@
       selectedCloudWorkspaceId =
         linkedWorkspaceId && workspaceResponse.items.some((workspace) => workspace.id === linkedWorkspaceId)
           ? linkedWorkspaceId
-          : selectedCloudWorkspaceId && workspaceResponse.items.some((workspace) => workspace.id === selectedCloudWorkspaceId)
-            ? selectedCloudWorkspaceId
-            : workspaceResponse.items[0]?.id ?? null
+          : null
       cloudSyncClientId = readCloudSyncClientId(cloudApiBaseUrl)
 
       if (selectedCloudWorkspaceId) {
@@ -1081,12 +1083,42 @@
 
     try {
       const response = await startDeviceAuth(cloudApiBaseUrl, cloudDeviceName)
+      const signInAttempt = ++cloudSignInAttempt
+      let verificationUrl = response.verification_uri_complete
+      let localCallback: { callbackId: string; callbackUrl: string } | null = null
+
+      if (isTauriRuntime) {
+        localCallback = await prepareBrowserAuthCallback()
+        const callbackAwareUrl = new URL(verificationUrl)
+        callbackAwareUrl.searchParams.set('callback_url', localCallback.callbackUrl)
+        verificationUrl = callbackAwareUrl.toString()
+      }
+
       cloudDeviceFlow = {
         ...response,
+        verification_uri_complete: verificationUrl,
         startedAt: Date.now(),
       }
-      await openExternalUrl(response.verification_uri_complete)
-      notice = 'Device sign-in started. Your browser was opened for login and password change if required.'
+
+      if (localCallback) {
+        void waitForBrowserAuthCallback(localCallback.callbackId, response.expires_in * 1000)
+          .then(async () => {
+            if (!cloudDeviceFlow || cloudDeviceFlow.device_code !== response.device_code || signInAttempt !== cloudSignInAttempt) {
+              return
+            }
+
+            await pollCloudSignIn()
+          })
+          .catch((err) => {
+            console.error(err)
+          })
+      }
+
+      await openExternalUrl(verificationUrl)
+
+      notice = localCallback
+        ? 'Device sign-in started. Your browser was opened and will confirm automatically after login.'
+        : 'Device sign-in started. Your browser was opened for login and password change if required.'
       error = null
     } catch (err) {
       console.error(err)

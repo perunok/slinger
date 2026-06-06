@@ -147,6 +147,7 @@
       <div class="mt-4 rounded border border-[var(--border)] bg-[var(--bg)] p-3">
         <div class="text-xs font-semibold uppercase text-[var(--muted)]">Device Flow</div>
         <div class="mt-3 grid gap-3">
+          <p class="text-xs text-[var(--muted)]">After the browser login succeeds, Slinger will confirm this sign-in automatically when the desktop callback is available.</p>
           <div>
             <div class="text-[10px] font-semibold uppercase text-[var(--muted)]">User Code</div>
             <div class="mt-1 rounded bg-[var(--surface)] px-3 py-2 font-mono text-sm tracking-[0.18em] text-[var(--text)]">

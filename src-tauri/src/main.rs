@@ -8,15 +8,125 @@ mod domain;
 
 use anyhow::Result;
 use reqwest::header::{HeaderName, HeaderValue};
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::Instant;
 use tauri::State;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 
 type RequestCancelRegistry = Mutex<HashMap<String, oneshot::Sender<()>>>;
+type AuthCallbackResult = Result<(), String>;
+type AuthCallbackRegistry = Mutex<HashMap<String, oneshot::Receiver<AuthCallbackResult>>>;
+
+#[derive(Serialize)]
+struct BrowserAuthCallback {
+    callback_id: String,
+    callback_url: String,
+}
+
+async fn read_http_request_path(stream: &mut tokio::net::TcpStream) -> Result<String, String> {
+    let mut buffer = [0_u8; 4096];
+    let read = stream
+        .read(&mut buffer)
+        .await
+        .map_err(|err| format!("failed to read callback request: {err}"))?;
+    if read == 0 {
+        return Err("browser auth callback connection closed before sending a request".to_string());
+    }
+
+    let request = String::from_utf8_lossy(&buffer[..read]);
+    let request_line = request
+        .lines()
+        .next()
+        .ok_or_else(|| "browser auth callback request was empty".to_string())?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    if method != "GET" {
+        return Err(format!("unsupported callback request method: {method}"));
+    }
+    if target.is_empty() {
+        return Err("browser auth callback request did not include a path".to_string());
+    }
+
+    Ok(target.to_string())
+}
+
+async fn write_http_response(
+    stream: &mut tokio::net::TcpStream,
+    status_line: &str,
+    body: &str,
+) -> Result<(), String> {
+    let response = format!(
+        "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|err| format!("failed to write callback response: {err}"))?;
+    stream
+        .flush()
+        .await
+        .map_err(|err| format!("failed to flush callback response: {err}"))
+}
+
+fn browser_auth_callback_body(message: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>Slinger Desktop</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f0e8;color:#1f2933;font-family:\"Segoe UI\",sans-serif;padding:24px}}main{{width:min(420px,100%);background:#fffdf8;border:1px solid #d9d0bf;border-radius:16px;padding:24px;box-shadow:0 20px 50px rgba(31,41,51,.08)}}h1{{margin:0 0 12px;font-size:24px}}p{{margin:0;color:#52606d;line-height:1.5}}</style></head><body><main><h1>Authorization received</h1><p>{message}</p></main></body></html>"
+    )
+}
+
+async fn run_browser_auth_callback_listener(
+    listener: TcpListener,
+    callback_path: String,
+    tx: oneshot::Sender<AuthCallbackResult>,
+) {
+    loop {
+        let (mut stream, _peer_addr): (tokio::net::TcpStream, SocketAddr) =
+            match listener.accept().await {
+                Ok(result) => result,
+                Err(err) => {
+                    let _ = tx.send(Err(format!("failed to accept callback request: {err}")));
+                    return;
+                }
+            };
+
+        let path = match read_http_request_path(&mut stream).await {
+            Ok(path) => path,
+            Err(err) => {
+                let body = browser_auth_callback_body(
+                    "The desktop app could not read this authorization request.",
+                );
+                let _ = write_http_response(&mut stream, "HTTP/1.1 400 Bad Request", &body).await;
+                let _ = tx.send(Err(err));
+                return;
+            }
+        };
+
+        if path != callback_path {
+            let body = browser_auth_callback_body(
+                "This callback URL is not active anymore. Return to the desktop app and try again.",
+            );
+            let _ = write_http_response(&mut stream, "HTTP/1.1 404 Not Found", &body).await;
+            continue;
+        }
+
+        let body = browser_auth_callback_body(
+            "The browser confirmed your sign-in. You can return to Slinger.",
+        );
+        let write_result = write_http_response(&mut stream, "HTTP/1.1 200 OK", &body).await;
+        let _ = tx.send(write_result.map(|_| ()));
+        return;
+    }
+}
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
@@ -42,6 +152,54 @@ fn open_external_url(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("failed to open browser: {err}"))
+}
+
+#[tauri::command]
+async fn prepare_browser_auth_callback(
+    registry: State<'_, AuthCallbackRegistry>,
+) -> Result<BrowserAuthCallback, String> {
+    let callback_id = uuid::Uuid::now_v7().to_string();
+    let callback_path = format!("/auth/callback/{callback_id}");
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|err| format!("failed to bind browser auth callback listener: {err}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|err| format!("failed to read browser auth callback listener address: {err}"))?
+        .port();
+    let callback_url = format!("http://127.0.0.1:{port}{callback_path}");
+    let (tx, rx) = oneshot::channel();
+    registry.lock().await.insert(callback_id.clone(), rx);
+    tauri::async_runtime::spawn(run_browser_auth_callback_listener(
+        listener,
+        callback_path,
+        tx,
+    ));
+
+    Ok(BrowserAuthCallback {
+        callback_id,
+        callback_url,
+    })
+}
+
+#[tauri::command]
+async fn wait_for_browser_auth_callback(
+    callback_id: String,
+    timeout_ms: u64,
+    registry: State<'_, AuthCallbackRegistry>,
+) -> Result<(), String> {
+    let callback_rx = registry
+        .lock()
+        .await
+        .remove(&callback_id)
+        .ok_or_else(|| "browser auth callback listener was not found".to_string())?;
+
+    match tokio::time::timeout(Duration::from_millis(timeout_ms.max(1)), callback_rx).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(err))) => Err(err),
+        Ok(Err(_)) => Err("browser auth callback listener stopped unexpectedly".to_string()),
+        Err(_) => Err("timed out waiting for browser authorization confirmation".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -420,6 +578,7 @@ fn main() -> Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .manage(pool)
         .manage(RequestCancelRegistry::default())
+        .manage(AuthCallbackRegistry::default())
         .invoke_handler(tauri::generate_handler![
             create_workspace,
             list_workspaces,
@@ -444,6 +603,8 @@ fn main() -> Result<()> {
             default_export_path,
             write_export_file,
             open_external_url,
+            prepare_browser_auth_callback,
+            wait_for_browser_auth_callback,
             execute_http_request,
             cancel_http_request,
         ])

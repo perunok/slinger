@@ -89,6 +89,11 @@ export type HttpResponseData = {
   body: string
 }
 
+export type BrowserAuthCallback = {
+  callbackId: string
+  callbackUrl: string
+}
+
 export async function openExternalUrl(url: string): Promise<void> {
   if (isTauriRuntime) {
     await invoke('open_external_url', { url })
@@ -96,6 +101,29 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 
   window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+export async function prepareBrowserAuthCallback(): Promise<BrowserAuthCallback> {
+  if (!isTauriRuntime) {
+    throw new Error('Browser auth callback listeners are only available in the Tauri app.')
+  }
+
+  const response = await invoke<{ callback_id: string; callback_url: string }>('prepare_browser_auth_callback')
+  return {
+    callbackId: response.callback_id,
+    callbackUrl: response.callback_url,
+  }
+}
+
+export async function waitForBrowserAuthCallback(callbackId: string, timeoutMs: number): Promise<void> {
+  if (!isTauriRuntime) {
+    throw new Error('Browser auth callback listeners are only available in the Tauri app.')
+  }
+
+  await invoke('wait_for_browser_auth_callback', {
+    callbackId,
+    timeoutMs,
+  })
 }
 
 export type UpdateRequestInput = {
