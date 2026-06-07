@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
 use sqlx::{
     query, query_as,
@@ -6,12 +6,17 @@ use sqlx::{
     SqlitePool,
 };
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use uuid::Uuid;
 
 use crate::domain::{
     ApiFolder, ApiRequest, ApplyCloudWorkspaceInput, CloudSyncOperationInput, Collection,
     CreateRequestInput, Environment, EnvironmentVariable, PostmanImportResult, UpdateRequestInput,
-    Workspace,
+    Workspace, WorkspaceVersioningCommit, WorkspaceVersioningFileChange,
+    WorkspaceVersioningRestoreResult, WorkspaceVersioningStatus,
 };
 
 fn now_unix_seconds() -> i64 {
@@ -1465,6 +1470,607 @@ fn join_postman_url_parts(parts: &[Value], separator: &str) -> String {
         .filter_map(Value::as_str)
         .collect::<Vec<_>>()
         .join(separator)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct WorkspaceSnapshot {
+    workspace: Workspace,
+    collections: Vec<Collection>,
+    folders: Vec<ApiFolder>,
+    requests: Vec<ApiRequest>,
+    environments: Vec<Environment>,
+    environment_variables: Vec<EnvironmentVariable>,
+}
+
+pub async fn init_workspace_versioning(
+    pool: &SqlitePool,
+    workspace_id: String,
+) -> Result<WorkspaceVersioningStatus> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    ensure_workspace_exists(pool, &workspace_id).await?;
+    ensure_git_available()?;
+
+    let repo_path = workspace_repo_path(&workspace_id)?;
+    fs::create_dir_all(&repo_path)?;
+
+    if !repo_path.join(".git").is_dir() {
+        run_git(&repo_path, ["init"])?;
+        run_git(
+            &repo_path,
+            ["config", "user.name", "Slinger Local Versioning"],
+        )?;
+        run_git(
+            &repo_path,
+            ["config", "user.email", "slinger@local.invalid"],
+        )?;
+    }
+
+    export_workspace_to_repo(pool, &workspace_id, &repo_path).await?;
+    get_workspace_versioning_status(pool, workspace_id).await
+}
+
+pub async fn get_workspace_versioning_status(
+    pool: &SqlitePool,
+    workspace_id: String,
+) -> Result<WorkspaceVersioningStatus> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    ensure_workspace_exists(pool, &workspace_id).await?;
+
+    let repo_path = workspace_repo_path(&workspace_id)?;
+    let initialized = repo_path.join(".git").is_dir();
+    if !initialized {
+        return Ok(WorkspaceVersioningStatus {
+            initialized: false,
+            repo_path: repo_path.to_string_lossy().to_string(),
+            changed_files: Vec::new(),
+        });
+    }
+
+    ensure_git_available()?;
+    export_workspace_to_repo(pool, &workspace_id, &repo_path).await?;
+
+    let output = run_git(&repo_path, ["status", "--short"])?;
+    let changed_files = output
+        .lines()
+        .filter_map(parse_git_status_line)
+        .collect::<Vec<_>>();
+
+    Ok(WorkspaceVersioningStatus {
+        initialized: true,
+        repo_path: repo_path.to_string_lossy().to_string(),
+        changed_files,
+    })
+}
+
+pub async fn commit_workspace_versioning(
+    pool: &SqlitePool,
+    workspace_id: String,
+    message: String,
+) -> Result<WorkspaceVersioningCommit> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    ensure_workspace_exists(pool, &workspace_id).await?;
+    ensure_git_available()?;
+
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        bail!("commit message is required");
+    }
+
+    let repo_path = workspace_repo_path(&workspace_id)?;
+    if !repo_path.join(".git").is_dir() {
+        bail!("workspace versioning is not initialized");
+    }
+
+    export_workspace_to_repo(pool, &workspace_id, &repo_path).await?;
+    run_git(&repo_path, ["add", "-A"])?;
+
+    if run_git(&repo_path, ["status", "--short"])?
+        .trim()
+        .is_empty()
+    {
+        bail!("no local workspace changes to commit");
+    }
+
+    run_git(&repo_path, ["commit", "-m", trimmed])?;
+
+    list_workspace_versioning_history(pool, workspace_id)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("commit succeeded but no history entry was returned"))
+}
+
+pub async fn list_workspace_versioning_history(
+    pool: &SqlitePool,
+    workspace_id: String,
+) -> Result<Vec<WorkspaceVersioningCommit>> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    ensure_workspace_exists(pool, &workspace_id).await?;
+
+    let repo_path = workspace_repo_path(&workspace_id)?;
+    if !repo_path.join(".git").is_dir() {
+        return Ok(Vec::new());
+    }
+
+    ensure_git_available()?;
+    export_workspace_to_repo(pool, &workspace_id, &repo_path).await?;
+    if !repo_has_commits(&repo_path)? {
+        return Ok(Vec::new());
+    }
+
+    let output = run_git(
+        &repo_path,
+        [
+            "log",
+            "--pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%s",
+            "--max-count=50",
+        ],
+    )?;
+
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\u{1f}');
+            let id = parts.next()?.to_string();
+            let short_id = parts.next()?.to_string();
+            let author = parts.next()?.to_string();
+            let authored_at = parts.next()?.parse::<i64>().ok()?;
+            let message = parts.next()?.to_string();
+
+            Some(WorkspaceVersioningCommit {
+                id,
+                short_id,
+                message,
+                author,
+                authored_at,
+            })
+        })
+        .collect())
+}
+
+pub async fn restore_workspace_versioning_commit(
+    pool: &SqlitePool,
+    workspace_id: String,
+    commit_id: String,
+) -> Result<WorkspaceVersioningRestoreResult> {
+    let workspace_id = Uuid::parse_str(&workspace_id)?.to_string();
+    ensure_workspace_exists(pool, &workspace_id).await?;
+    ensure_git_available()?;
+
+    let commit_id = commit_id.trim().to_string();
+    if commit_id.is_empty() {
+        bail!("commit id is required");
+    }
+
+    let repo_path = workspace_repo_path(&workspace_id)?;
+    if !repo_path.join(".git").is_dir() {
+        bail!("workspace versioning is not initialized");
+    }
+
+    let snapshot_spec = format!("{commit_id}:snapshot.json");
+    let snapshot_json = run_git(&repo_path, ["show", &snapshot_spec])?;
+    let snapshot: WorkspaceSnapshot =
+        serde_json::from_str(&snapshot_json).context("failed to parse workspace snapshot")?;
+
+    if snapshot.workspace.id != workspace_id {
+        bail!("selected commit does not belong to this workspace");
+    }
+
+    let restored_files = 2
+        + snapshot.collections.len()
+        + snapshot.folders.len()
+        + snapshot.requests.len()
+        + snapshot.environments.len()
+        + snapshot.environment_variables.len();
+
+    apply_workspace_snapshot(pool, snapshot).await?;
+    export_workspace_to_repo(pool, &workspace_id, &repo_path).await?;
+
+    Ok(WorkspaceVersioningRestoreResult {
+        commit_id,
+        restored_files,
+    })
+}
+
+async fn ensure_workspace_exists(pool: &SqlitePool, workspace_id: &str) -> Result<()> {
+    let exists: Option<(String,)> = query_as("SELECT id FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await?;
+
+    if exists.is_none() {
+        bail!("workspace not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_git_available() -> Result<()> {
+    let status = Command::new("git")
+        .arg("--version")
+        .status()
+        .context("failed to launch git")?;
+
+    if !status.success() {
+        bail!("git is not available on this machine");
+    }
+
+    Ok(())
+}
+
+fn repo_has_commits(repo_path: &Path) -> Result<bool> {
+    let status = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .status()
+        .context("failed to inspect git history")?;
+
+    Ok(status.success())
+}
+
+fn workspace_repo_path(workspace_id: &str) -> Result<PathBuf> {
+    let base = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or(std::env::current_dir()?);
+
+    Ok(base
+        .join(".slinger-versioning")
+        .join("workspaces")
+        .join(workspace_id))
+}
+
+fn run_git<const N: usize>(repo_path: &Path, args: [&str; N]) -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run git {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let message = if !stderr.is_empty() { stderr } else { stdout };
+        bail!(
+            "git {} failed{}",
+            args.join(" "),
+            if message.is_empty() {
+                String::new()
+            } else {
+                format!(": {message}")
+            }
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn parse_git_status_line(line: &str) -> Option<WorkspaceVersioningFileChange> {
+    let trimmed = line.trim_end();
+    if trimmed.len() < 4 {
+        return None;
+    }
+
+    let status = trimmed.get(0..2)?.trim().to_string();
+    let path = trimmed.get(3..)?.trim().to_string();
+
+    if path.is_empty() {
+        return None;
+    }
+
+    Some(WorkspaceVersioningFileChange { path, status })
+}
+
+async fn export_workspace_to_repo(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    repo_path: &Path,
+) -> Result<()> {
+    fs::create_dir_all(repo_path)?;
+    clear_directory_except_git(repo_path)?;
+
+    let snapshot = load_workspace_snapshot(pool, workspace_id).await?;
+    write_json_file(&repo_path.join("snapshot.json"), &snapshot)?;
+    write_json_file(&repo_path.join("workspace.json"), &snapshot.workspace)?;
+
+    write_entity_group(repo_path, "collections", &snapshot.collections, |item| {
+        item.id.as_str()
+    })?;
+    write_entity_group(repo_path, "folders", &snapshot.folders, |item| {
+        item.id.as_str()
+    })?;
+    write_entity_group(repo_path, "requests", &snapshot.requests, |item| {
+        item.id.as_str()
+    })?;
+    write_entity_group(repo_path, "environments", &snapshot.environments, |item| {
+        item.id.as_str()
+    })?;
+    write_entity_group(
+        repo_path,
+        "environment-variables",
+        &snapshot.environment_variables,
+        |item| item.id.as_str(),
+    )?;
+
+    Ok(())
+}
+
+fn clear_directory_except_git(root: &Path) -> Result<()> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_name() == OsStr::new(".git") {
+            continue;
+        }
+
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn write_entity_group<T, F>(repo_path: &Path, folder_name: &str, items: &[T], id: F) -> Result<()>
+where
+    T: serde::Serialize,
+    F: Fn(&T) -> &str,
+{
+    let directory = repo_path.join(folder_name);
+    fs::create_dir_all(&directory)?;
+
+    for item in items {
+        write_json_file(&directory.join(format!("{}.json", id(item))), item)?;
+    }
+
+    Ok(())
+}
+
+fn write_json_file<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut json = serde_json::to_string_pretty(value)?;
+    json.push('\n');
+    fs::write(path, json)?;
+    Ok(())
+}
+
+async fn load_workspace_snapshot(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<WorkspaceSnapshot> {
+    let workspace = query_as::<_, Workspace>(
+        r#"
+        SELECT id, name, created_at, updated_at, version
+        FROM workspaces
+        WHERE id = ?
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| anyhow!("workspace not found"))?;
+
+    let collections = query_as::<_, Collection>(
+        r#"
+        SELECT id, workspace_id, name, created_at, updated_at, version
+        FROM collections
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+
+    let folders = query_as::<_, ApiFolder>(
+        r#"
+        SELECT id, workspace_id, collection_id, parent_folder_id, name, created_at, updated_at, version
+        FROM folders
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+
+    let requests = query_as::<_, ApiRequest>(
+        r#"
+        SELECT id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version
+        FROM requests
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+
+    let environments = query_as::<_, Environment>(
+        r#"
+        SELECT id, workspace_id, name, created_at, updated_at, version
+        FROM environments
+        WHERE workspace_id = ?
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+
+    let environment_variables = query_as::<_, EnvironmentVariable>(
+        r#"
+        SELECT environment_variables.id, environment_variables.environment_id, environment_variables.key, environment_variables.value,
+               environment_variables.is_secret, environment_variables.masked_value,
+               environment_variables.created_at, environment_variables.updated_at, environment_variables.version
+        FROM environment_variables
+        INNER JOIN environments ON environments.id = environment_variables.environment_id
+        WHERE environments.workspace_id = ?
+        ORDER BY environment_variables.environment_id, environment_variables.key COLLATE NOCASE, environment_variables.id
+        "#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(WorkspaceSnapshot {
+        workspace,
+        collections,
+        folders,
+        requests,
+        environments,
+        environment_variables,
+    })
+}
+
+async fn apply_workspace_snapshot(pool: &SqlitePool, snapshot: WorkspaceSnapshot) -> Result<()> {
+    let mut tx = pool.begin().await?;
+
+    query("DELETE FROM environment_variables WHERE environment_id IN (SELECT id FROM environments WHERE workspace_id = ?)")
+        .bind(&snapshot.workspace.id)
+        .execute(&mut *tx)
+        .await?;
+    query("DELETE FROM requests WHERE workspace_id = ?")
+        .bind(&snapshot.workspace.id)
+        .execute(&mut *tx)
+        .await?;
+    query("DELETE FROM folders WHERE workspace_id = ?")
+        .bind(&snapshot.workspace.id)
+        .execute(&mut *tx)
+        .await?;
+    query("DELETE FROM collections WHERE workspace_id = ?")
+        .bind(&snapshot.workspace.id)
+        .execute(&mut *tx)
+        .await?;
+    query("DELETE FROM environments WHERE workspace_id = ?")
+        .bind(&snapshot.workspace.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let updated = query(
+        r#"
+        UPDATE workspaces
+        SET name = ?, created_at = ?, updated_at = ?, version = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&snapshot.workspace.name)
+    .bind(snapshot.workspace.created_at)
+    .bind(snapshot.workspace.updated_at)
+    .bind(snapshot.workspace.version)
+    .bind(&snapshot.workspace.id)
+    .execute(&mut *tx)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        bail!("workspace not found");
+    }
+
+    for item in snapshot.collections {
+        query(
+            r#"
+            INSERT INTO collections (id, workspace_id, name, created_at, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.workspace_id)
+        .bind(&item.name)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .bind(item.version)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for item in snapshot.folders {
+        query(
+            r#"
+            INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, created_at, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.workspace_id)
+        .bind(&item.collection_id)
+        .bind(&item.parent_folder_id)
+        .bind(&item.name)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .bind(item.version)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for item in snapshot.requests {
+        query(
+            r#"
+            INSERT INTO requests (id, workspace_id, collection_id, folder_id, name, method, url, document_json, created_at, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.workspace_id)
+        .bind(&item.collection_id)
+        .bind(&item.folder_id)
+        .bind(&item.name)
+        .bind(&item.method)
+        .bind(&item.url)
+        .bind(&item.document_json)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .bind(item.version)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for item in snapshot.environments {
+        query(
+            r#"
+            INSERT INTO environments (id, workspace_id, name, created_at, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.workspace_id)
+        .bind(&item.name)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .bind(item.version)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for item in snapshot.environment_variables {
+        query(
+            r#"
+            INSERT INTO environment_variables (id, environment_id, key, value, is_secret, masked_value, created_at, updated_at, version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&item.id)
+        .bind(&item.environment_id)
+        .bind(&item.key)
+        .bind(&item.value)
+        .bind(item.is_secret)
+        .bind(&item.masked_value)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .bind(item.version)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
 }
 
 #[cfg(test)]

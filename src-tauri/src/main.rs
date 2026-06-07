@@ -223,6 +223,58 @@ async fn delete_workspace(
 }
 
 #[tauri::command]
+async fn init_workspace_versioning(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<domain::WorkspaceVersioningStatus, String> {
+    db::init_workspace_versioning(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn get_workspace_versioning_status(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<domain::WorkspaceVersioningStatus, String> {
+    db::get_workspace_versioning_status(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn commit_workspace_versioning(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+    message: String,
+) -> Result<domain::WorkspaceVersioningCommit, String> {
+    db::commit_workspace_versioning(&state, workspace_id, message)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_workspace_versioning_history(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+) -> Result<Vec<domain::WorkspaceVersioningCommit>, String> {
+    db::list_workspace_versioning_history(&state, workspace_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn restore_workspace_versioning_commit(
+    state: State<'_, SqlitePool>,
+    workspace_id: String,
+    commit_id: String,
+) -> Result<domain::WorkspaceVersioningRestoreResult, String> {
+    db::restore_workspace_versioning_commit(&state, workspace_id, commit_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn list_workspaces(state: State<'_, SqlitePool>) -> Result<Vec<domain::Workspace>, String> {
     db::list_workspaces(&state)
         .await
@@ -616,6 +668,11 @@ fn main() -> Result<()> {
             prepare_browser_auth_callback,
             wait_for_browser_auth_callback,
             delete_workspace,
+            init_workspace_versioning,
+            get_workspace_versioning_status,
+            commit_workspace_versioning,
+            list_workspace_versioning_history,
+            restore_workspace_versioning_commit,
             execute_http_request,
             cancel_http_request,
         ])

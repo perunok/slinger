@@ -56,11 +56,14 @@
     type EnvironmentVariable,
     type HttpResponseData,
     type Workspace,
+    type WorkspaceVersioningCommit,
+    type WorkspaceVersioningStatus,
     createRequest,
     createCollection,
     createEnvironment,
     createWorkspace,
     applyCloudWorkspace,
+    commitWorkspaceVersioning,
     deleteCollection,
     deleteEnvironmentVariable,
     deleteRequest,
@@ -74,12 +77,16 @@
     getFolders,
     getRequests,
     getWorkspaces,
+    getWorkspaceVersioningStatus,
     importPostmanCollection,
+    initWorkspaceVersioning,
     isTauriRuntime,
+    listWorkspaceVersioningHistory,
     openExternalUrl,
     prepareBrowserAuthCallback,
     renameCollection,
     renameRequest,
+    restoreWorkspaceVersioningCommit,
     updateRequest,
     upsertEnvironmentVariable,
     waitForBrowserAuthCallback,
@@ -198,7 +205,7 @@
     method: string
     hasChanges: boolean
   }
-  type UtilityTab = 'copy-request' | 'environment' | 'cloud'
+  type UtilityTab = 'copy-request' | 'environment' | 'cloud' | 'versioning'
   type CopyFormat = 'curl'
   type BuiltRequest = {
     method: string
@@ -274,6 +281,9 @@
   let collectionRunner: { collection: Collection; requests: ApiRequest[] } | null = null
   let error: string | null = null
   let notice: string | null = null
+  let workspaceVersioningBusy = false
+  let workspaceVersioningStatus: WorkspaceVersioningStatus | null = null
+  let workspaceVersioningHistory: WorkspaceVersioningCommit[] = []
   let orientation: Orientation = window.localStorage.getItem('slinger-orientation') === 'horizontal'
     ? 'horizontal'
     : 'vertical'
@@ -315,9 +325,11 @@
   let environmentsLoadToken = 0
   let variablesLoadToken = 0
   let collectionTreeLoadToken = 0
+  let workspaceVersioningLoadToken = 0
   let cloudWorkspaceDetailsLoadToken = 0
   let cloudWorkspaceSelectionToken = 0
   let lastWorkspaceId: string | null | undefined
+  let lastVersioningPanelWorkspaceId: string | null | undefined
   let lastEnvironmentId: string | null | undefined
   let lastCollectionId: string | null | undefined
   let lastRequestId: string | null | undefined
@@ -377,6 +389,7 @@
     : null
   $: copyRequestCurl = builtCopyRequest ? curlCommandFromBuiltRequest(builtCopyRequest) : ''
   $: copyRequestMissingVariables = builtCopyRequest?.missingVariables ?? []
+  $: workspaceVersioningChangeCount = workspaceVersioningStatus?.changed_files.length ?? 0
   $: foldersByParent = groupFoldersByParent(folders)
   $: requestsByFolder = groupRequestsByFolder(requests)
   $: if (selectedResponseIndex >= responseExamples.length) {
@@ -403,10 +416,13 @@
       if (!selectedWorkspaceId) {
         collectionsLoadToken += 1
         environmentsLoadToken += 1
+        workspaceVersioningLoadToken += 1
         cancelAllRequests()
         collections = []
         environments = []
         environmentVariables = []
+        workspaceVersioningStatus = null
+        workspaceVersioningHistory = []
         selectedCollectionId = null
         selectedEnvironmentId = null
         openRequestTabs = []
@@ -419,6 +435,15 @@
         selectedResponseRequestId = null
         void loadCollections(selectedWorkspaceId)
         void loadEnvironments(selectedWorkspaceId)
+        void refreshWorkspaceVersioningStatus()
+      }
+    }
+  }
+  $: {
+    if (rightUtilityTab === 'versioning' && rightSidebarOpen && selectedWorkspaceId !== lastVersioningPanelWorkspaceId) {
+      lastVersioningPanelWorkspaceId = selectedWorkspaceId
+      if (selectedWorkspaceId) {
+        void refreshWorkspaceVersioningStatus({ includeHistory: true, showBusy: true })
       }
     }
   }
@@ -614,6 +639,115 @@
     const current = exportCollectionDialog
     exportCollectionDialog = null
     current.resolve(value)
+  }
+
+  async function refreshWorkspaceVersioningStatus(options: { includeHistory?: boolean; showBusy?: boolean } = {}) {
+    if (!isTauriRuntime || !selectedWorkspaceId) {
+      workspaceVersioningStatus = null
+      workspaceVersioningHistory = []
+      return
+    }
+
+    const token = ++workspaceVersioningLoadToken
+    if (options.showBusy) workspaceVersioningBusy = true
+
+    try {
+      const status = await getWorkspaceVersioningStatus(selectedWorkspaceId)
+      if (token !== workspaceVersioningLoadToken) return
+
+      workspaceVersioningStatus = status
+
+      if (options.includeHistory) {
+        workspaceVersioningHistory = await listWorkspaceVersioningHistory(selectedWorkspaceId)
+        if (token !== workspaceVersioningLoadToken) return
+      }
+
+      error = null
+    } catch (err) {
+      console.error(err)
+      if (token === workspaceVersioningLoadToken) {
+        error = err instanceof Error ? err.message : 'Unable to load local versioning status.'
+      }
+    } finally {
+      if (options.showBusy && token === workspaceVersioningLoadToken) {
+        workspaceVersioningBusy = false
+      }
+    }
+  }
+
+  function syncWorkspaceVersioningAfterMutation() {
+    if (!selectedWorkspaceId || !isTauriRuntime) return
+    void refreshWorkspaceVersioningStatus({ includeHistory: rightUtilityTab === 'versioning' && rightSidebarOpen })
+  }
+
+  async function handleInitWorkspaceVersioning() {
+    if (!selectedWorkspace) return
+
+    workspaceVersioningBusy = true
+    try {
+      workspaceVersioningStatus = await initWorkspaceVersioning(selectedWorkspace.id)
+      workspaceVersioningHistory = await listWorkspaceVersioningHistory(selectedWorkspace.id)
+      notice = `Initialized local Git versioning for "${selectedWorkspace.name}".`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = err instanceof Error ? err.message : 'Unable to initialize local versioning.'
+    } finally {
+      workspaceVersioningBusy = false
+    }
+  }
+
+  async function handleRefreshWorkspaceVersioning() {
+    await refreshWorkspaceVersioningStatus({ includeHistory: true, showBusy: true })
+  }
+
+  async function handleCommitWorkspaceVersioning(message: string) {
+    if (!selectedWorkspace) return
+
+    workspaceVersioningBusy = true
+    try {
+      const commit = await commitWorkspaceVersioning(selectedWorkspace.id, message)
+      await refreshWorkspaceVersioningStatus({ includeHistory: true })
+      notice = `Created local commit ${commit.short_id}.`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = err instanceof Error ? err.message : 'Unable to create a local commit.'
+    } finally {
+      workspaceVersioningBusy = false
+    }
+  }
+
+  async function handleRestoreWorkspaceVersioning(commitId: string) {
+    if (!selectedWorkspace) return
+
+    const selectedCommit = workspaceVersioningHistory.find((entry) => entry.id === commitId)
+    const confirmed = await askForConfirmation({
+      message: `Restore workspace "${selectedWorkspace.name}" to commit "${selectedCommit?.message ?? commitId}"? Current local workspace data will be replaced.`,
+      confirmLabel: 'Restore Workspace',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+
+    workspaceVersioningBusy = true
+    try {
+      const result = await restoreWorkspaceVersioningCommit(selectedWorkspace.id, commitId)
+      cancelAllRequests()
+      openRequestTabs = []
+      selectedRequestId = null
+      selectedResponseRequestId = null
+      await loadWorkspaces()
+      await loadCollections(selectedWorkspace.id)
+      await loadEnvironments(selectedWorkspace.id)
+      await refreshWorkspaceVersioningStatus({ includeHistory: true })
+      notice = `Restored "${selectedWorkspace.name}" to ${selectedCommit?.short_id ?? result.commit_id}.`
+      error = null
+    } catch (err) {
+      console.error(err)
+      error = err instanceof Error ? err.message : 'Unable to restore that local commit.'
+    } finally {
+      workspaceVersioningBusy = false
+    }
   }
 
   function comparableHeaders(headers: HeaderDocument[]) {
@@ -2032,6 +2166,7 @@
       workspaceName = ''
       notice = `Workspace "${workspace.name}" created.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to create workspace.'
@@ -2066,6 +2201,7 @@
       }
       notice = `Workspace "${deletingWorkspaceName}" deleted.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = err instanceof Error ? err.message : 'Unable to delete workspace.'
@@ -2084,6 +2220,7 @@
       collectionName = ''
       notice = `Collection "${collection.name}" created.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to create collection.'
@@ -2102,6 +2239,7 @@
       collections = collections.map((item) => (item.id === renamed.id ? renamed : item))
       notice = `Collection renamed to "${renamed.name}".`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to rename collection.'
@@ -2135,6 +2273,7 @@
       }
       notice = `Collection "${collection.name}" deleted.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to delete collection.'
@@ -2176,6 +2315,7 @@
 
       notice = `Request "${request.name}" deleted.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to delete request.'
@@ -2203,6 +2343,7 @@
       })
       notice = `Request renamed to "${renamed.name}".`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to rename request.'
@@ -2391,6 +2532,7 @@
       }
       notice = `Imported "${result.collection.name}" with ${result.requests.length} requests.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to import that Postman collection.'
@@ -2411,6 +2553,7 @@
       environmentName = ''
       notice = `Environment "${environment.name}" created.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to create environment.'
@@ -2435,6 +2578,7 @@
       variableValue = ''
       notice = `Saved {{${variable.key}}}.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to save environment variable.'
@@ -2455,6 +2599,7 @@
         : [...environmentVariables, variable]
       notice = `Saved {{${variable.key}}}.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to save environment variable.'
@@ -2483,6 +2628,7 @@
         ? environmentVariables.map((item) => (item.id === variable.id ? variable : item))
         : [...environmentVariables, variable]
     }
+    syncWorkspaceVersioningAfterMutation()
   }
 
   async function handleDeleteVariable(variable: EnvironmentVariable) {
@@ -2491,6 +2637,7 @@
       environmentVariables = environmentVariables.filter((item) => item.id !== variable.id)
       notice = `Deleted {{${variable.key}}}.`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to delete environment variable.'
@@ -2692,6 +2839,7 @@
         }
         notice = `Saved "${created.name}".`
         error = null
+        syncWorkspaceVersioningAfterMutation()
       } catch (err) {
         console.error(err)
         error = 'Unable to save request.'
@@ -2720,6 +2868,7 @@
       updateSelectedRequestTab(updated, updated)
       notice = `Saved "${updated.name}".`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to save request.'
@@ -2825,6 +2974,7 @@
       }
       notice = `Saved response "${responseName}".`
       error = null
+      syncWorkspaceVersioningAfterMutation()
     } catch (err) {
       console.error(err)
       error = 'Unable to save response.'
@@ -3431,6 +3581,7 @@
     selectedRequest={selectedRequest}
     {rightSidebarOpen}
     toggleRightSidebar={() => (rightSidebarOpen = !rightSidebarOpen)}
+    toolsIndicatorCount={workspaceVersioningChangeCount}
   />
   <Toolbar
     {workspaces}
@@ -3590,6 +3741,14 @@
       {pushWorkspaceSync}
       {pullWorkspaceSync}
       {publishWorkspaceToCloud}
+      versioningAvailable={isTauriRuntime}
+      versioningBusy={workspaceVersioningBusy}
+      versioningStatus={workspaceVersioningStatus}
+      versioningHistory={workspaceVersioningHistory}
+      refreshWorkspaceVersioning={handleRefreshWorkspaceVersioning}
+      initWorkspaceVersioning={handleInitWorkspaceVersioning}
+      commitWorkspaceVersioning={handleCommitWorkspaceVersioning}
+      restoreWorkspaceVersioning={handleRestoreWorkspaceVersioning}
     />
   </div>
 

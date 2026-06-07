@@ -2,11 +2,14 @@
   import { onDestroy } from 'svelte'
   import CloudToolsPanel from './CloudToolsPanel.svelte'
   import EnvironmentToolsPanel from './EnvironmentToolsPanel.svelte'
+  import WorkspaceVersioningDialog from './WorkspaceVersioningDialog.svelte'
   import type {
     ApiRequest,
     Environment,
     EnvironmentVariable,
     Workspace,
+    WorkspaceVersioningCommit,
+    WorkspaceVersioningStatus,
   } from '../tauri'
   import type {
     CloudDeviceFlowState,
@@ -23,7 +26,7 @@
     CloudWorkspaceRole,
   } from '../cloud'
 
-  type UtilityTab = 'copy-request' | 'environment' | 'cloud'
+  type UtilityTab = 'copy-request' | 'environment' | 'cloud' | 'versioning'
   type CopyFormat = 'curl'
 
   export let open: boolean
@@ -105,6 +108,16 @@
     version: number
   }) => Promise<void>
   export let publishWorkspaceToCloud: () => Promise<void>
+  export let versioningAvailable = false
+  export let versioningBusy = false
+  export let versioningStatus: WorkspaceVersioningStatus | null = null
+  export let versioningHistory: WorkspaceVersioningCommit[] = []
+  export let refreshWorkspaceVersioning: () => Promise<void>
+  export let initWorkspaceVersioning: () => Promise<void>
+  export let commitWorkspaceVersioning: (message: string) => Promise<void>
+  export let restoreWorkspaceVersioning: (commitId: string) => Promise<void>
+
+  $: versioningChangeCount = versioningStatus?.changed_files.length ?? 0
 
   let copied = false
   let copiedTimeout: ReturnType<typeof setTimeout> | null = null
@@ -201,6 +214,33 @@
             <path d="M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7" />
           </svg>
           <span>Env</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class={`flex h-6 items-center gap-1.5 rounded px-2 text-xs transition-colors ${
+            activeTab === 'versioning'
+              ? 'bg-[var(--surface)] text-[var(--text)]'
+              : 'text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]'
+          }`}
+          title={versioningAvailable ? 'Local versioning' : 'Local versioning is available in the desktop app'}
+          aria-label="Local versioning"
+          aria-selected={activeTab === 'versioning'}
+          on:click={() => openTab('versioning')}
+          disabled={!versioningAvailable}
+        >
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v6" />
+            <path d="m8.5 5.5 3.5-2.5 3.5 2.5" />
+            <path d="M5 12a7 7 0 1 0 7-7" />
+            <path d="M12 12h4" />
+          </svg>
+          <span>History</span>
+          {#if versioningChangeCount > 0}
+            <span class="inline-flex min-w-[1rem] items-center justify-center rounded-full bg-[#d7c35a] px-1 text-[10px] font-semibold leading-4 text-[#1b1b1b]">
+              {versioningChangeCount}
+            </span>
+          {/if}
         </button>
       </div>
       <button
@@ -328,6 +368,17 @@
           {changeCloudMemberRole}
           {publishWorkspaceToCloud}
           {selectedWorkspace}
+        />
+      {:else if activeTab === 'versioning'}
+        <WorkspaceVersioningDialog
+          workspaceName={selectedWorkspace?.name ?? null}
+          busy={versioningBusy}
+          status={versioningStatus}
+          history={versioningHistory}
+          on:refresh={refreshWorkspaceVersioning}
+          on:init={initWorkspaceVersioning}
+          on:commit={(event) => commitWorkspaceVersioning(event.detail)}
+          on:restore={(event) => restoreWorkspaceVersioning(event.detail)}
         />
       {/if}
     </div>

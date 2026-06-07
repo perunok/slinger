@@ -17,3 +17,5 @@ src-tauri/gen/
 src-tauri/slinger.db
 src-tauri/src-tauri
 src-tauri/target-local
+.slinger-versioning/
+src-tauri/.slinger-versioning/

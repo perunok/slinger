@@ -57,6 +57,30 @@ export type PostmanImportResult = {
   requests: ApiRequest[]
 }
 
+export type WorkspaceVersioningFileChange = {
+  path: string
+  status: string
+}
+
+export type WorkspaceVersioningStatus = {
+  initialized: boolean
+  repo_path: string
+  changed_files: WorkspaceVersioningFileChange[]
+}
+
+export type WorkspaceVersioningCommit = {
+  id: string
+  short_id: string
+  message: string
+  author: string
+  authored_at: number
+}
+
+export type WorkspaceVersioningRestoreResult = {
+  commit_id: string
+  restored_files: number
+}
+
 export type CloudSyncOperationInput = {
   operation_id: string
   workspace_id?: string
@@ -590,6 +614,52 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
   }
 
   writeStore(nextData)
+}
+
+export async function initWorkspaceVersioning(workspaceId: string): Promise<WorkspaceVersioningStatus> {
+  if (!isTauriRuntime) {
+    throw new Error('Local Git versioning is only available in the desktop app.')
+  }
+
+  return invokeTauri('init_workspace_versioning', { workspaceId })
+}
+
+export async function getWorkspaceVersioningStatus(workspaceId: string): Promise<WorkspaceVersioningStatus> {
+  if (!isTauriRuntime) {
+    throw new Error('Local Git versioning is only available in the desktop app.')
+  }
+
+  return invokeTauri('get_workspace_versioning_status', { workspaceId })
+}
+
+export async function commitWorkspaceVersioning(
+  workspaceId: string,
+  message: string,
+): Promise<WorkspaceVersioningCommit> {
+  if (!isTauriRuntime) {
+    throw new Error('Local Git versioning is only available in the desktop app.')
+  }
+
+  return invokeTauri('commit_workspace_versioning', { workspaceId, message })
+}
+
+export async function listWorkspaceVersioningHistory(workspaceId: string): Promise<WorkspaceVersioningCommit[]> {
+  if (!isTauriRuntime) {
+    throw new Error('Local Git versioning is only available in the desktop app.')
+  }
+
+  return invokeTauri('list_workspace_versioning_history', { workspaceId })
+}
+
+export async function restoreWorkspaceVersioningCommit(
+  workspaceId: string,
+  commitId: string,
+): Promise<WorkspaceVersioningRestoreResult> {
+  if (!isTauriRuntime) {
+    throw new Error('Local Git versioning is only available in the desktop app.')
+  }
+
+  return invokeTauri('restore_workspace_versioning_commit', { workspaceId, commitId })
 }
 
 export async function ensureDefaultEnvironment(workspaceId: string): Promise<Environment> {

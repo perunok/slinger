@@ -140,3 +140,31 @@ pub struct CreateRequestInput {
     pub url: String,
     pub document_json: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WorkspaceVersioningStatus {
+    pub initialized: bool,
+    pub repo_path: String,
+    pub changed_files: Vec<WorkspaceVersioningFileChange>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WorkspaceVersioningFileChange {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WorkspaceVersioningCommit {
+    pub id: String,
+    pub short_id: String,
+    pub message: String,
+    pub author: String,
+    pub authored_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WorkspaceVersioningRestoreResult {
+    pub commit_id: String,
+    pub restored_files: usize,
+}

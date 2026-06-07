@@ -5,6 +5,7 @@
   export let selectedRequest: { name?: string } | null
   export let rightSidebarOpen = false
   export let toggleRightSidebar: () => void
+  export let toolsIndicatorCount = 0
 
   const windowControlsAvailable = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -144,6 +145,11 @@
         <path d="M15 4v16" />
       </svg>
       <span>Tools</span>
+      {#if toolsIndicatorCount > 0}
+        <span class="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-[#d7c35a] px-1 text-[10px] font-semibold leading-4 text-[#1b1b1b]">
+          {toolsIndicatorCount}
+        </span>
+      {/if}
     </button>
   </div>
 </header>

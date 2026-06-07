@@ -13,7 +13,6 @@
   export let setTheme: (theme: 'dark' | 'light') => void
   export let orientation: 'vertical' | 'horizontal'
   export let setOrientation: (orientation: 'vertical' | 'horizontal') => void
-  export let openCloudPanel: () => void
 
   function selectValue(event: Event): string {
     return (event.currentTarget as HTMLSelectElement).value
