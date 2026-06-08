@@ -84,6 +84,15 @@ fn browser_auth_callback_body(message: &str) -> String {
     )
 }
 
+fn slinger_database_path() -> Result<PathBuf> {
+    let executable_path = std::env::current_exe()?;
+    let executable_dir = executable_path.parent().ok_or_else(|| {
+        anyhow::anyhow!("could not determine the directory containing the Slinger executable")
+    })?;
+
+    Ok(executable_dir.join("slinger.db"))
+}
+
 async fn run_browser_auth_callback_listener(
     listener: TcpListener,
     callback_path: String,
@@ -633,7 +642,8 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
 
-    let pool = runtime.block_on(db::init_database("slinger.db"))?;
+    let database_path = slinger_database_path()?;
+    let pool = runtime.block_on(db::init_database(&database_path.to_string_lossy()))?;
     runtime.block_on(db::ensure_default_workspace(&pool))?;
 
     tauri::Builder::default()
