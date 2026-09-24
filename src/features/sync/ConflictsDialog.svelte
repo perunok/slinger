@@ -65,9 +65,12 @@
     selected = allSelected ? new Set() : new Set(allOpen.map((c) => c.id))
   }
 
-  function afterResolved(id: string) {
-    const next = nextAfterRemoval(order, id)
-    focusItem(next)
+  let nextAfter: string | null = null
+  function beforeResolve(id: string) {
+    nextAfter = nextAfterRemoval(order, id)
+  }
+  function afterResolved() {
+    focusItem(nextAfter)
   }
 
   function askBulk(resolution: SyncResolution) {
@@ -159,7 +162,7 @@
     <section class="min-w-0 flex-1 overflow-auto md:pl-2" aria-label="Conflict details" aria-live="polite">
       {#if current}
         {#key current.id}
-          <ConflictCard conflict={current} onresolved={() => afterResolved(current.id)} />
+          <ConflictCard conflict={current} onbefore={() => beforeResolve(current.id)} onresolved={afterResolved} />
         {/key}
       {:else if conflicts.length === 0 && !sync.conflictsLoading}
         <div class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted">

@@ -843,7 +843,7 @@ export function createSyncApi(
     r.tombstones.delete(key)
     return id
   }
-  const doc = (name: string, method: string, url: string) => JSON.stringify({ name, method, url, header: [] })
+  const doc = (name: string, method: string, url: string) => JSON.stringify({ name, method, url, headers: [] })
 
   function seedRemotes() {
     const pay = newRemote('Payments API', 'editor')

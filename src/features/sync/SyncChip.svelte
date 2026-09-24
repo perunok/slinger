@@ -65,10 +65,10 @@
     <span class={chip.busy ? 'animate-spin' : ''}><Icon name={chip.busy ? 'refresh' : chip.icon} size={13} /></span>
     <span>{chip.label}</span>
     {#if chip.readOnly && chip.kind !== 'readOnly'}<span title="Read-only" class="text-muted"><Icon name="lock" size={12} /></span>{/if}
-    {#if chip.pending > 0 && chip.kind !== 'idle' && chip.kind !== 'offline'}<span class="rounded bg-surface px-1 text-[10px] text-muted">{chip.pending}</span>{/if}
+    {#if chip.pending > 0 && chip.kind !== 'idle' && chip.kind !== 'offline'}<span class="rounded bg-surface px-1 text-[10px] text-muted" title="{chip.pending} change{chip.pending === 1 ? '' : 's'} waiting to upload">{chip.pending}</span>{/if}
   </button>
   {#if open}
-    <div bind:this={pop} role="dialog" aria-label="Sync details" class="absolute right-0 top-full z-40 mt-1 w-80 space-y-2 rounded-md border border-strong bg-surface p-3 text-sm shadow-pop" data-testid="sync-popover">
+    <div bind:this={pop} role="dialog" aria-label="Sync details" class="absolute left-0 top-full z-40 mt-1 w-80 space-y-2 rounded-md border border-strong bg-surface p-3 text-sm shadow-pop" data-testid="sync-popover">
       <div>
         <p class="font-medium">{status?.linked ? (status.remoteName ?? ws?.name) : ws?.name}</p>
         <p class="text-xs text-muted">{chip.detail}</p>

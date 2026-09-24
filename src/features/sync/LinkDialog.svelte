@@ -108,9 +108,9 @@
           <fieldset class="space-y-1.5">
             <legend class="text-xs text-muted">Where should it go?</legend>
             <label class="flex items-start gap-2"><input type="radio" name="link-mode" value="new" bind:group={mode} disabled={busy} class="mt-1" />
-              <span><strong>Download into a new workspace</strong>{#if plan.mode === 'new'} <span class="text-xs text-success">(recommended)</span>{/if}<br /><span class="text-xs text-muted">Keeps “{ws?.name}” untouched and creates a team workspace with the cloud content.</span></span></label>
+              <span><strong>Download into a new workspace</strong>{#if plan.mode === 'new'}&nbsp;<span class="text-xs text-success">(recommended)</span>{/if}<br /><span class="text-xs text-muted">Keeps “{ws?.name}” untouched and creates a team workspace with the cloud content.</span></span></label>
             <label class="flex items-start gap-2"><input type="radio" name="link-mode" value="merge" bind:group={mode} disabled={busy} class="mt-1" />
-              <span><strong>Merge into “{ws?.name}”</strong>{#if plan.mode === 'merge'} <span class="text-xs text-success">(recommended)</span>{/if}<br /><span class="text-xs text-muted">Uploads what is here ({counts.collections} collection{counts.collections === 1 ? '' : 's'}, {counts.requests} request{counts.requests === 1 ? '' : 's'}, {counts.environments} environment{counts.environments === 1 ? '' : 's'}) and downloads what is there.</span></span></label>
+              <span><strong>Merge into “{ws?.name}”</strong>{#if plan.mode === 'merge'}&nbsp;<span class="text-xs text-success">(recommended)</span>{/if}<br /><span class="text-xs text-muted">Uploads what is here ({counts.collections} collection{counts.collections === 1 ? '' : 's'}, {counts.requests} request{counts.requests === 1 ? '' : 's'}, {counts.environments} environment{counts.environments === 1 ? '' : 's'}) and downloads what is there.</span></span></label>
           </fieldset>
         {:else}
           <p class="rounded border border-border bg-raised px-2 py-1.5 text-xs text-muted" data-testid="link-forced">{plan.reason}</p>

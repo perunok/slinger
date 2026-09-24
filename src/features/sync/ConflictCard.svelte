@@ -12,10 +12,12 @@
 
   interface Props {
     conflict: SyncConflict
+    /** Called right before the resolution is sent (the list still contains this conflict). */
+    onbefore?: () => void
     /** Called after a successful resolution. */
     onresolved?: () => void
   }
-  let { conflict, onresolved }: Props = $props()
+  let { conflict, onbefore, onresolved }: Props = $props()
 
   const diffs = $derived(buildGroupDiffs(conflict))
   const open = $derived(conflict.status === 'open')
@@ -33,6 +35,7 @@
     if (busy) return
     error = null
     busy = resolution
+    onbefore?.()
     try {
       await sync.resolve({
         conflictId: conflict.id,
@@ -98,7 +101,7 @@
   <InlineError message={error} />
 
   {#if open}
-    <div class="flex flex-wrap items-center gap-2 border-t border-border pt-2" role="group" aria-label="Resolve this conflict">
+    <div class="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-border bg-surface px-1 py-2" role="group" aria-label="Resolve this conflict">
       {#each conflict.allowedResolutions as r (r)}
         {@const ui = resolutionUi(conflict.kind, r)}
         {#if r === 'merge'}

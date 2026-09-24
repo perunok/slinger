@@ -63,6 +63,7 @@ export class SyncStore {
   #pendingApplied = new Map<string, { requests: Set<string>; environments: boolean; truncated: boolean }>()
   #initStarted = false
   #quiet = false
+  #conflictToast: number | null = null
 
   current = $derived<SyncStatus | null>(app.workspaceId ? (this.statuses[app.workspaceId] ?? null) : null)
   chip = $derived(deriveChip(this.current, this.session, this.now))
@@ -100,6 +101,22 @@ export class SyncStore {
         /* invalid legacy value: keep the main-process config */
       }
     }
+  }
+
+  /** Drops all state and subscriptions (tests, and sign-out of the whole app). */
+  reset(): void {
+    this.dispose()
+    this.session = null
+    this.config = null
+    this.statuses = {}
+    this.signIn = idleSignIn()
+    this.remotes = []
+    this.remotesError = null
+    this.conflicts = []
+    this.legacyLinks = []
+    this.busy = {}
+    this.#pendingApplied.clear()
+    this.#conflictToast = null
   }
 
   dismissLegacy(localWorkspaceId: string): void {
@@ -168,7 +185,7 @@ export class SyncStore {
       case 'auth': {
         const prev = this.session
         this.session = e.session
-        if (prev?.status === 'signedIn' && e.session.status === 'signedOut' && this.linkedCount > 0 && this.signIn.phase === 'idle' && !this.#quiet) {
+        if (prev?.status === 'signedIn' && e.session.status === 'signedOut' && this.linkedCount > 0 && this.signIn.phase !== 'waiting' && this.signIn.phase !== 'starting' && !this.#quiet) {
           toast.offer('Signed out of Slinger Cloud', 'Sign in again to keep syncing. Your changes are kept and will upload afterwards.', {
             label: 'Sign in',
             run: () => (ui.cloudOpen = true),
@@ -189,9 +206,10 @@ export class SyncStore {
     if (next.state === 'error' && next.lastError && (prev?.state !== 'error' || prev.lastError?.message !== next.lastError.message)) {
       toast.push('error', `Sync of "${name}" failed`, next.lastError.message, 15000, { label: 'Retry', run: () => void this.syncNow(next.workspaceId) })
     }
-    if (next.openConflicts > (prev?.openConflicts ?? 0)) {
+    if (next.openConflicts > (prev?.openConflicts ?? 0) && !ui.conflictsOpen) {
       const n = next.openConflicts
-      toast.offer(`${n} sync conflict${n === 1 ? '' : 's'}`, `Changes in "${name}" could not be merged automatically.`, {
+      if (this.#conflictToast !== null) toast.dismiss(this.#conflictToast)
+      this.#conflictToast = toast.offer(`${n} sync conflict${n === 1 ? '' : 's'}`, `Changes in "${name}" could not be merged automatically.`, {
         label: 'Review',
         run: () => void this.openConflicts(next.workspaceId),
       })
@@ -346,13 +364,21 @@ export class SyncStore {
 
   /** Throws (the flow dialogs show the error inline). */
   async publish(workspaceId: string): Promise<SyncStatus> {
-    return this.#store(await this.#busy(workspaceId, 'publish', () => api().publishWorkspace(workspaceId)))
+    const status = this.#store(await this.#busy(workspaceId, 'publish', () => api().publishWorkspace(workspaceId)))
+    void this.#refreshRemotes()
+    return status
+  }
+
+  /** Keeps the "Your cloud workspaces" list truthful after link/publish/unlink (only when it was loaded). */
+  #refreshRemotes(): Promise<void> {
+    return this.signedIn && this.remotes.length > 0 ? this.loadRemotes() : Promise.resolve()
   }
 
   /** Throws. On success the returned workspace exists locally (refresh the list yourself). */
   async link(input: LinkRemoteWorkspaceInput): Promise<{ workspace: Workspace; status: SyncStatus }> {
     const res = await api().linkRemoteWorkspace(input)
     this.#store(res.status)
+    void this.#refreshRemotes()
     return res
   }
 
@@ -361,6 +387,7 @@ export class SyncStore {
       await api().unlinkWorkspace(workspaceId)
       this.statuses[workspaceId] = await api().getSyncStatus(workspaceId)
       if (workspaceId === app.workspaceId) this.conflicts = []
+      void this.#refreshRemotes()
       return true
     } catch (e) {
       toast.error('Could not unlink', errorInfo(e).message)
