@@ -36,6 +36,7 @@ function toVariable(r: VariableRow): EnvironmentVariable {
     value: secret ? null : r.value,
     isSecret: secret,
     maskedValue: secret ? SECRET_MASK : null,
+    secretMissing: false, // populated from migration 0004 onwards
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     version: r.version,

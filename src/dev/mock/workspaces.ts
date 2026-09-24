@@ -45,6 +45,7 @@ function publicVariable(v: VariableRow): EnvironmentVariable {
     value: v.isSecret ? null : v.value,
     isSecret: v.isSecret,
     maskedValue: v.isSecret ? SECRET_MASK : null,
+    secretMissing: false,
     createdAt: v.createdAt,
     updatedAt: v.updatedAt,
     version: v.version,

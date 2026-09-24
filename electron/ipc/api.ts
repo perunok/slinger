@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { SlingerIpcApi } from '../../shared/ipc-contract'
+import type { SlingerInvokeApi } from '../../shared/ipc-contract'
 import type { PickFileOptions } from '../../shared/types'
 import { invalidInput } from '../lib/errors'
 import { isUuid } from '../lib/ids'
@@ -8,6 +8,7 @@ import { importPostmanCollection } from '../services/postmanImport'
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import type { Core } from '../services/core'
+import { createSyncIpc } from './syncApi'
 
 // ---------------------------------------------------------------------------
 // Input schemas. Every IPC argument list is parsed here, before any repository is touched.
@@ -159,7 +160,7 @@ export interface PlatformDeps {
  * exposes exactly these functions over IPC. Lives outside handlers.ts so it can be tested under
  * plain Node (no `electron` import).
  */
-export function createIpcApi(core: Core, platform: PlatformDeps): SlingerIpcApi {
+export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeApi {
   return {
     // Workspaces
     listWorkspaces: async (...a) => (parseArgs(z.tuple([]), a), core.workspaces.list()),
@@ -287,6 +288,9 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerIpcApi 
       const [id, timeout] = parseArgs(z.tuple([z.string(), z.number()]), a)
       return core.authCallbacks.wait(id, timeout)
     },
+
+    // Cloud account + sync (electron/ipc/syncApi.ts)
+    ...createSyncIpc(core),
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),

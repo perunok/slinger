@@ -72,6 +72,8 @@ export interface EnvironmentVariable {
   isSecret: boolean
   /** Present only when isSecret === true, e.g. "••••••••". */
   maskedValue: string | null
+  /** Secret variable created by another device: its value is not set on this device (see sync design D3). */
+  secretMissing: boolean
   createdAt: number
   updatedAt: number
   version: number
@@ -307,6 +309,172 @@ export interface SecureStoreSetInput {
 }
 
 // ---------------------------------------------------------------------------
+// Cloud sync
+// ---------------------------------------------------------------------------
+
+export type CloudRole = 'owner' | 'admin' | 'editor' | 'viewer'
+
+export type SyncEntityType =
+  | 'collection'
+  | 'folder'
+  | 'request'
+  | 'environment'
+  | 'environment_variable'
+  | 'collection_version'
+
+export interface CloudConfig {
+  apiBaseUrl: string
+  deviceName: string
+}
+
+export interface CloudUser {
+  id: string
+  email: string
+  displayName: string
+}
+
+export interface CloudSession {
+  apiBaseUrl: string
+  status: 'signedOut' | 'signingIn' | 'signedIn'
+  user: CloudUser | null
+  /** True when the last server contact failed for network reasons (session is still valid). */
+  offline: boolean
+}
+
+export interface CloudSignInStart {
+  userCode: string
+  verificationUri: string
+  verificationUriComplete: string | null
+  expiresInSec: number
+  intervalSec: number
+}
+
+export interface RemoteWorkspace {
+  id: string
+  name: string
+  slug: string
+  role: CloudRole
+  /** Local workspace on THIS device linked to it, if any. */
+  linkedLocalWorkspaceId: string | null
+}
+
+export interface RemoteWorkspacePreview {
+  id: string
+  name: string
+  role: CloudRole
+  /** null when it could not be determined (offline mid-call). */
+  remoteEmpty: boolean | null
+  linkedLocalWorkspaceId: string | null
+}
+
+export type SyncState =
+  | 'unlinked'
+  | 'signedOut'
+  | 'idle'
+  | 'syncing'
+  | 'offline'
+  | 'error'
+  | 'accessRevoked'
+  | 'serverUnsupported'
+
+export interface SyncProgress {
+  phase: 'snapshot' | 'pull' | 'push'
+  done: number
+  /** null when unknown (pull). */
+  total: number | null
+}
+
+export interface SyncStatus {
+  workspaceId: string
+  linked: boolean
+  state: SyncState
+  apiBaseUrl: string | null
+  remoteWorkspaceId: string | null
+  remoteName: string | null
+  role: CloudRole | null
+  /** True when local writes are blocked (viewer role). Mutations reject with code 'read_only'. */
+  readOnly: boolean
+  autoSync: boolean
+  /** Entities with local changes not yet acknowledged by the cloud. */
+  pendingChanges: number
+  openConflicts: number
+  /** true until the first upload/download after link/publish completed. */
+  initialSyncPending: boolean
+  lastSyncedAt: number | null // epoch seconds
+  lastError: { code: string; message: string } | null
+  /** Epoch seconds of the next automatic retry while backing off, else null. */
+  nextRetryAt: number | null
+  progress: SyncProgress | null
+}
+
+export type SyncConflictKind =
+  | 'edit_edit'
+  | 'remote_deleted'
+  | 'local_deleted'
+  | 'duplicate_key'
+  | 'immutable_clash'
+  | 'rejected'
+
+export type SyncResolution = 'keep_local' | 'keep_remote' | 'merge' | 'duplicate'
+
+/** One field group of a conflicting entity. Values are display strings; secret values never appear. */
+export interface SyncConflictGroup {
+  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value'
+  label: string
+  conflicting: boolean
+  base: string | null
+  local: string | null
+  remote: string | null
+}
+
+export interface SyncConflict {
+  id: string
+  workspaceId: string
+  entityType: SyncEntityType
+  entityId: string
+  kind: SyncConflictKind
+  status: 'open' | 'resolved' | 'auto_resolved'
+  /** Entity name at detection time. */
+  label: string
+  /** Breadcrumb, e.g. ['Payments API', 'Auth', 'Create token']. */
+  path: string[]
+  message: string
+  groups: SyncConflictGroup[]
+  allowedResolutions: SyncResolution[]
+  createdAt: number
+  resolvedAt: number | null
+  resolution: SyncResolution | null
+}
+
+export interface ResolveSyncConflictInput {
+  conflictId: string
+  resolution: SyncResolution
+  /** Required for 'merge': per conflicting group, which side to keep. */
+  fieldChoices?: Partial<Record<SyncConflictGroup['group'], 'local' | 'remote'>>
+  /** Required for kind 'immutable_clash' + 'duplicate': the new semver label for the recreated version. */
+  newVersion?: string
+}
+
+export interface LinkRemoteWorkspaceInput {
+  remoteWorkspaceId: string
+  /** Local workspace to merge into, or null to create a new local workspace from the cloud one. */
+  localWorkspaceId: string | null
+}
+
+export type SyncEvent =
+  | { type: 'status'; status: SyncStatus }
+  | {
+      type: 'applied'
+      workspaceId: string
+      /** Ids changed by pull/resolution; renderer refetches the affected lists. Capped at 500, then truncated = true. */
+      changed: Array<{ entityType: SyncEntityType; entityId: string; change: 'upsert' | 'delete' }>
+      truncated: boolean
+    }
+  | { type: 'conflicts'; workspaceId: string; open: number }
+  | { type: 'auth'; session: CloudSession }
+  | { type: 'signInResult'; result: 'approved' | 'expired' | 'denied' | 'cancelled' | 'error'; message: string | null }
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
@@ -319,6 +487,9 @@ export interface IpcErrorPayload {
     | 'io_error'
     | 'network_error'
     | 'internal_error'
+    | 'read_only'
+    | 'unauthenticated'
+    | 'sync_blocked'
   message: string
   details?: Record<string, unknown>
 }

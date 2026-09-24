@@ -2,6 +2,7 @@
  * In-memory implementation of the whole SlingerIpcApi for running the renderer in a plain browser.
  * `installMockBackend()` sets `window.slinger` (when undefined) and `window.__slingerMock`.
  */
+import { createSyncApi } from './mock/sync'
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
@@ -77,6 +78,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createVersionApi(state),
     ...createHttpApi(state),
     ...misc,
+    ...createSyncApi(),
     async listHistory(workspaceId, limit) {
       const rows = state.history.filter((h) => h.workspaceId === workspaceId).sort((a, b) => b.createdAt - a.createdAt)
       return limit && limit > 0 ? rows.slice(0, limit) : rows
@@ -112,6 +114,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
   const api = {} as Record<string, unknown>
   for (const channel of IPC_CHANNELS) api[channel] = wrap(channel)
+  api.onSyncEvent = impl.onSyncEvent
 
   const controls: MockControls = {
     reset() {

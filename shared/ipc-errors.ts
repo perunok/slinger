@@ -27,3 +27,8 @@ export function errorMessage(value: unknown): string {
   if (typeof value === 'string') return value
   return 'Unexpected error'
 }
+
+/** True for the error a mutation gets when the workspace is a read-only (viewer) cloud workspace. */
+export function isReadOnlyError(value: unknown): boolean {
+  return isIpcErrorPayload(value) && value.code === 'read_only'
+}

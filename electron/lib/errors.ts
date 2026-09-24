@@ -1,6 +1,9 @@
 import { IpcError } from '../../shared/types'
 import type { IpcErrorPayload } from '../../shared/types'
 
+/** Message raised by the `sync_readonly_*` triggers; mapped to the `read_only` IPC error code. */
+export const READ_ONLY_MARKER = 'slinger:read_only'
+
 export { IpcError }
 export type { IpcErrorPayload }
 
@@ -25,5 +28,9 @@ export function toErrorPayload(err: unknown): IpcErrorPayload {
     return { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) }
   }
   const message = err instanceof Error ? err.message : String(err)
+  // SQLite triggers on read-only (viewer) cloud workspaces abort with this marker (see migration 0004).
+  if (message.includes(READ_ONLY_MARKER)) {
+    return { code: 'read_only', message: 'This workspace is read-only (viewer role); changes are not allowed' }
+  }
   return { code: 'internal_error', message }
 }

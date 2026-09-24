@@ -30,6 +30,16 @@ import type {
   MoveRequestInput,
   PickFileOptions,
   PostmanImportResult,
+  CloudConfig,
+  CloudSession,
+  CloudSignInStart,
+  LinkRemoteWorkspaceInput,
+  RemoteWorkspace,
+  RemoteWorkspacePreview,
+  ResolveSyncConflictInput,
+  SyncConflict,
+  SyncEvent,
+  SyncStatus,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
@@ -121,6 +131,36 @@ export interface SlingerIpcApi {
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
   pickFile(options?: PickFileOptions): Promise<string | null>
+
+
+  // Cloud account (tokens never reach the renderer)
+  getCloudConfig(): Promise<CloudConfig>
+  setCloudConfig(config: CloudConfig): Promise<CloudConfig>
+  getCloudSession(): Promise<CloudSession>
+  /** Starts the device flow; main polls in the background and emits 'auth' / 'signInResult'. */
+  startCloudSignIn(): Promise<CloudSignInStart>
+  cancelCloudSignIn(): Promise<void>
+  signOutCloud(): Promise<void>
+  listRemoteWorkspaces(): Promise<RemoteWorkspace[]>
+  previewRemoteWorkspace(remoteWorkspaceId: string): Promise<RemoteWorkspacePreview>
+
+  // Sync
+  getSyncStatus(workspaceId: string): Promise<SyncStatus>
+  listSyncStatuses(): Promise<SyncStatus[]>            // every LINKED workspace
+  /** Runs (or joins) a sync cycle and resolves with the final status. Never rejects for network errors: see status.state/lastError. */
+  syncNow(workspaceId: string): Promise<SyncStatus>
+  setAutoSync(workspaceId: string, enabled: boolean): Promise<SyncStatus>
+  /** Creates the remote workspace, links, and starts the initial upload in the background. */
+  publishWorkspace(workspaceId: string): Promise<SyncStatus>
+  /** Links (merge) or downloads (localWorkspaceId null). Resolves after the link exists; download/upload continues in the background. Returns the local workspace. */
+  linkRemoteWorkspace(input: LinkRemoteWorkspaceInput): Promise<{ workspace: Workspace; status: SyncStatus }>
+  unlinkWorkspace(workspaceId: string): Promise<void>
+  listSyncConflicts(workspaceId: string, includeResolved?: boolean): Promise<SyncConflict[]>
+  resolveSyncConflict(input: ResolveSyncConflictInput): Promise<SyncStatus>
+  discardPendingChanges(workspaceId: string): Promise<SyncStatus>
+
+  /** Push channel (main -> renderer). Returns an unsubscribe function. Implemented in preload with ipcRenderer.on('sync:event'). */
+  onSyncEvent(listener: (event: SyncEvent) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -181,10 +221,34 @@ export const IPC_CHANNELS = [
   'waitForBrowserAuthCallback',
   'getAppVersion',
   'pickFile',
+  'getCloudConfig',
+  'setCloudConfig',
+  'getCloudSession',
+  'startCloudSignIn',
+  'cancelCloudSignIn',
+  'signOutCloud',
+  'listRemoteWorkspaces',
+  'previewRemoteWorkspace',
+  'getSyncStatus',
+  'listSyncStatuses',
+  'syncNow',
+  'setAutoSync',
+  'publishWorkspace',
+  'linkRemoteWorkspace',
+  'unlinkWorkspace',
+  'listSyncConflicts',
+  'resolveSyncConflict',
+  'discardPendingChanges',
   'grantedFiles',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
+
+/** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
+export const IPC_EVENT_CHANNELS = ['sync:event'] as const
+
+/** The invoke-only part of the API (everything except the push subscription), i.e. what main implements. */
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent'>
 
 declare global {
   interface Window {

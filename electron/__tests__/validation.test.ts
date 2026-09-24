@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
+import { IPC_CHANNELS, type SlingerInvokeApi } from '../../shared/ipc-contract'
 import { isUuid, assertUuid, newId } from '../lib/ids'
 import { sanitizeFileName } from '../services/exportFiles'
 import { makeEnv, NIL_UUID, scaffold, type TestEnv } from './helpers'
@@ -31,7 +31,7 @@ describe('UUID validation', () => {
 
   it('every id-taking API method rejects a non-UUID with invalid_input before touching the database', async () => {
     const bad = '../../etc/passwd'
-    const calls: Array<[keyof SlingerIpcApi, unknown[]]> = [
+    const calls: Array<[keyof SlingerInvokeApi, unknown[]]> = [
       ['renameWorkspace', [bad, 'x']],
       ['deleteWorkspace', [bad]],
       ['listEnvironments', [bad]],

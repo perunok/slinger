@@ -1,5 +1,5 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
+import { IPC_CHANNELS, type SlingerInvokeApi } from '../../shared/ipc-contract'
 import { toErrorPayload } from '../lib/errors'
 import type { IpcEnvelope } from './envelope'
 
@@ -7,7 +7,7 @@ import type { IpcEnvelope } from './envelope'
  * Registers one `ipcMain.handle` per channel in IPC_CHANNELS. The channel name equals the API
  * method name. Every call is refused unless it comes from the app's own renderer frame.
  */
-export function registerIpcHandlers(api: SlingerIpcApi, isTrustedFrameUrl: (url: string) => boolean): void {
+export function registerIpcHandlers(api: SlingerInvokeApi, isTrustedFrameUrl: (url: string) => boolean): void {
   for (const channel of IPC_CHANNELS) {
     ipcMain.handle(channel, async (event: IpcMainInvokeEvent, ...args: unknown[]): Promise<IpcEnvelope> => {
       const frameUrl = event.senderFrame?.url ?? ''
