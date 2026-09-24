@@ -26,6 +26,21 @@ describe('Postman import', () => {
     for (const r of stored) expect(() => JSON.parse(r.documentJson)).not.toThrow()
   })
 
+  it('gives requests the nearest folder auth (folder auth is not stored on its own)', async () => {
+    const payload = JSON.stringify({
+      info: { name: 'Auth C', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      auth: { type: 'bearer', bearer: [{ key: 'token', value: 'root' }] },
+      item: [
+        { name: 'F', auth: { type: 'bearer', bearer: [{ key: 'token', value: 'folder' }] }, item: [{ name: 'in', request: { method: 'GET', url: 'http://x' } }] },
+        { name: 'top', request: { method: 'GET', url: 'http://x' } },
+      ],
+    })
+    const imported = await env.api.importPostmanCollection(wsId, payload)
+    const docs = Object.fromEntries((await env.api.listRequests(imported.collection.id)).map((r) => [r.name, JSON.parse(r.documentJson)]))
+    expect(docs.in.auth.bearer[0].value).toBe('folder')
+    expect(docs.top.auth.bearer[0].value).toBe('root')
+  })
+
   it('preserves nested folders and their parent links', async () => {
     const payload = JSON.stringify({
       info: { name: 'nested' },
