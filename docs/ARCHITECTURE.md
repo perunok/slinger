@@ -157,6 +157,34 @@ The cloud HTTP client, sign-in, token refresh and the sync engine run in the mai
 never sees tokens and does not call `executeHttpRequest` or `cloudFetch` for cloud purposes. Only `executeHttpRequest` (the user's
 own requests) writes history.
 
+## Cloud sync (main process)
+
+Design: `docs/SYNC_DESIGN.md` (section 20 lists where the code differs). Code: `electron/cloud/` (HTTP client with 30 s timeout and
+no history, device-flow sign-in, single-flight token refresh with persist-before-use, typed API) and `electron/sync/`
+(`SyncService` in `index.ts` implements the account/sync IPC methods; no Electron imports, clock/timers/fetch/emit injected).
+
+- **Capture**: SQLite triggers from `0004_sync.sql` mark changed rows of linked workspaces in `sync_dirty` in the same statement;
+  engine writes run with `sync_control.applying = 1` and are not captured. Read-only (viewer) links are enforced by triggers too
+  (`read_only` IPC error). The last state both sides agreed on is `sync_entities.base_payload` (the 3-way merge base).
+- **Cycle** (`engine.ts`, one per workspace at a time): register client (refuses servers below protocol v2), re-read the role,
+  snapshot download for a new link, then up to 4 rounds of pull (apply pages in one transaction each; the checkpoint only advances
+  with the applied page) -> build ops from the dirty set (`outbox.buildOps`: no-op elimination, limits quarantine, cascade pruning,
+  dependency order, chunks <= 200 ops / 700 KB) -> push. Push rejections branch on the v2 `reason`
+  (`version_mismatch` merges the returned `current_payload` and pushes again without a pull; `not_found` pulls the tombstone;
+  `duplicate_key`, `immutable`, `invalid`/`too_large`, `id_in_use`, `read_only` as in design section 20).
+- **Conflicts** are detected locally (`apply.ts`, per field group) and stored in `sync_conflicts`; a conflicted entity is frozen
+  (not pushed) until resolved (`conflicts.ts`: keep local / keep remote / merge per group / duplicate).
+- **Scheduling** (`scheduler.ts`): 5 s dirty poll + 1.5 s debounce, full cycle every 60 s focused / 5 min blurred, on start, focus,
+  resume, online and manual sync; exponential backoff with jitter honouring `Retry-After`. Local edits are announced to the renderer
+  as `status` events (also with auto sync off), applied remote changes as `applied` events.
+- **Secrets** never leave the device: secret variables travel as metadata (`value: null`); a variable that arrives from another
+  device is `secretMissing` until a value is set locally.
+- **Tests**: `electron/__tests__/sync/` (units, an in-process fake server that implements the same wire contract as the real one
+  (`wireContract.ts` runs against both), a two-device convergence fuzzer with a racing third writer) and
+  `electron/__tests__/sync-it/` (the same engine against the real slinger-admin server + throwaway PostgreSQL:
+  `SLINGER_SYNC_IT_SERVER_DIR=../slinger-admin/server npm run test:sync-it`). Real-app specs: `e2e/cloud.e2e.test.ts`,
+  `e2e/sync.e2e.test.ts` (two profiles = two devices, gated by `SLINGER_E2E_CLOUD_URL`).
+
 ## Collection versioning
 
 Versions are immutable snapshots stored inside the database, not git. `createCollectionVersion` serializes the collection's live
