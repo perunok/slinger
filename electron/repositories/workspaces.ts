@@ -1,4 +1,5 @@
 import type { Workspace } from '../../shared/types'
+import { detachSync } from '../sync/detach'
 import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
 import type { SecretStore } from '../services/secrets'
@@ -53,6 +54,9 @@ export class WorkspaceRepository {
     const wid = id.toLowerCase()
     const now = nowSeconds()
     const secretRefs = this.db.transaction(() => {
+      // A linked workspace is detached first: deleting locally never deletes remote data, and the
+      // read-only triggers must not block the delete.
+      detachSync(this.db, wid)
       const secretRefs = (
         this.db
           .prepare(

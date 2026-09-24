@@ -16,7 +16,7 @@ export class CollectionRepository {
     requireWorkspace(this.db, workspaceId)
     return (
       this.db
-        .prepare('SELECT * FROM collections WHERE workspace_id = ? AND deleted = 0 ORDER BY created_at, id')
+        .prepare('SELECT * FROM collections WHERE workspace_id = ? AND deleted = 0 ORDER BY id')
         .all(workspaceId.toLowerCase()) as CollectionRow[]
     ).map(toCollection)
   }

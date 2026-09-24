@@ -21,6 +21,7 @@ interface VariableRow {
   value: string | null
   is_secret: number
   secret_ref: string | null
+  secret_missing: number
   version: number
   created_at: number
   updated_at: number
@@ -36,7 +37,7 @@ function toVariable(r: VariableRow): EnvironmentVariable {
     value: secret ? null : r.value,
     isSecret: secret,
     maskedValue: secret ? SECRET_MASK : null,
-    secretMissing: false, // populated from migration 0004 onwards
+    secretMissing: secret && r.secret_missing === 1,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     version: r.version,
@@ -61,7 +62,7 @@ export class EnvironmentRepository {
     requireWorkspace(this.db, workspaceId)
     return (
       this.db
-        .prepare('SELECT * FROM environments WHERE workspace_id = ? AND deleted = 0 ORDER BY created_at, id')
+        .prepare('SELECT * FROM environments WHERE workspace_id = ? AND deleted = 0 ORDER BY id')
         .all(workspaceId.toLowerCase()) as EnvironmentRow[]
     ).map(toEnvironment)
   }
@@ -210,7 +211,7 @@ export class EnvironmentRepository {
     if (isSecret) this.secrets.set(ref, effective)
     this.db
       .prepare(
-        `UPDATE environment_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?,
+        `UPDATE environment_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?, secret_missing = 0,
            updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0`,
       )
       .run(key, isSecret ? null : effective, isSecret ? 1 : 0, isSecret ? ref : null, now, existing.id)

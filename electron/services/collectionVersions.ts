@@ -132,12 +132,12 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
     }
     const folders = (
       db
-        .prepare('SELECT * FROM folders WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, created_at, id')
+        .prepare('SELECT * FROM folders WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, id')
         .all(collection.id) as FolderRow[]
     ).map((f) => ({ id: f.id, parentFolderId: f.parent_folder_id, name: f.name, sortOrder: f.sort_order }))
     const requests = (
       db
-        .prepare('SELECT * FROM requests WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, created_at, id')
+        .prepare('SELECT * FROM requests WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, id')
         .all(collection.id) as RequestRow[]
     ).map((r) => ({
       id: r.id,

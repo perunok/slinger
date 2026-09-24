@@ -66,7 +66,7 @@ function placeAt(
       .prepare(
         `SELECT id, sort_order FROM ${table}
          WHERE collection_id = ? AND ${col} IS ? AND deleted = 0 AND id != ?
-         ORDER BY sort_order, created_at, id`,
+         ORDER BY sort_order, id`,
       )
       .all(collectionId, containerId, movedId) as Array<{ id: string; sort_order: number }>
   ).map((r) => r.id)
@@ -93,7 +93,7 @@ export class FolderRepository {
       this.db
         .prepare(
           `SELECT * FROM folders WHERE collection_id = ? AND deleted = 0
-           ORDER BY sort_order, created_at, id`,
+           ORDER BY sort_order, id`,
         )
         .all(collectionId.toLowerCase()) as FolderRow[]
     ).map(toFolder)
@@ -205,7 +205,7 @@ export class RequestRepository {
       this.db
         .prepare(
           `SELECT * FROM requests WHERE collection_id = ? AND deleted = 0
-           ORDER BY sort_order, created_at, id`,
+           ORDER BY sort_order, id`,
         )
         .all(collectionId.toLowerCase()) as RequestRow[]
     ).map(toRequest)
