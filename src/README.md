@@ -86,4 +86,9 @@ Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes
   (scripts, responses, source, settings) are preserved on save. Our own additions: `params` (rows incl. disabled ones)
   and `settings.timeoutMs`. See `lib/request.ts`.
 * Tokens for the cloud panel live in the OS keychain through `secureStore*` (never `localStorage`).
-* Renderer additions to the contract (not in the main process yet): `pickFile`, `writeExportFile(..., encoding)`.
+* Renderer-driven contract additions (`pickFile`, `writeExportFile(..., encoding)`, `historyUrl` on `HttpRequestInput`) are implemented in the main process.
+* Cloud calls (`features/cloud/client.ts`) go through `executeHttpRequest` (the CSP blocks direct renderer network access), so they appear in
+  history. Cloud API URL, device name and workspace links are in `localStorage` (`slinger.cloud.*`); only tokens use the keychain.
+* Other `localStorage` keys: `slinger.theme`, `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`.
+* Open request tabs are in memory only and are not restored on restart.
+* Whole-app docs: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md).

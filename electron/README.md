@@ -1,7 +1,8 @@
 # Slinger main process (Electron + TypeScript)
 
-Local-first API client. This directory is the Electron **main process**; it replaces the old
-Rust/Tauri backend in `src-tauri/` (kept only as a behavior reference).
+Local-first API client. This directory is the Electron **main process** (SQLite, HTTP executor, keychain, files, dialogs).
+See [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) for the whole-app picture and
+[../NOTES-FOR-FRONTEND.md](../NOTES-FOR-FRONTEND.md) for behavior notes for callers of `window.slinger`.
 
 ## Layout
 
@@ -33,8 +34,9 @@ service (UUID validation again, then SQL) -> envelope back -> preload resolves o
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | vitest (switches `better-sqlite3` to the Node build first via `pretest`) |
-| `npm run typecheck` | `tsc` over `electron/`, `shared/` |
+| `npm test` | vitest for `electron/**` then the renderer suite (switches `better-sqlite3` to the Node build first via `pretest`); `npm run test:main` runs only this directory |
+| `npm run typecheck` | `tsc` over `electron/` + `shared/`, `tsc` over `e2e/`, `svelte-check` over the renderer |
+| `npm run test:e2e` | builds, then drives the real Electron app with Playwright (`e2e/`) |
 | `npm run electron:dev` | rebuilds the main bundle, starts Vite on :5173, launches Electron pointed at it |
 | `npm run electron:build` | Vite build of the renderer, bundle main/preload, rebuild native module for Electron, `electron-builder` (win/mac/linux per `electron-builder.yml`) |
 | `npm run rebuild:node` / `rebuild:electron` | force the native `better-sqlite3` binary for Node or Electron |
@@ -51,13 +53,14 @@ inside Electron 33's Node 20, so the project pins `^12`.)
 
 * File: `<userData>/slinger.db` (WAL, `foreign_keys=ON`).
 * `db/migrate.ts` applies `electron/migrations/NNNN_name.sql` in numeric order, each in its own
-  transaction, and records `id, name, sha256, applied_at` in `_migrations`.
+  transaction, and records `id, name, checksum (SHA-256), applied_at` in `_migrations`.
   Re-running applies nothing. Startup aborts if an applied file was edited (checksum) or if the
   database contains a migration the app does not ship (database newer than app).
   **Never edit a released migration; add the next number.**
 * `0001_init.sql` base schema, `0002_collection_versions.sql` semver snapshots,
-  `0003_integrity.sql` unique env-var keys, ordering indexes, immutability trigger.
-* Timestamps are Unix **seconds** (same unit the old backend used).
+  `0003_integrity.sql` unique env-var keys, ordering indexes, immutability trigger. `0001` also creates a
+  `cloud_links` table that no code uses (the cloud link is kept in the renderer's localStorage).
+* Timestamps are Unix **seconds**.
 
 ### Soft delete and versions
 
@@ -112,7 +115,7 @@ stored without API-key query parameters added by auth.
   channels in `IPC_CHANNELS`.
 * Every handler rejects frames that are not the app's own origin (`app://slinger/` or the dev server).
 * The renderer is served from a privileged `app://` scheme with a strict CSP
-  (`default-src 'none'; script-src 'self'; ...`), permission requests are denied, navigation away
+  (`default-src 'none'; script-src 'self'; ...`, see `lib/csp.ts`; it also allows Google Fonts stylesheets/fonts and inline styles), only `clipboard-sanitized-write` is permitted among permission requests, navigation away
   from the app is blocked and `window.open` goes to the OS browser (http/https only).
 * All IDs are validated as UUIDs before any query or path; all arguments are zod-validated in
   `ipc/api.ts`. Export writes accept only a file **name** which is reduced to a basename inside the
