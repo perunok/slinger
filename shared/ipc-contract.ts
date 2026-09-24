@@ -5,7 +5,7 @@
  *   entry using this exact channel string and this exact signature.
  * - electron/preload.ts exposes `window.slinger.<methodName>` via contextBridge,
  *   calling `ipcRenderer.invoke(channel, ...args)` for each entry.
- * - src/tauri.ts (renderer-side client) calls `window.slinger.<methodName>(...)`.
+ * - src/lib/ipc.ts (renderer-side client) calls `window.slinger.<methodName>(...)`.
  *
  * Do not rename a channel or change a signature here without updating both
  * the main-process handler and the renderer client in the same change.
@@ -27,6 +27,7 @@ import type {
   HttpResponseData,
   MoveFolderInput,
   MoveRequestInput,
+  PickFileOptions,
   PostmanImportResult,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
@@ -85,7 +86,8 @@ export interface SlingerIpcApi {
   // Postman import/export
   importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
   defaultExportPath(fileName: string): Promise<string>
-  writeExportFile(fileName: string, contents: string): Promise<void>
+  /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
+  writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
   /**
    * ADDED: opens a native folder picker; the chosen folder becomes the export
    * directory used by defaultExportPath/writeExportFile for this session.
@@ -112,6 +114,10 @@ export interface SlingerIpcApi {
 
   // App
   getAppVersion(): Promise<string>
+
+  // --- Renderer-driven additions ---
+  /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
+  pickFile(options?: PickFileOptions): Promise<string | null>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -165,6 +171,7 @@ export const IPC_CHANNELS = [
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
   'getAppVersion',
+  'pickFile',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]

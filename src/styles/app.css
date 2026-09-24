@@ -1,0 +1,150 @@
+@import './themes.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size);
+  line-height: 1.4;
+  overflow: hidden;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::selection {
+  background: var(--selection);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+input[type='text'],
+input[type='url'],
+input[type='number'],
+input[type='password'],
+input[type='search'],
+select,
+textarea {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+@layer components {
+  .field {
+    @apply w-full rounded border border-border bg-surface px-2 py-1 text-fg;
+  }
+}
+
+/* ---- CodeMirror overlays (tooltips live outside the editor DOM) ---- */
+.cm-tooltip {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-sans);
+  z-index: 80;
+}
+.cm-tooltip-autocomplete > ul {
+  font-family: var(--font-mono) !important;
+  max-height: 14em;
+}
+.cm-tooltip-autocomplete > ul > li {
+  padding: 2px 8px !important;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent-soft) !important;
+  color: var(--text) !important;
+}
+.cm-completionDetail {
+  color: var(--text-faint);
+  font-style: normal !important;
+  margin-left: auto !important;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tpl-pop {
+  padding: 6px 10px;
+  max-width: 24rem;
+  font-size: 12px;
+}
+.tpl-pop-title {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.tpl-pop-value {
+  font-family: var(--font-mono);
+  word-break: break-all;
+  color: var(--var-ok);
+}
+.tpl-pop-value[data-secret='true'] {
+  color: var(--var-secret);
+}
+.tpl-pop-bad {
+  color: var(--var-bad);
+}
+.tpl-pop-src {
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.tpl-pop-btn {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--text);
+  cursor: pointer;
+}
+.tpl-pop-btn:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.template-input .cm-editor {
+  background: transparent;
+}
+.template-input.is-masked .cm-content {
+  -webkit-text-security: disc;
+}
+.code-editor .cm-editor {
+  height: 100%;
+}
+.code-editor .cm-scroller {
+  overflow: auto;
+}

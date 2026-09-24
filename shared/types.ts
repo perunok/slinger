@@ -219,6 +219,12 @@ export interface HttpResponseData {
   bodyByteLength: number
 }
 
+/** Options for the native file picker (`pickFile`). */
+export interface PickFileOptions {
+  title?: string
+  filters?: Array<{ name: string; extensions: string[] }>
+}
+
 // ---------------------------------------------------------------------------
 // Postman import/export
 // ---------------------------------------------------------------------------

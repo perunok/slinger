@@ -1,9 +1,6 @@
 node_modules/
 /dist
 /build
-/target
-/src-tauri/target
-**/*.rs.bk
 *.log
 .env
 .DS_Store
@@ -13,13 +10,12 @@ yarn-error.log*
 yarn.lock
 pnpm-lock.yaml
 
-src-tauri/gen/
-src-tauri/slinger.db
-src-tauri/src-tauri
-src-tauri/target-local
-.slinger-versioning/
-src-tauri/.slinger-versioning/
+
 
 # Electron
 /dist-electron
 /release
+
+/test-results
+/playwright-report
+/.e2e-tmp
