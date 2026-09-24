@@ -7,7 +7,8 @@ import type { SyncEntityType } from '../../shared/types'
 import type { Db } from '../db/database'
 import { envVarSecretKey, type SecretStore } from '../services/secrets'
 import { parse as parseSemver } from '../services/semver'
-import { TABLE, loadRow, toWire, type AnyRow } from './mapping'
+import { TABLE, loadRow, parsePayload, toWire, type AnyRow } from './mapping'
+import { getEntity } from './store'
 import type { Payload } from './types'
 
 export interface RowEnv {
@@ -238,3 +239,24 @@ export function currentWire(db: Db, type: SyncEntityType, id: string): { row: An
   const row = loadRow(db, type, id)
   return row ? { row, wire: toWire(type, row) } : undefined
 }
+
+/**
+ * Whether the SERVER will cascade the delete of `container` onto this entity, judged by the last state the server
+ * confirmed (`base_payload`), never by local structure: a child that was moved locally (not pushed yet) is still in its
+ * old container on the server and needs its own delete.
+ */
+export function serverCascades(db: Db, container: EntityRef, child: EntityRef): boolean {
+  const base = parsePayload(getEntity(db, child.type, child.id)?.base_payload ?? null)
+  if (!base) return false
+  if (container.type === 'collection') return base.collection_id === container.id
+  if (container.type === 'environment') return base.environment_id === container.id
+  // folder: walk the remote parent chain of the child's folder
+  let cur = (child.type === 'folder' ? base.parent_folder_id : base.folder_id) as string | null | undefined
+  for (let depth = 0; cur && depth < 1000; depth++) {
+    if (cur === container.id) return true
+    const parent = parsePayload(getEntity(db, 'folder', cur)?.base_payload ?? null)
+    cur = (parent?.parent_folder_id as string | null | undefined) ?? null
+  }
+  return false
+}
+

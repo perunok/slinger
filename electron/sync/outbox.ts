@@ -9,7 +9,7 @@ import { newId } from '../lib/ids'
 import { hideClashingVersion, type ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict } from './conflictStore'
 import { canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire } from './mapping'
-import { parentOf, subtree, type EntityRef } from './rows'
+import { parentOf, serverCascades, type EntityRef } from './rows'
 import { clearDirty, getEntity, markDirty, putEntity, setEntityState } from './store'
 import type { Payload, PushResponse, WireOp } from './types'
 
@@ -150,12 +150,11 @@ function pruneCascadedDeletes(db: Db, ops: BuiltOp[]): BuiltOp[] {
   const dropped = new Set<string>()
   for (const o of ops) {
     if (o.op.op !== 'delete' || !CONTAINERS.includes(o.type)) continue
-    for (const child of subtree(db, o.type, o.id, true)) {
-      const c = deletes.get(`${child.type}:${child.id}`)
-      if (!c || dropped.has(`${child.type}:${child.id}`)) continue
-      // Only when the child is not itself covered by a container we keep: any container in the batch covers it.
-      dropped.add(`${child.type}:${child.id}`)
-      o.covers.push({ type: child.type, id: child.id, seq: c.seq })
+    for (const c of deletes.values()) {
+      if (c === o || dropped.has(`${c.type}:${c.id}`)) continue
+      if (!serverCascades(db, { type: o.type, id: o.id }, { type: c.type, id: c.id })) continue
+      dropped.add(`${c.type}:${c.id}`)
+      o.covers.push({ type: c.type, id: c.id, seq: c.seq })
     }
   }
   return ops.filter((o) => !dropped.has(`${o.type}:${o.id}`))

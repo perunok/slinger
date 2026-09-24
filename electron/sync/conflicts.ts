@@ -289,7 +289,13 @@ function relatedRemoteDeleted(db: Db, target: EntityRef): EntityRef[] {
 function restoreRemoteDeleted(ctx: ApplyCtx, target: EntityRef): void {
   const { db } = ctx
   for (const r of relatedRemoteDeleted(db, target)) {
-    putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: 0, base_payload: null, remote_deleted: 0, state: 'synced' })
+    const e = getEntity(db, r.type, r.id)
+    if (e && e.remote_deleted === 0 && e.remote_version > 0) {
+      // The server never deleted it (it only lives under a container that is gone): just unfreeze, it will be pushed as an update.
+      putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: e.remote_version, base_payload: e.base_payload, state: 'synced' })
+    } else {
+      putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: 0, base_payload: null, remote_deleted: 0, state: 'synced' })
+    }
     markDirty(db, r.type, r.id, ctx.workspaceId)
     const oc = findOpenConflict(db, r.type, r.id)
     if (oc && key(r) !== key(target)) closeConflict(db, oc.id, ctx.nowS, 'resolved', 'keep_local')
@@ -303,8 +309,15 @@ function dropLocalTree(ctx: ApplyCtx, target: EntityRef): void {
   for (const r of all) {
     const row = loadRow(db, r.type, r.id)
     if (row && row.deleted === 0) softDeleteRow(ctx, r.type, r.id)
-    putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: 0, base_payload: null, remote_deleted: 1, state: 'synced' })
-    clearDirty(db, r.type, r.id)
+    const e = getEntity(db, r.type, r.id)
+    if (e && e.remote_deleted === 0 && e.remote_version > 0 && e.base_payload) {
+      // The server still has it (it was only moved here locally): the delete has to be pushed with its base.
+      putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: e.remote_version, base_payload: e.base_payload, state: 'synced' })
+      markDirty(db, r.type, r.id, ctx.workspaceId)
+    } else {
+      putEntity(db, r.type, r.id, ctx.workspaceId, { remote_version: 0, base_payload: null, remote_deleted: 1, state: 'synced' })
+      clearDirty(db, r.type, r.id)
+    }
     const oc = findOpenConflict(db, r.type, r.id)
     if (oc && key(r) !== key(target)) closeConflict(db, oc.id, ctx.nowS, 'auto_resolved')
     noteChange(ctx, r.type, r.id, 'delete')

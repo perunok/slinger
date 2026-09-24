@@ -59,6 +59,8 @@ export interface RecordedRequest {
   query: URLSearchParams
   body: string
   userId: string | null
+  /** Filled once answered (for debugging). */
+  response?: string
 }
 
 /** Rejections are returned per operation exactly like the real server. */
@@ -229,7 +231,8 @@ export class FakeCloud {
     const auth = req.headers.authorization?.replace(/^Bearer /, '') ?? null
     const userId = auth ? (this.access.get(auth) ?? null) : null
     const key = `${method} ${url.pathname}`
-    this.requests.push({ method, path: url.pathname, query: url.searchParams, body, userId })
+    const recorded: RecordedRequest = { method, path: url.pathname, query: url.searchParams, body, userId }
+    this.requests.push(recorded)
 
     const fault0 = this.faults.find((f) => (typeof f.match === 'string' ? f.match === key : f.match.test(key)))
     let fault: Fault | undefined = fault0
@@ -243,6 +246,7 @@ export class FakeCloud {
       if (fault.action === 'drop-before') return void req.socket.destroy()
     }
     const respond = (status: number, payload: unknown, headers?: Record<string, string>) => {
+      recorded.response = JSON.stringify(payload)
       if (fault?.action === 'drop-after') return void req.socket.destroy()
       this.send(res, status, payload, headers)
     }
@@ -378,6 +382,11 @@ export class FakeCloud {
     const entry: LogOp = { operation_id: opId, workspace_id: w.id, resource_type: type, resource_id: id, op, resulting_version: version, payload, occurred_at: new Date().toISOString(), checkpoint: w.checkpoint, client_id: clientId }
     w.log.push(entry)
     w.seen.set(opId, entry)
+  }
+
+  /** Wire payload of an entity as pulled/snapshotted (secret values are never present). */
+  wireOf(e: Entity): Payload {
+    return this.wire(e)
   }
 
   /** Wire payload as pulled: secret values are never present. */

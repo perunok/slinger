@@ -17,6 +17,7 @@ import {
   insertFromPayload,
   overwriteFromPayload,
   parentOf,
+  serverCascades,
   softDeleteRow,
   subtree,
   type EntityRef,
@@ -67,6 +68,7 @@ function isModified(db: Db, type: SyncEntityType, row: AnyRow): boolean {
 
 function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: number, payload: Payload, opId: string | null): void {
   const { db } = ctx
+  ctx.touched.delete(k(type, id))
   const E = getEntity(db, type, id)
   const L = loadRow(db, type, id)
   const sent = opId != null && isSentOp(db, opId)
@@ -144,11 +146,11 @@ function upsertInner(
 
   if (L.deleted === 1) {
     const pendingDelete = isDirty(db, type, id)
-    if (pendingDelete && baseP) {
-      if (samePayload(baseP, payload)) {
+    if (pendingDelete) {
+      if (baseP && samePayload(baseP, payload)) {
         // Remote unchanged: our delete stays pending.
         putEntity(db, type, id, ws, { ...synced, state: hadConflict ? 'conflict' : 'synced' })
-        if (hadConflict) openConflictAgain(ctx, type, id, baseP, payload, version)
+        if (hadConflict) openConflictAgain(ctx, type, id, baseP!, payload, version)
         return
       }
       putEntity(db, type, id, ws, { ...synced, state: 'conflict' })
@@ -332,7 +334,7 @@ function applyDelete(ctx: ApplyCtx, type: SyncEntityType, id: string, opId: stri
   if (L.deleted === 1) {
     // Deleted on both sides: reconcile silently. Children of a deleted container are tombstoned too.
     tombstoneRow(ctx, type, id)
-    for (const c of subtree(db, type, id, true)) if (c.deleted) tombstoneRow(ctx, c.type, c.id)
+    for (const c of subtree(db, type, id, true)) if (c.deleted && serverCascades(db, { type, id }, c)) tombstoneRow(ctx, c.type, c.id)
     return
   }
 
@@ -375,7 +377,13 @@ function applyDelete(ctx: ApplyCtx, type: SyncEntityType, id: string, opId: stri
     const prior = findOpenConflict(db, s.type, s.id)
     const base = prior ? parsePayload(prior.base_json) : parsePayload(e?.base_payload ?? null)
     const local = toWire(s.type, row)
-    putEntity(db, s.type, s.id, ws, { ...TOMBSTONE, state: 'conflict' })
+    const isRoot = s.type === type && s.id === id
+    if (isRoot || serverCascades(db, { type, id }, s)) {
+      putEntity(db, s.type, s.id, ws, { ...TOMBSTONE, state: 'conflict' })
+    } else {
+      // Moved into the deleted container locally only: the server still has it (elsewhere), so its bookkeeping stays.
+      putEntity(db, s.type, s.id, ws, { remote_version: e?.remote_version ?? 0, base_payload: e?.base_payload ?? null, remote_deleted: e?.remote_deleted === 1 ? 1 : 0, state: 'conflict' })
+    }
     markDirty(db, s.type, s.id, ws)
     openConflict(ctx, s.type, s.id, 'remote_deleted', {
       base, local, remote: null, remoteVersion: 0,
