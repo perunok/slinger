@@ -1,17 +1,19 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
-import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { svelteTesting } from '@testing-library/svelte/vite'
 
 export default defineConfig({
-  build: {
-    // The JSON editor is now lazy-loaded, but the library itself ships as a large single module.
-    chunkSizeWarningLimit: 1200,
-  },
-  plugins: [
-    svelte({
-      preprocess: vitePreprocess(),
-    }),
-  ],
-  server: {
-    port: 5173,
+  // Relative asset paths so the production build also loads from file:// in Electron.
+  base: './',
+  plugins: [svelte(), svelteTesting()],
+  server: { port: 5173 },
+  build: { chunkSizeWarningLimit: 1500 },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./test/setup.ts'],
+    include: ['src/**/*.test.ts'],
+    css: false,
   },
 })

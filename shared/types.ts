@@ -115,6 +115,12 @@ export interface UpdateRequestInput {
   expectedVersion: number
 }
 
+/**
+ * NOTE on `targetIndex` (MoveRequestInput / MoveFolderInput): index among the
+ * siblings of the SAME kind (requests among requests, folders among folders) in
+ * the target container, counted after the moved item has been removed from its
+ * old position. Folders always render before requests inside a container.
+ */
 export interface MoveRequestInput {
   requestId: string
   targetCollectionId: string
@@ -199,6 +205,11 @@ export interface HttpRequestInput {
   requestId?: string | null
   requestName?: string | null
   workspaceId: string
+  /**
+   * Renderer-assigned id for this execution. Pass the same id to
+   * `cancelHttpRequest(requestRunId)` to abort the in-flight request.
+   */
+  requestRunId?: string
 }
 
 export interface HttpResponseData {
@@ -213,6 +224,12 @@ export interface HttpResponseData {
   bodyByteLength: number
 }
 
+/** Options for the native file picker (`pickFile`). */
+export interface PickFileOptions {
+  title?: string
+  filters?: Array<{ name: string; extensions: string[] }>
+}
+
 // ---------------------------------------------------------------------------
 // Postman import/export
 // ---------------------------------------------------------------------------
@@ -224,32 +241,46 @@ export interface PostmanImportResult {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace versioning (local git-backed snapshots)
+// Collection versions (immutable snapshots labelled with a semantic version)
 // ---------------------------------------------------------------------------
 
-export interface WorkspaceVersioningStatus {
-  initialized: boolean
-  repoPath: string
-  changedFiles: WorkspaceVersioningFileChange[]
+/** Frozen copy of a collection's content at the time a version was created. */
+export interface CollectionSnapshot {
+  collectionName: string
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder'>>
+  requests: Array<
+    Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
+  >
 }
 
-export interface WorkspaceVersioningFileChange {
-  path: string
-  status: 'added' | 'modified' | 'deleted'
-}
-
-export interface WorkspaceVersioningCommit {
+export interface CollectionVersion {
   id: string
-  shortId: string
-  message: string
-  author: string
-  authoredAt: number
+  workspaceId: string
+  collectionId: string
+  /** Semantic version 2.0.0 string, e.g. "1.4.0" or "2.0.0-beta.1" (no leading "v"). */
+  version: string
+  notes: string | null
+  folderCount: number
+  requestCount: number
+  createdAt: number
 }
 
-export interface WorkspaceVersioningRestoreResult {
-  commitId: string
-  restoredFiles: number
+export interface CollectionVersionDetail extends CollectionVersion {
+  snapshot: CollectionSnapshot
 }
+
+export interface CreateCollectionVersionInput {
+  collectionId: string
+  /** Must be valid semver and not already used for this collection. */
+  version: string
+  notes?: string | null
+}
+
+export type RestoreCollectionVersionMode =
+  /** Overwrite the live collection's folders/requests with the snapshot. */
+  | 'replace'
+  /** Create a new collection named "<name> (v<version>)" from the snapshot; live collection untouched. */
+  | 'copy'
 
 // ---------------------------------------------------------------------------
 // Secure storage (OS keychain, proxied through the main process)

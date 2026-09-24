@@ -14,6 +14,10 @@ import type {
   ApiFolder,
   ApiRequest,
   Collection,
+  CollectionVersion,
+  CollectionVersionDetail,
+  CreateCollectionVersionInput,
+  RestoreCollectionVersionMode,
   CreateFolderInput,
   CreateRequestInput,
   Environment,
@@ -23,13 +27,11 @@ import type {
   HttpResponseData,
   MoveFolderInput,
   MoveRequestInput,
+  PickFileOptions,
   PostmanImportResult,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
-  WorkspaceVersioningCommit,
-  WorkspaceVersioningRestoreResult,
-  WorkspaceVersioningStatus,
 } from './types'
 
 export interface SlingerIpcApi {
@@ -82,17 +84,15 @@ export interface SlingerIpcApi {
   // Postman import/export
   importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
   defaultExportPath(fileName: string): Promise<string>
-  writeExportFile(fileName: string, contents: string): Promise<void>
+  /** `encoding` (renderer addition, optional): 'base64' means `contents` is base64 of raw bytes (binary response bodies). Default 'utf8'. */
+  writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
 
-  // Workspace versioning (local git snapshots)
-  initWorkspaceVersioning(workspaceId: string): Promise<WorkspaceVersioningStatus>
-  getWorkspaceVersioningStatus(workspaceId: string): Promise<WorkspaceVersioningStatus>
-  commitWorkspaceVersioning(workspaceId: string, message: string): Promise<WorkspaceVersioningCommit>
-  listWorkspaceVersioningHistory(workspaceId: string): Promise<WorkspaceVersioningCommit[]>
-  restoreWorkspaceVersioningCommit(
-    workspaceId: string,
-    commitId: string,
-  ): Promise<WorkspaceVersioningRestoreResult>
+  // Collection versions (semver snapshots; no git)
+  listCollectionVersions(collectionId: string): Promise<CollectionVersion[]> // newest semver first
+  getCollectionVersion(versionId: string): Promise<CollectionVersionDetail>
+  createCollectionVersion(input: CreateCollectionVersionInput): Promise<CollectionVersion>
+  restoreCollectionVersion(versionId: string, mode: RestoreCollectionVersionMode): Promise<Collection>
+  deleteCollectionVersion(versionId: string): Promise<void>
 
   // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
   secureStoreGet(key: string): Promise<string | null>
@@ -106,6 +106,12 @@ export interface SlingerIpcApi {
 
   // App
   getAppVersion(): Promise<string>
+
+  // --- Renderer-driven additions (slinger-ui branch) ---
+  /** Returns the plaintext value of a secret environment variable (the only way the renderer can read one). */
+  revealEnvironmentVariable(variableId: string): Promise<string>
+  /** Native open-file dialog; resolves to an absolute path or null when cancelled. */
+  pickFile(options?: PickFileOptions): Promise<string | null>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -145,11 +151,11 @@ export const IPC_CHANNELS = [
   'importPostmanCollection',
   'defaultExportPath',
   'writeExportFile',
-  'initWorkspaceVersioning',
-  'getWorkspaceVersioningStatus',
-  'commitWorkspaceVersioning',
-  'listWorkspaceVersioningHistory',
-  'restoreWorkspaceVersioningCommit',
+  'listCollectionVersions',
+  'getCollectionVersion',
+  'createCollectionVersion',
+  'restoreCollectionVersion',
+  'deleteCollectionVersion',
   'secureStoreGet',
   'secureStoreSet',
   'secureStoreDelete',
@@ -157,6 +163,8 @@ export const IPC_CHANNELS = [
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
   'getAppVersion',
+  'revealEnvironmentVariable',
+  'pickFile',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
