@@ -74,7 +74,7 @@ export interface DeviceOptions {
 }
 
 /** One desktop "install": own SQLite, own keychain, own sync client, talking to `cloud` over real HTTP. */
-export function makeDevice(cloud: FakeCloud, opts: DeviceOptions = {}): Device {
+export function makeDevice(cloud: { baseUrl: string; issueTokens?: FakeCloud['issueTokens'] }, opts: DeviceOptions = {}): Device {
   const db = openDatabase(':memory:')
   const secrets = new MemorySecretStore()
   const events: SyncEvent[] = []
@@ -97,7 +97,7 @@ export function makeDevice(cloud: FakeCloud, opts: DeviceOptions = {}): Device {
     },
   })
   const api = createIpcApi(core, { appVersion: '0', openExternal: async () => {}, chooseDirectory: async () => null, pickFile: async () => null })
-  if (opts.userId && opts.signedIn !== false) {
+  if (opts.userId && opts.signedIn !== false && cloud.issueTokens) {
     const t = cloud.issueTokens(opts.userId)
     secrets.set(tokenKey(cloud.baseUrl), JSON.stringify({ accessToken: t.accessToken, refreshToken: t.refreshToken }))
   }

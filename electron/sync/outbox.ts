@@ -14,7 +14,10 @@ import { clearDirty, getEntity, markDirty, putEntity, setEntityState } from './s
 import type { Payload, PushResponse, WireOp } from './types'
 
 export const MAX_OPS_PER_PUSH = 200
+/** Soft cap of one push request: chunks are filled up to this size, a single larger operation travels alone. */
 export const MAX_BYTES_PER_PUSH = 700_000
+/** Nothing above this can ever be sent (the server's push body cap is 8 MiB): such an item is quarantined locally. */
+export const MAX_OP_BYTES = 8_000_000
 
 export interface BuiltOp {
   op: WireOp
@@ -132,8 +135,8 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
       )
       const op: WireOp = { operation_id: opId, resource_type: type, resource_id: id, op: kind, base_version: rv, payload, occurred_at: occurredAt }
       const bytes = Buffer.byteLength(JSON.stringify(op), 'utf8')
-      if (bytes > MAX_BYTES_PER_PUSH) {
-        quarantine(db, nowS, workspaceId, type, id, `This item is ${Math.round(bytes / 1000)} KB, larger than the ${MAX_BYTES_PER_PUSH / 1000} KB a single sync request may carry.`, payload)
+      if (bytes > MAX_OP_BYTES) {
+        quarantine(db, nowS, workspaceId, type, id, `This item is ${Math.round(bytes / 1000)} KB, larger than the ${MAX_OP_BYTES / 1_000_000} MB a single sync request may carry.`, payload)
         quarantined++
         continue
       }
