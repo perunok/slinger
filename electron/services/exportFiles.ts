@@ -62,9 +62,20 @@ export class ExportFiles {
     return join(this.directory, sanitizeFileName(fileName))
   }
 
-  async write(fileName: string, contents: string): Promise<string> {
+  async write(fileName: string, contents: string, encoding: 'utf8' | 'base64' = 'utf8'): Promise<string> {
     if (typeof contents !== 'string') throw invalidInput('export contents must be a string')
-    if (Buffer.byteLength(contents, 'utf8') > MAX_EXPORT_BYTES) throw invalidInput('export is too large')
+    if (encoding !== 'utf8' && encoding !== 'base64') throw invalidInput('unsupported export encoding')
+    let data: Buffer
+    if (encoding === 'base64') {
+      // Strict: Buffer.from(..., 'base64') silently skips junk, which would write a corrupt file.
+      if (contents.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(contents)) throw invalidInput('export contents are not valid base64')
+      if ((contents.length / 4) * 3 > MAX_EXPORT_BYTES + 3) throw invalidInput('export is too large')
+      data = Buffer.from(contents, 'base64')
+    } else {
+      if (Buffer.byteLength(contents, 'utf8') > MAX_EXPORT_BYTES) throw invalidInput('export is too large')
+      data = Buffer.from(contents, 'utf8')
+    }
+    if (data.length > MAX_EXPORT_BYTES) throw invalidInput('export is too large')
     const target = this.pathFor(fileName)
     try {
       await mkdir(this.directory, { recursive: true })
@@ -72,7 +83,7 @@ export class ExportFiles {
       const existing = await lstat(target).catch(() => null)
       if (existing?.isSymbolicLink()) throw invalidInput('refusing to overwrite a symbolic link')
       if (existing?.isDirectory()) throw invalidInput('a folder with that name already exists')
-      await writeFile(target, contents, 'utf8')
+      await writeFile(target, data)
     } catch (err) {
       if (err instanceof Error && err.name === 'IpcError') throw err
       throw ioError(`Could not write export file: ${err instanceof Error ? err.message : String(err)}`)

@@ -190,6 +190,15 @@ if (!app.requestSingleInstanceLock()) {
     const api = createIpcApi(core, {
       appVersion: app.getVersion(),
       openExternal: (url) => shell.openExternal(url),
+      pickFile: async (options) => {
+        const dialogOptions = {
+          title: options.title,
+          filters: options.filters,
+          properties: ['openFile'] as Array<'openFile'>,
+        }
+        const result = mainWindow ? await dialog.showOpenDialog(mainWindow, dialogOptions) : await dialog.showOpenDialog(dialogOptions)
+        return result.canceled ? null : (result.filePaths[0] ?? null)
+      },
       chooseDirectory: async () => {
         const options = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)

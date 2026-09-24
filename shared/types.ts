@@ -219,7 +219,7 @@ export interface HttpResponseData {
   bodyByteLength: number
 }
 
-/** Options for the native file picker (`pickFile`). */
+/** Options for the native file picker (`pickFile`): single file selection. */
 export interface PickFileOptions {
   title?: string
   filters?: Array<{ name: string; extensions: string[] }>

@@ -13,6 +13,10 @@ export function contentSecurityPolicy(options: { dev: boolean; devOrigin?: strin
     'img-src': `${self} data: blob:`,
     'worker-src': `${self} blob:`,
     'connect-src': options.dev && options.devOrigin ? `${self} ${options.devOrigin.replace(/^http/, 'ws')}` : "'self'",
+    // The PDF preview is an <iframe src="blob:...">. HTML previews use srcdoc (about:srcdoc is
+    // not governed by frame-src) and inherit this policy, so previewed pages cannot run script
+    // (script-src 'self' plus a fully sandboxed iframe) or load remote resources.
+    'frame-src': 'blob:',
     'object-src': "'none'",
     'base-uri': "'none'",
     'form-action': "'none'",

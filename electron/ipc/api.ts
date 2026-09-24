@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { SlingerIpcApi } from '../../shared/ipc-contract'
+import type { PickFileOptions } from '../../shared/types'
 import { invalidInput } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
@@ -17,6 +18,22 @@ const name = z.string().min(1).max(500)
 const text = z.string().max(1_000_000)
 const nullableUuid = uuid.nullish()
 const index = z.number().int().min(0)
+
+const pickFileOptions = z
+  .object({
+    title: z.string().max(200).optional(),
+    filters: z
+      .array(
+        z.object({
+          name: z.string().max(100),
+          // Extensions without dots or path characters ('*' alone means "all files").
+          extensions: z.array(z.string().regex(/^(\*|[A-Za-z0-9_-]{1,20})$/)).max(50),
+        }),
+      )
+      .max(20)
+      .optional(),
+  })
+  .strict()
 
 const requestHeader = z.object({ key: z.string().max(8192), value: z.string().max(65_536) })
 
@@ -122,6 +139,8 @@ export interface PlatformDeps {
   openExternal(url: string): Promise<void>
   /** Shows a native folder picker; resolves to the chosen directory or null. */
   chooseDirectory(): Promise<string | null>
+  /** Shows a native open-file dialog (single selection); resolves to the chosen absolute path or null. */
+  pickFile(options: PickFileOptions): Promise<string | null>
   appVersion: string
 }
 
@@ -210,8 +229,15 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerIpcApi 
     },
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {
-      const [fileName, contents] = parseArgs(z.tuple([z.string().max(1024), z.string()]), a)
-      await core.exportFiles.write(fileName, contents)
+      const [fileName, contents, encoding] = parseArgs(
+        z.tuple([z.string().max(1024), z.string(), z.enum(['utf8', 'base64']).optional()]),
+        a,
+      )
+      await core.exportFiles.write(fileName, contents, encoding ?? 'utf8')
+    },
+    pickFile: async (...a) => {
+      const [options] = parseArgs(z.tuple([pickFileOptions.optional()]), a)
+      return platform.pickFile(options ?? {})
     },
     chooseExportDirectory: async (...a) => {
       parseArgs(z.tuple([]), a)
