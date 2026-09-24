@@ -34,7 +34,10 @@ const groupChoice = z.enum(['local', 'remote'])
 const resolveInput = z.object({
   conflictId: uuid,
   resolution: z.enum(['keep_local', 'keep_remote', 'merge', 'duplicate']),
-  fieldChoices: z.record(z.enum(['name', 'content', 'location', 'order', 'key', 'value']), groupChoice).optional(),
+  fieldChoices: z
+    .object({ name: groupChoice, content: groupChoice, location: groupChoice, order: groupChoice, key: groupChoice, value: groupChoice })
+    .partial()
+    .optional(),
   newVersion: z.string().min(1).max(128).optional(),
 })
 const linkInput = z.object({ remoteWorkspaceId: remoteId, localWorkspaceId: uuid.nullable() })

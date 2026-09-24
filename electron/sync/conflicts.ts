@@ -348,6 +348,35 @@ function recreateVersion(ctx: ApplyCtx, c: ConflictRow, newVersion: string | und
   noteChange(ctx, 'collection_version', id, 'upsert')
 }
 
+/**
+ * Open edit_edit conflicts whose sides now agree (the user typed the same thing, or reverted to the base) close by
+ * themselves. Runs after every pull, so a conflict never lingers once it has stopped being one.
+ */
+export function reevaluateOpenConflicts(ctx: ApplyCtx): number {
+  const { db } = ctx
+  let closed = 0
+  const open = db.prepare("SELECT * FROM sync_conflicts WHERE workspace_id = ? AND status = 'open' AND kind = 'edit_edit'").all(ctx.workspaceId) as ConflictRow[]
+  for (const c of open) {
+    const row = loadRow(db, c.entity_type, c.entity_id)
+    const remote = parsePayload(c.remote_json)
+    if (!row || row.deleted === 1 || !remote) continue
+    const local = toWire(c.entity_type, row)
+    const base = parsePayload(c.base_json)
+    if (samePayload(local, remote)) {
+      syncedTo(ctx, c.entity_type, c.entity_id, c.remote_version, remote)
+      clearDirty(db, c.entity_type, c.entity_id)
+    } else if (base && samePayload(local, base)) {
+      overwriteFromPayload(ctx, c.entity_type, row, remote)
+      syncedTo(ctx, c.entity_type, c.entity_id, c.remote_version, remote)
+      clearDirty(db, c.entity_type, c.entity_id)
+      noteChange(ctx, c.entity_type, c.entity_id, 'upsert')
+    } else continue
+    closeConflict(db, c.id, ctx.nowS, 'auto_resolved')
+    closed++
+  }
+  return closed
+}
+
 /** Row is clean vs its last synced state (used by discard/status). */
 export function isPending(db: Db, type: SyncEntityType, id: string): boolean {
   return isDirty(db, type, id)

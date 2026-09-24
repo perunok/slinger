@@ -147,3 +147,34 @@ export async function settle(dev: Device, workspaceId: string, rounds = 3): Prom
 export function pendingCount(dev: Device, workspaceId: string): number {
   return (dev.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty WHERE workspace_id = ?').get(workspaceId) as { n: number }).n
 }
+
+export interface Pair {
+  cloud: FakeCloud
+  a: Device
+  b: Device
+  wsA: string
+  wsB: string
+  remoteId: string
+  userId: string
+}
+
+/** Two devices of one user on one cloud workspace: A published (after `seed`), B downloaded it. */
+export async function makePair(cloud: FakeCloud, seed: (a: Device, ws: string) => Promise<void>, opts: { second?: { userId?: string } } = {}): Promise<Pair> {
+  const user = cloud.createUser(`u${cloud.users.size}@example.com`)
+  const a = makeDevice(cloud, { userId: user.id, deviceName: 'A' })
+  await seed(a, a.workspace.id)
+  await a.api.publishWorkspace(a.workspace.id)
+  const st = await settle(a, a.workspace.id)
+  const b = makeDevice(cloud, { userId: opts.second?.userId ?? user.id, deviceName: 'B' })
+  const link = await b.api.linkRemoteWorkspace({ remoteWorkspaceId: st.remoteWorkspaceId!, localWorkspaceId: null })
+  await settle(b, link.workspace.id)
+  return { cloud, a, b, wsA: a.workspace.id, wsB: link.workspace.id, remoteId: st.remoteWorkspaceId!, userId: user.id }
+}
+
+/** Sync both devices until neither has anything left to say. */
+export async function converge(p: Pair, rounds = 4): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await p.a.core.sync.syncNow(p.wsA)
+    await p.b.core.sync.syncNow(p.wsB)
+  }
+}

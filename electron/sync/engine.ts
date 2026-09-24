@@ -11,6 +11,7 @@ import type { Clock } from '../lib/clock'
 import type { SecretStore } from '../services/secrets'
 import { applyRemoteOp, applySnapshotEntity, fixFolderCycles, makeApplyCtx, type ApplyCtx } from './apply'
 import { recordAutoResolved } from './conflictStore'
+import { reevaluateOpenConflicts } from './conflicts'
 import { dedupeEnvironments } from './linking'
 import {
   MAX_BYTES_PER_PUSH,
@@ -393,7 +394,10 @@ export class SyncEngine {
       total += res.operations.length
       rt.progress = { phase: 'pull', done: total, total: null }
       this.emitStatus(workspaceId)
-      if (!res.has_more) return total
+      if (!res.has_more) {
+        this.runApply(workspaceId, (ctx) => reevaluateOpenConflicts(ctx))
+        return total
+      }
     }
   }
 
