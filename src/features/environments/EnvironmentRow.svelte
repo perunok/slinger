@@ -4,6 +4,7 @@
   import TemplateInput from '../../components/editor/TemplateInput.svelte'
   import type { TemplateScope } from '../../lib/template'
   import { isBlank, type Row } from './envLogic'
+  import { sync } from '../sync/syncStore.svelte'
   import type { EnvModel } from './envModel.svelte'
 
   interface Props {
@@ -24,6 +25,10 @@
   const blank = $derived(isBlank(row))
   const kept = $derived(row.isSecret && row.serverSecret && !row.secretTouched && !row.revealed)
   const name = $derived(row.key || 'new variable')
+  /** Read-only workspace: everything is disabled except giving a missing/stored secret a value on this device. */
+  const ro = $derived(sync.blocked)
+  const secretEditable = $derived(row.isSecret && row.serverSecret)
+  const missing = $derived(row.secretMissing && !row.secretTouched)
 
   $effect(() => {
     const f = model.focusRequest
@@ -52,7 +57,7 @@
       placeholder="Variable name"
       spellcheck="false"
       autocomplete="off"
-      disabled={row.deleted}
+      disabled={row.deleted || ro}
       value={row.key}
       oninput={(e) => model.edit(row.rid, { key: e.currentTarget.value })}
       onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), (row.isSecret ? secretEl : valueEl)?.focus?.())}
@@ -64,13 +69,13 @@
           bind:this={secretEl}
           type={row.revealed ? 'text' : 'password'}
           aria-label="Secret value: {name}"
-          placeholder={kept ? '•••••••• (unchanged)' : 'Secret value'}
+          placeholder={missing ? 'Value not set on this device' : kept ? '•••••••• (unchanged)' : 'Secret value'}
           autocomplete="new-password"
           spellcheck="false"
-          disabled={row.deleted}
+          disabled={row.deleted || (ro && !secretEditable)}
           value={row.value}
           oninput={(e) => model.edit(row.rid, { value: e.currentTarget.value })}
-          class="h-7 min-w-0 flex-1 rounded border border-border bg-surface px-2 font-mono text-xs text-fg outline-none focus:border-accent"
+          class="h-7 min-w-0 flex-1 rounded border bg-surface px-2 font-mono text-xs text-fg outline-none focus:border-accent {missing ? 'border-warning' : 'border-border'}"
         />
         <IconButton
           icon={row.revealed ? 'eye-off' : 'eye'}
@@ -86,7 +91,7 @@
           {scope}
           label="Variable value"
           placeholder="Value"
-          disabled={row.deleted}
+          disabled={row.deleted || ro}
           value={row.value}
           oninput={(v) => model.edit(row.rid, { value: v })}
         />
@@ -97,7 +102,7 @@
         type="checkbox"
         aria-label="Secret: {name}"
         checked={row.isSecret}
-        disabled={row.deleted || blank}
+        disabled={row.deleted || blank || ro}
         onchange={() => model.toggleSecret(row.rid)}
       />
       <Icon name="lock" size={12} />
@@ -111,10 +116,16 @@
         <span class="text-danger" role="img" aria-label="Save failed"><Icon name="alert" size={14} /></span>
       {/if}
       {#if !blank}
-        <IconButton icon="trash" label="Delete variable {name}" disabled={row.deleted} onclick={() => model.remove(row.rid)} />
+        <IconButton icon="trash" label="Delete variable {name}" disabled={row.deleted || ro} onclick={() => model.remove(row.rid)} />
       {/if}
     </div>
   </div>
+  {#if missing && !row.deleted}
+    <p class="mt-0.5 flex items-center gap-2 text-xs text-warning" data-testid="secret-missing">
+      <span>Value not set on this device. Secret values are never synced.</span>
+      <button type="button" class="rounded border border-warning px-1.5 hover:bg-warning-soft" onclick={() => secretEl?.focus()}>Set value</button>
+    </p>
+  {/if}
   {#if issue}
     <p class="mt-0.5 text-xs text-danger" data-testid="row-issue">{issue}</p>
   {:else if saveError}

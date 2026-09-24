@@ -7,6 +7,9 @@
   import AuthPanel from './AuthPanel.svelte'
   import BodyPanel from './BodyPanel.svelte'
   import CodePanel from './CodePanel.svelte'
+  import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
+  import { sync } from '../sync/syncStore.svelte'
+  import TabNoticeBanner from '../sync/TabNoticeBanner.svelte'
   import ConflictDialog from './ConflictDialog.svelte'
   import DocsPanel from './DocsPanel.svelte'
   import HeadersPanel from './HeadersPanel.svelte'
@@ -35,6 +38,7 @@
     void tabsStore.send(tab)
   }
   function save() {
+    if (sync.blocked) return
     if (tab.requestId) void tabsStore.save(tab)
     else ui.saveAsTabId = tab.id
   }
@@ -52,8 +56,10 @@
       placeholder="Request name"
     />
     {#if !tab.requestId}<span class="rounded bg-raised px-1.5 py-0.5">unsaved</span>{/if}
-    <button type="button" class="ml-auto rounded px-2 py-1 hover:bg-hover" onclick={() => (ui.saveAsTabId = tab.id)}>Save As…</button>
+    <button type="button" class="ml-auto rounded px-2 py-1 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" disabled={sync.blocked} title={sync.blocked ? sync.blockedMessage : undefined} onclick={() => (ui.saveAsTabId = tab.id)}>Save As…</button>
   </div>
+  <TabNoticeBanner {tab} />
+  {#if sync.blocked && tab.dirty}<ReadOnlyNote class="mx-3 mt-2" />{/if}
   <UrlBar {tab} onsend={send} oncancel={() => tabsStore.cancel(tab)} onsave={save} />
   <SplitPane direction="column" storageKey="slinger.split.request" initial={0.5} class="min-h-0">
     {#snippet first()}

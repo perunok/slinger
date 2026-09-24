@@ -13,11 +13,13 @@
     loading: boolean
     error: string | null
     versions: CollectionVersion[]
+    /** Read-only workspace: restore and delete are disabled. */
+    readOnly?: boolean
     onretry: () => void
     onrestore: () => void
     ondelete: () => void
   }
-  let { summary, detail, loading, error, versions, onretry, onrestore, ondelete }: Props = $props()
+  let { summary, detail, loading, error, versions, readOnly = false, onretry, onrestore, ondelete }: Props = $props()
 
   let tab = $state('snapshot')
   const tabs = [
@@ -40,8 +42,8 @@
       {#if summary.notes}<p class="mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-sm">{summary.notes}</p>{/if}
     </div>
     <div class="flex gap-1.5">
-      <Button icon="history" onclick={onrestore}>Restore...</Button>
-      <Button icon="trash" variant="danger" onclick={ondelete}>Delete</Button>
+      <Button icon="history" onclick={onrestore} disabled={readOnly}>Restore...</Button>
+      <Button icon="trash" variant="danger" onclick={ondelete} disabled={readOnly}>Delete</Button>
     </div>
   </header>
   <Tabs {tabs} value={tab} onchange={(t) => (tab = t)} label="Version detail" idPrefix="ver-tab" class="px-2" />

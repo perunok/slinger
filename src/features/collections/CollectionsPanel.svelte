@@ -8,12 +8,14 @@
   import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
   import NameDialog from '../../components/ui/NameDialog.svelte'
+  import { sync } from '../sync/syncStore.svelte'
   import { planDrop, type DragItem, type DropPosition, type DropTarget } from '../../lib/tree'
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
   import { buildRows, rowKey, type TreeRowModel } from './rows'
   import TreeRow, { type DropHint } from './TreeRow.svelte'
 
+  const ro = $derived(sync.blocked)
   const expanded = $derived(expandedStore.keys)
   let filter = $state('')
   let focusKey = $state<string | null>(null)
@@ -64,6 +66,15 @@
 
   // ---- menus -------------------------------------------------------------
   function menuItems(row: TreeRowModel): MenuItem[] {
+    const items = fullMenu(row)
+    return ro ? readOnlyMenu(items) : items
+  }
+  /** Read-only workspaces keep the non-mutating entries (open, run, versions, export). */
+  function readOnlyMenu(items: MenuItem[]): MenuItem[] {
+    const keep = new Set(['Open', 'Run collection…', 'Run folder…', 'Versions…', 'Export as Postman JSON…'])
+    return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
+  }
+  function fullMenu(row: TreeRowModel): MenuItem[] {
     if (row.kind === 'collection') {
       return [
         { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.id, folderId: null }) },
@@ -187,10 +198,12 @@
         return
       case 'F2':
         e.preventDefault()
+        if (ro) return void toast.info('Read-only workspace', sync.blockedMessage)
         dlg = { t: 'rename', row }
         return
       case 'Delete':
         e.preventDefault()
+        if (ro) return void toast.info('Read-only workspace', sync.blockedMessage)
         dlg = { t: 'delete', row }
         return
       case 'ContextMenu':
@@ -228,7 +241,7 @@
     expandTimer = null
   }
   function onDragStart(e: DragEvent, row: TreeRowModel) {
-    if (row.kind === 'collection') return e.preventDefault()
+    if (row.kind === 'collection' || ro) return e.preventDefault()
     drag = { kind: row.kind, id: row.id }
     e.dataTransfer?.setData('text/plain', row.label)
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
@@ -275,8 +288,8 @@
       <label for="tree-filter" class="sr-only">Filter collections</label>
       <input id="tree-filter" type="search" class="w-full" placeholder="Filter…" bind:value={filter} onkeydown={(e) => e.key === 'Escape' && (filter = '')} />
     </div>
-    <IconButton icon="plus" label="New collection" onclick={() => (dlg = { t: 'newCollection' })} />
-    <IconButton icon="upload" label="Import Postman collection" onclick={() => (ui.importOpen = true)} />
+    <IconButton icon="plus" label="New collection" disabled={ro} title={ro ? sync.blockedMessage : 'New collection'} onclick={() => (dlg = { t: 'newCollection' })} />
+    <IconButton icon="upload" label="Import Postman collection" disabled={ro} title={ro ? sync.blockedMessage : 'Import Postman collection'} onclick={() => (ui.importOpen = true)} />
   </div>
 
   <div
@@ -315,8 +328,12 @@
     {#if app.collections.length === 0 && !app.loading}
       <div class="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted">
         <p>No collections yet.</p>
-        <Button variant="primary" icon="plus" onclick={() => (dlg = { t: 'newCollection' })}>New collection</Button>
-        <Button icon="upload" onclick={() => (ui.importOpen = true)}>Import from Postman</Button>
+        {#if ro}
+          <p class="text-xs" data-testid="readonly-empty">{sync.blockedMessage}</p>
+        {:else}
+          <Button variant="primary" icon="plus" onclick={() => (dlg = { t: 'newCollection' })}>New collection</Button>
+          <Button icon="upload" onclick={() => (ui.importOpen = true)}>Import from Postman</Button>
+        {/if}
       </div>
     {:else if rows.length === 0 && filter}
       <p class="px-4 py-6 text-center text-sm text-muted">Nothing matches “{filter}”.</p>

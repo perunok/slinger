@@ -11,6 +11,8 @@
   import { api, errorInfo } from '../../lib/ipc'
   import { sortVersionsDesc } from '../../lib/semver'
   import { tabsStore } from '../requests/tabs.svelte'
+  import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
+  import { sync } from '../sync/syncStore.svelte'
   import CreateVersionDialog from './CreateVersionDialog.svelte'
   import RestoreDialog from './RestoreDialog.svelte'
   import { mapRestored, remapExpandedKeys } from './restoreRemap'
@@ -146,8 +148,9 @@
   <div class="flex h-[70vh] min-h-[320px] flex-col gap-2">
     <div class="flex items-center justify-between gap-2">
       <p class="text-xs text-muted">Versions are immutable snapshots of this collection, labelled with a semantic version.</p>
-      <Button variant="primary" icon="plus" onclick={() => (creating = true)} disabled={!collection}>Create version</Button>
+      <Button variant="primary" icon="plus" onclick={() => (creating = true)} disabled={!collection || sync.blocked} title={sync.blocked ? sync.blockedMessage : undefined}>Create version</Button>
     </div>
+    <ReadOnlyNote />
     {#if error}
       <div class="flex items-center gap-2"><InlineError message={error} class="flex-1" /><Button size="sm" onclick={() => reload()}>Retry</Button></div>
     {:else if loading && versions.length === 0}
@@ -169,6 +172,7 @@
           {#if selected}
             <VersionDetail
               summary={selected}
+              readOnly={sync.blocked}
               {detail}
               loading={detailLoading}
               error={detailError}

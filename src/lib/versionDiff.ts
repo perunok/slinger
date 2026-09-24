@@ -126,7 +126,7 @@ function renderOther(d: RequestDraft): string {
   return lines.join('\n')
 }
 
-interface Rendered {
+export interface Rendered {
   name: string
   method: string
   url: string
@@ -139,7 +139,7 @@ interface Rendered {
   other: string
 }
 
-function render(r: SnapshotRequest): Rendered {
+export function render(r: Pick<SnapshotRequest, 'name' | 'method' | 'url' | 'documentJson'>): Rendered {
   const d = parseDocument(r)
   return {
     name: r.name,
@@ -154,7 +154,7 @@ function render(r: SnapshotRequest): Rendered {
   }
 }
 
-const FIELDS = ['name', 'method', 'url', 'body', 'headers', 'auth', 'params', 'description', 'other'] as const
+export const FIELDS = ['name', 'method', 'url', 'body', 'headers', 'auth', 'params', 'description', 'other'] as const
 
 // ---------------------------------------------------------------------------
 // Diff

@@ -3,6 +3,7 @@
   import { mergeParamsFromUrl } from '../../lib/urlParams'
   import TemplateInput from '../../components/editor/TemplateInput.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import { sync } from '../sync/syncStore.svelte'
   import { methodColor } from './method'
   import type { RequestTab } from './tabs.svelte'
 
@@ -47,5 +48,5 @@
   {:else}
     <Button variant="primary" icon="send" onclick={onsend} class="w-24" title="Send (Ctrl+Enter)">Send</Button>
   {/if}
-  <Button icon="save" onclick={onsave} loading={tab.saving} title="Save (Ctrl+S)" disabled={!!tab.requestId && !tab.dirty}>Save</Button>
+  <Button icon="save" onclick={onsave} loading={tab.saving} title={sync.blocked ? `${sync.blockedMessage} Saving is disabled.` : 'Save (Ctrl+S)'} disabled={sync.blocked || (!!tab.requestId && !tab.dirty)}>Save</Button>
 </div>

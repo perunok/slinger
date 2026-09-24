@@ -3,11 +3,13 @@
   import EnvSwitcher from '../features/environments/EnvSwitcher.svelte'
   import WorkspaceSwitcher from '../features/workspaces/WorkspaceSwitcher.svelte'
   import IconButton from '../components/ui/IconButton.svelte'
+  import SyncChip from '../features/sync/SyncChip.svelte'
 </script>
 
 <header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
   <span class="text-sm font-bold tracking-wide text-accent">Slinger</span>
   <WorkspaceSwitcher />
+  <SyncChip />
   {#if window.__slingerMock}
     <span class="rounded bg-warning-soft px-2 py-0.5 text-xs text-warning" title="Running in a browser with an in-memory mock backend; data is not persisted.">Mock backend</span>
   {/if}

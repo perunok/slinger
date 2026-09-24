@@ -8,6 +8,8 @@
     selectedId: string | null
     activeId: string | null
     disabled?: boolean
+    /** Read-only workspace: creating, renaming, duplicating and deleting are disabled. */
+    readOnly?: boolean
     onselect: (id: string) => void
     onsetactive: (id: string) => void
     oncreate: () => void
@@ -15,14 +17,14 @@
     onduplicate: (env: Environment) => void
     ondelete: (env: Environment) => void
   }
-  let { environments, selectedId, activeId, disabled = false, onselect, onsetactive, oncreate, onrename, onduplicate, ondelete }: Props = $props()
+  let { environments, selectedId, activeId, disabled = false, readOnly = false, onselect, onsetactive, oncreate, onrename, onduplicate, ondelete }: Props = $props()
   const selected = $derived(environments.find((e) => e.id === selectedId))
 </script>
 
 <div class="flex h-full min-h-0 w-56 shrink-0 flex-col gap-2">
   <div class="flex items-center justify-between">
     <h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Environments</h3>
-    <IconButton icon="plus" label="New environment" onclick={oncreate} />
+    <IconButton icon="plus" label="New environment" disabled={readOnly} onclick={oncreate} />
   </div>
   <ul aria-label="Environments" class="min-h-0 flex-1 overflow-auto rounded border border-border">
     {#each environments as env (env.id)}
@@ -45,9 +47,9 @@
   {#if selected}
     <div class="flex flex-wrap gap-1">
       <Button size="sm" disabled={selected.id === activeId} onclick={() => onsetactive(selected.id)}>Set active</Button>
-      <IconButton icon="edit" label="Rename environment" onclick={() => onrename(selected)} />
-      <IconButton icon="copy" label="Duplicate environment" onclick={() => onduplicate(selected)} />
-      <IconButton icon="trash" label="Delete environment" onclick={() => ondelete(selected)} />
+      <IconButton icon="edit" label="Rename environment" disabled={readOnly} onclick={() => onrename(selected)} />
+      <IconButton icon="copy" label="Duplicate environment" disabled={readOnly} onclick={() => onduplicate(selected)} />
+      <IconButton icon="trash" label="Delete environment" disabled={readOnly} onclick={() => ondelete(selected)} />
     </div>
     <p class="text-[11px] text-faint">Duplicating copies plain variables only; secrets are not copied.</p>
   {/if}

@@ -16,13 +16,15 @@ export interface Row {
   secretTouched: boolean
   revealed: boolean
   deleted: boolean
+  /** Secret variable that came from the cloud: its value is not set on this device. */
+  secretMissing: boolean
 }
 
 let counter = 0
 export const newRid = (): string => `r${Date.now().toString(36)}${(counter++).toString(36)}`
 
 export function newRow(envId: string, patch: Partial<Row> = {}): Row {
-  return { rid: newRid(), envId, key: '', value: '', isSecret: false, serverSecret: false, secretTouched: false, revealed: false, deleted: false, ...patch }
+  return { rid: newRid(), envId, key: '', value: '', isSecret: false, serverSecret: false, secretTouched: false, revealed: false, deleted: false, secretMissing: false, ...patch }
 }
 
 export const isBlank = (r: Row): boolean => !r.id && r.key === '' && r.value === '' && !r.isSecret

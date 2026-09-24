@@ -4,7 +4,7 @@
  * Every IPC failure is reported through a toast; nothing throws to callers.
  */
 import type { ApiFolder, ApiRequest, Collection, Environment, EnvironmentVariable, Workspace } from '../../shared/types'
-import { api, errorInfo } from '../lib/ipc'
+import { api, errorInfo, isReadOnly } from '../lib/ipc'
 import { makeScope } from '../lib/template'
 import { scopeStore } from './scope.svelte'
 import { toast } from './toast.svelte'
@@ -172,7 +172,14 @@ class AppState {
     if (!ws) return
     try {
       let envs = await api().listEnvironments(ws)
-      if (envs.length === 0) envs = [await api().ensureDefaultEnvironment(ws)]
+      if (envs.length === 0) {
+        // A read-only workspace cannot get a default environment; showing none is correct there.
+        try {
+          envs = [await api().ensureDefaultEnvironment(ws)]
+        } catch (e) {
+          if (!isReadOnly(e)) throw e
+        }
+      }
       if (this.workspaceId !== ws) return
       this.environments = envs
       const saved = lsGet(lsKeyEnv(ws))

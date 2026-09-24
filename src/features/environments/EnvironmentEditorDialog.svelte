@@ -10,6 +10,8 @@
   import InlineError from '../../components/ui/InlineError.svelte'
   import Spinner from '../../components/ui/Spinner.svelte'
   import { errorInfo } from '../../lib/ipc'
+  import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
+  import { sync } from '../sync/syncStore.svelte'
   import { createEnv, deleteEnv, duplicateEnv, renameEnv } from './envActions'
   import { EnvModel } from './envModel.svelte'
   import EnvironmentBulk from './EnvironmentBulk.svelte'
@@ -91,7 +93,7 @@
   {#if app.environments.length === 0}
     <div class="flex flex-col items-center gap-3 py-12 text-sm text-muted">
       <p>There are no environments yet.</p>
-      <Button variant="primary" onclick={() => (dialog = { kind: 'create' })}>Create environment</Button>
+      {#if sync.blocked}<ReadOnlyNote />{:else}<Button variant="primary" onclick={() => (dialog = { kind: 'create' })}>Create environment</Button>{/if}
     </div>
   {:else}
     <div class="flex min-h-[22rem] gap-4">
@@ -99,6 +101,7 @@
         environments={app.environments}
         selectedId={model.environmentId}
         activeId={app.activeEnvironmentId}
+        readOnly={sync.blocked}
         onselect={select}
         onsetactive={setActive}
         oncreate={() => (dialog = { kind: 'create' })}
@@ -110,12 +113,13 @@
         <div class="flex items-center justify-between gap-2">
           <h3 class="truncate text-sm font-semibold">{selected?.name ?? ''}</h3>
           <div class="flex items-center gap-2">
-            <Button size="sm" disabled={model.loading} onclick={() => (model.bulkMode ? (model.applyBulk(), model.exitBulk()) : model.enterBulk())}>
+            <Button size="sm" disabled={model.loading || sync.blocked} onclick={() => (model.bulkMode ? (model.applyBulk(), model.exitBulk()) : model.enterBulk())}>
               {model.bulkMode ? 'Table edit' : 'Bulk edit'}
             </Button>
             <SaveStatus kind={model.status.kind} label={model.status.label} onretry={() => model.flush()} />
           </div>
         </div>
+        <ReadOnlyNote />
         <InlineError message={closeError} />
         {#if closeError}
           <div><Button size="sm" variant="danger" onclick={discardAndClose}>Discard unsaved changes and close</Button></div>

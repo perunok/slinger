@@ -5,6 +5,8 @@
   import Spinner from '../components/ui/Spinner.svelte'
   import Button from '../components/ui/Button.svelte'
   import CloudDialog from '../features/cloud/CloudDialog.svelte'
+  import SyncBanner from '../features/sync/SyncBanner.svelte'
+  import SyncHost from '../features/sync/SyncHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
   import ImportPostmanDialog from '../features/importexport/ImportPostmanDialog.svelte'
@@ -42,6 +44,7 @@
 
 <div class="flex h-full flex-col">
   <TopBar />
+  <SyncBanner />
   {#if !app.ready}
     <div class="flex flex-1 items-center justify-center gap-2 text-muted"><Spinner /> Loading…</div>
   {:else if app.fatalError}
@@ -76,6 +79,7 @@
 {#if ui.shortcutsOpen}<ShortcutsDialog />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
 <CloudDialog />
+<SyncHost />
 <EnvironmentEditor />
 <VersionsDialog />
 <RunnerDialog />

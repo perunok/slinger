@@ -8,6 +8,7 @@ import { toast } from '../../app/toast.svelte'
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
+import type { TabNotice } from '../sync/tabNotices'
 import { cancelRun, executeDraft, type ExecuteOutcome } from './execute'
 
 export type RequestSection = 'params' | 'auth' | 'headers' | 'body' | 'docs' | 'settings' | 'code'
@@ -46,6 +47,8 @@ export class RequestTab {
   saving = $state(false)
   /** Set when updateRequest reported a version conflict; the UI shows the resolve dialog. */
   conflict = $state<{ serverRequest: ApiRequest | null } | null>(null)
+  /** Set by cloud sync when this request changed or was deleted remotely while the tab has unsaved edits. */
+  remoteNotice = $state<TabNotice | null>(null)
 
   dirty = $derived(draftFingerprint(this.draft) !== this.savedFingerprint)
   title = $derived(this.draft.name || 'Untitled Request')
@@ -69,6 +72,7 @@ export class RequestTab {
     this.draft = parseDocument(request)
     this.savedFingerprint = draftFingerprint(this.draft)
     this.serverKey = serverKeyOf(request)
+    this.remoteNotice = null
   }
 }
 
@@ -223,6 +227,7 @@ class TabsStore {
       tab.savedFingerprint = fingerprint
       tab.serverKey = serverKeyOf(updated)
       tab.conflict = null
+      tab.remoteNotice = null
       app.upsertRequest(updated)
       return true
     } catch (e) {

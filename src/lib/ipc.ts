@@ -13,7 +13,10 @@ export interface ErrorInfo {
   details?: Record<string, unknown>
 }
 
-const CODES = ['not_found', 'version_conflict', 'invalid_input', 'io_error', 'network_error', 'internal_error'] as const
+const CODES = ['not_found', 'version_conflict', 'invalid_input', 'io_error', 'network_error', 'internal_error', 'read_only', 'unauthenticated', 'sync_blocked'] as const
+
+/** Shown for every mutation rejected because the workspace is a read-only (viewer) cloud workspace. */
+export const READ_ONLY_MESSAGE = 'This workspace is read-only (viewer access). Ask an owner for editor access, or unlink it to work on a local copy.'
 
 /** Normalises anything thrown by IPC (real IpcError, Electron-wrapped Error, string) into one shape. */
 export function errorInfo(e: unknown): ErrorInfo {
@@ -24,9 +27,13 @@ export function errorInfo(e: unknown): ErrorInfo {
     if (!code) code = CODES.find((c) => message.includes(c))
     // Electron prefixes: "Error invoking remote method 'x': IpcError: msg"
     const clean = message.replace(/^Error invoking remote method '[^']+':\s*(?:\w*Error:\s*)?/, '')
-    return { code, message: clean, details: (o.details as Record<string, unknown> | undefined) ?? undefined }
+    return { code, message: code === 'read_only' ? READ_ONLY_MESSAGE : clean, details: (o.details as Record<string, unknown> | undefined) ?? undefined }
   }
   return { message: String(e) }
+}
+
+export function isReadOnly(e: unknown): boolean {
+  return errorInfo(e).code === 'read_only'
 }
 
 export function isVersionConflict(e: unknown): boolean {

@@ -17,7 +17,7 @@ export interface FocusRequest {
 }
 
 function fromVariable(v: EnvironmentVariable): Row {
-  return newRow(v.environmentId, { id: v.id, key: v.key, value: v.isSecret ? '' : (v.value ?? ''), isSecret: v.isSecret, serverSecret: v.isSecret })
+  return newRow(v.environmentId, { id: v.id, key: v.key, value: v.isSecret ? '' : (v.value ?? ''), isSecret: v.isSecret, serverSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing })
 }
 
 export class EnvModel {
@@ -267,6 +267,7 @@ export class EnvModel {
     if (cur) {
       cur.id = res.id
       cur.serverSecret = res.isSecret
+      cur.secretMissing = res.isSecret && res.secretMissing
       if (cur.isSecret && cur.value === sent.value && !cur.revealed) {
         cur.value = ''
         cur.secretTouched = false
