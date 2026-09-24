@@ -14,6 +14,10 @@ import type {
   ApiFolder,
   ApiRequest,
   Collection,
+  CollectionVersion,
+  CollectionVersionDetail,
+  CreateCollectionVersionInput,
+  RestoreCollectionVersionMode,
   CreateFolderInput,
   CreateRequestInput,
   Environment,
@@ -27,9 +31,6 @@ import type {
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
-  WorkspaceVersioningCommit,
-  WorkspaceVersioningRestoreResult,
-  WorkspaceVersioningStatus,
 } from './types'
 
 export interface SlingerIpcApi {
@@ -84,15 +85,12 @@ export interface SlingerIpcApi {
   defaultExportPath(fileName: string): Promise<string>
   writeExportFile(fileName: string, contents: string): Promise<void>
 
-  // Workspace versioning (local git snapshots)
-  initWorkspaceVersioning(workspaceId: string): Promise<WorkspaceVersioningStatus>
-  getWorkspaceVersioningStatus(workspaceId: string): Promise<WorkspaceVersioningStatus>
-  commitWorkspaceVersioning(workspaceId: string, message: string): Promise<WorkspaceVersioningCommit>
-  listWorkspaceVersioningHistory(workspaceId: string): Promise<WorkspaceVersioningCommit[]>
-  restoreWorkspaceVersioningCommit(
-    workspaceId: string,
-    commitId: string,
-  ): Promise<WorkspaceVersioningRestoreResult>
+  // Collection versions (semver snapshots; no git)
+  listCollectionVersions(collectionId: string): Promise<CollectionVersion[]> // newest semver first
+  getCollectionVersion(versionId: string): Promise<CollectionVersionDetail>
+  createCollectionVersion(input: CreateCollectionVersionInput): Promise<CollectionVersion>
+  restoreCollectionVersion(versionId: string, mode: RestoreCollectionVersionMode): Promise<Collection>
+  deleteCollectionVersion(versionId: string): Promise<void>
 
   // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
   secureStoreGet(key: string): Promise<string | null>
@@ -145,11 +143,11 @@ export const IPC_CHANNELS = [
   'importPostmanCollection',
   'defaultExportPath',
   'writeExportFile',
-  'initWorkspaceVersioning',
-  'getWorkspaceVersioningStatus',
-  'commitWorkspaceVersioning',
-  'listWorkspaceVersioningHistory',
-  'restoreWorkspaceVersioningCommit',
+  'listCollectionVersions',
+  'getCollectionVersion',
+  'createCollectionVersion',
+  'restoreCollectionVersion',
+  'deleteCollectionVersion',
   'secureStoreGet',
   'secureStoreSet',
   'secureStoreDelete',

@@ -224,32 +224,46 @@ export interface PostmanImportResult {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace versioning (local git-backed snapshots)
+// Collection versions (immutable snapshots labelled with a semantic version)
 // ---------------------------------------------------------------------------
 
-export interface WorkspaceVersioningStatus {
-  initialized: boolean
-  repoPath: string
-  changedFiles: WorkspaceVersioningFileChange[]
+/** Frozen copy of a collection's content at the time a version was created. */
+export interface CollectionSnapshot {
+  collectionName: string
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder'>>
+  requests: Array<
+    Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
+  >
 }
 
-export interface WorkspaceVersioningFileChange {
-  path: string
-  status: 'added' | 'modified' | 'deleted'
-}
-
-export interface WorkspaceVersioningCommit {
+export interface CollectionVersion {
   id: string
-  shortId: string
-  message: string
-  author: string
-  authoredAt: number
+  workspaceId: string
+  collectionId: string
+  /** Semantic version 2.0.0 string, e.g. "1.4.0" or "2.0.0-beta.1" (no leading "v"). */
+  version: string
+  notes: string | null
+  folderCount: number
+  requestCount: number
+  createdAt: number
 }
 
-export interface WorkspaceVersioningRestoreResult {
-  commitId: string
-  restoredFiles: number
+export interface CollectionVersionDetail extends CollectionVersion {
+  snapshot: CollectionSnapshot
 }
+
+export interface CreateCollectionVersionInput {
+  collectionId: string
+  /** Must be valid semver and not already used for this collection. */
+  version: string
+  notes?: string | null
+}
+
+export type RestoreCollectionVersionMode =
+  /** Overwrite the live collection's folders/requests with the snapshot. */
+  | 'replace'
+  /** Create a new collection named "<name> (v<version>)" from the snapshot; live collection untouched. */
+  | 'copy'
 
 // ---------------------------------------------------------------------------
 // Secure storage (OS keychain, proxied through the main process)
