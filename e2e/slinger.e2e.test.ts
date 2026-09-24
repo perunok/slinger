@@ -354,6 +354,29 @@ describe('errors', () => {
   })
 })
 
+describe('collection runner', () => {
+  it('runs a collection and reports every request', async () => {
+    await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = await s.createCollection(ws.id, 'Run C')
+      for (const n of ['one', 'two']) {
+        await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name: `run-${n}`, method: 'GET', url: `{{baseUrl}}/runner/${n}`, documentJson: JSON.stringify({ headers: [], body: null }) })
+      }
+    })
+    await page.reload()
+    await item(/^Run C/).waitFor()
+    const before = target.requests.length
+    await contextMenu(item(/^Run C/), 'Run collection…')
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: /^Run/ }).first().click()
+    await expect.poll(() => dialog.getByRole('list', { name: 'Run results' }).innerText()).toMatch(/run-one[\s\S]*run-two/)
+    await expect.poll(() => target.requests.slice(before).map((r) => r.url)).toEqual(['/runner/one', '/runner/two'])
+    await expect.poll(() => dialog.getByRole('button', { name: 'Run again' }).count()).toBe(1)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  })
+})
+
 describe('collection versions', () => {
   const versionsDialog = () => page.getByRole('dialog', { name: /^Versions/ })
   async function createVersion(version: string) {
