@@ -33,7 +33,8 @@ components/
   kv/KeyValueTable.svelte   params / headers / form-data / urlencoded tables
 features/
   workspaces/  collections/ (tree, DnD, actions)  requests/ (tabs store, editor panels, send)
-  response/    environments/ history/ runner/ importexport/ versions/ cloud/ settings/
+  response/    environments/ history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
+  sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
 lib/                        pure logic, no DOM: template, urlParams, kv, request (document model),
                             prepare (draft -> HttpRequestInput), response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc
@@ -85,10 +86,13 @@ Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes
 * `ApiRequest.documentJson` keeps the Postman v2.1 item shape (headers[], body{mode}, auth{type}); unknown keys
   (scripts, responses, source, settings) are preserved on save. Our own additions: `params` (rows incl. disabled ones)
   and `settings.timeoutMs`. See `lib/request.ts`.
-* Tokens for the cloud panel live in the OS keychain through `secureStore*` (never `localStorage`).
+* Cloud tokens, HTTP and the sync engine live in the main process; the renderer only calls the account/sync IPC methods and subscribes to `onSyncEvent` (`features/sync/syncStore.svelte.ts`). Tokens never reach the renderer.
 * Renderer-driven contract additions (`pickFile`, `writeExportFile(..., encoding)`, `historyUrl` on `HttpRequestInput`) are implemented in the main process.
-* Cloud calls (`features/cloud/client.ts`) go through `executeHttpRequest` (the CSP blocks direct renderer network access), so they appear in
-  history. Cloud API URL, device name and workspace links are in `localStorage` (`slinger.cloud.*`); only tokens use the keychain.
+* Cloud API URL and device name are stored by the main process (`getCloudConfig`/`setCloudConfig`). The old `localStorage` keys `slinger.cloud.config` and
+  `slinger.cloud.links` are migrated/removed once on startup (`features/cloud/legacy.ts`); links only survive as a dismissible relink hint (`slinger.cloud.legacyHints`).
+* Read-only workspaces: edit affordances read `sync.blocked` (`features/sync/syncStore.svelte.ts`); the main process still rejects writes with `read_only`.
+* Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
+  `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
 * Other `localStorage` keys: `slinger.theme`, `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`.
 * Open request tabs are in memory only and are not restored on restart.
 * Whole-app docs: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md).

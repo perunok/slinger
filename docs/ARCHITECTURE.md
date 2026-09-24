@@ -153,8 +153,9 @@ additions `params` and `settings.timeoutMs`). The main process treats it as an o
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome.
 
-The cloud client (`src/features/cloud/client.ts`) uses the separate `cloudFetch` IPC (same fetch stack, avoids CORS) which
-never records history and cannot read local files; only `executeHttpRequest` (the user's own requests) writes history.
+The cloud HTTP client, sign-in, token refresh and the sync engine run in the main process (`docs/SYNC_DESIGN.md`); the renderer
+never sees tokens and does not call `executeHttpRequest` or `cloudFetch` for cloud purposes. Only `executeHttpRequest` (the user's
+own requests) writes history.
 
 ## Collection versioning
 
@@ -189,13 +190,29 @@ State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tr
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
 
+**Cloud sync in the renderer** (`src/features/sync`, `src/features/cloud`). `sync/syncStore.svelte.ts` is one reactive wrapper over
+the account/sync IPC methods plus a single `onSyncEvent` subscription (`status`, `applied`, `conflicts`, `auth`, `signInResult`);
+nothing polls the main process (the only timer refreshes "synced 2 min ago" labels, and the pending count is re-read once,
+debounced, after the user's own writes). Status/gating logic is pure (`sync/status.ts`: chip priority
+accessRevoked > serverUnsupported > signedOut > conflicts > error > offline > syncing > readOnly > idle; `blockReason`), as are the
+conflict view model (`conflictDiff.ts`, reusing `lib/versionDiff.ts` renderings; `conflictUi.ts`) and the open-tab rules
+(`tabNotices.ts`). An `applied` event refetches collections/environments of the open workspace; a dirty open tab whose request
+changed or vanished gets a non-destructive banner (`RequestTab.remoteNotice`) and is never overwritten. Edit affordances are gated
+on `sync.blocked` (read-only role or access revoked) and every mutation still rejects with `read_only` from the main process, which
+`errorInfo` maps to one friendly message. Request-content conflicts are compared by name/method/URL plus a fingerprint from the
+contract's summary text, and field by field (headers, body, auth) when a group carries the optional `localDetail`/`remoteDetail`
+texts. "Publish a copy" is done in the renderer (`sync/duplicateWorkspace.ts`) with the ordinary IPC methods. The browser mock
+(`src/dev/mock/sync.ts`) simulates the cloud server and the engine (pull/merge/push, every conflict kind, roles, offline, expired
+sign-in, old server) and is scriptable through `window.__slingerMock.cloud`.
+
 **Theming tokens.** `src/styles/themes.css` defines each palette as CSS variables on `[data-theme='<id>']`; `<html data-theme>`
 selects one (`light`, `dark`, `midnight`, `solarized`, `contrast`; `system` resolves to light or dark from
 `prefers-color-scheme`). `public/theme-init.js` applies the stored theme before first paint. Components use tokens only (Tailwind
 classes such as `bg-surface`, `text-fg` map to the variables in `tailwind.config.js`; CodeMirror themes use `var(--...)`).
 Token groups: surfaces, borders, text, semantic (`accent`, `danger`, `success`, `warning`), template tokens, syntax colours, HTTP
 method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Preferences are stored in `localStorage`
-(`slinger.theme`, `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`, `slinger.cloud.*`).
+(`slinger.theme`, `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`; the old `slinger.cloud.config` /
+`slinger.cloud.links` keys are migrated once and removed, `slinger.cloud.legacyHints` holds the dismissible relink hint).
 
 ## Testing strategy
 
@@ -229,6 +246,5 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: OAuth 2.0 request auth, pre-request/test scripts (kept in imported documents, never executed), collection
-sync with the cloud (the `cloud_links` table is unused; the panel only creates and links an empty remote workspace),
-realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
+Not present in the code: OAuth 2.0 request auth, pre-request/test scripts (kept in imported documents, never executed), realtime
+collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
