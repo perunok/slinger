@@ -144,6 +144,20 @@ class TabsStore {
     this.requestClose(this.tabs.map((t) => t.id))
   }
 
+  /**
+   * A sidebar rename bumped the server version and changed the name. For a tab with unsaved edits,
+   * adopt the new name/version and keep only the user's other edits dirty (no spurious conflict).
+   */
+  adoptRename(requestId: string) {
+    const t = this.tabs.find((x) => x.requestId === requestId)
+    const server = app.requestById(requestId)
+    if (!t || !server || !t.dirty) return
+    t.draft.name = server.name
+    t.baseVersion = server.version
+    t.serverKey = serverKeyOf(server)
+    t.savedFingerprint = draftFingerprint(parseDocument(server))
+  }
+
   /** Requests deleted elsewhere: drop their tabs without prompting (the data is gone). */
   dropRequests(requestIds: string[]) {
     const ids = this.tabs.filter((t) => t.requestId && requestIds.includes(t.requestId)).map((t) => t.id)
@@ -161,7 +175,14 @@ class TabsStore {
       if (!t.requestId) continue
       const server = app.requestById(t.requestId)
       if (!server) {
-        gone.push(t.requestId)
+        if (t.dirty) {
+          // Never discard unsaved work silently: keep the tab, detached, so it can be saved again.
+          t.requestId = null
+          t.collectionId = null
+          t.folderId = null
+          t.baseVersion = 0
+          t.serverKey = ''
+        } else gone.push(t.requestId)
         continue
       }
       if (server.version === t.baseVersion) {
@@ -188,6 +209,8 @@ class TabsStore {
     tab.saving = true
     try {
       const s = serializeDraft(tab.draft)
+      // Snapshot BEFORE the round trip: keystrokes typed while saving must stay "unsaved".
+      const fingerprint = draftFingerprint(tab.draft)
       const updated = await api().updateRequest({
         requestId: tab.requestId,
         name: s.name,
@@ -197,7 +220,7 @@ class TabsStore {
         expectedVersion: opts.overwrite ? await this.latestVersion(tab) : tab.baseVersion,
       })
       tab.baseVersion = updated.version
-      tab.savedFingerprint = draftFingerprint(tab.draft)
+      tab.savedFingerprint = fingerprint
       tab.serverKey = serverKeyOf(updated)
       tab.conflict = null
       app.upsertRequest(updated)
@@ -242,6 +265,7 @@ class TabsStore {
   async saveAs(tab: RequestTab, target: { collectionId: string; folderId: string | null; name: string }): Promise<void> {
     if (!app.workspaceId) throw new Error('No workspace selected')
     const s = serializeDraft({ ...tab.draft, name: target.name })
+    const fingerprint = draftFingerprint({ ...tab.draft, name: s.name })
     // Throws on failure: the Save As dialog stays open and shows the error.
     const created = await api().createRequest({
       workspaceId: app.workspaceId,
@@ -258,7 +282,7 @@ class TabsStore {
     tab.collectionId = created.collectionId
     tab.folderId = created.folderId
     tab.baseVersion = created.version
-    tab.savedFingerprint = draftFingerprint(tab.draft)
+    tab.savedFingerprint = fingerprint
     tab.serverKey = serverKeyOf(created)
   }
 

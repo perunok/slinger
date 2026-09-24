@@ -39,7 +39,7 @@
     <p role="alert" class="mt-3 rounded border border-danger bg-danger-soft px-2 py-1.5 text-xs text-danger">{error}</p>
   {/if}
   {#snippet footer()}
-    <Button onclick={oncancel} disabled={busy}>Cancel</Button>
-    <Button variant={danger ? 'danger' : 'primary'} loading={busy} onclick={run} data-autofocus>{confirmLabel}</Button>
+    <Button onclick={oncancel} disabled={busy} data-autofocus={danger ? true : undefined}>Cancel</Button>
+    <Button variant={danger ? 'danger' : 'primary'} loading={busy} onclick={run} data-autofocus={danger ? undefined : true}>{confirmLabel}</Button>
   {/snippet}
 </Dialog>

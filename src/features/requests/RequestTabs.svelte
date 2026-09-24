@@ -59,7 +59,10 @@
           <span class="truncate">{t.title}</span>
           {#if t.dirty}<span class="h-2 w-2 shrink-0 rounded-full bg-warning" title="Unsaved changes" role="img" aria-label="Unsaved changes"></span>{/if}
         </button>
-        <IconButton icon="x" label="Close {t.title}" size={12} class="!h-5 !w-5 mr-1 opacity-60 group-hover:opacity-100" tabindex={active ? 0 : -1} onclick={() => tabsStore.requestClose([t.id])} />
+        <!-- Mouse-only affordance: keyboard users close tabs with Delete (on the tab) or Ctrl+W, so this stays out of the tab order and the tablist. -->
+        <span aria-hidden="true" class="mr-1 inline-flex">
+          <IconButton icon="x" label="Close {t.title}" size={12} class="!h-5 !w-5 opacity-60 group-hover:opacity-100" tabindex={-1} onclick={() => tabsStore.requestClose([t.id])} />
+        </span>
       </div>
     {/each}
   </div>

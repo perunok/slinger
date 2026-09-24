@@ -33,7 +33,7 @@ describe('splitUrl / paramsFromUrl', () => {
 
 describe('encode/decode', () => {
   it('encodes structural characters but not tokens', () => {
-    expect(encodeQueryPart('a b&c=d#e+f')).toBe('a%20b%26c%3Dd%23e%2Bf')
+    expect(encodeQueryPart('a b&c=d#e+f')).toBe('a%20b%26c%3Dd%23e+f')
     expect(encodeQueryPart('{{a b}}')).toBe('{{a b}}')
     expect(encodeQueryPart('{{host}}/x y')).toBe('{{host}}/x%20y')
     expect(encodeQueryPart('100%')).toBe('100%25')

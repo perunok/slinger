@@ -216,11 +216,13 @@ export function parseAuth(auth: unknown): AuthDraft {
   }
 }
 
-const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'settings'])
+const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params'])
 
 function seedParams(doc: Json, url: string): KvRow[] {
   let prev: KvRow[] = rowsFromList(doc.params)
-  if (prev.length === 0) {
+  // Only imports (no `params` key at all) fall back to Postman's disabled query entries; once we
+  // have saved our own list — even an empty one — it is authoritative.
+  if (!Array.isArray(doc.params)) {
     // Postman imports keep disabled query params only inside source.request.url.query.
     const source = isObj(doc.source) && isObj(doc.source.request) && isObj(doc.source.request.url) ? doc.source.request.url : null
     const q = source && Array.isArray(source.query) ? source.query : []
@@ -331,9 +333,13 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   doc.headers = rowsToList(d.headers)
   doc.body = serializeBody(d.body)
   doc.auth = serializeAuth(d.auth)
-  const params = dataRows(d.params)
-  if (params.some((p) => !p.enabled || p.description)) doc.params = rowsToList(params)
-  if (d.timeoutMs != null) doc.settings = { timeoutMs: d.timeoutMs }
+  doc.params = rowsToList(dataRows(d.params))
+  // Keep any other Postman request settings (followRedirects...) and only own `timeoutMs`.
+  const settings: Json = isObj(d.extras.settings) ? { ...d.extras.settings } : {}
+  if (d.timeoutMs != null) settings.timeoutMs = d.timeoutMs
+  else delete settings.timeoutMs
+  if (Object.keys(settings).length > 0) doc.settings = settings
+  else delete doc.settings
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
 }
 

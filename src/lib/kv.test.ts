@@ -70,6 +70,13 @@ describe('bulk edit', () => {
     expect(back[0].id).toBe(rows[0].id)
     expect(back.at(-1)?.key).toBe('')
   })
+  it('keeps descriptions attached to the right row when a middle line is deleted or renamed', () => {
+    const rows = [newRow({ key: 'a', value: '1', description: 'A' }), newRow({ key: 'b', value: '2', description: 'B' }), newRow({ key: 'c', value: '3', description: 'C' })]
+    const del = dataRows(parseBulk('a: 1\nc: 3', rows))
+    expect(del.map((r) => [r.key, r.description])).toEqual([['a', 'A'], ['c', 'C']])
+    const ren = dataRows(parseBulk('a: 1\nbb: 2\nc: 3', rows))
+    expect(ren.map((r) => [r.key, r.description])).toEqual([['a', 'A'], ['bb', 'B'], ['c', 'C']])
+  })
   it('handles keys without value, blank lines and CRLF', () => {
     const rows = dataRows(parseBulk('flag\r\n\r\n# off: 1\r\nk:v', []))
     expect(rows.map((r) => [r.key, r.value, r.enabled])).toEqual([

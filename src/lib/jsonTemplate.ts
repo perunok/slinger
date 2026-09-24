@@ -11,7 +11,8 @@ interface Substituted {
   tokens: string[]
 }
 
-const MARK = '__SLINGER_TPL_'
+const BARE = '__SLINGER_BARE_'
+const STR = '__SLINGER_STR_'
 
 export function substituteTokens(text: string): Substituted {
   const tokens: string[] = []
@@ -25,9 +26,10 @@ export function substituteTokens(text: string): Substituted {
     if (ti < toks.length && i === toks[ti].from) {
       const t = toks[ti]
       out += text.slice(last, t.from)
-      const id = `${MARK}${tokens.length}__`
+      // Bare tokens stand in for a JSON value (quoted so the text stays valid); tokens already
+      // inside a string are swapped for plain characters.
+      out += inString ? `${STR}${tokens.length}__` : `"${BARE}${tokens.length}__"`
       tokens.push(t.raw)
-      out += inString ? id : `"${id}"`
       last = t.to
       i = t.to - 1
       ti++
@@ -45,8 +47,8 @@ export function substituteTokens(text: string): Substituted {
 
 function restore(text: string, tokens: string[]): string {
   return text
-    .replace(new RegExp(`"${MARK}(\\d+)__"`, 'g'), (_m, n: string) => tokens[Number(n)])
-    .replace(new RegExp(`${MARK}(\\d+)__`, 'g'), (_m, n: string) => tokens[Number(n)])
+    .replace(new RegExp(`"${BARE}(\\d+)__"`, 'g'), (_m, n: string) => tokens[Number(n)])
+    .replace(new RegExp(`${STR}(\\d+)__`, 'g'), (_m, n: string) => tokens[Number(n)])
 }
 
 export type JsonCheck = { ok: true } | { ok: false; error: string }

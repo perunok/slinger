@@ -22,6 +22,10 @@ describe('beautifyJson', () => {
     if (!r.ok) return
     expect(r.text).toBe('{\n  "a": {{x}},\n  "b": "v-{{y}}",\n  "c": [\n    1,\n    {{$guid}}\n  ]\n}')
   })
+  it('keeps quotes around a token that is the whole string value', () => {
+    const r = beautifyJson('{"id":"{{userId}}","n":{{count}},"s":"{{a}}{{b}}"}')
+    expect(r.ok && r.text).toBe('{\n  "id": "{{userId}}",\n  "n": {{count}},\n  "s": "{{a}}{{b}}"\n}')
+  })
   it('fails without touching text on invalid JSON', () => {
     const r = beautifyJson('{"a":')
     expect(r.ok).toBe(false)

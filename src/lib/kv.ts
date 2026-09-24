@@ -96,10 +96,8 @@ export function serializeBulk(rows: KvRow[]): string {
  * descriptions survive a bulk edit; extra lines create new rows.
  */
 export function parseBulk(text: string, previous: KvRow[] = []): KvRow[] {
-  const prev = dataRows(previous)
-  const rows: KvRow[] = []
-  const lines = text.split(/\r?\n/)
-  for (const rawLine of lines) {
+  const parsed: { key: string; value: string; enabled: boolean }[] = []
+  for (const rawLine of text.split(/\r?\n/)) {
     let line = rawLine
     if (!line.trim()) continue
     let enabled = true
@@ -112,9 +110,26 @@ export function parseBulk(text: string, previous: KvRow[] = []): KvRow[] {
     const key = (idx >= 0 ? line.slice(0, idx) : line).trim()
     const value = idx >= 0 ? line.slice(idx + 1).replace(/^\s/, '') : ''
     if (!key && !value) continue
-    const old = prev[rows.length]
-    rows.push(newRow({ ...(old ? { id: old.id, description: old.description, kind: old.kind, filePath: old.filePath } : {}), key, value, enabled }))
+    parsed.push({ key, value, enabled })
   }
+  // Reuse previous rows (ids, descriptions, file paths): first by key, then in order for the rest,
+  // so deleting or renaming a line never shifts metadata onto a different row.
+  const pool = dataRows(previous)
+  const used = new Set<string>()
+  const assigned: (KvRow | undefined)[] = parsed.map((p) => {
+    const hit = pool.find((r) => !used.has(r.id) && r.key === p.key)
+    if (hit) used.add(hit.id)
+    return hit
+  })
+  const leftovers = pool.filter((r) => !used.has(r.id))
+  const rows = parsed.map((p, i) => {
+    let old = assigned[i]
+    if (!old) {
+      old = leftovers.shift()
+      if (old) used.add(old.id)
+    }
+    return newRow({ ...(old ? { id: old.id, description: old.description, kind: old.kind, filePath: old.filePath } : {}), ...p })
+  })
   return ensureTrailingEmpty(rows)
 }
 

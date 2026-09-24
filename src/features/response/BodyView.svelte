@@ -55,7 +55,7 @@
   {#if info.kind === 'empty'}
     <p class="p-4 text-sm text-muted">This response has no body.</p>
   {:else if mode === 'preview' && info.kind === 'html' && info.text !== null}
-    <iframe title="HTML preview" sandbox="" srcdoc={info.text} referrerpolicy="no-referrer" class="h-full w-full flex-1 border-0 bg-white"></iframe>
+    <iframe title="HTML preview" sandbox="" srcdoc={info.text} referrerpolicy="no-referrer" class="h-full w-full flex-1 border-0" style="background:var(--preview-bg)"></iframe>
   {:else if mode !== 'raw' && info.kind === 'image' && info.base64}
     <div class="flex h-full items-center justify-center overflow-auto p-4">
       <img src={dataUrl(info.mime, info.base64)} alt="Response body" class="max-h-full max-w-full object-contain" style="background: repeating-conic-gradient(var(--surface-raised) 0% 25%, var(--surface) 0% 50%) 50% / 16px 16px" />

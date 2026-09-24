@@ -61,7 +61,7 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement
-    const target = root.querySelector<HTMLElement>('[data-autofocus]') ?? focusables().find((el) => !el.hasAttribute('data-dialog-close')) ?? root
+    const target = root.querySelector<HTMLElement>('[data-autofocus]') ?? focusables().find((el) => !el.closest('[data-dialog-close]')) ?? root
     target.focus()
     document.addEventListener('keydown', onkeydown)
     return () => {

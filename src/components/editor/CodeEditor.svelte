@@ -62,6 +62,8 @@
   const langC = new Compartment()
   const wrapC = new Compartment()
   const roC = new Compartment()
+  const foldC = new Compartment()
+  const numC = new Compartment()
   const currentScope = () => scope ?? scopeStore.scope
 
   function baseExtensions(): Extension[] {
@@ -74,13 +76,14 @@
       highlightActiveLine(),
       highlightSelectionMatches(),
       search({ top: true }),
-      lineNumbers ? [lineNumbersExt(), highlightActiveLineGutter()] : [],
-      fold ? foldGutter() : [],
+      numC.of(lineNumbers ? [lineNumbersExt(), highlightActiveLineGutter()] : []),
+      foldC.of(fold ? foldGutter() : []),
       readOnly ? [] : closeBrackets(),
       templates ? templateExtension({ getScope: currentScope, onCreateVariable: (n) => scopeStore.createVariable?.(n) }) : [],
       placeholder ? placeholderExt(placeholder) : [],
       EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
-      keymap.of([...searchKeymap, ...foldKeymap, ...historyKeymap, ...defaultKeymap]),
+      // Mod-Enter (send) and Mod-/ (shortcuts help) are app-level shortcuts, not editor commands.
+      keymap.of([...searchKeymap, ...foldKeymap, ...historyKeymap, ...defaultKeymap.filter((k) => k.key !== 'Mod-Enter' && k.key !== 'Mod-/')]),
       EditorView.updateListener.of((u) => {
         if (u.docChanged) {
           const next = u.state.doc.toString()
@@ -109,6 +112,14 @@
   $effect(() => {
     const l = language
     view?.dispatch({ effects: langC.reconfigure(languageExtension(l)) })
+  })
+  $effect(() => {
+    const f = fold
+    view?.dispatch({ effects: foldC.reconfigure(f ? foldGutter() : []) })
+  })
+  $effect(() => {
+    const n = lineNumbers
+    view?.dispatch({ effects: numC.reconfigure(n ? [lineNumbersExt(), highlightActiveLineGutter()] : []) })
   })
   $effect(() => {
     const w = wrap

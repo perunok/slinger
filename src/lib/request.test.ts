@@ -81,6 +81,28 @@ describe('document round trip', () => {
   })
 })
 
+describe('document edge cases', () => {
+  it('keeps unknown Postman settings and only owns timeoutMs', () => {
+    const d = parseDocument({ ...base, documentJson: JSON.stringify({ settings: { followRedirects: false } }) })
+    d.timeoutMs = 500
+    expect(JSON.parse(serializeDraft(d).documentJson).settings).toEqual({ followRedirects: false, timeoutMs: 500 })
+    d.timeoutMs = null
+    expect(JSON.parse(serializeDraft(d).documentJson).settings).toEqual({ followRedirects: false })
+  })
+
+  it('does not resurrect deleted disabled params from the Postman source', () => {
+    const documentJson = JSON.stringify({
+      url: 'http://x/y',
+      source: { request: { url: { query: [{ key: 'off', value: '1', disabled: true }] } } },
+    })
+    const d = parseDocument({ ...base, documentJson })
+    expect(dataRows(d.params).map((p) => p.key)).toEqual(['off'])
+    d.params = d.params.filter((p) => p.key !== 'off')
+    const again = parseDocument({ ...base, documentJson: serializeDraft(d).documentJson })
+    expect(dataRows(again.params)).toHaveLength(0)
+  })
+})
+
 describe('prepareRequest', () => {
   const scope = makeScope('Dev', [
     { key: 'host', value: 'api.test', secret: false },
@@ -119,6 +141,20 @@ describe('prepareRequest', () => {
     expect(res.ok && res.input.url).toBe('http://a/b?k=v%20w#h')
     d.body = { ...d.body, kind: 'binary', binaryPath: '' }
     expect(prepareRequest(d, ctx).ok).toBe(false)
+  })
+
+  it('resolves variables that reference other variables, and rejects cycles', () => {
+    const nested = makeScope('Dev', [
+      { key: 'host', value: 'api.test', secret: false },
+      { key: 'base', value: 'https://{{host}}/v1', secret: false },
+      { key: 'a', value: '{{b}}', secret: false },
+      { key: 'b', value: '{{a}}', secret: false },
+    ])
+    const ok = prepareRequest(newDraft({ url: '{{base}}/x' }), { workspaceId: 'w', scope: nested })
+    expect(ok.ok && ok.input.url).toBe('https://api.test/v1/x')
+    const cyc = prepareRequest(newDraft({ url: 'http://h/{{a}}' }), { workspaceId: 'w', scope: nested })
+    expect(cyc.ok).toBe(false)
+    expect(!cyc.ok && cyc.error).toContain('{{')
   })
 
   it('lists needed secrets and lets snippets keep unresolved tokens', () => {

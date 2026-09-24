@@ -16,8 +16,7 @@ function ws(): string {
 }
 
 async function refresh(collectionIds: string[]) {
-  await Promise.all([...new Set(collectionIds)].map((id) => app.reloadCollection(id)))
-  tabsStore.syncWithServer()
+  await app.reloadCollectionsById(collectionIds) // also reconciles open tabs, once
 }
 
 export async function runAction(what: string, fn: () => Promise<void>): Promise<boolean> {
@@ -68,6 +67,7 @@ export async function createRequest(collectionId: string, folderId: string | nul
 export async function renameRequest(request: ApiRequest, name: string) {
   await api().renameRequest(request.id, name)
   await refresh([request.collectionId])
+  tabsStore.adoptRename(request.id)
 }
 export async function deleteRequest(request: ApiRequest) {
   await api().deleteRequest(request.id)

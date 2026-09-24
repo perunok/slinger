@@ -65,7 +65,7 @@ function highlighter(hooks: TemplateHooks) {
 // Hover popover
 // ---------------------------------------------------------------------------
 
-function popoverFor(name: string, hooks: TemplateHooks): HTMLElement {
+export function popoverFor(name: string, hooks: TemplateHooks): HTMLElement {
   const scope = hooks.getScope()
   const status = tokenStatus(name, scope)
   const dom = document.createElement('div')
@@ -128,7 +128,7 @@ function hover(hooks: TemplateHooks) {
 // Autocomplete
 // ---------------------------------------------------------------------------
 
-function completions(hooks: TemplateHooks) {
+export function templateCompletionSource(hooks: TemplateHooks) {
   return (ctx: CompletionContext): CompletionResult | null => {
     const m = ctx.matchBefore(/\{\{\s*[\w$.\-]*/)
     if (!m) return null
@@ -184,6 +184,6 @@ export function templateExtension(hooks: TemplateHooks): Extension {
   return [
     highlighter(hooks),
     hover(hooks),
-    autocompletion({ override: [completions(hooks), suggestionSource(hooks)], icons: false, activateOnTyping: true, closeOnBlur: true }),
+    autocompletion({ override: [templateCompletionSource(hooks), suggestionSource(hooks)], icons: false, activateOnTyping: true, closeOnBlur: true }),
   ]
 }

@@ -129,16 +129,31 @@ class AppState {
     }
   }
 
-  /** Replaces one collection's folders + requests (cheaper than a full reload). */
-  async reloadCollection(collectionId: string): Promise<void> {
+  /**
+   * Replaces the folders + requests of the given collections. All lists are fetched first and
+   * assigned together, then open tabs are reconciled once (a half-updated state must never look
+   * like "request deleted").
+   */
+  async reloadCollectionsById(collectionIds: string[]): Promise<void> {
+    const ids = [...new Set(collectionIds)]
     try {
-      const [f, r] = await Promise.all([api().listFolders(collectionId), api().listRequests(collectionId)])
-      this.folders = [...this.folders.filter((x) => x.collectionId !== collectionId), ...f]
-      this.requests = [...this.requests.filter((x) => x.collectionId !== collectionId), ...r]
+      const loaded = await Promise.all(
+        ids.map(async (id) => {
+          const [f, r] = await Promise.all([api().listFolders(id), api().listRequests(id)])
+          return { id, f, r }
+        }),
+      )
+      const set = new Set(ids)
+      this.folders = [...this.folders.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.f)]
+      this.requests = [...this.requests.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.r)]
       this.onRequestsReloaded?.()
     } catch (e) {
       toast.error('Could not refresh collection', errorInfo(e).message)
     }
+  }
+
+  reloadCollection(collectionId: string): Promise<void> {
+    return this.reloadCollectionsById([collectionId])
   }
 
   upsertRequest(req: ApiRequest) {

@@ -11,7 +11,7 @@
 }
 
 /* ---------- Light ---------- */
-:root[data-theme='light'] {
+[data-theme='light'] {
   color-scheme: light;
   --bg: #f4f5f7;
   --surface: #ffffff;
@@ -31,6 +31,7 @@
   --success-soft: #dcf5e4;
   --warning: #a35c00;
   --warning-soft: #fdeccb;
+  --preview-bg: #ffffff;
   --overlay: rgba(15, 23, 42, 0.45);
   --shadow-pop: 0 8px 28px rgba(15, 23, 42, 0.22);
   --selection: #bcd3fb;
@@ -58,7 +59,7 @@
 }
 
 /* ---------- Dark ---------- */
-:root[data-theme='dark'] {
+[data-theme='dark'] {
   color-scheme: dark;
   --bg: #16181d;
   --surface: #1e2127;
@@ -78,6 +79,7 @@
   --success-soft: #1c3a2c;
   --warning: #f0b45a;
   --warning-soft: #443417;
+  --preview-bg: #ffffff;
   --overlay: rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 10px 32px rgba(0, 0, 0, 0.55);
   --selection: #2c4a7c;
@@ -105,7 +107,7 @@
 }
 
 /* ---------- Midnight (deep blue) ---------- */
-:root[data-theme='midnight'] {
+[data-theme='midnight'] {
   color-scheme: dark;
   --bg: #070d1f;
   --surface: #0d1630;
@@ -125,6 +127,7 @@
   --success-soft: #0f3a3a;
   --warning: #ffc36b;
   --warning-soft: #3d3216;
+  --preview-bg: #ffffff;
   --overlay: rgba(2, 5, 18, 0.7);
   --shadow-pop: 0 10px 34px rgba(0, 0, 8, 0.65);
   --selection: #234a92;
@@ -152,7 +155,7 @@
 }
 
 /* ---------- Solarized Dark ---------- */
-:root[data-theme='solarized'] {
+[data-theme='solarized'] {
   color-scheme: dark;
   --bg: #001f27;
   --surface: #002b36;
@@ -168,20 +171,21 @@
   --accent-soft: #0b4a52;
   --danger: #ff6a5f;
   --danger-soft: #4a2320;
-  --success: #a4b900;
-  --success-soft: #29400a;
+  --success: #5fc38a;
+  --success-soft: #0d4a3a;
   --warning: #e0a31a;
   --warning-soft: #4a3a0a;
+  --preview-bg: #ffffff;
   --overlay: rgba(0, 12, 16, 0.65);
   --shadow-pop: 0 10px 30px rgba(0, 10, 14, 0.6);
   --selection: #0e5866;
-  --var-ok: #a4b900;
-  --var-ok-bg: #2b3d0a;
+  --var-ok: #5fc38a;
+  --var-ok-bg: #0d4a3a;
   --var-bad: #ff7d72;
   --var-bad-bg: #4a2320;
   --var-secret: #b5c0c0;
   --var-secret-bg: #124450;
-  --syn-keyword: #b3a10c;
+  --syn-keyword: #c2b02a;
   --syn-string: #2fb5aa;
   --syn-number: #e07b4f;
   --syn-bool: #e468a0;
@@ -190,7 +194,7 @@
   --syn-tag: #ff7d72;
   --syn-attr: #2fb5aa;
   --syn-punct: #93a1a1;
-  --m-get: #a4b900;
+  --m-get: #5fc38a;
   --m-post: #e0a31a;
   --m-put: #4ea7e6;
   --m-patch: #a98be0;
@@ -199,7 +203,7 @@
 }
 
 /* ---------- High contrast ---------- */
-:root[data-theme='contrast'] {
+[data-theme='contrast'] {
   color-scheme: dark;
   --bg: #000000;
   --surface: #000000;
@@ -219,6 +223,7 @@
   --success-soft: #003d1a;
   --warning: #ffb000;
   --warning-soft: #3d2900;
+  --preview-bg: #ffffff;
   --overlay: rgba(0, 0, 0, 0.85);
   --shadow-pop: 0 0 0 2px #ffffff;
   --selection: #0b4d9c;

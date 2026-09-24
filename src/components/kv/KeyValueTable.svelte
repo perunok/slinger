@@ -4,6 +4,7 @@
    * Rows are keyed by stable ids so focus survives every state update; a blank row is always
    * kept at the end; a bulk-edit mode edits the same rows as text.
    */
+  import { EditorView } from '@codemirror/view'
   import { api, errorInfo } from '../../lib/ipc'
   import { toast } from '../../app/toast.svelte'
   import {
@@ -54,8 +55,7 @@
 
   let bulk = $state(false)
   let bulkText = $state('')
-  let keyRefs: Record<string, TemplateInput | undefined> = {}
-  let valueRefs: Record<string, TemplateInput | undefined> = {}
+  let tableEl = $state<HTMLElement>()
 
   const dupSet = $derived(duplicates === 'none' ? new Set<string>() : findDuplicateKeys(rows, duplicates === 'case-insensitive'))
 
@@ -80,8 +80,12 @@
 
   function focusCell(col: 'key' | 'value', index: number) {
     const target = rows[index]
-    if (!target) return
-    ;(col === 'key' ? keyRefs[target.id] : valueRefs[target.id])?.focus('end')
+    if (!target || !tableEl) return
+    const cm = tableEl.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(target.id)}"] [data-col="${col}"] .cm-editor`)
+    const view = cm ? EditorView.findFromDOM(cm) : null
+    if (!view) return
+    view.focus()
+    view.dispatch({ selection: { anchor: view.state.doc.length } })
   }
 
   const keySuggest = (t: string) => (suggestions === 'headers' ? suggestHeaderNames(t) : [])
@@ -123,7 +127,7 @@
     </div>
     <p class="mt-1 text-xs text-faint">One <code>key: value</code> per line. Lines starting with <code>//</code> or <code>#</code> are disabled.</p>
   {:else}
-    <table class="w-full table-fixed border-collapse text-sm">
+    <table bind:this={tableEl} class="w-full table-fixed border-collapse text-sm">
       <thead class="text-left text-xs text-faint">
         <tr>
           <th class="w-8 px-1 py-1 font-normal"><span class="sr-only">Enabled</span></th>
@@ -149,10 +153,9 @@
                 class={blank ? 'invisible' : ''}
               />
             </td>
-            <td class="px-1 py-0.5">
+            <td class="px-1 py-0.5" data-col="key">
               <div class="flex items-center gap-1">
                 <TemplateInput
-                  bind:this={keyRefs[row.id]}
                   class="flex-1 {dup ? '!border-warning' : ''}"
                   value={row.key}
                   label="{noun} {i + 1} key"
@@ -181,7 +184,7 @@
                 </select>
               </td>
             {/if}
-            <td class="px-1 py-0.5">
+            <td class="px-1 py-0.5" data-col="value">
               {#if fileFields && row.kind === 'file'}
                 <div class="flex items-center gap-1">
                   <Button size="sm" icon="upload" onclick={() => chooseFile(row)} disabled={readonly}>{row.filePath ? 'Change' : 'Choose file'}</Button>
@@ -189,7 +192,6 @@
                 </div>
               {:else}
                 <TemplateInput
-                  bind:this={valueRefs[row.id]}
                   class="w-full"
                   value={row.value}
                   label="{noun} {i + 1} value"

@@ -7,6 +7,7 @@ function dialogOpen(): boolean {
 
 /** Global keyboard shortcuts. Returns true when the event was handled. */
 export function handleShortcut(e: KeyboardEvent): boolean {
+  if (e.defaultPrevented) return false // an editor or widget already handled it
   const mod = e.ctrlKey || e.metaKey
   if (!mod || e.altKey) return false
   const key = e.key.toLowerCase()

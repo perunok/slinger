@@ -6,7 +6,7 @@
 import type { HttpRequestInput, ResolvedAuth, ResolvedBody } from '../../shared/types'
 import { dataRows } from './kv'
 import { rawContentType, templateTexts, type RequestDraft } from './request'
-import { findSecretsUsed, findUnresolved, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
+import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
 
 export type PrepareResult =
@@ -55,7 +55,19 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     }
   }
   const cache = new Map<string, string>()
-  const r = (t: string) => resolveTemplate(t, ctx.scope, { secrets: ctx.secrets, now: ctx.now, builtinCache: cache })
+  const leftover = new Set<string>()
+  // Values may reference other variables ({{a}} = "{{b}}/x"): resolve until stable (bounded, so
+  // circular definitions terminate) and remember any token that survives.
+  const r = (t: string) => {
+    let cur = t
+    for (let i = 0; i < 6 && cur.includes('{{'); i++) {
+      const next = resolveTemplate(cur, ctx.scope, { secrets: ctx.secrets, now: ctx.now, builtinCache: cache })
+      if (next === cur) break
+      cur = next
+    }
+    for (const tok of parseTokens(cur)) leftover.add(tok.name)
+    return cur
+  }
   const warnings: string[] = []
 
   let url = normalizeUrl(r(draft.url))
@@ -120,6 +132,15 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     body.binaryFilePath = b.binaryPath
   } else if (b.kind === 'unsupported') {
     warnings.push('This request has a body type Slinger cannot edit; it is sent without a body.')
+  }
+
+  if (leftover.size > 0 && !ctx.allowUnresolved) {
+    const names = [...leftover]
+    return {
+      ok: false,
+      unresolved: names,
+      error: `Could not fully resolve ${names.map((n) => `{{${n}}}`).join(', ')} (undefined, or defined in terms of itself).`,
+    }
   }
 
   return {

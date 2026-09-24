@@ -17,10 +17,14 @@ function mapOutsideTokens(text: string, fn: (part: string) => string): string {
     .join('')
 }
 
-/** Encodes a key/value so it cannot break the query structure. Idempotent for already-valid escapes. */
+/**
+ * Encodes a key/value so it cannot break the query structure. Idempotent for already-valid
+ * escapes. `+` is left alone on purpose: parsing does not turn it into a space either, so the
+ * URL text round-trips exactly.
+ */
 export function encodeQueryPart(text: string): string {
   return mapOutsideTokens(text, (part) =>
-    part.replace(/%(?![0-9A-Fa-f]{2})|[&#=+ \u0000-\u001f\u007f-￿]/gu, (ch) => {
+    part.replace(/%(?![0-9A-Fa-f]{2})|[&#= \u0000-\u001f\u007f-￿]/gu, (ch) => {
       if (ch === '%') return '%25'
       return encodeURIComponent(ch)
     }),

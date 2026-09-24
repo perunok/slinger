@@ -23,7 +23,12 @@
           return
         }
         const ok = await tabsStore.save(t)
-        if (!ok) return // conflict/error surfaced by save(); keep tabs open
+        if (!ok) {
+          // Conflict/error is shown by the tab itself: bring that tab forward so the user sees it.
+          tabsStore.activate(t.id)
+          tabsStore.pendingClose = null
+          return
+        }
       }
       tabsStore.closeNow(ids)
     } finally {

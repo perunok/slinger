@@ -12,7 +12,7 @@
     api().getAppVersion().then((v) => (version = v), () => (version = null))
   })
 
-  const choices = [{ id: 'system', label: 'System', swatch: null as null | string[] }, ...THEMES.map((t) => ({ id: t.id, label: t.label, swatch: t.swatch as string[] }))]
+  const choices = [{ id: 'system', label: 'System' }, ...THEMES]
 </script>
 
 <Dialog title="Settings" onclose={() => (ui.settingsOpen = false)} size="md">
@@ -24,15 +24,17 @@
           class="flex cursor-pointer flex-col gap-1.5 rounded-md border p-2 text-sm transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent {settings.theme === c.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-hover'}"
         >
           <input type="radio" name="theme" value={c.id} class="sr-only" checked={settings.theme === c.id} onchange={() => settings.setTheme(c.id)} />
+          <!-- Each swatch is scoped to its own palette via data-theme, so it always shows the real tokens. -->
           <span class="flex h-8 overflow-hidden rounded border border-border" aria-hidden="true">
-            {#if c.swatch}
-              <span class="flex-1" style="background:{c.swatch[0]}"></span>
-              <span class="flex-1" style="background:{c.swatch[1]}"></span>
-              <span class="flex-1" style="background:{c.swatch[2]}"></span>
-              <span class="flex-1" style="background:{c.swatch[3]}"></span>
+            {#if c.id === 'system'}
+              <span data-theme="light" class="flex-1" style="background:var(--surface)"></span>
+              <span data-theme="dark" class="flex-1" style="background:var(--surface)"></span>
             {:else}
-              <span class="flex-1" style="background:{THEMES[0].swatch[1]}"></span>
-              <span class="flex-1" style="background:{THEMES[1].swatch[1]}"></span>
+              <span data-theme={c.id} class="flex flex-1" style="background:var(--bg)">
+                <span class="flex-1" style="background:var(--surface)"></span>
+                <span class="flex-1" style="background:var(--accent)"></span>
+                <span class="flex-1" style="background:var(--text)"></span>
+              </span>
             {/if}
           </span>
           {c.label}

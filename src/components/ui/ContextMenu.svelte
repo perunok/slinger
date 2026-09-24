@@ -24,6 +24,13 @@
   let root: HTMLDivElement
   let index = $state(-1)
   let pos = $state({ left: 0, top: 0 })
+  let opener: Element | null = null
+
+  /** Give focus back to where the menu was opened from (before an action may open a dialog). */
+  function close() {
+    if (opener instanceof HTMLElement && document.contains(opener)) opener.focus()
+    onclose()
+  }
 
   const actionable = () => items.map((it, i) => ({ it, i })).filter(({ it }) => !it.separator && !it.disabled).map(({ i }) => i)
 
@@ -37,7 +44,7 @@
 
   function choose(it: MenuItem) {
     if (it.disabled || it.separator) return
-    onclose()
+    close()
     it.action?.()
   }
 
@@ -45,7 +52,7 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      onclose()
+      close()
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       move(1)
@@ -57,11 +64,12 @@
       if (index >= 0) choose(items[index])
     } else if (e.key === 'Tab') {
       e.preventDefault()
-      onclose()
+      close()
     }
   }
 
   onMount(() => {
+    opener = document.activeElement
     const r = root.getBoundingClientRect()
     pos = {
       left: Math.max(4, Math.min(x, window.innerWidth - (r.width || 200) - 4)),

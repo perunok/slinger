@@ -4,6 +4,8 @@
    * editor using the same extension as multi-line editors, so highlighting, hover popover
    * and autocomplete behave identically everywhere.
    */
+  import { completionStatus } from '@codemirror/autocomplete'
+  import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
   import { Compartment, EditorState, type Extension } from '@codemirror/state'
   import { EditorView, keymap, placeholder as placeholderExt } from '@codemirror/view'
   import { onMount } from 'svelte'
@@ -100,6 +102,8 @@
         {
           key: 'Escape',
           run: (v) => {
+            if (completionStatus(v.state)) return false // let the popup close first
+            if (v.dom.closest('[role="dialog"]')) return false // Escape closes the dialog instead
             v.contentDOM.blur()
             return true
           },
@@ -115,6 +119,9 @@
           },
         },
       ]),
+      history(),
+      // Mod-Enter is the app-wide Send shortcut; Enter is handled above.
+      keymap.of([...historyKeymap, ...defaultKeymap.filter((k) => k.key !== 'Mod-Enter' && k.key !== 'Enter' && k.key !== 'Mod-/')]),
       EditorView.updateListener.of((u) => {
         if (u.docChanged) {
           const next = u.state.doc.toString()
