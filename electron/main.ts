@@ -9,6 +9,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
 import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
+import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
@@ -20,6 +21,11 @@ const devServerUrl = process.env.SLINGER_DEV_SERVER_URL || null
 
 // Tests and CI can point the app at a throwaway data directory.
 if (process.env.SLINGER_USER_DATA_DIR) app.setPath('userData', process.env.SLINGER_USER_DATA_DIR)
+else {
+  // package.json productName ("Slinger") makes dev and packaged builds share one profile directory.
+  // Older dev runs used the lowercase "slinger"; move that profile over once.
+  migrateLegacyDataDir(join(app.getPath('appData'), 'slinger'), app.getPath('userData'))
+}
 
 // Must run before app 'ready'. A standard+secure scheme gives the renderer a real origin
 // (instead of file://) so we can attach response headers such as the CSP.
@@ -201,6 +207,7 @@ if (!app.requestSingleInstanceLock()) {
       pickFile: async (options) => {
         const dialogOptions = {
           title: options.title,
+          defaultPath: options.defaultPath,
           filters: options.filters,
           properties: ['openFile'] as Array<'openFile'>,
         }

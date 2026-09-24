@@ -1,7 +1,8 @@
-import type { HttpRequestInput, HttpResponseData } from '../../shared/types'
+import type { CloudFetchInput, HttpRequestInput, HttpResponseData } from '../../shared/types'
 import { toErrorPayload, invalidInput } from '../lib/errors'
 import { assertUuid, isUuid } from '../lib/ids'
 import type { HistoryRepository } from '../repositories/history'
+import type { FileAccess } from './fileGrants'
 import { executeHttp, normalizeUrl } from './httpExecutor'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
@@ -15,7 +16,10 @@ const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 export class HttpService {
   private readonly runs = new Map<string, AbortController>()
 
-  constructor(private readonly history: HistoryRepository) {}
+  constructor(
+    private readonly history: HistoryRepository,
+    private readonly files?: FileAccess,
+  ) {}
 
   async execute(input: HttpRequestInput): Promise<HttpResponseData> {
     const workspaceId = assertUuid(input.workspaceId, 'workspaceId')
@@ -29,7 +33,7 @@ export class HttpService {
 
     const started = performance.now()
     try {
-      const response = await executeHttp(input, { signal: controller.signal })
+      const response = await executeHttp(input, { signal: controller.signal, files: this.files })
       this.record(input, workspaceId, {
         statusCode: response.status,
         ok: response.status >= 200 && response.status < 300,
@@ -48,6 +52,23 @@ export class HttpService {
     } finally {
       if (runId !== null) this.runs.delete(runId)
     }
+  }
+
+  /**
+   * Internal transport for the app's own cloud API calls: never recorded in history, never reads
+   * local files, and has no run id (not cancellable). Kept separate from `execute` so history
+   * stays a log of the user's requests only.
+   */
+  async fetchInternal(input: CloudFetchInput): Promise<HttpResponseData> {
+    return executeHttp({
+      method: input.method,
+      url: input.url,
+      headers: input.headers,
+      auth: { kind: 'none' },
+      body: input.body ? { mode: 'raw', raw: { content: input.body.content, contentType: input.body.contentType } } : { mode: 'none' },
+      timeoutMs: input.timeoutMs,
+      workspaceId: '',
+    })
   }
 
   /** Cancelling an unknown or already finished run is a no-op. */

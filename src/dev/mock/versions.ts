@@ -54,19 +54,6 @@ export function addVersion(s: MockState, collectionId: string, version: string, 
 
 const summary = ({ snapshot: _snapshot, ...rest }: VersionRow) => rest
 
-/** Keep the snapshot's id unless another live row (outside the collection being rebuilt) already uses it. */
-function idResolver(taken: Set<string>): (id: string) => string {
-  const map = new Map<string, string>()
-  return (id) => {
-    let mapped = map.get(id)
-    if (!mapped) {
-      mapped = taken.has(id) ? uuid() : id
-      map.set(id, mapped)
-    }
-    return mapped
-  }
-}
-
 function materialize(
   s: MockState,
   collection: Collection,
@@ -109,13 +96,11 @@ function materialize(
 }
 
 function restoreReplace(s: MockState, collection: Collection, snapshot: CollectionSnapshot): Collection {
-  const previous = {
-    folders: new Map(s.folders.filter((f) => f.collectionId === collection.id).map((f) => [f.id, f])),
-    requests: new Map(s.requests.filter((r) => r.collectionId === collection.id).map((r) => [r.id, r])),
-  }
   removeCollectionContents(s, collection.id)
-  const taken = new Set([...s.folders.map((f) => f.id), ...s.requests.map((r) => r.id)])
-  materialize(s, collection, clone(snapshot), idResolver(taken), previous)
+  // Like the real main process: every restored folder/request gets a fresh id.
+  const fresh = new Map<string, string>()
+  const resolve = (id: string) => fresh.get(id) ?? (fresh.set(id, uuid()), fresh.get(id) as string)
+  materialize(s, collection, clone(snapshot), resolve, { folders: new Map(), requests: new Map() })
   return touch(collection)
 }
 

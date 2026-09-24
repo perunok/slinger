@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { HttpRequestInput } from '../../shared/types'
 import { hasUnresolvedPlaceholder, normalizeUrl } from '../services/httpExecutor'
-import { baseHttp, closedPort, makeEnv, scaffold, startTestServer, type TestEnv } from './helpers'
+import { baseHttp, closedPort, makeEnv, pickAndGrant, scaffold, startTestServer, type TestEnv } from './helpers'
 
 let env: TestEnv
 let server: Awaited<ReturnType<typeof startTestServer>>
@@ -163,6 +163,7 @@ describe('body modes', () => {
   it('formData: real multipart with text and file parts, enabled rows only', async () => {
     const filePath = join(fileDir, 'note.txt')
     writeFileSync(filePath, 'file-contents-ÄÖ')
+    await pickAndGrant(env, filePath)
     const res = await run({
       method: 'POST',
       // A stale Content-Type header must not break the multipart boundary.
@@ -186,12 +187,12 @@ describe('body modes', () => {
     expect(body.split(ct.split('boundary=')[1]!).length).toBeGreaterThan(3)
   })
 
-  it('formData: missing file and relative file paths are rejected before sending', async () => {
+  it('formData: missing (ungranted) file and relative file paths are rejected before sending', async () => {
     const mk = (filePath: string): Partial<HttpRequestInput> => ({
       method: 'POST',
       body: { mode: 'formData', formData: [{ key: 'f', value: '', filePath, type: 'file', enabled: true }] },
     })
-    await expect(run(mk(join(fileDir, 'missing.bin')))).rejects.toMatchObject({ code: 'io_error' })
+    await expect(run(mk(join(fileDir, 'missing.bin')))).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(run(mk('relative/file.txt'))).rejects.toMatchObject({ code: 'invalid_input' })
     expect(server.requests.length).toBe(0)
   })
@@ -200,6 +201,7 @@ describe('body modes', () => {
     const bytes = Buffer.from([0, 1, 2, 0xff, 0xfe, 0x80, 0x00, 0x7f])
     const filePath = join(fileDir, 'blob.bin')
     writeFileSync(filePath, bytes)
+    await pickAndGrant(env, filePath)
     await run({ method: 'PUT', body: { mode: 'binary', binaryFilePath: filePath } })
     expect(server.last().method).toBe('PUT')
     expect(server.last().headers['content-type']).toBe('application/octet-stream')

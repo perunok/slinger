@@ -27,7 +27,6 @@ class CloudStore {
   client(): CloudClient {
     return new CloudClient({
       baseUrl: this.config.apiBaseUrl,
-      workspaceId: app.workspaceId ?? '',
       onSignedOut: () => this.#markSignedOut(),
     })
   }

@@ -1,11 +1,10 @@
 import { errorInfo } from '../../lib/ipc'
 /**
- * The single typed cloud HTTP client. Requests go through window.slinger.executeHttpRequest
- * (main-process transport, avoids CORS). NOTE: that IPC records a history entry per call;
- * accepted for now, may be noisy.
+ * The single typed cloud HTTP client. Requests go through window.slinger.cloudFetch
+ * (main-process transport, avoids CORS). That IPC never records history and cannot read local files.
  */
 import { api } from '../../lib/ipc'
-import type { HttpRequestInput } from '../../../shared/types'
+import type { CloudFetchInput } from '../../../shared/types'
 import { endpoints, joinUrl } from './endpoints'
 import { clearTokens, loadTokens, saveTokens } from './session'
 import {
@@ -19,8 +18,6 @@ import {
 
 export interface ClientOptions {
   baseUrl: string
-  /** Local workspace id, only used to label the history entry. */
-  workspaceId: string
   /** Called after a failed refresh cleared the stored tokens. */
   onSignedOut?: () => void
 }
@@ -57,21 +54,14 @@ export class CloudClient {
     const headers = [{ key: 'Accept', value: 'application/json' }]
     if (body !== undefined) headers.push({ key: 'Content-Type', value: 'application/json' })
     if (token) headers.push({ key: 'Authorization', value: `Bearer ${token}` })
-    const input: HttpRequestInput = {
+    const input: CloudFetchInput = {
       method,
       url: joinUrl(this.opts.baseUrl, path),
       headers,
-      auth: { kind: 'none' },
-      body:
-        body === undefined
-          ? { mode: 'none' }
-          : { mode: 'raw', raw: { content: JSON.stringify(body), contentType: 'application/json' } },
-      requestId: null,
-      requestName: `Cloud ${method} ${path}`,
-      workspaceId: this.opts.workspaceId,
+      body: body === undefined ? null : { content: JSON.stringify(body), contentType: 'application/json' },
     }
     try {
-      return await api().executeHttpRequest(input)
+      return await api().cloudFetch(input)
     } catch (e) {
       throw new CloudApiError(0, errorInfo(e).message || 'Network error', 'network_error')
     }

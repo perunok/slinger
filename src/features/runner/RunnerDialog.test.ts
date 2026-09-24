@@ -51,6 +51,24 @@ describe('RunnerDialog', () => {
     expect(rows[0]).toHaveTextContent('Slinger mock')
   })
 
+  it('fails a 3xx by default and passes it with "Treat 3xx as pass"', async () => {
+    await setup([['Redirect', `${H}/302`]])
+    await fireEvent.click(screen.getByRole('button', { name: 'Run 1 request' }))
+    let summary = await screen.findByTestId('summary', {}, { timeout: 3000 })
+    expect(summary).toHaveTextContent('1 failed')
+    const row = within(screen.getByRole('list', { name: 'Run results' })).getAllByRole('listitem')[0]
+    expect(row).toHaveAttribute('data-status', 'failed')
+    expect(row).toHaveTextContent('302')
+    expect(row).toHaveTextContent('HTTP 302')
+    await fireEvent.click(screen.getByRole('button', { name: 'Configure' }))
+    const box = screen.getByRole('checkbox', { name: 'Treat 3xx as pass' })
+    expect(box).not.toBeChecked()
+    await fireEvent.click(box)
+    await fireEvent.click(screen.getByRole('button', { name: 'Run 1 request' }))
+    summary = await screen.findByTestId('summary', {}, { timeout: 3000 })
+    expect(summary).toHaveTextContent('1 passed')
+  })
+
   it('respects the selection', async () => {
     const mock = await setup([['A', `${H}/json`], ['B', `${H}/text`]])
     await fireEvent.click(screen.getByRole('button', { name: 'Select none' }))

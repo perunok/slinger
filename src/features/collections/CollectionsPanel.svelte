@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { expandedStore } from '../../app/expanded.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
   import { ui } from '../../app/ui.svelte'
@@ -13,17 +14,7 @@
   import { buildRows, rowKey, type TreeRowModel } from './rows'
   import TreeRow, { type DropHint } from './TreeRow.svelte'
 
-  const LS_EXPANDED = 'slinger.expanded'
-  function loadExpanded(): Set<string> {
-    try {
-      const raw = localStorage.getItem(LS_EXPANDED)
-      if (raw) return new Set(JSON.parse(raw) as string[])
-    } catch {
-      /* ignore */
-    }
-    return new Set()
-  }
-  let expanded = $state(loadExpanded())
+  const expanded = $derived(expandedStore.keys)
   let filter = $state('')
   let focusKey = $state<string | null>(null)
   let menu = $state<{ x: number; y: number; row: TreeRowModel } | null>(null)
@@ -40,20 +31,7 @@
   const rows = $derived(buildRows({ collections: app.collections, folders: app.folders, requests: app.requests, expanded, filter }))
   const activeRequestId = $derived(tabsStore.active?.requestId ?? null)
 
-  function persist() {
-    try {
-      localStorage.setItem(LS_EXPANDED, JSON.stringify([...expanded]))
-    } catch {
-      /* ignore */
-    }
-  }
-  function setExpanded(key: string, open: boolean) {
-    const next = new Set(expanded)
-    if (open) next.add(key)
-    else next.delete(key)
-    expanded = next
-    persist()
-  }
+  const setExpanded = (key: string, open: boolean) => expandedStore.set(key, open)
   // First run: open the first collection so the tree is not blank.
   let seeded = false
   $effect(() => {

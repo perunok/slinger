@@ -169,6 +169,12 @@ describe('http and history', () => {
     expect(await api.listHistory('w1')).toEqual([])
   })
 
+  it('cloudFetch reaches the network layer but never records history', async () => {
+    const res = await api.cloudFetch({ method: 'GET', url: 'https://mock.slinger.local/json', headers: [] })
+    expect(res.status).toBe(200)
+    expect(await api.listHistory('w1')).toEqual([])
+  })
+
   it('echoes request details, adding auth and content type', async () => {
     const res = await api.executeHttpRequest(
       run({
@@ -219,7 +225,7 @@ describe('collection versions', () => {
     expect((await api.listCollectionVersions(col.id)).map((v) => v.version)).toEqual(['1.10.0', '1.10.0-beta.1', '1.0.0'])
   })
 
-  it('restores with replace (same ids) and copy (fresh ids)', async () => {
+  it('restores with replace and copy (both give fresh ids, like the real backend)', async () => {
     const { ws, col } = await setup()
     const f = await api.createFolder({ workspaceId: ws.id, collectionId: col.id, name: 'F' })
     const r = await mkRequest(ws.id, col.id, 'orig', f.id)
@@ -238,9 +244,10 @@ describe('collection versions', () => {
 
     await api.restoreCollectionVersion(v.id, 'replace')
     const live = await api.listRequests(col.id)
-    expect(live.map((x) => [x.id, x.name])).toEqual([[r.id, 'orig']])
-    expect(live[0].version).toBeGreaterThan(r.version)
-    expect((await api.listFolders(col.id))[0].id).toBe(f.id)
+    expect(live.map((x) => x.name)).toEqual(['orig'])
+    expect(live[0].id).not.toBe(r.id)
+    expect((await api.listFolders(col.id))[0].id).not.toBe(f.id)
+    expect((await api.listFolders(col.id))[0].name).toBe('F')
 
     const detail = await api.getCollectionVersion(v.id)
     expect(detail.snapshot.requests).toHaveLength(1)

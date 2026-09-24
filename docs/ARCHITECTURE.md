@@ -57,11 +57,11 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 50 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 52 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections, folders, requests, history, HTTP
-(`executeHttpRequest`, `cancelHttpRequest`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
+(`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
-`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`.
+`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -153,8 +153,8 @@ additions `params` and `settings.timeoutMs`). The main process treats it as an o
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome.
 
-The cloud client (`src/features/cloud/client.ts`) uses the same `executeHttpRequest` path to avoid CORS, so cloud calls also
-appear in history.
+The cloud client (`src/features/cloud/client.ts`) uses the separate `cloudFetch` IPC (same fetch stack, avoids CORS) which
+never records history and cannot read local files; only `executeHttpRequest` (the user's own requests) writes history.
 
 ## Collection versioning
 
@@ -173,7 +173,11 @@ runs in the renderer on snapshots.
 Export writes take a **file name** only (`ExportFiles`): reduced to a basename, control/reserved characters replaced, Windows
 device names rejected, max 200 chars, written inside the chosen (`chooseExportDirectory`) or default (Downloads, else home)
 directory, refusing symlinks and directories, capped at 256 MB, base64 strictly validated. `openExternalUrl` accepts http/https
-only. `pickFile` opens a native open dialog and returns an absolute path (used for form-data files and binary bodies).
+only. `pickFile` opens a native open dialog and returns an absolute path (used for form-data files and binary bodies); the main
+process then adds that file's real path to an in-memory allowlist (`FileGrants`). `executeHttpRequest` reads a local file only
+if its real path (symlinks and `..` resolved) is on the list, otherwise it fails with `invalid_input`; grants reset on restart, so
+file fields saved in a request show "file not granted, choose again" in a new session (`grantedFiles` reports which paths are
+granted).
 `prepareBrowserAuthCallback` binds a one-shot `127.0.0.1` listener on a random port at `/auth/callback/<id>` (10 minute
 maximum lifetime) and `waitForBrowserAuthCallback` resolves with the query parameters; it exists in the API but the current
 cloud panel signs in with the device-code flow instead.

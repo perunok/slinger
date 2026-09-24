@@ -4,6 +4,7 @@
   import CodeEditor from '../../components/editor/CodeEditor.svelte'
   import KeyValueTable from '../../components/kv/KeyValueTable.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import { trackGrantedFiles } from '../../lib/fileGrants.svelte'
   import { api, errorInfo } from '../../lib/ipc'
   import { beautifyJson, checkJson } from '../../lib/jsonTemplate'
   import { RAW_LANGUAGES, type BodyKind, type RawLanguage } from '../../lib/request'
@@ -28,10 +29,16 @@
     else toast.error('Cannot beautify', r.error)
   }
 
+  const grants = trackGrantedFiles(() => (b.kind === 'binary' && b.binaryPath ? [b.binaryPath] : []))
+  const binaryStale = $derived(grants.isStale(b.binaryPath))
+
   async function pickBinary() {
     try {
-      const p = await api().pickFile({ title: 'Choose a file to send as the request body' })
-      if (p) tab.draft.body.binaryPath = p
+      const p = await api().pickFile({ title: 'Choose a file to send as the request body', defaultPath: b.binaryPath || undefined })
+      if (p) {
+        grants.markGranted(p)
+        tab.draft.body.binaryPath = p
+      }
     } catch (e) {
       toast.error('Could not open the file picker', errorInfo(e).message)
     }
@@ -94,8 +101,10 @@
     </div>
   {:else if b.kind === 'binary'}
     <div class="flex items-center gap-3 py-2">
-      <Button icon="upload" onclick={pickBinary}>{b.binaryPath ? 'Change file' : 'Choose file'}</Button>
-      <span class="min-w-0 truncate text-sm {b.binaryPath ? '' : 'text-muted'}" title={b.binaryPath}>{b.binaryPath || 'No file selected'}</span>
+      <Button icon="upload" onclick={pickBinary}>{binaryStale ? 'Choose again' : b.binaryPath ? 'Change file' : 'Choose file'}</Button>
+      <span class="min-w-0 truncate text-sm {binaryStale ? 'text-warning' : b.binaryPath ? '' : 'text-muted'}" title={b.binaryPath} data-testid="file-status">
+        {b.binaryPath || 'No file selected'}{#if binaryStale} - file not granted, choose again{/if}
+      </span>
       {#if b.binaryPath}<Button size="sm" variant="ghost" onclick={() => (tab.draft.body.binaryPath = '')}>Clear</Button>{/if}
     </div>
     <p class="text-xs text-faint">The selected file is sent as the raw request body when you send the request.</p>

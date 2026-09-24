@@ -27,7 +27,7 @@ you opt into the (still minimal) cloud panel.
 
 ## Requirements
 
-- Node.js 20 or newer and npm (no `engines` field is declared; Electron 33 embeds Node 20 and the main bundle targets it).
+- Node.js 20 or newer and npm (`engines.node >= 20` is declared; Electron 33 embeds Node 20 and the main bundle targets it).
 - A working native toolchain is only needed if a prebuilt `better-sqlite3` / `@napi-rs/keyring` binary is unavailable for your platform.
 - Linux: a Secret Service provider (GNOME Keyring, KWallet, ...) for secret variables and cloud tokens. Without one the app
   still runs; only secret operations fail with a clear error.
@@ -67,11 +67,11 @@ The Electron user-data directory holds one file, `slinger.db` (SQLite, WAL mode)
 
 | OS | Packaged app | Unpackaged dev (`electron:dev`) |
 | --- | --- | --- |
-| Linux | `~/.config/Slinger/` | `~/.config/slinger/` |
-| macOS | `~/Library/Application Support/Slinger/` | `~/Library/Application Support/slinger/` |
-| Windows | `%APPDATA%\Slinger\` | `%APPDATA%\slinger\` |
+| Linux | `~/.config/Slinger/` | `~/.config/Slinger/` |
+| macOS | `~/Library/Application Support/Slinger/` | `~/Library/Application Support/Slinger/` |
+| Windows | `%APPDATA%\Slinger\` | `%APPDATA%\Slinger\` |
 
-Set `SLINGER_USER_DATA_DIR` to use a different directory (used by tests). Theme, font size, wrap, the active environment per
+Dev and packaged builds share this directory (`productName` is set in `package.json`); an older lowercase `slinger` dev directory is moved over once on first start. Set `SLINGER_USER_DATA_DIR` to use a different directory (used by tests). Theme, font size, wrap, the active environment per
 workspace, cloud API URL/device name and cloud workspace links are stored in the renderer's `localStorage`
 (inside the same Electron profile), not in the database.
 

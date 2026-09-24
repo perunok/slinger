@@ -118,6 +118,9 @@ export function cannedResponse(req: CannedRequest): CannedResponse {
       return json({ error: 'not_found', message: 'Resource does not exist' }, 404, 'Not Found')
     case '/500':
       return json({ error: 'internal_error', message: 'Something went wrong' }, 500, 'Internal Server Error')
+    case '/302':
+      // A redirect that was not followed to a final 2xx (e.g. no usable target): the runner must not pass it.
+      return json({ redirect: true }, 302, 'Found')
     case '/slow':
       return { ...json({ ok: true, waitedMs: 3000 }), delayMs: 3000 }
     case '/echo':

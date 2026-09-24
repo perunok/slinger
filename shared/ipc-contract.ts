@@ -13,6 +13,7 @@
 import type {
   ApiFolder,
   ApiRequest,
+  CloudFetchInput,
   Collection,
   CollectionVersion,
   CollectionVersionDetail,
@@ -82,6 +83,8 @@ export interface SlingerIpcApi {
   // HTTP execution
   executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData>
   cancelHttpRequest(requestRunId: string): Promise<void>
+  /** Internal cloud API transport: same network stack, but never recorded in history and no file access. */
+  cloudFetch(input: CloudFetchInput): Promise<HttpResponseData>
 
   // Postman import/export
   importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
@@ -118,6 +121,11 @@ export interface SlingerIpcApi {
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
   pickFile(options?: PickFileOptions): Promise<string | null>
+  /**
+   * Which of these saved file paths the user has granted in this session (via pickFile). Local files
+   * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
+   */
+  grantedFiles(paths: string[]): Promise<string[]>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -155,6 +163,7 @@ export const IPC_CHANNELS = [
   'deleteHistoryEntry',
   'executeHttpRequest',
   'cancelHttpRequest',
+  'cloudFetch',
   'importPostmanCollection',
   'defaultExportPath',
   'writeExportFile',
@@ -172,6 +181,7 @@ export const IPC_CHANNELS = [
   'waitForBrowserAuthCallback',
   'getAppVersion',
   'pickFile',
+  'grantedFiles',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]

@@ -22,6 +22,7 @@ const index = z.number().int().min(0)
 const pickFileOptions = z
   .object({
     title: z.string().max(200).optional(),
+    defaultPath: z.string().max(4096).optional(),
     filters: z
       .array(
         z.object({
@@ -76,6 +77,14 @@ const httpRequestInput = z.object({
   workspaceId: uuid,
   requestRunId: z.string().max(128).nullish(),
   historyUrl: z.string().max(100_000).nullish(),
+})
+
+const cloudFetchInput = z.object({
+  method: z.string().min(1).max(32),
+  url: z.string().max(100_000),
+  headers: z.array(requestHeader).max(100),
+  body: z.object({ content: z.string().max(10_000_000), contentType: z.string().max(1024) }).nullish(),
+  timeoutMs: z.number().int().positive().max(3_600_000).optional(),
 })
 
 const createRequestInput = z.object({
@@ -221,6 +230,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerIpcApi 
 
     // HTTP execution
     executeHttpRequest: async (...a) => core.http.execute(parseArgs(z.tuple([httpRequestInput]), a)[0]),
+    cloudFetch: async (...a) => core.http.fetchInternal(parseArgs(z.tuple([cloudFetchInput]), a)[0]),
     cancelHttpRequest: async (...a) => core.http.cancel(parseArgs(z.tuple([z.string().max(128)]), a)[0]),
 
     // Postman import/export
@@ -238,8 +248,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerIpcApi 
     },
     pickFile: async (...a) => {
       const [options] = parseArgs(z.tuple([pickFileOptions.optional()]), a)
-      return platform.pickFile(options ?? {})
+      const path = await platform.pickFile(options ?? {})
+      // Only a path the OS dialog just returned is ever granted; the renderer cannot grant anything itself.
+      if (path) await core.fileGrants.grant(path)
+      return path
     },
+    grantedFiles: async (...a) => core.fileGrants.filterGranted(parseArgs(z.tuple([z.array(z.string().max(4096)).max(2000)]), a)[0]),
     chooseExportDirectory: async (...a) => {
       parseArgs(z.tuple([]), a)
       const dir = await platform.chooseDirectory()

@@ -38,7 +38,7 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent.
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
   the body mode and `User-Agent: Slinger`); a header you set yourself wins.
-- **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog), `x-www-form-urlencoded`, `raw`
+- **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
   (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
   a body.
 - **Authorization:** No Auth, Basic Auth, Bearer Token, or API Key (added to a header or as a query parameter). Fields accept
@@ -86,8 +86,8 @@ folder). Non-2xx responses are shown normally; network errors, timeouts and canc
 
 Right-click a collection or folder and choose **Run collection...** / **Run folder...**. Pick which requests to run, set the delay
 between requests (ms) and optionally **Stop on first failure**, then run. Requests run sequentially in tree order using the active
-environment; each row shows status, time and, expanded, headers and a body preview. A row fails on an HTTP status of 400 or higher or on a network error, and passes
-otherwise; requests with unresolved variables are skipped with the reason. You can stop a running run.
+environment; each row shows status, time and, expanded, headers and a body preview. A row passes on a 2xx status only (redirects are followed first, so a remaining 3xx means the redirect did not end in a 2xx); 3xx, 4xx, 5xx and
+network errors fail, unless you tick **Treat 3xx as pass**; requests with unresolved variables are skipped with the reason. You can stop a running run.
 Runner requests are recorded in History.
 
 ## History

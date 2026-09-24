@@ -14,6 +14,7 @@ type MiscApi = Pick<
   | 'waitForBrowserAuthCallback'
   | 'getAppVersion'
   | 'pickFile'
+  | 'grantedFiles'
 > & { resetSecureStore(): void }
 
 const STORAGE_KEY = 'slinger.mock.secureStore'
@@ -54,6 +55,7 @@ function download(fileName: string, contents: string, encoding: 'utf8' | 'base64
 export function createMiscApi(): MiscApi {
   let secure = loadSecure()
   let pickIndex = 0
+  const granted = new Set<string>()
   let exportDir = '/home/user/Downloads'
   return {
     async defaultExportPath(fileName) {
@@ -94,7 +96,13 @@ export function createMiscApi(): MiscApi {
     },
     async pickFile() {
       const name = PICK_NAMES[pickIndex++ % PICK_NAMES.length]
-      return `/home/user/Documents/${name}`
+      const path = `/home/user/Documents/${name}`
+      granted.add(path)
+      return path
+    },
+    // Mirrors the main process: only paths chosen with pickFile in this session count as granted.
+    async grantedFiles(paths) {
+      return paths.filter((p) => granted.has(p))
     },
     resetSecureStore() {
       secure = new Map()

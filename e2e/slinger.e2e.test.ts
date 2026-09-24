@@ -261,6 +261,7 @@ describe('request bodies and responses', () => {
     expect(body).toContain('hello alice')
     expect(body).toContain('name="doc"; filename="upload.txt"')
     expect(body).toContain('file-contents-for-multipart')
+    await save() // kept for the "file not granted after restart" check below
   })
 
   it('shows a PNG response as an image and saves the exact bytes', async () => {
@@ -346,6 +347,36 @@ describe('errors', () => {
     await page.getByRole('tab', { name: 'Collections' }).click()
   })
 
+  it('never lets the renderer read a file the user did not pick, and cloudFetch leaves no history', async () => {
+    const other = join(tmp, 'not-picked.txt')
+    writeFileSync(other, 'private')
+    const outcome = await page.evaluate(
+      async ({ file, url }) => {
+        const s = window.slinger
+        const ws = (await s.listWorkspaces())[0]!
+        const historyBefore = (await s.listHistory(ws.id)).length
+        let code = ''
+        try {
+          await s.executeHttpRequest({
+            method: 'PUT', url: `${url}/leak`, headers: [], auth: { kind: 'none' },
+            body: { mode: 'binary', binaryFilePath: file }, workspaceId: ws.id,
+          })
+        } catch (e) {
+          code = (e as { code?: string }).code ?? ''
+        }
+        const historyAfterFailedFile = (await s.listHistory(ws.id)).length
+        const res = await s.cloudFetch({ method: 'GET', url: `${url}/cloud-ping`, headers: [] })
+        return { code, status: res.status, historyBefore, historyAfterFailedFile, historyAfterCloud: (await s.listHistory(ws.id)).length }
+      },
+      { file: other, url: target.url },
+    )
+    expect(outcome.code).toBe('invalid_input')
+    expect(outcome.status).toBe(200)
+    expect(target.requests.some((r) => r.url === '/leak')).toBe(false)
+    expect(target.requests.some((r) => r.url === '/cloud-ping')).toBe(true)
+    expect(outcome.historyAfterCloud).toBe(outcome.historyAfterFailedFile)
+  })
+
   it('refuses to send while a variable is unresolved and names it', async () => {
     await newRequest(/^Col A/, 'Unresolved', 'GET', '{{doesNotExist}}/x')
     await page.getByRole('button', { name: 'Send', exact: true }).click()
@@ -373,6 +404,38 @@ describe('collection runner', () => {
     await expect.poll(() => dialog.getByRole('list', { name: 'Run results' }).innerText()).toMatch(/run-one[\s\S]*run-two/)
     await expect.poll(() => target.requests.slice(before).map((r) => r.url)).toEqual(['/runner/one', '/runner/two'])
     await expect.poll(() => dialog.getByRole('button', { name: 'Run again' }).count()).toBe(1)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  })
+})
+
+describe('collection runner: 3xx', () => {
+  it('fails an unfollowed 3xx by default, passes a followed redirect, and honours "Treat 3xx as pass"', async () => {
+    await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = await s.createCollection(ws.id, 'Redirect C')
+      for (const [name, path] of [['redirect-followed', 'ok'], ['redirect-dead-end', 'nowhere']] as const) {
+        await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name, method: 'GET', url: `{{baseUrl}}/redirect/${path}`, documentJson: JSON.stringify({ headers: [], body: null }) })
+      }
+    })
+    await page.reload()
+    await item(/^Redirect C/).waitFor()
+    await contextMenu(item(/^Redirect C/), 'Run collection…')
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: /^Run 2/ }).click()
+    await expect.poll(() => dialog.getByTestId('summary').innerText()).toContain('1 passed')
+    const rows = dialog.getByRole('list', { name: 'Run results' }).getByRole('listitem')
+    // order is tree order; find rows by name to stay independent of it
+    const followed = rows.filter({ hasText: 'redirect-followed' })
+    const dead = rows.filter({ hasText: 'redirect-dead-end' })
+    expect(await followed.getAttribute('data-status')).toBe('passed')
+    expect(await followed.innerText()).toContain('200') // status is shown per row
+    expect(await dead.getAttribute('data-status')).toBe('failed')
+    expect(await dead.innerText()).toContain('302')
+    await dialog.getByRole('button', { name: 'Configure' }).click()
+    await dialog.getByRole('checkbox', { name: 'Treat 3xx as pass' }).check()
+    await dialog.getByRole('button', { name: /^Run 2/ }).click()
+    await expect.poll(() => dialog.getByTestId('summary').innerText()).toContain('2 passed')
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   })
 })
@@ -406,7 +469,12 @@ describe('collection versions', () => {
     await page.getByRole('button', { name: 'Cancel' }).click()
   })
 
-  it('restores 1.0.0 in place: the later request disappears and open tabs survive', async () => {
+  it('restores 1.0.0 in place: the folder stays expanded and the replaced Echo tab can be reopened', async () => {
+    // Open Echo (clean) before restoring, so there is a tab the restore has to replace.
+    await versionsDialog().getByRole('button', { name: 'Close dialog' }).click()
+    await item(/Echo$/).click()
+    await page.getByRole('tab', { name: /Echo/ }).waitFor()
+    await contextMenu(item(/^Col A/), 'Versions…')
     await versionsDialog().getByRole('option', { name: /1\.0\.0/ }).click()
     await versionsDialog().getByRole('button', { name: /Restore/ }).click()
     await page.getByRole('radio', { name: /Replace/ }).check()
@@ -418,12 +486,15 @@ describe('collection versions', () => {
       return (await window.slinger.listRequests(col.id)).map((r) => r.name)
     })).includes('Added Later')).toBe(false)
     if (await versionsDialog().count()) await versionsDialog().getByRole('button', { name: 'Close dialog' }).click()
-    await reveal(/Echo$/)
+    // The folder keeps its expanded state (ids differ, but the folder is matched by name/path):
+    // the restored request is visible without clicking the folder open again.
+    await item(/Echo$/).waitFor()
     expect(await item(/Added Later/).count()).toBe(0)
-    // Replace-restore recreates requests with new ids, so the old (clean) Echo tab was closed
-    // by the renderer; opening the restored request from the tree works and uses the secret.
+    // Replace-restore recreates requests with new ids, so the old (clean) Echo tab was closed;
+    // the app offers to reopen the restored request of the same name.
     expect(await page.getByRole('tab', { name: /Echo/ }).count()).toBe(0)
-    await item(/Echo$/).click()
+    await page.getByRole('button', { name: 'Reopen restored request' }).click()
+    await page.getByRole('tab', { name: /Echo/ }).waitFor()
     await send()
     expect(await response().getByTestId('status-chip').innerText()).toContain('200')
     expect(target.requests.at(-1)!.headers.authorization).toBe(`Bearer ${SECRET}`)
@@ -513,6 +584,21 @@ describe('persistence across restart', () => {
     await item(/Echo$/).click()
     await send()
     expect(target.requests.at(-1)!.headers.authorization).toBe(`Bearer ${SECRET}`)
+  })
+
+  it('a saved file field is not granted in the new session: it says so, refuses to send, and Choose again re-grants', async () => {
+    await reveal(/Upload$/, /^Col A/)
+    await item(/Upload$/).click()
+    await page.getByRole('tab', { name: 'Body' }).click()
+    await expect.poll(() => page.getByTestId('file-status').innerText()).toContain('file not granted')
+    const before = target.requests.length
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect.poll(() => response().innerText()).toMatch(/not granted/i)
+    expect(target.requests.length).toBe(before)
+    await page.getByRole('button', { name: 'Choose again' }).click()
+    await expect.poll(() => page.getByTestId('file-status').innerText()).not.toContain('not granted')
+    await send()
+    expect(target.requests.at(-1)!.body.toString()).toContain('file-contents-for-multipart')
   })
 
   it('never wrote the secret to the renderer or to the database files', async () => {

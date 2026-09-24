@@ -7,6 +7,7 @@ import { WorkspaceRepository } from '../repositories/workspaces'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
 import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
+import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
 import type { SecretStore } from './secrets'
 
@@ -31,12 +32,14 @@ export interface Core {
   http: HttpService
   authCallbacks: BrowserAuthCallbacks
   exportFiles: ExportFiles
+  fileGrants: FileGrants
 }
 
 export function createCore(deps: CoreDeps): Core {
   if (deps.migrationsDir) runMigrations(deps.db, deps.migrationsDir)
   const { db, secrets } = deps
   const history = new HistoryRepository(db)
+  const fileGrants = new FileGrants()
   const core: Core = {
     db,
     secrets,
@@ -46,9 +49,10 @@ export function createCore(deps: CoreDeps): Core {
     folders: new FolderRepository(db),
     requests: new RequestRepository(db),
     history,
-    http: new HttpService(history),
+    http: new HttpService(history, fileGrants),
     authCallbacks: new BrowserAuthCallbacks(),
     exportFiles: deps.exportFiles ?? new ExportFiles(),
+    fileGrants,
   }
   // First launch: make sure there is always a workspace to work in.
   core.workspaces.ensureDefault()

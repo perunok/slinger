@@ -33,6 +33,22 @@ export interface RunRow {
 export interface RunOptions {
   delayMs: number
   stopOnFailure: boolean
+  /** Count a final 3xx response as a pass (default false: see `classifyStatus`). */
+  treat3xxAsPass?: boolean
+}
+
+/**
+ * What "pass" means for a run row. The HTTP executor follows redirects itself, so a 3xx that
+ * reaches the runner is a redirect that did NOT end in a 2xx (no Location, 304/300, ...):
+ *   2xx           passes
+ *   3xx           fails, unless `treat3xxAsPass` is set
+ *   1xx, 4xx, 5xx fail
+ * Network errors, timeouts and unresolved variables never reach this function; they fail too.
+ */
+export function classifyStatus(status: number, opts: { treat3xxAsPass?: boolean } = {}): { passed: boolean; reason: string | null } {
+  if (status >= 200 && status < 300) return { passed: true, reason: null }
+  if (status >= 300 && status < 400 && opts.treat3xxAsPass) return { passed: true, reason: null }
+  return { passed: false, reason: `HTTP ${status}` }
 }
 
 export type RunPhase = 'idle' | 'running' | 'done'
@@ -228,14 +244,18 @@ export class CollectionRun {
       const text = res.bodyText
       const preview =
         text !== null ? text.slice(0, BODY_PREVIEW_CHARS) : res.bodyBase64 !== null ? `(binary body, ${res.bodyByteLength} bytes)` : null
-      const failed = res.status >= 400
+      const verdict = classifyStatus(res.status, { treat3xxAsPass: this.#options.treat3xxAsPass })
+      const failed = !verdict.passed
+      const detail = res.statusText ? ` ${res.statusText}` : ''
       return {
         ...base,
         status: failed ? 'failed' : 'passed',
         statusCode: res.status,
         statusText: res.statusText,
         durationMs: res.durationMs,
-        reason: failed ? `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}` : null,
+        reason: failed
+          ? `HTTP ${res.status}${detail}${res.status >= 300 && res.status < 400 ? ' (redirect did not end in a 2xx response)' : ''}`
+          : null,
         headers: res.headers,
         bodyPreview: preview,
         bodyTruncated: text !== null && text.length > BODY_PREVIEW_CHARS,

@@ -54,6 +54,15 @@ export async function startTarget(): Promise<{ url: string; requests: Recorded[]
         res.writeHead(200, { 'Content-Type': 'application/octet-stream' })
         return void res.end(Buffer.from([0, 255, 254, 1, 2, 3, 128, 200]))
       }
+      if (path === '/redirect/ok') {
+        res.writeHead(302, { Location: '/redirect/landed' })
+        return void res.end()
+      }
+      if (path === '/redirect/nowhere') {
+        // A 3xx without a Location: fetch cannot follow it, so the client sees the 302 itself.
+        res.writeHead(302)
+        return void res.end()
+      }
       const auth = req.headers.authorization
       res.writeHead(200, { 'Content-Type': 'application/json', 'X-Echo-Path': path ?? '' })
       res.end(

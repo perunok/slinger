@@ -17,7 +17,10 @@ export function res(status: number, body?: unknown): HttpResponseData {
 export function installFakeSlinger(exec = vi.fn()) {
   const store = new Map<string, string>()
   const fake = {
-    executeHttpRequest: exec,
+    cloudFetch: exec,
+    executeHttpRequest: vi.fn(async () => {
+      throw new Error('cloud calls must not use executeHttpRequest (it records history)')
+    }),
     secureStoreGet: vi.fn(async (k: string) => store.get(k) ?? null),
     secureStoreSet: vi.fn(async (k: string, v: string) => void store.set(k, v)),
     secureStoreDelete: vi.fn(async (k: string) => void store.delete(k)),

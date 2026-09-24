@@ -18,6 +18,17 @@
       <div class="min-w-0 flex-1">
         <div class="text-sm font-medium">{t.title}</div>
         {#if t.detail}<div class="mt-0.5 break-words text-xs text-muted">{t.detail}</div>{/if}
+        {#if t.action}
+          {@const action = t.action}
+          <button
+            type="button"
+            class="mt-1.5 rounded border border-strong px-2 py-0.5 text-xs font-medium hover:bg-hover"
+            onclick={() => {
+              toast.dismiss(t.id)
+              action.run()
+            }}>{action.label}</button
+          >
+        {/if}
       </div>
       <IconButton icon="x" label="Dismiss notification" size={13} onclick={() => toast.dismiss(t.id)} />
     </div>

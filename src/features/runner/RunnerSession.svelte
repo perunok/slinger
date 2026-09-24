@@ -33,6 +33,7 @@
   let selected = $state<Set<string>>(new Set(items.map((i) => i.id)))
   let delayText = $state('0')
   let stopOnFailure = $state(false)
+  let treat3xxAsPass = $state(false)
   let run = $state.raw<CollectionRun | null>(null)
   let view = $state.raw<RunState | null>(null)
   let expanded = $state<Set<string>>(new Set())
@@ -57,7 +58,7 @@
     exportError = null
     const r = new CollectionRun(
       chosen,
-      { delayMs, stopOnFailure },
+      { delayMs, stopOnFailure, treat3xxAsPass },
       {
         execute: (item, hooks) =>
           executeDraft(parseDocument(item.request), {
@@ -174,7 +175,12 @@
             <input type="checkbox" bind:checked={stopOnFailure} />
             Stop on first failure
           </label>
+          <label class="flex items-center gap-2 pb-1.5 text-sm" title="By default only 2xx passes; a 3xx that redirect-following did not turn into a 2xx fails.">
+            <input type="checkbox" bind:checked={treat3xxAsPass} />
+            Treat 3xx as pass
+          </label>
         </div>
+        <p class="text-xs text-muted">A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</p>
         <p class="text-xs text-muted">Requests run one after another exactly like Send: templates, secrets and auth of the active environment apply.</p>
       {/if}
     </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { CollectionVersion, CollectionVersionDetail, RestoreCollectionVersionMode } from '../../../shared/types'
+  import { expandedStore } from '../../app/expanded.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
@@ -9,8 +10,10 @@
   import InlineError from '../../components/ui/InlineError.svelte'
   import { api, errorInfo } from '../../lib/ipc'
   import { sortVersionsDesc } from '../../lib/semver'
+  import { tabsStore } from '../requests/tabs.svelte'
   import CreateVersionDialog from './CreateVersionDialog.svelte'
   import RestoreDialog from './RestoreDialog.svelte'
+  import { mapRestored, remapExpandedKeys } from './restoreRemap'
   import VersionDetail from './VersionDetail.svelte'
   import VersionList from './VersionList.svelte'
 
@@ -84,9 +87,45 @@
   async function restore(mode: RestoreCollectionVersionMode) {
     if (!selected) return
     const v = selected
+    // A replace gives every folder/request a new id. Remember the layout and the clean open tabs
+    // (reloading closes tabs whose request id vanished) so both can be carried over by name/path.
+    const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }
+    const cleanTabs = tabsStore.tabs.filter((t) => t.requestId && !t.dirty && before.requests.some((r) => r.id === t.requestId))
+    const wasActive = tabsStore.active?.requestId ?? null
+    const openedNames = new Map(cleanTabs.map((t) => [t.requestId!, t.draft.name]))
     await api().restoreCollectionVersion(v.id, mode)
     await app.reloadCollections()
+    if (mode === 'replace') carryOverUi(before, openedNames, wasActive)
     toast.success(mode === 'copy' ? `Restored v${v.version} as a new collection` : `Replaced "${name}" with v${v.version}`)
+  }
+
+  /** Keeps expanded folders open and offers to reopen tabs whose request came back under a new id. */
+  function carryOverUi(
+    before: { folders: typeof app.folders; requests: typeof app.requests },
+    openedNames: Map<string, string>,
+    wasActive: string | null,
+  ) {
+    const map = mapRestored(before, { folders: app.foldersOf(collectionId), requests: app.requestsOf(collectionId) })
+    expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
+    const reopen = [...openedNames.keys()].map((oldId) => ({ oldId, newId: map.requests.get(oldId) })).filter((x) => x.newId)
+    if (reopen.length === 0) return
+    const names = reopen.map((x) => openedNames.get(x.oldId)).join(', ')
+    toast.offer(
+      reopen.length === 1 ? 'Tab closed by the restore' : `${reopen.length} tabs closed by the restore`,
+      `${names} ${reopen.length === 1 ? 'was' : 'were'} replaced by the restored ${reopen.length === 1 ? 'request' : 'requests'} of the same name.`,
+      {
+        label: reopen.length === 1 ? 'Reopen restored request' : 'Reopen restored requests',
+        run: () => {
+          for (const { oldId, newId } of reopen) {
+            const req = app.requestById(newId!)
+            if (req) tabsStore.openRequest(req)
+          }
+          const active = reopen.find((x) => x.oldId === wasActive)
+          const activeReq = active ? app.requestById(active.newId!) : null
+          if (activeReq) tabsStore.openRequest(activeReq)
+        },
+      },
+    )
   }
 
   async function remove() {

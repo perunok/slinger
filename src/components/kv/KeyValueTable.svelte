@@ -7,6 +7,7 @@
   import { EditorView } from '@codemirror/view'
   import { api, errorInfo } from '../../lib/ipc'
   import { toast } from '../../app/toast.svelte'
+  import { trackGrantedFiles } from '../../lib/fileGrants.svelte'
   import {
     ensureTrailingEmpty,
     findDuplicateKeys,
@@ -97,10 +98,15 @@
     return path.split(/[\\/]/).pop() ?? path
   }
 
+  const grants = trackGrantedFiles(() => (fileFields ? rows.filter((r) => r.kind === 'file').map((r) => r.filePath) : []))
+
   async function chooseFile(row: KvRow) {
     try {
-      const path = await api().pickFile({ title: `Choose a file for "${row.key || noun}"` })
-      if (path) patch(row.id, { filePath: path, kind: 'file' })
+      const path = await api().pickFile({ title: `Choose a file for "${row.key || noun}"`, defaultPath: row.filePath || undefined })
+      if (path) {
+        grants.markGranted(path)
+        patch(row.id, { filePath: path, kind: 'file' })
+      }
     } catch (e) {
       toast.error('Could not open the file picker', errorInfo(e).message)
     }
@@ -141,6 +147,7 @@
       <tbody>
         {#each rows as row, i (row.id)}
           {@const blank = isEmptyRow(row)}
+          {@const stale = grants.isStale(row.filePath)}
           {@const dup = isDuplicate(row, dupSet, duplicates === 'case-insensitive')}
           <tr class="border-t border-border {row.enabled ? '' : 'opacity-60'}" data-row-id={row.id}>
             <td class="px-1 text-center">
@@ -187,8 +194,10 @@
             <td class="px-1 py-0.5" data-col="value">
               {#if fileFields && row.kind === 'file'}
                 <div class="flex items-center gap-1">
-                  <Button size="sm" icon="upload" onclick={() => chooseFile(row)} disabled={readonly}>{row.filePath ? 'Change' : 'Choose file'}</Button>
-                  <span class="min-w-0 truncate text-xs text-muted" title={row.filePath}>{row.filePath ? basename(row.filePath) : 'No file selected'}</span>
+                  <Button size="sm" icon="upload" onclick={() => chooseFile(row)} disabled={readonly}>{stale ? 'Choose again' : row.filePath ? 'Change' : 'Choose file'}</Button>
+                  <span class="min-w-0 truncate text-xs {stale ? 'text-warning' : 'text-muted'}" title={row.filePath} data-testid="file-status">
+                    {row.filePath ? basename(row.filePath) : 'No file selected'}{#if stale} - file not granted, choose again{/if}
+                  </span>
                 </div>
               {:else}
                 <TemplateInput

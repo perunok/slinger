@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiFolder, ApiRequest, HttpResponseData } from '../../../shared/types'
 import type { ExecuteOutcome } from '../requests/execute'
-import { CollectionRun, collectRunItems, resultsToJson, summarize, type RunItem, type RunState } from './runner'
+import { classifyStatus, CollectionRun, collectRunItems, resultsToJson, summarize, type RunItem, type RunState } from './runner'
 
 const req = (id: string, folderId: string | null, sortOrder = 0): ApiRequest => ({
   id, workspaceId: 'w', collectionId: 'c', folderId, name: id, method: 'GET', url: `https://x/${id}`, documentJson: '{}', sortOrder, createdAt: 0, updatedAt: 0, version: 1,
@@ -170,5 +170,37 @@ describe('CollectionRun', () => {
     expect(updates.at(-1)?.completed).toBe(2)
     expect(Math.max(...updates.map((u) => u.completed))).toBe(2)
     expect(JSON.parse(resultsToJson('C', updates.at(-1)!)).summary).toEqual({ passed: 2, failed: 0, skipped: 0, total: 2 })
+  })
+})
+
+describe('pass/fail classification', () => {
+  it('passes 2xx only by default', () => {
+    for (const status of [200, 201, 204, 299]) expect(classifyStatus(status).passed).toBe(true)
+    for (const status of [100, 301, 302, 304, 399, 400, 404, 500, 503]) expect(classifyStatus(status).passed).toBe(false)
+  })
+  it('treat3xxAsPass only widens 3xx', () => {
+    const opts = { treat3xxAsPass: true }
+    expect(classifyStatus(302, opts).passed).toBe(true)
+    expect(classifyStatus(304, opts).passed).toBe(true)
+    expect(classifyStatus(404, opts).passed).toBe(false)
+    expect(classifyStatus(500, opts).passed).toBe(false)
+  })
+
+  const runWith = async (status: number, treat3xxAsPass?: boolean) => {
+    const run = new CollectionRun([item('a')], { delayMs: 0, stopOnFailure: false, treat3xxAsPass }, { execute: async () => ok(status), cancel: async () => {} })
+    return (await run.start()).rows[0]
+  }
+  it('a 3xx row fails by default with an explanatory reason and keeps its status code', async () => {
+    const row = await runWith(302)
+    expect(row).toMatchObject({ status: 'failed', statusCode: 302 })
+    expect(row.reason).toContain('HTTP 302')
+    expect(row.reason).toContain('redirect')
+  })
+  it('a 3xx row passes with treat3xxAsPass', async () => {
+    expect(await runWith(302, true)).toMatchObject({ status: 'passed', statusCode: 302, reason: null })
+  })
+  it('4xx and 5xx fail even with treat3xxAsPass', async () => {
+    expect((await runWith(404, true)).status).toBe('failed')
+    expect((await runWith(500, true)).status).toBe('failed')
   })
 })

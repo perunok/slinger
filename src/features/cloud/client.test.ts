@@ -14,7 +14,7 @@ beforeEach(async () => {
   exec = vi.fn()
   installFakeSlinger(exec)
   signedOut = vi.fn()
-  client = new CloudClient({ baseUrl: BASE, workspaceId: 'w1', onSignedOut: signedOut })
+  client = new CloudClient({ baseUrl: BASE, onSignedOut: signedOut })
   await saveTokens(BASE, { accessToken: 'A1', refreshToken: 'R1' })
 })
 

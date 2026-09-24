@@ -5,7 +5,7 @@ import { buildRequest, type BuiltRequest } from './requestBuilder'
 import type { MockState } from './store'
 import { bytesToBase64, nowSec, uuid } from './util'
 
-type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest'>
+type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest' | 'cloudFetch'>
 
 const HISTORY_CAP = 500
 
@@ -156,6 +156,25 @@ export function createHttpApi(s: MockState): HttpApi {
           if (timer) clearTimeout(timer)
           runs.delete(runId)
         })
+    },
+    // Internal cloud transport: same network path, but no history row (matches the real main process).
+    cloudFetch(input) {
+      const run: RunControl = { controller: new AbortController(), cancelled: false, timedOut: false }
+      const timer = input.timeoutMs ? setTimeout(() => ((run.timedOut = true), run.controller.abort()), input.timeoutMs) : null
+      return perform(
+        {
+          method: input.method,
+          url: input.url,
+          headers: input.headers,
+          auth: { kind: 'none' },
+          body: input.body ? { mode: 'raw', raw: input.body } : { mode: 'none' },
+          timeoutMs: input.timeoutMs,
+          workspaceId: '',
+        },
+        run,
+      ).finally(() => {
+        if (timer) clearTimeout(timer)
+      })
     },
     async cancelHttpRequest(requestRunId) {
       const run = runs.get(requestRunId)

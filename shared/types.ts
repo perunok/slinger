@@ -225,9 +225,23 @@ export interface HttpResponseData {
   bodyByteLength: number
 }
 
+/**
+ * Input of `cloudFetch`: the app's own cloud API transport. Deliberately narrower than
+ * HttpRequestInput: no auth block, no file bodies, no workspace, and it never creates history rows.
+ */
+export interface CloudFetchInput {
+  method: string
+  url: string
+  headers: RequestHeader[]
+  body?: { content: string; contentType: string } | null
+  timeoutMs?: number
+}
+
 /** Options for the native file picker (`pickFile`): single file selection. */
 export interface PickFileOptions {
   title?: string
+  /** Directory or file the dialog opens at (e.g. a saved path that must be granted again). */
+  defaultPath?: string
   filters?: Array<{ name: string; extensions: string[] }>
 }
 

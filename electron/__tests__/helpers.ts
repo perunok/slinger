@@ -141,3 +141,9 @@ export async function closedPort(): Promise<number> {
   await new Promise((r) => s.close(r))
   return port
 }
+
+/** Simulates the user choosing `path` in the native file dialog (the only way to grant file access). */
+export async function pickAndGrant(env: TestEnv, path: string): Promise<string | null> {
+  env.picked.result = path
+  return env.api.pickFile()
+}

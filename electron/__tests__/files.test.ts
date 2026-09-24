@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { makeEnv, type TestEnv } from './helpers'
@@ -40,9 +40,11 @@ describe('writeExportFile encoding', () => {
 
 describe('pickFile', () => {
   it('returns the dialog result and passes validated options through', async () => {
-    env.picked.result = '/tmp/some/file.png'
-    const options = { title: 'Choose', filters: [{ name: 'Images', extensions: ['png', 'jpg'] }] }
-    expect(await env.api.pickFile(options)).toBe('/tmp/some/file.png')
+    const file = join(env.exportDir, 'file.png')
+    writeFileSync(file, 'x')
+    env.picked.result = file
+    const options = { title: 'Choose', defaultPath: '/tmp/prev/file.png', filters: [{ name: 'Images', extensions: ['png', 'jpg'] }] }
+    expect(await env.api.pickFile(options)).toBe(file)
     expect(env.picked.calls).toEqual([options])
   })
 

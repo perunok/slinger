@@ -2,6 +2,10 @@
   "name": "slinger",
   "version": "0.1.0",
   "private": true,
+  "productName": "Slinger",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "description": "Slinger: a local-first API development desktop app (Electron + TypeScript + Svelte).",
   "author": {

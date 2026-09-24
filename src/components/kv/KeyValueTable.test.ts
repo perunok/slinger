@@ -83,6 +83,24 @@ describe('KeyValueTable', () => {
     expect(row.filePath).toMatch(/^\/home\/user\//)
   })
 
+  it('flags a saved file path that is not granted in this session and re-grants it on Choose again', async () => {
+    const { onchange } = setup([newRow({ key: 'avatar', kind: 'file', filePath: '/home/user/old/photo.png' })], { noun: 'Field', fileFields: true })
+    await vi.waitFor(() => expect(screen.getByTestId('file-status')).toHaveTextContent('file not granted'))
+    expect(screen.getByTestId('file-status')).toHaveTextContent('photo.png')
+    await fireEvent.click(screen.getByRole('button', { name: 'Choose again' }))
+    await vi.waitFor(() => expect(onchange).toHaveBeenCalled())
+    expect((onchange.mock.calls[0][0] as KvRow[])[0].filePath).toMatch(/^\/home\/user\/Documents\//)
+  })
+
+  it('does not flag a file picked in this session', async () => {
+    const { onchange, rerender } = setup([newRow({ key: 'avatar', kind: 'file' })], { noun: 'Field', fileFields: true })
+    await fireEvent.click(screen.getByRole('button', { name: 'Choose file' }))
+    await vi.waitFor(() => expect(onchange).toHaveBeenCalled())
+    await rerender({ rows: onchange.mock.calls[0][0] })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByTestId('file-status')).not.toHaveTextContent('not granted')
+  })
+
   it('offers header name suggestions', () => {
     // Suggestions are wired through the same CodeMirror completion source as templates.
     setup([], { suggestions: 'headers' })

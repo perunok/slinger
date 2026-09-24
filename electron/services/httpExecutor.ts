@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
-import { basename, isAbsolute } from 'node:path'
+import { basename } from 'node:path'
 import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
 import { invalidInput, ioError, networkError } from '../lib/errors'
+import type { FileAccess } from './fileGrants'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
 export const MAX_TIMEOUT_MS = 10 * 60_000
@@ -64,10 +65,12 @@ function headerList(input: HttpRequestInput): RequestHeader[] {
 
 const hasHeader = (headers: Headers, name: string) => headers.has(name)
 
-async function readLocalFile(path: string | undefined, label: string): Promise<Buffer> {
-  if (!path || !isAbsolute(path)) throw invalidInput(`${label} must be an absolute file path`)
+async function readLocalFile(path: string | undefined, label: string, files: FileAccess | undefined): Promise<Buffer> {
+  // Only files the user picked in a native dialog may be read (see FileGrants); no access object = none.
+  if (!files) throw invalidInput(`${label}: reading local files is not allowed here`)
+  const real = await files.resolve(path, label)
   try {
-    return await readFile(path)
+    return await readFile(real)
   } catch (err) {
     throw ioError(`Could not read ${label} "${path}": ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -81,7 +84,7 @@ interface BuiltRequest {
 }
 
 /** Validates the input and builds fetch arguments. All auth kinds and body modes are applied here. */
-export async function buildRequest(input: HttpRequestInput): Promise<BuiltRequest> {
+export async function buildRequest(input: HttpRequestInput, files?: FileAccess): Promise<BuiltRequest> {
   assertNoUnresolvedPlaceholders(input)
 
   const method = (input.method ?? '').trim().toUpperCase()
@@ -159,7 +162,7 @@ export async function buildRequest(input: HttpRequestInput): Promise<BuiltReques
         if (!f.enabled || f.key === '') continue
         count++
         if (f.type === 'file') {
-          const bytes = await readLocalFile(f.filePath, `file for form field "${f.key}"`)
+          const bytes = await readLocalFile(f.filePath, `file for form field "${f.key}"`, files)
           form.append(f.key, new Blob([bytes], { type: 'application/octet-stream' }), basename(f.filePath!))
         } else {
           form.append(f.key, f.value)
@@ -172,7 +175,7 @@ export async function buildRequest(input: HttpRequestInput): Promise<BuiltReques
       break
     }
     case 'binary': {
-      body = await readLocalFile(b.binaryFilePath, 'binary body file')
+      body = await readLocalFile(b.binaryFilePath, 'binary body file', files)
       if (!hasHeader(headers, 'content-type')) headers.set('Content-Type', 'application/octet-stream')
       break
     }
@@ -220,6 +223,8 @@ export function decodeBody(bytes: Uint8Array, headers: Headers): string | null {
 export interface ExecuteOptions {
   /** Aborting it cancels the request (also while the body is streaming). */
   signal?: AbortSignal
+  /** Grants for local files referenced by the body; without it any file reference is rejected. */
+  files?: FileAccess
 }
 
 /**
@@ -227,7 +232,7 @@ export interface ExecuteOptions {
  * headers and the complete body download. Throws IpcError for invalid input / network failure.
  */
 export async function executeHttp(input: HttpRequestInput, options: ExecuteOptions = {}): Promise<HttpResponseData> {
-  const built = await buildRequest(input)
+  const built = await buildRequest(input, options.files)
   const timeoutMs = Math.min(Math.max(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1), MAX_TIMEOUT_MS)
 
   const controller = new AbortController()
