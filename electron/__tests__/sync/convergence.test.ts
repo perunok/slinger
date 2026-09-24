@@ -110,6 +110,22 @@ async function seededPair(): Promise<Pair> {
   return p
 }
 
+/**
+ * A third writer (dashboard/REST) that changes the server between a device's pull and its push, so pushes meet
+ * protocol v2 rejections (version_mismatch with current_payload, not_found for rows deleted meanwhile).
+ */
+function armThirdWriter(rnd: () => number, n: number): void {
+  cloud.beforePush = (wsId) => {
+    const pool = cloud.live(wsId).filter((e) => e.type === 'request' || e.type === 'folder' || e.type === 'collection')
+    if (!pool.length) return
+    const e = pool[Math.floor(rnd() * pool.length)]!
+    const x = rnd()
+    if (x < 0.5) cloud.restUpsert(wsId, e.type, e.id, { name: `W${n}` })
+    else if (x < 0.75 && e.type !== 'collection') cloud.restUpsert(wsId, e.type, e.id, { sort_order: Math.floor(rnd() * 6) })
+    else if (e.type !== 'collection') cloud.restDelete(wsId, e.type, e.id)
+  }
+}
+
 const seedCount = Number(process.env.SEEDS ?? 20) // SEEDS=200 explores more, SEED=<n> reproduces one
 const seedFrom = Number(process.env.SEED_FROM ?? 1)
 const seeds = process.env.SEED ? [Number(process.env.SEED)] : Array.from({ length: seedCount }, (_, i) => seedFrom + i)
@@ -125,13 +141,20 @@ describe('two-device convergence fuzzer', () => {
           const k = 2 + Math.floor(rnd() * 5)
           for (let i = 0; i < k; i++) await randomOp(d, ws, rnd, ++n)
         }
+        // sometimes another writer races between a device's pull and push
+        if (rnd() < 0.4) armThirdWriter(rnd, ++n)
         // sync in random order, sometimes only one device
         const mode = rnd()
         if (mode < 0.35) { await p.a.core.sync.syncNow(p.wsA); await p.b.core.sync.syncNow(p.wsB) }
         else if (mode < 0.7) { await p.b.core.sync.syncNow(p.wsB); await p.a.core.sync.syncNow(p.wsA) }
         else if (mode < 0.85) await p.a.core.sync.syncNow(p.wsA)
       }
+      cloud.beforePush = null
       await quiesce(p, rnd)
+      if (process.env.REASONS) {
+        const rs = cloud.requests.filter((r) => /sync\/push$/.test(r.path) && r.response).flatMap((r) => (JSON.parse(r.response!) as { rejected: Array<{ code: string; reason: string; message: string }> }).rejected)
+        console.log('REASONS', JSON.stringify(rs.map((r) => `${r.code}/${r.reason}: ${r.message.slice(0, 80)}`)))
+      }
       checkInvariants(p)
     })
   }

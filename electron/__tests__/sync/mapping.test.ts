@@ -28,6 +28,9 @@ describe('wire mapping', () => {
   it('limits: name, document, variable key/value, snapshot', () => {
     expect(checkLimits('collection', { name: 'x'.repeat(200) })).toBeNull()
     expect(checkLimits('collection', { name: 'x'.repeat(201) })).toMatch(/200/)
+    expect(checkLimits('request', { name: 'x'.repeat(500), url: 'u'.repeat(8192) })).toBeNull() // server S9: request names up to 500
+    expect(checkLimits('request', { name: 'x'.repeat(501) })).toMatch(/500/)
+    expect(checkLimits('request', { name: 'r', url: 'u'.repeat(8193) })).toMatch(/8192/)
     expect(checkLimits('request', { name: 'r', document_json: 'x'.repeat(900_000) })).toBeNull()
     expect(checkLimits('request', { name: 'r', document_json: 'x'.repeat(900_001) })).toMatch(/KB/)
     expect(checkLimits('request', { name: 'r', document_json: 'é'.repeat(450_001) })).toMatch(/KB/) // bytes, not characters
@@ -35,6 +38,7 @@ describe('wire mapping', () => {
     expect(checkLimits('environment_variable', { key: '1bad', value: 'v', is_secret: false })).toMatch(/not accepted/)
     expect(checkLimits('environment_variable', { key: 'k'.repeat(129), value: 'v', is_secret: false })).toMatch(/not accepted/)
     expect(checkLimits('environment_variable', { key: 'k', value: 'v'.repeat(65_537), is_secret: false })).toMatch(/65536/)
-    expect(checkLimits('collection_version', { snapshot_json: 'x'.repeat(8 * 1024 * 1024 + 1) })).toMatch(/8 MB/)
+    expect(checkLimits('collection_version', { snapshot_json: 'x'.repeat(8_000_000) })).toBeNull()
+    expect(checkLimits('collection_version', { snapshot_json: 'x'.repeat(8_000_001) })).toMatch(/8 MB/)
   })
 })

@@ -334,7 +334,9 @@ describe('failures, backoff and quarantine', () => {
     const c = (await d.api.listCollections(ws))[0]!
     const huge = JSON.stringify({ body: 'z'.repeat(950_000) })
     const bad = await d.api.createRequest({ workspaceId: ws, collectionId: c.id, name: 'Too big', method: 'POST', url: 'u', documentJson: huge })
-    const long = await d.api.createRequest({ workspaceId: ws, collectionId: c.id, name: 'n'.repeat(300), method: 'GET', url: 'u', documentJson: DOC })
+    // folder names: server cap 200 (request names may have 500 since server S9)
+    const long = await d.api.createFolder({ workspaceId: ws, collectionId: c.id, name: 'f' })
+    d.db.prepare('UPDATE folders SET name = ? WHERE id = ?').run('n'.repeat(300), long.id)
     await req(d, ws, c.id, 'Fine')
     const env = await d.api.createEnvironment(ws, 'E')
     await d.api.upsertEnvironmentVariable({ environmentId: env.id, key: 'has space', value: '1', isSecret: false })

@@ -57,6 +57,33 @@ export function applySnapshotEntity(ctx: ApplyCtx, e: SnapshotEntity): void {
   applyUpsert(ctx, e.resource_type, e.resource_id, e.version, e.payload ?? {}, null)
 }
 
+/**
+ * Push rejected with `version_mismatch` + `current_payload` (protocol v2): the server's current state is merged
+ * exactly like a pulled upsert, so the retry can go out without a pull first. Returns false (caller falls back to
+ * pull + retry) when that would not be equivalent to the pull path:
+ * - the entity has no agreed base yet (a create: the server copy may be our own earlier, unacknowledged create,
+ *   which only the pulled log entry's operation id can recognise), or another op of ours for it is still unacknowledged;
+ * - the server's version is not newer than what we hold (it was deleted and re-created: the log has the tombstone);
+ * - the payload references a parent this device has not pulled yet.
+ */
+export function applyRemoteState(ctx: ApplyCtx, type: SyncEntityType, id: string, version: number, payload: Payload, rejectedOpId: string): boolean {
+  const { db } = ctx
+  const E = getEntity(db, type, id)
+  if (!E || E.remote_version <= 0 || !E.base_payload || version <= E.remote_version) return false
+  const otherInFlight = db
+    .prepare('SELECT 1 FROM sync_sent_ops WHERE entity_type = ? AND entity_id = ? AND op_id != ?')
+    .get(type, id, rejectedOpId)
+  if (otherInFlight) return false
+  if (parentRefs(type, payload).some((r) => !loadRow(db, r.type, r.id))) return false
+  applyUpsert(ctx, type, id, version, payload, null)
+  return true
+}
+
+/** Push rejected because the entity itself no longer exists on the server: same as pulling its tombstone. */
+export function applyRemoteDelete(ctx: ApplyCtx, type: SyncEntityType, id: string): void {
+  applyDelete(ctx, type, id, null)
+}
+
 /** Local state differs from what the remote last confirmed (or is a frozen conflict). */
 function isModified(db: Db, type: SyncEntityType, row: AnyRow): boolean {
   const e = getEntity(db, type, row.id as string)
@@ -73,9 +100,11 @@ function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: n
   const L = loadRow(db, type, id)
   const sent = opId != null && isSentOp(db, opId)
   if (sent) dropSentOp(db, opId!)
-  // Log entries written before protocol v2 carry no sort_order: unchanged (or 0 for a new row).
+  // Log entries written before protocol v2 carry no sort_order: "unchanged" = the last value both sides agreed on
+  // (NOT the local one, which may be an unpushed reorder), else the local row's, else 0 for a new row.
   if ((type === 'folder' || type === 'request') && payload.sort_order === undefined) {
-    payload = { ...payload, sort_order: (L?.sort_order as number | undefined) ?? 0 }
+    const agreed = parsePayload(E?.base_payload ?? null)?.sort_order
+    payload = { ...payload, sort_order: typeof agreed === 'number' ? agreed : ((L?.sort_order as number | undefined) ?? 0) }
   }
   const canon = canonicalJson(payload)
 
@@ -145,6 +174,13 @@ function upsertInner(
     insertFromPayload(ctx, type, id, ws, payload)
     putEntity(db, type, id, ws, { ...synced, state: 'synced' })
     note(ctx, type, id, 'upsert')
+    return
+  }
+
+  if (type === 'collection_version' && !(L.deleted === 1 && isDirty(db, type, id)) && !samePayload(toWire(type, L), payload)) {
+    // Versions are immutable on both sides: a different copy under the same id is never merged or silently un-hidden.
+    hideClashingVersion(ctx, L, { remote: payload, remoteVersion: version })
+    putEntity(db, type, id, ws, { ...synced, state: 'conflict' })
     return
   }
 
@@ -301,8 +337,11 @@ function versionLabelClash(ctx: ApplyCtx, id: string, payload: Payload): boolean
   return true
 }
 
-/** Hides a local version whose label the remote (or the server) already uses; opens `immutable_clash`. */
-export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow): void {
+/**
+ * Hides a local version whose label the remote (or the server) already uses; opens `immutable_clash`.
+ * `sameId`: the server holds THIS id with different content (`immutable` rejection); its state becomes the remote side.
+ */
+export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow, sameId?: { remote: Payload; remoteVersion: number }): void {
   const { db } = ctx
   const cid = clash.id as string
   const wire = toWire('collection_version', clash)
@@ -313,8 +352,10 @@ export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow): void {
   })
   clearDirty(db, 'collection_version', cid)
   openConflict(ctx, 'collection_version', cid, 'immutable_clash', {
-    base: null, local: wire, remote: null, remoteVersion: 0,
-    message: `Version ${String(wire.semver)} already exists in the cloud for this collection (created on another device).`,
+    base: null, local: wire, remote: sameId?.remote ?? null, remoteVersion: sameId?.remoteVersion ?? 0,
+    message: sameId
+      ? `Version ${String(wire.semver)} in the cloud has different content than this device's copy (versions cannot change).`
+      : `Version ${String(wire.semver)} already exists in the cloud for this collection (created on another device).`,
   })
   note(ctx, 'collection_version', cid, 'delete')
 }

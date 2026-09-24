@@ -44,11 +44,13 @@ export const GROUP_LABELS: Record<GroupName, string> = {
 /** Server-side caps the engine enforces BEFORE sending (design section 3). */
 export const LIMITS = {
   documentJsonBytes: 900_000,
-  /** Server cap for every name; local request names may be longer (500): those are quarantined, never truncated. */
+  /** Server cap for collection/folder/environment names (request names: `requestNameChars`); longer ones are quarantined, never truncated. */
   nameChars: 200,
+  requestNameChars: 500,
+  urlChars: 8192,
   variableKeyChars: 128,
   variableValueChars: 65_536,
-  snapshotJsonBytes: 8 * 1024 * 1024,
+  snapshotJsonBytes: 8_000_000,
 } as const
 export const VARIABLE_KEY_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 
@@ -146,8 +148,12 @@ export function payloadLabel(type: SyncEntityType, payload: Payload | null): str
 /** null when the payload can be sent; otherwise a human-readable reason it never can (quarantine). */
 export function checkLimits(type: SyncEntityType, payload: Payload): string | null {
   const bytes = (s: unknown) => (typeof s === 'string' ? Buffer.byteLength(s, 'utf8') : 0)
-  if ('name' in payload && typeof payload.name === 'string' && payload.name.length > LIMITS.nameChars) {
-    return `The name is ${payload.name.length} characters; the cloud accepts at most ${LIMITS.nameChars}. Shorten it to sync this item.`
+  const nameMax = type === 'request' ? LIMITS.requestNameChars : LIMITS.nameChars
+  if ('name' in payload && typeof payload.name === 'string' && payload.name.trim().length > nameMax) {
+    return `The name is ${payload.name.length} characters; the cloud accepts at most ${nameMax}. Shorten it to sync this item.`
+  }
+  if (type === 'request' && typeof payload.url === 'string' && payload.url.length > LIMITS.urlChars) {
+    return `The URL is ${payload.url.length} characters; the cloud accepts at most ${LIMITS.urlChars}. Shorten it to sync this request.`
   }
   if (type === 'request' && bytes(payload.document_json) > LIMITS.documentJsonBytes) {
     return `The request is ${Math.round(bytes(payload.document_json) / 1000)} KB; the cloud accepts at most ${LIMITS.documentJsonBytes / 1000} KB per request. Reduce its body or headers to sync it.`
@@ -162,7 +168,7 @@ export function checkLimits(type: SyncEntityType, payload: Payload): string | nu
     }
   }
   if (type === 'collection_version' && bytes(payload.snapshot_json) > LIMITS.snapshotJsonBytes) {
-    return `The version snapshot is larger than ${LIMITS.snapshotJsonBytes / (1024 * 1024)} MB, which the cloud does not accept.`
+    return `The version snapshot is larger than ${LIMITS.snapshotJsonBytes / 1_000_000} MB, which the cloud does not accept.`
   }
   return null
 }

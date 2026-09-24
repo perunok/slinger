@@ -6,12 +6,12 @@
 import type { SyncEntityType } from '../../shared/types'
 import type { Db } from '../db/database'
 import { newId } from '../lib/ids'
-import { hideClashingVersion, type ApplyCtx } from './apply'
+import { applyRemoteDelete, applyRemoteState, hideClashingVersion, type ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict } from './conflictStore'
 import { canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire } from './mapping'
 import { parentOf, serverCascades, type EntityRef } from './rows'
-import { clearDirty, getEntity, markDirty, putEntity, setEntityState } from './store'
-import type { Payload, PushResponse, RejectReason, WireOp } from './types'
+import { clearDirty, getEntity, isDirty, markDirty, putEntity, setEntityState } from './store'
+import type { Payload, PushRejected, PushResponse, RejectReason, WireOp } from './types'
 
 export const MAX_OPS_PER_PUSH = 200
 /** Soft cap of one push request: chunks are filled up to this size, a single larger operation travels alone. */
@@ -28,6 +28,8 @@ export interface BuiltOp {
   /** Child delete operations dropped from the batch because this container delete cascades on the server. */
   covers: Array<{ type: SyncEntityType; id: string; seq: number }>
   bytes: number
+  /** Server message of the rejection that put this op on the retry list (used if it has to be quarantined). */
+  rejection?: string
 }
 
 export interface BuildResult {
@@ -227,26 +229,53 @@ export function chunkOps(ops: BuiltOp[], maxOps = MAX_OPS_PER_PUSH, maxBytes = M
 
 export interface PushOutcome {
   accepted: number
-  /** Entities rejected with `sync_conflict` (or `not_found` on an upsert): a fresh pull must precede the retry. */
+  /** Rejected entities that need a fresh pull before the retry (no usable server state in the rejection). */
   retry: BuiltOp[]
+  /**
+   * Rejections settled locally from the rejection itself (merged against `current_payload`, remote delete applied,
+   * a key that the same batch frees): whatever is still pending can be pushed again WITHOUT pulling first.
+   */
+  resolved: number
   /** Server answered `internal_error` for some operation(s): treat like a transient failure. */
   transient: boolean
-  /** New rejected conflicts opened. */
+  /** New rejected conflicts opened (or local renames made) that may have produced new work. */
   conflicts: number
+  /** The server said this account may not write here (`read_only`/`forbidden`): stop pushing, keep everything dirty. */
+  denied: 'read_only' | 'forbidden' | null
 }
 
-function legacyReason(code: string, type: SyncEntityType): RejectReason | undefined {
-  if (code === 'invalid_request') return 'invalid'
-  // A plain `conflict` on something that is neither a variable key nor a version label is an id clash.
-  if (code === 'conflict' && type !== 'environment_variable' && type !== 'collection_version') return 'id_in_use'
-  return undefined
+const REASONS: ReadonlySet<string> = new Set<RejectReason>([
+  'version_mismatch', 'not_found', 'invalid', 'too_large', 'id_in_use', 'duplicate_key', 'immutable', 'forbidden', 'read_only', 'internal_error',
+])
+
+/**
+ * The reason a rejection is handled by. Protocol v2 servers send `reason` (authoritative); a missing or unknown one
+ * is derived from the legacy `code` so an older server (or a newer reason we do not know) still gets a safe answer.
+ */
+export function rejectionReason(r: Pick<PushRejected, 'code' | 'reason'>, type: SyncEntityType): RejectReason {
+  if (r.reason && REASONS.has(r.reason)) return r.reason
+  switch (r.code) {
+    case 'sync_conflict':
+      return 'version_mismatch' // without current_payload: pull, then retry (a deleted row arrives as a tombstone)
+    case 'not_found':
+      return 'not_found'
+    case 'invalid_request':
+      return 'invalid'
+    case 'conflict':
+      // Legacy servers used a plain `conflict` for unique clashes (variable keys, version labels) and id clashes.
+      return type === 'environment_variable' || type === 'collection_version' ? 'duplicate_key' : 'id_in_use'
+    default:
+      return 'internal_error'
+  }
 }
 
 /** Applies one push response. Must run inside `applyTx` (a rejected key clash renames a local variable). */
 export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushResponse): PushOutcome {
   const { db, workspaceId } = ctx
   const byOp = new Map(chunk.map((c) => [c.op.operation_id, c]))
-  const out: PushOutcome = { accepted: 0, retry: [], transient: false, conflicts: 0 }
+  const out: PushOutcome = { accepted: 0, retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
+  const settled = (b: BuiltOp) => void db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
+  const acceptedIds = new Set(resp.accepted.map((a) => a.resource_id))
 
   for (const a of resp.accepted) {
     const b = byOp.get(a.operation_id)
@@ -261,48 +290,111 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
     byOp.delete(r.operation_id)
     const { type, id } = b
     const local = b.op.op === 'upsert' ? b.op.payload : null
-    // v2 servers say WHY (reason); older ones only give the legacy code, from which the same decision is derived.
-    const reason = r.reason ?? legacyReason(r.code, type)
-    if (reason === 'id_in_use') {
-      quarantine(db, ctx.nowS, workspaceId, type, id, `This item's id is already used by another cloud workspace (${r.message}).`, local)
-      out.conflicts++
-      db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
-      continue
-    }
-    if (reason === 'too_large' || reason === 'invalid') {
-      quarantine(db, ctx.nowS, workspaceId, type, id, `The cloud rejected this item: ${r.message}`, local)
-      out.conflicts++
-      db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
-      continue
-    }
-    switch (r.code) {
-      case 'sync_conflict':
-        out.retry.push(b)
+    const reason = rejectionReason(r, type)
+    switch (reason) {
+      case 'version_mismatch': {
+        // The server moved on. v2 tells us its current state: merge now (like a pulled upsert) and push again at once.
+        const current = r.current_payload
+        if (current && r.current_version != null && mergedGuarded(ctx, () => applyRemoteState(ctx, type, id, r.current_version!, current, b.op.operation_id))) {
+          settled(b)
+          out.resolved++
+        } else out.retry.push(b) // pull brings the change (or the tombstone), then the op is rebuilt
         break
+      }
       case 'not_found':
         if (b.op.op === 'delete') {
-          ack(ctx, b, 0)
+          ack(ctx, b, 0) // already gone
           out.accepted++
-        } else out.retry.push(b)
+        } else if (r.code === 'sync_conflict' && b.op.base_version > 0) {
+          // The entity itself was deleted on the server: exactly what pulling its tombstone would do (remote_deleted).
+          if (mergedGuarded(ctx, () => (applyRemoteDelete(ctx, type, id), true))) {
+            settled(b)
+            out.resolved++
+          } else out.retry.push(b)
+        } else out.retry.push(b) // a parent / target collection is missing remotely: pull first (quarantined if it persists)
         break
-      case 'invalid_request':
+      case 'invalid':
+      case 'too_large':
+        if (reason === 'invalid' && b.op.op === 'upsert' && refsFolder(b)) {
+          // The server reports a folder that does not exist (deleted meanwhile) as `invalid`, not `not_found`: pull
+          // first (the tombstone turns this into a remote_deleted conflict); the cycle quarantines it if it persists.
+          b.rejection = r.message
+          out.retry.push(b)
+          break
+        }
         quarantine(db, ctx.nowS, workspaceId, type, id, `The cloud rejected this item: ${r.message}`, local)
         out.conflicts++
+        settled(b)
         break
-      case 'conflict':
-        handleConflictRejection(ctx, b, r.message)
+      case 'id_in_use':
+        quarantine(db, ctx.nowS, workspaceId, type, id, `This item's id is already used by another cloud workspace (${r.message}).`, local)
         out.conflicts++
+        settled(b)
+        break
+      case 'duplicate_key':
+        if (keyFreedByUs(ctx, b, r.conflicting_resource_id ?? null, acceptedIds)) {
+          out.resolved++ // our own pending change frees the key: push again after it (same op id, nothing was applied)
+          break
+        }
+        handleDuplicateKey(ctx, b, r.message)
+        out.conflicts++
+        settled(b)
+        break
+      case 'immutable': {
+        const row = type === 'collection_version' ? loadRow(db, type, id) : undefined
+        if (row) {
+          const current = r.current_payload ?? null
+          hideClashingVersion(ctx, row, current && r.current_version != null ? { remote: current, remoteVersion: r.current_version } : undefined)
+        } else quarantine(db, ctx.nowS, workspaceId, type, id, `The cloud refused to change this item: ${r.message}`, local)
+        out.conflicts++
+        settled(b)
+        break
+      }
+      case 'read_only':
+      case 'forbidden':
+        // Reserved per-operation reasons: never drop the change; the engine stops pushing and re-checks the role.
+        out.denied = reason === 'read_only' || out.denied === 'read_only' ? 'read_only' : 'forbidden'
         break
       case 'internal_error':
         out.transient = true
         break
     }
-    if (r.code !== 'internal_error' && r.code !== 'sync_conflict' && r.code !== 'not_found') {
-      db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
-    }
   }
   // Operations the server did not answer at all: leave everything untouched (retried with the same op ids).
   return out
+}
+
+const refsFolder = (b: BuiltOp): boolean =>
+  (b.type === 'request' && b.op.payload.folder_id != null) || (b.type === 'folder' && b.op.payload.parent_folder_id != null)
+
+/** Runs a local resolution in a savepoint; a failure rolls just it back and the caller falls back to pull + retry. */
+function mergedGuarded(ctx: ApplyCtx, fn: () => boolean): boolean {
+  try {
+    return ctx.db.transaction(fn)()
+  } catch (err) {
+    console.warn('[slinger] could not settle a push rejection locally:', err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
+/**
+ * `duplicate_key` against an entity of OUR OWN that gives the key up locally (deleted, re-keyed or re-labelled):
+ * either later in this same push (the server applies in array order and upserts precede deletes, so it is already
+ * accepted in `acceptedIds`) or in a pending change that is not frozen. Nothing is wrong: the retry goes through.
+ */
+function keyFreedByUs(ctx: ApplyCtx, b: BuiltOp, holderId: string | null, acceptedIds: Set<string>): boolean {
+  const { db } = ctx
+  if (!holderId || holderId === b.id || (b.type !== 'environment_variable' && b.type !== 'collection_version')) return false
+  const holder = loadRow(db, b.type, holderId)
+  if (!holder) return false
+  const pending = isDirty(db, b.type, holderId) && getEntity(db, b.type, holderId)?.state !== 'conflict'
+  if (!pending && !acceptedIds.has(holderId)) return false
+  if (holder.deleted === 1) return true
+  const mine = loadRow(db, b.type, b.id)
+  if (!mine) return false
+  return b.type === 'environment_variable'
+    ? holder.environment_id !== mine.environment_id || holder.key !== mine.key
+    : holder.collection_id !== mine.collection_id || holder.version !== mine.version
 }
 
 function ack(ctx: ApplyCtx, b: BuiltOp, resultingVersion: number): void {
@@ -325,7 +417,8 @@ function ack(ctx: ApplyCtx, b: BuiltOp, resultingVersion: number): void {
   db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
 }
 
-function handleConflictRejection(ctx: ApplyCtx, b: BuiltOp, serverMessage: string): void {
+/** A unique key (variable key / version label) is taken in the cloud by another id (design 8.4, `immutable_clash`). */
+function handleDuplicateKey(ctx: ApplyCtx, b: BuiltOp, serverMessage: string): void {
   const { db, workspaceId } = ctx
   if (b.type === 'environment_variable') {
     const row = loadRow(db, b.type, b.id)
@@ -352,7 +445,7 @@ function handleConflictRejection(ctx: ApplyCtx, b: BuiltOp, serverMessage: strin
       return
     }
   }
-  quarantine(db, ctx.nowS, workspaceId, b.type, b.id, `This item's id is already used by another cloud workspace (${serverMessage}).`, b.op.op === 'upsert' ? b.op.payload : null)
+  quarantine(db, ctx.nowS, workspaceId, b.type, b.id, `The cloud refused this item: ${serverMessage}`, b.op.op === 'upsert' ? b.op.payload : null)
 }
 
 /** Ancestor-first helper exported for tests: the parent container of a local row. */

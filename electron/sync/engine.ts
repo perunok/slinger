@@ -204,29 +204,48 @@ export class SyncEngine {
 
     if (link.link_state === 'initial' && link.snapshot_cursor !== null) await this.snapshotPhase(workspaceId, clientId)
 
+    // Pull before every push, except right after a push whose rejections were settled from the rejection itself
+    // (v2 `current_payload` merges, remote deletes): the retry then goes out at once (design 7.4, implementation notes).
+    let pullFirst = true
     for (let round = 1; round <= MAX_ROUNDS; round++) {
-      const pulled = await this.pull(workspaceId, clientId)
+      const pulled = pullFirst ? await this.pull(workspaceId, clientId) : null
       link = getLink(db, workspaceId)!
       if (link.read_only === 1) break
       const built = buildOps(db, workspaceId, clock.now())
       if (!built.ops.length) break
       const outcome = await this.pushAll(workspaceId, clientId, built.ops)
       if (outcome.transient) throw new CloudApiError({ kind: 'http', status: 500, code: 'internal_error', message: 'The cloud could not process some changes; retrying later' })
-      if (link.read_only === 1 || getLink(db, workspaceId)!.read_only === 1) break
-      if (!outcome.retry.length) {
-        // A push may have created new local work (renamed variables); loop only when something is still pending.
-        if (!outcome.conflicts) break
-        continue
-      }
-      if ((pulled === 0 && round >= 2) || round === MAX_ROUNDS) {
-        // Defensive: the server keeps refusing although a fresh pull brought nothing new. Never loop forever.
-        this.runApply(workspaceId, (ctx) => {
-          for (const b of outcome.retry) {
-            quarantine(ctx.db, ctx.nowS, workspaceId, b.type, b.id, 'The cloud keeps reporting a version conflict for this item. Choose which version to keep.', b.op.op === 'upsert' ? b.op.payload : null)
-          }
-        })
+      if (outcome.denied === 'read_only') {
+        // Per-operation `read_only` (reserved by the server): same as the whole-push 403 for a viewer.
+        updateLink(db, workspaceId, { read_only: 1 })
         break
       }
+      if (outcome.denied === 'forbidden') {
+        await this.refreshRole(workspaceId, true) // lost access -> AccessLost
+        throw new CloudApiError({ kind: 'http', status: 403, code: 'forbidden', message: 'The cloud refused some changes for this account; they stay on this device.' })
+      }
+      if (getLink(db, workspaceId)!.read_only === 1) break
+      if (outcome.retry.length) {
+        if ((pulled === 0 && round >= 2) || round === MAX_ROUNDS) {
+          // Defensive: the server keeps refusing although a fresh pull brought nothing new. Never loop forever.
+          this.runApply(workspaceId, (ctx) => {
+            for (const b of outcome.retry) {
+              const why = b.rejection ? `The cloud rejected this item: ${b.rejection}` : 'The cloud keeps refusing this change although this device is up to date. Choose which version to keep.'
+              quarantine(ctx.db, ctx.nowS, workspaceId, b.type, b.id, why, b.op.op === 'upsert' ? b.op.payload : null)
+            }
+          })
+          break
+        }
+        pullFirst = true
+        continue
+      }
+      if (outcome.resolved) {
+        pullFirst = false
+        continue
+      }
+      // A push may have created new local work (renamed variables); loop only when something is still pending.
+      if (!outcome.conflicts) break
+      pullFirst = true
     }
 
     link = getLink(db, workspaceId)!
@@ -453,7 +472,7 @@ export class SyncEngine {
     let pending = orderOps(db, ops)
     let maxOps = MAX_OPS_PER_PUSH
     let maxBytes = MAX_BYTES_PER_PUSH
-    const agg: PushOutcome = { accepted: 0, retry: [], transient: false, conflicts: 0 }
+    const agg: PushOutcome = { accepted: 0, retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
     while (pending.length) {
       const chunk = chunkOps(pending, maxOps, maxBytes)[0]!
       const link = getLink(db, workspaceId)!
@@ -475,6 +494,12 @@ export class SyncEngine {
           continue
         }
         if (err instanceof CloudApiError && err.status === 403) {
+          if (err.details?.reason === 'read_only') {
+            // v2: "this workspace is read-only for your role (viewer)". Pending changes are kept (banner), nothing else to ask.
+            const role = typeof err.details.role === 'string' ? err.details.role : 'viewer'
+            updateLink(db, workspaceId, { read_only: 1, remote_role: role })
+            return agg
+          }
           // Role downgrade or access revoked: re-read the role; a viewer keeps its pending changes (banner), otherwise stop.
           await this.refreshRole(workspaceId, true)
           if (getLink(db, workspaceId)!.read_only === 1) return agg
@@ -486,6 +511,11 @@ export class SyncEngine {
       agg.retry.push(...outcome.retry)
       agg.transient ||= outcome.transient
       agg.conflicts += outcome.conflicts
+      agg.resolved += outcome.resolved
+      if (outcome.denied) {
+        agg.denied = agg.denied === 'read_only' ? 'read_only' : outcome.denied
+        return agg // the rest would be refused the same way
+      }
       const sent = new Set(chunk.map((c) => c.op.operation_id))
       pending = pending.filter((p) => !sent.has(p.op.operation_id))
       done += chunk.length

@@ -63,22 +63,29 @@ export interface RecordedRequest {
   response?: string
 }
 
-/** Rejections are returned per operation exactly like the real server. */
+type RejectReason = 'version_mismatch' | 'not_found' | 'invalid' | 'too_large' | 'id_in_use' | 'duplicate_key' | 'immutable' | 'forbidden' | 'read_only' | 'internal_error'
+
+/**
+ * Rejections are returned per operation exactly like the real server (slinger-admin `routes/sync.ts` `rejection()`):
+ * a legacy `code` plus the structured `reason`; `current_version` + `current_payload` only for version_mismatch /
+ * immutable; `conflicting_resource_id` only for duplicate_key.
+ */
 class Reject extends Error {
+  readonly reason: RejectReason
   constructor(
     public code: 'sync_conflict' | 'not_found' | 'invalid_request' | 'conflict',
     message: string,
     public currentVersion: number | null = null,
-    /** Structured reason of protocol v2 (branch on this, `code` is the legacy class). */
-    public reason: string = '',
-    public extra: { current_payload?: Payload | null; conflicting_resource_id?: string | null } = {},
+    reason?: RejectReason,
+    public conflictingResourceId: string | null = null,
   ) {
     super(message)
-    if (!this.reason) {
-      this.reason = code === 'sync_conflict' ? 'version_mismatch' : code === 'not_found' ? 'not_found' : code === 'invalid_request' ? (/exceeds/.test(message) ? 'too_large' : 'invalid') : 'id_in_use'
-    }
+    // Same fallback as the server for errors thrown without an explicit reason.
+    this.reason = reason ?? (code === 'sync_conflict' ? 'version_mismatch' : code === 'not_found' ? 'not_found' : code === 'conflict' ? 'id_in_use' : 'invalid')
   }
 }
+const tooLarge = (message: string) => new Reject('invalid_request', `item too large: ${message}`, null, 'too_large')
+const invalid = (message: string) => new Reject('invalid_request', `invalid payload: ${message}`, null, 'invalid')
 
 export interface Fault {
   /** Matches `METHOD /path` (regex or exact string). */
@@ -108,6 +115,8 @@ export class FakeCloud {
   readonly faults: Fault[] = []
   protocolVersion: number
   pushBodyLimit: number
+  /** Test hook: runs right before a push is applied (simulates another writer racing between our pull and push). */
+  beforePush: ((workspaceId: string) => void) | null = null
   accessTtlMs: number
   baseUrl = ''
   private server!: Server
@@ -263,7 +272,7 @@ export class FakeCloud {
       const out = this.route(method, url, body ? (JSON.parse(body) as Payload) : {}, userId)
       respond(out.status ?? 200, out.body)
     } catch (err) {
-      if (err instanceof HttpError) return respond(err.status, { error: { code: err.code, message: err.message, details: {}, request_id: 'req' } })
+      if (err instanceof HttpError) return respond(err.status, { error: { code: err.code, message: err.message, details: err.details, request_id: 'req' } })
       console.error('[fakeCloud]', err)
       respond(500, { error: { code: 'internal_error', message: String(err) } })
     }
@@ -315,7 +324,7 @@ export class FakeCloud {
     if (method === 'POST' && path === '/v1/sync/clients/register') {
       const id = `cl_${randomUUID()}`
       this.clients.set(id, userId)
-      return { status: 201, body: { client: { client_id: id, registered_at: new Date().toISOString() }, protocol_version: this.protocolVersion, features: ['sort_order', 'snapshot', 'collection_version', 'secret_metadata'] } }
+      return { status: 201, body: { client: { client_id: id, registered_at: new Date().toISOString() }, protocol_version: this.protocolVersion, features: ['sort_order', 'snapshot', 'collection_version', 'secret_metadata', 'op_reasons', 'request_move'] } }
     }
     if (method === 'GET' && path === '/v1/workspaces') {
       const items = [...this.workspaces.values()].filter((w) => w.members.has(userId)).map((w) => this.wsDto(w, userId))
@@ -331,11 +340,18 @@ export class FakeCloud {
     const m = /^\/v1\/workspaces\/([^/]+)(?:\/(sync\/(?:push|pull|snapshot)))?$/.exec(path)
     if (m) {
       const w = this.workspaces.get(decodeURIComponent(m[1]!))
+      if (w && m[2] === 'sync/push' && method === 'POST' && this.beforePush) {
+        const hook = this.beforePush
+        this.beforePush = null
+        hook(w.id)
+      }
       const role = w?.members.get(userId)
       if (!w || !role) throw new HttpError(w ? 403 : 404, w ? 'workspace_access_denied' : 'not_found', w ? 'not a member of this workspace' : 'workspace not found')
       if (!m[2] && method === 'GET') return { body: { workspace: this.wsDto(w, userId), membership: { role } } }
       if (m[2] === 'sync/push' && method === 'POST') {
-        if (role === 'viewer') throw new HttpError(403, 'forbidden', 'viewers cannot push')
+        if (role === 'viewer') {
+          throw new HttpError(403, 'workspace_access_denied', 'This workspace is read-only for your role (viewer): changes cannot be pushed.', { reason: 'read_only', role: 'viewer', workspace_id: w.id })
+        }
         return { body: this.push(w, userId, body) }
       }
       if (m[2] === 'sync/pull' && method === 'GET') return { body: this.pull(w, userId, url.searchParams) }
@@ -377,10 +393,21 @@ export class FakeCloud {
         accepted.push({ operation_id: opId, resource_id: rid, resulting_version: version })
       } catch (err) {
         if (!(err instanceof Reject)) throw err
-        rejected.push({ operation_id: opId, resource_id: rid, code: err.code, reason: err.reason, message: err.message, current_version: err.currentVersion, current_payload: err.extra.current_payload ?? null, conflicting_resource_id: err.extra.conflicting_resource_id ?? null })
+        const withState = err.currentVersion !== null && (err.reason === 'version_mismatch' || err.reason === 'immutable')
+        const current = withState ? this.findIn(w, op.resource_type as ResourceType, rid) : undefined
+        rejected.push({
+          operation_id: opId, resource_id: rid, code: err.code, reason: err.reason, message: err.message, current_version: err.currentVersion,
+          current_payload: current ? this.wire(current) : null, conflicting_resource_id: err.conflictingResourceId,
+        })
       }
     }
     return { accepted, rejected, checkpoint: w.checkpoint }
+  }
+
+  /** An entity of this workspace (other workspaces' rows are invisible, exactly like "not found"). */
+  private findIn(w: Workspace, type: ResourceType, id: string): Entity | undefined {
+    const e = this.entities.get(id)
+    return e && e.ws === w.id && e.type === type ? e : undefined
   }
 
   private record(w: Workspace, clientId: string | null, opId: string, type: ResourceType, id: string, op: 'upsert' | 'delete', version: number, payload: Payload): void {
@@ -413,16 +440,26 @@ export class FakeCloud {
     }
   }
 
+  /** Mirrors the server's zod schemas: an exceeded cap is `too_large`, anything else malformed is `invalid`. */
   private validate(type: ResourceType, p: Payload, partialOk: boolean): void {
     const str = (k: string, max: number, opt = partialOk) => {
       if (p[k] === undefined) {
         if (opt) return
-        throw new Reject('invalid_request', `invalid payload: ${k} required`)
+        throw invalid(`${k} Required`)
       }
-      if (typeof p[k] !== 'string' || (p[k] as string).trim().length < 1 || (p[k] as string).length > max) throw new Reject('invalid_request', `invalid payload: ${k} must be 1-${max} characters`)
+      if (typeof p[k] !== 'string' || (p[k] as string).trim().length < 1) throw invalid(`${k} must be a non-empty string`)
+      if ((p[k] as string).trim().length > max) throw tooLarge(`${k} String must contain at most ${max} character(s)`)
     }
     const bytes = (k: string, max: number) => {
-      if (typeof p[k] === 'string' && Buffer.byteLength(p[k] as string, 'utf8') > max) throw new Reject('invalid_request', `${k} exceeds ${max} bytes (too_large)`)
+      if (typeof p[k] === 'string' && Buffer.byteLength(p[k] as string, 'utf8') > max) throw tooLarge(`${k} ${k} exceeds ${max} bytes`)
+    }
+    const json = (k: string) => {
+      if (typeof p[k] !== 'string') return
+      try {
+        JSON.parse(p[k] as string)
+      } catch {
+        throw invalid(`${k} ${k} must be a valid JSON string`)
+      }
     }
     switch (type) {
       case 'collection':
@@ -432,21 +469,33 @@ export class FakeCloud {
         break
       case 'request':
         str('name', 500)
-        str('method', 32)
-        if (typeof p.method === 'string' && !METHOD_RE.test(p.method)) throw new Reject('invalid_request', 'method must be an HTTP token')
-        if (p.url !== undefined && typeof p.url !== 'string') throw new Reject('invalid_request', 'url must be a string')
+        if (p.method !== undefined) {
+          if (typeof p.method !== 'string' || p.method.length < 1) throw invalid('method Required')
+          if (p.method.length > 32) throw tooLarge('method String must contain at most 32 character(s)')
+          if (!METHOD_RE.test(p.method)) throw invalid('method method must be an HTTP token')
+        }
+        if (p.url !== undefined && typeof p.url !== 'string') throw invalid('url Expected string')
+        if (typeof p.url === 'string' && p.url.length > 8192) throw tooLarge('url String must contain at most 8192 character(s)')
         bytes('document_json', 900_000)
+        json('document_json')
         break
       case 'environment_variable':
-        if (p.key !== undefined && (typeof p.key !== 'string' || p.key.length > 128 || !KEY_RE.test(p.key))) throw new Reject('invalid_request', 'invalid payload: key')
-        if (p.is_secret === true && p.value != null) throw new Reject('invalid_request', 'secret values must not be synced')
-        if (typeof p.value === 'string' && p.value.length > 65_536) throw new Reject('invalid_request', 'value too long')
+        if (p.key !== undefined) {
+          if (typeof p.key !== 'string' || p.key.length < 1) throw invalid('key Required')
+          if (p.key.length > 128) throw tooLarge('key String must contain at most 128 character(s)')
+          if (!KEY_RE.test(p.key)) throw invalid('key invalid variable key')
+        }
+        if (typeof p.value === 'string' && p.value.length > 65_536) throw tooLarge('value String must contain at most 65536 character(s)')
+        if (p.is_secret === true && p.value != null) throw new Reject('invalid_request', 'secret values must not be synced: send value null with is_secret true', null, 'invalid')
         break
       case 'collection_version':
+        str('semver', 64, false)
+        if (typeof p.notes === 'string' && p.notes.length > 65_536) throw tooLarge('notes String must contain at most 65536 character(s)')
         bytes('snapshot_json', 8_000_000)
+        json('snapshot_json')
         break
     }
-    if (p.sort_order !== undefined && (!Number.isInteger(p.sort_order) || (p.sort_order as number) < 0)) throw new Reject('invalid_request', 'sort_order must be an integer >= 0')
+    if (p.sort_order !== undefined && (!Number.isInteger(p.sort_order) || (p.sort_order as number) < 0)) throw invalid('sort_order Number must be greater than or equal to 0')
   }
 
   private applyOp(w: Workspace, clientId: string, op: { operation_id: string; resource_type: ResourceType; resource_id: string; op: 'upsert' | 'delete'; base_version: number; payload: Payload }): number {
@@ -455,10 +504,10 @@ export class FakeCloud {
     if (cur && op.resource_type === 'collection_version' && op.op === 'upsert') {
       // Immutable resource: an identical re-send is an idempotent success, anything else is refused.
       if (JSON.stringify(sortKeys(this.wire(cur))) === JSON.stringify(sortKeys(op.payload))) return cur.version
-      throw new Reject('conflict', 'collection versions are immutable', null, 'immutable')
+      throw new Reject('conflict', 'collection versions are immutable', cur.version, 'immutable')
     }
     if (cur) {
-      if (op.base_version !== cur.version) throw new Reject('sync_conflict', 'base_version does not match the server version; pull and retry', cur.version, 'version_mismatch', { current_payload: this.wire(cur) })
+      if (op.base_version !== cur.version) throw new Reject('sync_conflict', 'base_version does not match the server version; pull and retry', cur.version, 'version_mismatch')
     } else if (op.op === 'upsert' && op.base_version > 0) {
       throw new Reject('sync_conflict', 'resource no longer exists on the server (deleted); pull and retry', null, 'not_found')
     }
@@ -532,14 +581,13 @@ export class FakeCloud {
         if (!find('environment', d.environment_id)) throw new Reject('not_found', 'environment not found')
         if (cur && d.environment_id !== cur.data.environment_id) throw new Reject('invalid_request', "a variable's environment cannot change")
         const clash = [...this.entities.values()].find((e) => e.type === 'environment_variable' && e.ws === w.id && e.id !== cur?.id && e.data.environment_id === d.environment_id && e.data.key === d.key)
-        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists', null, 'duplicate_key', { conflicting_resource_id: clash.id })
+        if (clash) throw new Reject('conflict', 'a variable with this key already exists in the environment', null, 'duplicate_key', clash.id)
         break
       }
       case 'collection_version': {
         if (!find('collection', d.collection_id)) throw new Reject('not_found', 'collection not found')
-        if (cur) throw new Reject('conflict', 'collection versions are immutable', null, 'immutable')
         const clash = [...this.entities.values()].find((e) => e.type === 'collection_version' && e.ws === w.id && e.data.collection_id === d.collection_id && e.data.semver === d.semver)
-        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists', null, 'duplicate_key', { conflicting_resource_id: clash.id })
+        if (clash) throw new Reject('conflict', `version ${String(d.semver)} already exists for this collection`, null, 'duplicate_key', clash.id)
         break
       }
     }
@@ -640,6 +688,7 @@ class HttpError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details: Record<string, unknown> = {},
   ) {
     super(message)
   }

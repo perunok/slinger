@@ -182,9 +182,14 @@ export function resolveConflict(ctx: ApplyCtx, c: ConflictRow, input: ResolveSyn
       discardLocalChange(ctx, type, id)
       break
     case 'immutable_clash':
-      if (input.resolution === 'duplicate') recreateVersion(ctx, c, input.newVersion)
-      db.prepare('DELETE FROM sync_entities WHERE entity_type = ? AND entity_id = ?').run(type, id)
+      if (remote && c.remote_version > 0 && loadRow(db, 'collection', String(remote.collection_id ?? ''))?.deleted === 0) {
+        // Same id, different content in the cloud (`immutable` rejection): this device takes the cloud's copy.
+        takeRemoteVersion(ctx, id, remote, c.remote_version)
+      } else {
+        db.prepare('DELETE FROM sync_entities WHERE entity_type = ? AND entity_id = ?').run(type, id)
+      }
       clearDirty(db, type, id)
+      if (input.resolution === 'duplicate') recreateVersion(ctx, c, input.newVersion)
       break
     case 'duplicate_key':
       break
@@ -348,6 +353,16 @@ export function discardLocalChange(ctx: ApplyCtx, type: SyncEntityType, id: stri
   clearDirty(db, type, id)
   const oc = findOpenConflict(db, type, id)
   if (oc) closeConflict(db, oc.id, ctx.nowS, 'auto_resolved')
+}
+
+/** Replaces the (hidden) local copy of a collection version with the cloud's content under the same id. */
+function takeRemoteVersion(ctx: ApplyCtx, id: string, remote: Payload, version: number): void {
+  const { db } = ctx
+  // Versions are immutable in SQLite (only `deleted` may change), so the local copy is replaced, not updated.
+  db.prepare('DELETE FROM collection_versions WHERE id = ?').run(id)
+  insertFromPayload(ctx, 'collection_version', id, ctx.workspaceId, remote)
+  syncedTo(ctx, 'collection_version', id, version, remote)
+  noteChange(ctx, 'collection_version', id, 'upsert')
 }
 
 function recreateVersion(ctx: ApplyCtx, c: ConflictRow, newVersion: string | undefined): void {
