@@ -129,4 +129,4 @@ migration; add the next numbered file. Adding an IPC method is a four-file chang
 
 ## License
 
-No license file is present in this repository yet (placeholder: to be decided).
+Released under the [MIT License](LICENSE).
