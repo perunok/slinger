@@ -52,6 +52,8 @@ class AppState {
 
   /** Registered by the tabs store: reconcile open tabs whenever requests were reloaded. */
   onRequestsReloaded: (() => void) | null = null
+  /** Registered by cloud sync: local data was (re)loaded after a write, so the pending-change count may have changed. */
+  onLocalData: (() => void) | null = null
 
   foldersOf(collectionId: string): ApiFolder[] {
     return this.folders.filter((f) => f.collectionId === collectionId)
@@ -124,6 +126,7 @@ class AppState {
       this.folders = perCollection.flatMap((x) => x.f)
       this.requests = perCollection.flatMap((x) => x.r)
       this.onRequestsReloaded?.()
+      this.onLocalData?.()
     } catch (e) {
       toast.error('Could not load collections', errorInfo(e).message)
     }
@@ -147,6 +150,7 @@ class AppState {
       this.folders = [...this.folders.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.f)]
       this.requests = [...this.requests.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.r)]
       this.onRequestsReloaded?.()
+      this.onLocalData?.()
     } catch (e) {
       toast.error('Could not refresh collection', errorInfo(e).message)
     }
@@ -160,6 +164,7 @@ class AppState {
     const i = this.requests.findIndex((r) => r.id === req.id)
     if (i >= 0) this.requests[i] = req
     else this.requests.push(req)
+    this.onLocalData?.()
   }
   removeRequestLocal(id: string) {
     this.requests = this.requests.filter((r) => r.id !== id)
@@ -214,6 +219,7 @@ class AppState {
       toast.error('Could not load environment variables', errorInfo(e).message)
     }
     this.publishScope()
+    this.onLocalData?.()
   }
 
   publishScope() {

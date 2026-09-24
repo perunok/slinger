@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SyncConflictGroup } from '../../../shared/types'
-import { buildGroupDiffs, conflictingGroups, displayValue, lineDiff, parseRequestContent } from './conflictDiff'
+import { buildGroupDiffs, conflictingGroups, displayValue, lineDiff, parseContentSummary, parseRequestContent } from './conflictDiff'
 
 const doc = (o: Record<string, unknown>) => JSON.stringify(o)
 const content = (name: string, url: string, extra: Record<string, unknown> = {}, method = 'GET') =>
@@ -34,6 +34,33 @@ describe('parseRequestContent', () => {
     expect(parseRequestContent('not json')).toBeNull()
     expect(parseRequestContent('42')).toBeNull()
     expect(parseRequestContent('{"foo":1}')).toBeNull()
+  })
+})
+
+describe('summary tier (what the contract guarantees: "<name> - <METHOD> <url> [details #hash]")', () => {
+  const s = (name: string, method: string, url: string, hash: string) => `${name} - ${method} ${url} [details #${hash}]`
+  it('parses the display text, including names with dashes', () => {
+    expect(parseContentSummary(s('Get user', 'GET', 'https://x/y?a=1', 'abc123'))).toEqual({ name: 'Get user', method: 'GET', url: 'https://x/y?a=1', hash: 'abc123' })
+    expect(parseContentSummary(s('A - B', 'POST', '{{baseUrl}}/x', 'ffffff'))).toMatchObject({ name: 'A - B', method: 'POST' })
+    expect(parseContentSummary('nonsense')).toBeNull()
+    expect(parseContentSummary(null)).toBeNull()
+  })
+  it('compares name/method/url and reports headers, body and auth by fingerprint with a note', () => {
+    const [g] = buildGroupDiffs({ entityType: 'request', groups: [group({ local: s('R', 'GET', 'https://a', '111111'), remote: s('R', 'GET', 'https://a', '222222') })] })
+    const by = Object.fromEntries(g.rows.map((r) => [r.key, r]))
+    expect(by.name.changed || by.method.changed || by.url.changed).toBe(false)
+    expect(by.details).toMatchObject({ changed: true, local: 'fingerprint #111111', remote: 'fingerprint #222222' })
+    expect(g.note).toContain('fingerprint')
+    const same = buildGroupDiffs({ entityType: 'request', groups: [group({ local: s('R', 'GET', 'https://a', '111111'), remote: s('R', 'PUT', 'https://a', '111111') })] })[0]
+    expect(same.note).toBeUndefined()
+    expect(same.rows.find((r) => r.key === 'method')).toMatchObject({ changed: true, local: 'GET', remote: 'PUT' })
+  })
+  it('prefers the full detail texts when the engine provides them', () => {
+    const local = content('R', 'u', { headers: [{ key: 'A', value: '1' }] })
+    const remote = content('R', 'u', { headers: [{ key: 'A', value: '2' }] })
+    const [g] = buildGroupDiffs({ entityType: 'request', groups: [{ ...group({ local: s('R', 'GET', 'u', '1'), remote: s('R', 'GET', 'u', '2') }), localDetail: local, remoteDetail: remote }] })
+    expect(g.rows.find((r) => r.key === 'headers')?.changed).toBe(true)
+    expect(g.note).toBeUndefined()
   })
 })
 

@@ -84,9 +84,10 @@
       {#each g.rows as row (row.key)}
         <DiffPane {row} deletedLocal={local ? '(deleted here)' : '(missing)'} deletedRemote={conflict.kind === 'remote_deleted' ? '(deleted in the cloud)' : '(missing)'} />
       {/each}
+      {#if g.note}<p class="text-[11px] text-muted">{g.note}</p>{/if}
     </section>
   {/each}
-  {#if diffs.length === 0}
+  {#if diffs.length === 0 && conflict.kind === 'edit_edit'}
     <p class="rounded border border-border bg-raised p-2 text-xs text-muted">No field-level details are available for this item.</p>
   {/if}
 

@@ -280,7 +280,10 @@ describe('conflicts', () => {
     const edit = list.find((c) => c.kind === 'edit_edit' && c.entityType === 'request')!
     expect(edit.path).toEqual(['Demo API (mine)', 'Users', 'Get user'])
     expect(edit.groups.find((g) => g.group === 'content')?.conflicting).toBe(true)
-    expect(edit.allowedResolutions).toEqual(['keep_local', 'keep_remote', 'duplicate'])
+    expect(edit.allowedResolutions).toEqual(['keep_local', 'keep_remote', 'merge', 'duplicate'])
+    // Like the real engine: field groups are only reported for edit/edit conflicts.
+    expect(list.filter((c) => c.kind !== 'edit_edit').every((c) => c.groups.length === 0)).toBe(true)
+    expect(edit.groups.find((g) => g.group === 'content')?.local).toMatch(/^Get user - GET https:\/\/mine\.example\.test\/users\/\{\{userId\}\} \[details #[0-9a-f]{6}\]$/)
   })
 
   async function conflictOf(kind: string, type?: string) {
@@ -317,7 +320,8 @@ describe('conflicts', () => {
 
   it('merge needs a choice per conflicting group', async () => {
     const { out, c } = await conflictOf('edit_edit', 'collection')
-    expect(c.allowedResolutions).not.toContain('merge') // one group only
+    expect(c.allowedResolutions).toContain('merge')
+    expect(c.groups.map((g) => g.group)).toEqual(['name'])
     await b.resolveSyncConflict({ conflictId: c.id, resolution: 'keep_remote' })
     const col = (await b.listCollections(out.workspaceId)).find((x) => x.id === c.entityId)!
     expect(col.name).toBe('Demo API (theirs)')

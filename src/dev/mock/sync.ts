@@ -38,6 +38,7 @@ import {
   GROUP_FIELDS,
   GROUP_LABEL,
   canonical,
+  contentDetail,
   groupValue,
   keyOf,
   labelOf,
@@ -462,7 +463,7 @@ export function createSyncApi(
     switch (c.kind) {
       case 'edit_edit': {
         const out: SyncResolution[] = ['keep_local', 'keep_remote']
-        if (c.groups.length > 1) out.push('merge')
+        out.push('merge')
         if (c.entityType === 'request') out.push('duplicate')
         return out
       }
@@ -478,19 +479,27 @@ export function createSyncApi(
     }
   }
 
+  const nameOf = (t: SyncEntityType, id: unknown): string | null => {
+    if (typeof id !== 'string') return null
+    return t === 'collection' ? (s.collections.find((x) => x.id === id)?.name ?? null) : (s.folders.find((x) => x.id === id)?.name ?? null)
+  }
+
+  /** Like the real engine: field groups are only reported for edit/edit conflicts (every group, flagged when conflicting). */
   function groupsOf(c: ConflictRow): SyncConflictGroup[] {
+    if (c.kind !== 'edit_edit') return []
     const defs = Object.keys(GROUP_FIELDS[c.entityType] ?? {}) as GroupName[]
-    const out: SyncConflictGroup[] = []
-    for (const g of defs) {
-      const lv = groupValue(c.entityType, g, c.local)
-      const rv = groupValue(c.entityType, g, c.remote)
-      const bv = groupValue(c.entityType, g, c.base)
-      const conflicting = c.groups.includes(g)
-      if (conflicting || lv !== rv || c.kind === 'remote_deleted' || c.kind === 'local_deleted') {
-        out.push({ group: g, label: GROUP_LABEL[g], conflicting, base: bv, local: lv, remote: rv })
+    return defs.map((g) => {
+      const group: SyncConflictGroup & { baseDetail?: string | null; localDetail?: string | null; remoteDetail?: string | null } = {
+        group: g,
+        label: GROUP_LABEL[g],
+        conflicting: c.groups.includes(g),
+        base: groupValue(c.entityType, g, c.base, nameOf),
+        local: groupValue(c.entityType, g, c.local, nameOf),
+        remote: groupValue(c.entityType, g, c.remote, nameOf),
       }
-    }
-    return out
+      if (c.entityType === 'request' && g === 'content') Object.assign(group, { baseDetail: contentDetail(c.base), localDetail: contentDetail(c.local), remoteDetail: contentDetail(c.remote) })
+      return group
+    })
   }
 
   function contractConflict(l: Link, c: ConflictRow): SyncConflict {
@@ -825,7 +834,7 @@ export function createSyncApi(
     if (!workspaceId) return
     const l = links.get(workspaceId)
     if (!l) return
-    emitStatus(l)
+    // Like the real engine: no status event for a bare local edit; the next cycle (or the renderer's own read) reports it.
     scheduleCycle(l)
   }
 

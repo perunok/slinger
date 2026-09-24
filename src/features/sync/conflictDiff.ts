@@ -1,10 +1,13 @@
 /**
  * Builds the side-by-side view model of a conflict from `SyncConflict.groups` (display strings).
  *
- * Contract note: for entity type `request`, the group `content` carries JSON text of the wire fields
- * `{name, method, url, document_json}` (a bare `document_json` string or plain text also work: anything that
- * does not parse falls back to a text diff). Every other group is a plain display string. `null` means the
- * entity does not exist on that side (deleted).
+ * Request content comes in two tiers:
+ *  - full: when a group carries `localDetail` / `remoteDetail` (JSON text of the wire fields
+ *    `{name, method, url, document_json}`; an optional, additive extension of SyncConflictGroup) every field is
+ *    compared: name, method, URL, headers, body, authorization...
+ *  - summary: the contract's own `local`/`remote` text for group `content`, "<name> - <METHOD> <url> [details #hash]",
+ *    which allows comparing name, method and URL, and headers/body/auth only as a fingerprint.
+ * Anything else is compared as plain text. `null` means the entity does not exist on that side.
  */
 import type { SyncConflict, SyncConflictGroup } from '../../../shared/types'
 import { FIELDS, render, type Rendered } from '../../lib/versionDiff'
@@ -27,11 +30,16 @@ export interface DiffRow {
   remoteLines: DiffLine[] | null
 }
 
+/** SyncConflictGroup plus the optional full-detail texts a newer engine may provide (see file header). */
+export type DetailedGroup = SyncConflictGroup & { baseDetail?: string | null; localDetail?: string | null; remoteDetail?: string | null }
+
 export interface GroupDiff {
   group: SyncConflictGroup['group']
   label: string
   conflicting: boolean
   rows: DiffRow[]
+  /** Explains a limited comparison. */
+  note?: string
 }
 
 const FIELD_LABEL: Record<(typeof FIELDS)[number], string> = {
@@ -139,17 +147,46 @@ function requestRows(local: string | null, remote: string | null): DiffRow[] | n
   return rows
 }
 
-export function buildGroupDiffs(c: Pick<SyncConflict, 'entityType' | 'groups'>): GroupDiff[] {
+const SUMMARY = /^(.*) - ([^\s]+) (.*) \[details #([0-9a-f]+)\]$/s
+
+/** Parses "<name> - <METHOD> <url> [details #hash]" (the contract's request `content` display text). */
+export function parseContentSummary(text: string | null): { name: string; method: string; url: string; hash: string } | null {
+  if (text === null) return null
+  const m = SUMMARY.exec(text)
+  return m ? { name: m[1], method: m[2], url: m[3], hash: m[4] } : null
+}
+
+function summaryRows(local: string | null, remote: string | null): DiffRow[] | null {
+  const l = parseContentSummary(local)
+  const r = parseContentSummary(remote)
+  if ((local !== null && !l) || (remote !== null && !r) || (!l && !r)) return null
+  return [
+    row('name', 'Name', l?.name ?? null, r?.name ?? null),
+    row('method', 'Method', l?.method ?? null, r?.method ?? null),
+    row('url', 'URL', l?.url ?? null, r?.url ?? null),
+    row('details', 'Headers, body, authorization, settings', l ? `fingerprint #${l.hash}` : null, r ? `fingerprint #${r.hash}` : null),
+  ]
+}
+
+export function buildGroupDiffs(c: { entityType: SyncConflict['entityType']; groups: DetailedGroup[] }): GroupDiff[] {
   return c.groups.map((g) => {
     let rows: DiffRow[] | null = null
-    if (c.entityType === 'request' && g.group === 'content') rows = requestRows(g.local, g.remote)
+    let note: string | undefined
+    if (c.entityType === 'request' && g.group === 'content') {
+      if (g.localDetail !== undefined || g.remoteDetail !== undefined) rows = requestRows(g.localDetail ?? null, g.remoteDetail ?? null)
+      rows ??= requestRows(g.local, g.remote)
+      if (!rows) {
+        rows = summaryRows(g.local, g.remote)
+        if (rows?.find((x) => x.key === 'details')?.changed) note = 'Headers, body and authorization differ (compared by fingerprint only). Open the request in its tab to inspect them.'
+      }
+    }
     rows ??= [row(g.group, g.label, g.local, g.remote)]
-    return { group: g.group, label: g.label, conflicting: g.conflicting, rows }
+    return { group: g.group, label: g.label, conflicting: g.conflicting, rows, note }
   })
 }
 
 /** Groups whose value differs between the sides and therefore need a choice when merging. */
-export function conflictingGroups(c: Pick<SyncConflict, 'groups'>): SyncConflictGroup['group'][] {
+export function conflictingGroups(c: { groups: Array<Pick<SyncConflictGroup, 'group' | 'conflicting'>> }): SyncConflictGroup['group'][] {
   return c.groups.filter((g) => g.conflicting).map((g) => g.group)
 }
 

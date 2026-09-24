@@ -114,15 +114,32 @@ export function merge(type: SyncEntityType, base: Wire | null, local: Wire, remo
   return { merged, conflicting }
 }
 
-/** Display string of a group for the conflict UI. `content` is JSON text of the request fields. */
-export function groupValue(type: SyncEntityType, group: GroupName, p: Wire | null): string | null {
+function hash(s: string): string {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  return (h >>> 0).toString(16).padStart(8, '0').slice(0, 6)
+}
+
+/**
+ * Display string of a group for the conflict UI, in the same format the real engine produces
+ * (electron/sync/conflicts.ts): `content` is "<name> - <METHOD> <url> [details #hash]".
+ */
+export function groupValue(type: SyncEntityType, group: GroupName, p: Wire | null, nameOf?: (t: SyncEntityType, id: unknown) => string | null): string | null {
   if (!p) return null
   const fields = GROUP_FIELDS[type]?.[group] ?? []
-  if (group === 'content') return JSON.stringify(Object.fromEntries(fields.map((f) => [f, p[f] ?? null])))
-  if (group === 'value') return p.is_secret ? '(secret: not synced)' : String(p.value ?? '')
-  if (group === 'location') return fields.map((f) => String(p[f] ?? '(root)')).join(' / ')
-  if (group === 'order') return `position ${String(p.sort_order ?? 0)}`
+  if (group === 'content') return `${String(p.name ?? '')} - ${String(p.method ?? '')} ${String(p.url ?? '')} [details #${hash(typeof p.document_json === 'string' ? p.document_json : '')}]`
+  if (group === 'value') return p.is_secret ? '(secret, stays on each device)' : String(p.value ?? '')
+  if (group === 'location') {
+    const folder = 'parent_folder_id' in p ? p.parent_folder_id : p.folder_id
+    return [nameOf?.('collection', p.collection_id) ?? String(p.collection_id ?? ''), folder ? (nameOf?.('folder', folder) ?? String(folder)) : '(top level)'].join(' / ')
+  }
+  if (group === 'order') return `#${String(p.sort_order ?? 0)}`
   return String(p[fields[0]] ?? '')
+}
+
+/** Full text of a request `content` group (JSON of the wire fields): the optional `*Detail` extension. */
+export function contentDetail(p: Wire | null): string | null {
+  return p ? JSON.stringify({ name: p.name ?? null, method: p.method ?? null, url: p.url ?? null, document_json: p.document_json ?? null }) : null
 }
 
 export function labelOf(type: SyncEntityType, p: Wire | null, fallback = ''): string {

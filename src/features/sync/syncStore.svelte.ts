@@ -64,6 +64,7 @@ export class SyncStore {
   #initStarted = false
   #quiet = false
   #conflictToast: number | null = null
+  #statusTimer: ReturnType<typeof setTimeout> | null = null
 
   current = $derived<SyncStatus | null>(app.workspaceId ? (this.statuses[app.workspaceId] ?? null) : null)
   chip = $derived(deriveChip(this.current, this.session, this.now))
@@ -90,6 +91,7 @@ export class SyncStore {
     if (this.#initStarted) return
     this.#initStarted = true
     this.#unsub = api().onSyncEvent((e) => this.handleEvent(e))
+    app.onLocalData = () => this.#localDataChanged()
     this.#ticker = setInterval(() => (this.now = nowSec()), 15_000)
     await Promise.all([this.refreshSession(), this.refreshStatuses()])
     const legacy = collectLegacy(this.config)
@@ -127,6 +129,9 @@ export class SyncStore {
   dispose(): void {
     this.#unsub?.()
     this.#unsub = null
+    if (app.onLocalData) app.onLocalData = null
+    if (this.#statusTimer) clearTimeout(this.#statusTimer)
+    this.#statusTimer = null
     if (this.#ticker) clearInterval(this.#ticker)
     this.#ticker = null
     if (this.#reloadTimer) clearTimeout(this.#reloadTimer)
@@ -163,6 +168,25 @@ export class SyncStore {
     } catch {
       /* the chip simply stays hidden */
     }
+  }
+
+  /**
+   * The user's own edits change the pending-change count without a cycle running (auto sync off, or before
+   * the next scheduler tick), so re-read the status of the open workspace once things settle. Event-driven by
+   * the user's writes, debounced, and only for linked workspaces: not polling.
+   */
+  #localDataChanged(): void {
+    const id = app.workspaceId
+    if (!id || !this.statuses[id]?.linked || this.#statusTimer) return
+    this.#statusTimer = setTimeout(async () => {
+      this.#statusTimer = null
+      try {
+        const fresh = await api().getSyncStatus(id)
+        if (this.statuses[id]?.linked) this.statuses[id] = fresh
+      } catch {
+        /* the next event will bring the status */
+      }
+    }, 400)
   }
 
   // ---- events ---------------------------------------------------------------

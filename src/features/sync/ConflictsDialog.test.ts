@@ -55,7 +55,7 @@ describe('ConflictsDialog', () => {
     expect(within(card).getByRole('button', { name: 'Keep mine' })).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Use cloud version' })).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Keep both' })).toBeInTheDocument()
-    expect(within(card).queryByRole('button', { name: /Choose per part/ })).toBeNull() // one conflicting group only
+    expect(within(card).getByRole('button', { name: 'Choose per part…' })).toBeInTheDocument()
   })
 
   it('resolves keep mine: sends the payload, updates the list and the status, moves focus on', async () => {

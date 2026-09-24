@@ -122,6 +122,21 @@ describe('status events', () => {
     expect((await b.getSyncStatus(id)).pendingChanges).toBe(1)
   })
 
+  it('pending changes follow the user\'s own edits without a cycle (debounced re-read, no polling)', async () => {
+    const id = await publishPersonal()
+    await sync.setAutoSync(id, false)
+    const before = b.calls.filter((c) => c.method === 'getSyncStatus').length
+    await b.renameCollection(app.collections[0]!.id, 'Edited locally')
+    await app.reloadCollections()
+    await app.reloadCollections()
+    expect(sync.current?.pendingChanges).toBe(0) // not yet: debounced
+    await flush(500)
+    expect(sync.current?.pendingChanges).toBe(1)
+    expect(b.calls.filter((c) => c.method === 'getSyncStatus').length - before).toBe(1) // one read for the whole burst
+    await flush(600)
+    expect(b.calls.filter((c) => c.method === 'getSyncStatus').length - before).toBe(1) // and nothing afterwards
+  })
+
   it('toasts a failed sync once, with a Retry that runs another cycle', async () => {
     const id = await publishPersonal()
     toast.clear()
