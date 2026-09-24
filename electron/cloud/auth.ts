@@ -130,7 +130,10 @@ export class CloudAuth {
     const base = this.baseUrl()
     if (this.loadedFor === base) return
     this.loadedFor = base
-    if (this.status === 'signingIn') return
+    if (this.flow) {
+      this.status = 'signingIn'
+      return
+    }
     const tokens = this.loadTokens(base)
     this.status = tokens ? 'signedIn' : 'signedOut'
     this.user = null
