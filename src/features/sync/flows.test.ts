@@ -136,6 +136,7 @@ describe('LinkDialog', () => {
     render(LinkDialog)
     const preview = await screen.findByTestId('link-preview')
     expect(preview).toHaveTextContent('It already has content')
+    expect(preview).toHaveTextContent(/It already has content: \d+ collections?, \d+ requests?, \d+ environments?\./)
     expect(preview).toHaveTextContent('your role: editor')
     expect(screen.getByRole('radio', { name: /Download into a new workspace/ })).toBeChecked()
     expect(screen.queryByTestId('merge-warning')).toBeNull()

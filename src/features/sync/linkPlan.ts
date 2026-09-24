@@ -1,5 +1,5 @@
 /** Which destinations are offered when linking a cloud workspace, and which one is recommended (design 9.2). */
-import type { RemoteWorkspacePreview } from '../../../shared/types'
+import type { RemoteWorkspaceCounts, RemoteWorkspacePreview } from '../../../shared/types'
 
 export interface LinkPlan {
   /** Merging into the current local workspace is possible. */
@@ -25,4 +25,11 @@ export function linkPlan(input: {
   // Recommended: a new workspace when there is local content and the remote is not empty (a merge could duplicate things).
   const mode = localHasContent && preview?.remoteEmpty !== true ? 'new' : 'merge'
   return { canMerge: true, mode, reason: '' }
+}
+
+/** "1 collection, 3 requests, 2 environments" for a cloud workspace preview; null when the server gave no counts. */
+export function remoteContentSummary(counts: RemoteWorkspaceCounts | null | undefined): string | null {
+  if (!counts) return null
+  const n = (x: number, one: string) => `${counts.truncated ? 'at least ' : ''}${x} ${one}${x === 1 ? '' : 's'}`
+  return [n(counts.collections, 'collection'), n(counts.requests, 'request'), n(counts.environments, 'environment')].join(', ')
 }

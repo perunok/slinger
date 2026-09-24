@@ -1083,7 +1083,9 @@ export function createSyncApi(
       requireOnline()
       requireSignedIn()
       const r = remote(remoteWorkspaceId)
-      return { id: r.id, name: r.name, role: r.role, remoteEmpty: r.entities.size === 0, linkedLocalWorkspaceId: remoteLinkedTo(r.id) }
+      const count = (t: SyncEntityType) => [...r.entities.keys()].filter((k) => k.startsWith(keyOf(t, ''))).length
+      const counts = { collections: count('collection'), folders: count('folder'), requests: count('request'), environments: count('environment'), truncated: false }
+      return { id: r.id, name: r.name, role: r.role, remoteEmpty: r.entities.size === 0, linkedLocalWorkspaceId: remoteLinkedTo(r.id), counts }
     },
 
     async getSyncStatus(workspaceId) {

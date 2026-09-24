@@ -12,7 +12,7 @@
   import Dialog from '../../components/ui/Dialog.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { errorInfo } from '../../lib/ipc'
-  import { linkPlan } from './linkPlan'
+  import { linkPlan, remoteContentSummary } from './linkPlan'
   import { sync } from './syncStore.svelte'
 
   let remoteId = $state<string | null>(ui.linkOpen?.remoteId ?? null)
@@ -102,7 +102,7 @@
       <div class="space-y-2" data-testid="link-preview">
         <p class="text-xs text-muted">
           <strong class="text-fg">{preview.name}</strong>: your role: {preview.role === 'viewer' ? 'viewer (read-only)' : preview.role}.
-          {#if preview.remoteEmpty === true}It is empty.{:else if preview.remoteEmpty === false}It already has content.{:else}Its content could not be checked right now.{/if}
+          {#if preview.remoteEmpty === true}It is empty.{:else if preview.remoteEmpty === false}It already has content{#if remoteContentSummary(preview.counts)}: {remoteContentSummary(preview.counts)}{/if}.{:else}Its content could not be checked right now.{/if}
         </p>
         {#if plan.canMerge}
           <fieldset class="space-y-1.5">

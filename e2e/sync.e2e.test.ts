@@ -78,7 +78,8 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
     const row = dialog.getByRole('list', { name: 'Cloud workspaces' }).locator('li', { hasText: wsName })
     await row.getByRole('button', { name: /Link/ }).click()
     const link = b.page.getByRole('dialog', { name: 'Link a cloud workspace' })
-    await expect.poll(() => link.getByTestId('link-preview').innerText()).toContain('It already has content')
+    // remote counts from the preview (engine counts what the cloud holds)
+    await expect.poll(() => link.getByTestId('link-preview').innerText()).toContain('It already has content: 1 collection, 1 request, 1 environment')
     await link.getByRole('button', { name: 'Link and download' }).click()
     await link.waitFor({ state: 'detached' })
     await closeDialog(b.page, 'Cloud')
@@ -154,6 +155,8 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
       )
     await edit(a.page, wsA, 'https://a.example.test/edited')
     await edit(b.page, wsB, 'https://b.example.test/edited')
+    // A local edit alone (auto sync off, no cycle) is announced to the renderer: the chip counts it without a reload.
+    await expect.poll(() => b.page.getByTestId('sync-chip').innerText(), { timeout: 15_000 }).toContain('1 pending')
     await syncNow(a.page, wsA)
     const st = await syncNow(b.page, wsB)
     expect(st.openConflicts).toBe(1)
