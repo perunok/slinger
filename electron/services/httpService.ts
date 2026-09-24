@@ -8,7 +8,8 @@ const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 
 /**
  * Runs requests, tracks cancellable runs, and records every attempt (success or failure) in
- * history. History stores the URL as typed (normalized) without any apiKey query parameter
+ * history. History stores `historyUrl` when the renderer supplies it (secrets kept as {{name}}
+ * placeholders), else the URL as typed (normalized), never an apiKey query parameter
  * added by auth, so credentials never end up in the log.
  */
 export class HttpService {
@@ -65,7 +66,7 @@ export class HttpService {
         requestId: isUuid(input.requestId) ? input.requestId : null,
         requestName: input.requestName ?? null,
         method: (input.method || 'GET').trim().toUpperCase().slice(0, 32) || 'GET',
-        url: normalizeUrl(input.url ?? '').slice(0, 8192),
+        url: normalizeUrl(input.historyUrl ?? input.url ?? '').slice(0, 8192),
         ...result,
       })
     } catch (err) {

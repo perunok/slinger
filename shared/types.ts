@@ -205,6 +205,12 @@ export interface HttpRequestInput {
    * A run id may only be in flight once at a time.
    */
   requestRunId?: string | null
+  /**
+   * ADDED: what to store in history instead of `url`. The renderer resolves templates before
+   * sending, so `url` may contain secret values or an apiKey query parameter; it passes the URL
+   * with secrets left as `{{name}}` placeholders and without auth query parameters here.
+   */
+  historyUrl?: string | null
 }
 
 export interface HttpResponseData {

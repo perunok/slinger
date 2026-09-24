@@ -75,6 +75,7 @@ const httpRequestInput = z.object({
   requestName: z.string().max(500).nullish(),
   workspaceId: uuid,
   requestRunId: z.string().max(128).nullish(),
+  historyUrl: z.string().max(100_000).nullish(),
 })
 
 const createRequestInput = z.object({

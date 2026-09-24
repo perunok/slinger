@@ -328,6 +328,13 @@ describe('history', () => {
     expect(entry!.url).not.toContain('SUPERSECRET')
   })
 
+  it('stores historyUrl instead of the sent URL when provided', async () => {
+    await run({ url: `${server.baseUrl}/echo?key=SUPERSECRET`, historyUrl: `${server.baseUrl}/echo?key={{apikey}}` })
+    const [entry] = await env.api.listHistory(wsId)
+    expect(entry!.url).toBe(`${server.baseUrl}/echo?key={{apikey}}`)
+    expect(JSON.stringify(await env.api.listHistory(wsId))).not.toContain('SUPERSECRET')
+  })
+
   it('still returns the HTTP outcome if the request id is unknown', async () => {
     const res = await run({ requestId: '00000000-0000-4000-8000-000000000001', requestName: 'ghost' })
     expect(res.status).toBe(200)

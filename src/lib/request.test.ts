@@ -110,6 +110,16 @@ describe('prepareRequest', () => {
   ])
   const ctx = { workspaceId: 'w', scope, secrets: new Map([['tok', 'S3']]) }
 
+  it('gives history a URL without secret values or auth query parameters', () => {
+    const d = newDraft({ url: '{{host}}/x?k={{tok}}' })
+    d.auth = { ...d.auth, kind: 'apiKey', apiKey: { key: 'api_key', value: '{{tok}}', addTo: 'query' } }
+    const res = prepareRequest(d, ctx)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.input.url).toContain('S3')
+    expect(res.input.historyUrl).toBe('http://api.test/x?k={{tok}}')
+  })
+
   it('applies templates consistently to url, headers, body and auth', () => {
     const d = newDraft({ method: 'post', url: '{{host}}/x?k={{host}}' })
     d.headers = [newRow({ key: 'X-{{host}}', value: '{{host}}' }), newRow({ key: 'Off', value: '1', enabled: false })]

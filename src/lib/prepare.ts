@@ -68,9 +68,20 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     for (const tok of parseTokens(cur)) leftover.add(tok.name)
     return cur
   }
+  // The history log must never contain secret values: same resolution, but secrets stay `{{name}}`.
+  const rHistory = (t: string) => {
+    let cur = t
+    for (let i = 0; i < 6 && cur.includes('{{'); i++) {
+      const next = resolveTemplate(cur, ctx.scope, { now: ctx.now, builtinCache: cache })
+      if (next === cur) break
+      cur = next
+    }
+    return cur
+  }
   const warnings: string[] = []
 
   let url = normalizeUrl(r(draft.url))
+  const historyUrl = normalizeUrl(rHistory(draft.url))
   if (!url) return { ok: false, unresolved: [], error: 'Enter a URL to send the request.' }
 
   const headers = dataRows(draft.headers)
@@ -156,6 +167,7 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
       requestId: ctx.requestId ?? null,
       requestName: draft.name,
       workspaceId: ctx.workspaceId,
+      historyUrl,
     },
   }
 }
