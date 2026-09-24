@@ -146,20 +146,17 @@ describe('version_mismatch', () => {
 })
 
 describe('not_found', () => {
-  it('editing a row the server deleted opens remote_deleted at once; keep_local re-creates it', async () => {
+  it('editing a row the server deleted: the next pull brings the tombstone -> remote_deleted; keep_local re-creates it', async () => {
     const { d, ws, remoteId, req, edit } = await withRequest()
     await edit({ name: 'Edited here' })
     cloud.beforePush = (w) => cloud.restDelete(w, 'request', req)
     cloud.clearRecorded()
     const s = await d.core.sync.syncNow(ws)
     expect(firstRejection()).toMatchObject({ code: 'sync_conflict', reason: 'not_found' })
-    expect(syncCalls()).toEqual(['pull', 'push'])
+    expect(syncCalls()).toEqual(['pull', 'push', 'pull']) // frozen after that pull: nothing left to push
     expect(s.openConflicts).toBe(1)
     const [c] = await d.api.listSyncConflicts(ws)
     expect(c).toMatchObject({ kind: 'remote_deleted', entityId: req })
-    // The tombstone pulled later does not change anything.
-    await d.core.sync.syncNow(ws)
-    expect((await d.api.listSyncConflicts(ws)).map((x) => x.id)).toEqual([c!.id])
     await d.api.resolveSyncConflict({ conflictId: c!.id, resolution: 'keep_local' })
     await settle(d, ws)
     expect(cloud.entity(req)!.data.name).toBe('Edited here')

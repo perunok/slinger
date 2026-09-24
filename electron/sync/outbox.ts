@@ -6,7 +6,7 @@
 import type { SyncEntityType } from '../../shared/types'
 import type { Db } from '../db/database'
 import { newId } from '../lib/ids'
-import { applyRemoteDelete, applyRemoteState, hideClashingVersion, type ApplyCtx } from './apply'
+import { applyRemoteState, hideClashingVersion, type ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict } from './conflictStore'
 import { canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire } from './mapping'
 import { parentOf, serverCascades, type EntityRef } from './rows'
@@ -305,13 +305,13 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
         if (b.op.op === 'delete') {
           ack(ctx, b, 0) // already gone
           out.accepted++
-        } else if (r.code === 'sync_conflict' && b.op.base_version > 0) {
-          // The entity itself was deleted on the server: exactly what pulling its tombstone would do (remote_deleted).
-          if (mergedGuarded(ctx, () => (applyRemoteDelete(ctx, type, id), true))) {
-            settled(b)
-            out.resolved++
-          } else out.retry.push(b)
-        } else out.retry.push(b) // a parent / target collection is missing remotely: pull first (quarantined if it persists)
+        } else {
+          // The entity itself was deleted on the server (legacy code sync_conflict), or a parent / target collection is
+          // missing: the pull right after brings the tombstone(s), which open remote_deleted exactly like any pulled
+          // delete. (Applying the tombstone from the rejection instead would let the real log entry, pulled later,
+          // hit the entity again after the user restored it: deletes carry no ordering version across a re-create.)
+          out.retry.push(b)
+        }
         break
       case 'invalid':
       case 'too_large':

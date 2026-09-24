@@ -79,11 +79,6 @@ export function applyRemoteState(ctx: ApplyCtx, type: SyncEntityType, id: string
   return true
 }
 
-/** Push rejected because the entity itself no longer exists on the server: same as pulling its tombstone. */
-export function applyRemoteDelete(ctx: ApplyCtx, type: SyncEntityType, id: string): void {
-  applyDelete(ctx, type, id, null)
-}
-
 /** Local state differs from what the remote last confirmed (or is a frozen conflict). */
 function isModified(db: Db, type: SyncEntityType, row: AnyRow): boolean {
   const e = getEntity(db, type, row.id as string)

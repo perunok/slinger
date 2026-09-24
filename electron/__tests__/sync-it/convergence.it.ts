@@ -1,7 +1,9 @@
 /**
  * Two-device convergence against the REAL server: the same seeded fuzzer as the fake-server suite
  * (electron/__tests__/sync/convergence.test.ts) with the invariants checked against the server's own snapshot.
- * SYNC_IT_SEEDS=<n> (default 6) or SEED=<n> to reproduce one seed.
+ * SYNC_IT_SEEDS=<n> (default 6, starting at SYNC_IT_SEED_FROM, default 1) or SEED=<n> to reproduce one seed. The server
+ * allows 30 device sign-ins per 5 minutes per IP (2 per seed), so explore in batches of at most 12 seeds per run.
+ * A third writer (REST) races some pushes, so the v2 rejection paths run against the real server too.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
@@ -12,7 +14,8 @@ import { RealCloud, signInDevice } from './realCloud'
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
 const PASSWORD = 'sync-it-user-passphrase-1'
 const seedCount = Number(process.env.SYNC_IT_SEEDS ?? 6)
-const seeds = process.env.SEED ? [Number(process.env.SEED)] : Array.from({ length: seedCount }, (_, i) => i + 1)
+const seedFrom = Number(process.env.SYNC_IT_SEED_FROM ?? 1)
+const seeds = process.env.SEED ? [Number(process.env.SEED)] : Array.from({ length: seedCount }, (_, i) => seedFrom + i)
 
 describe.skipIf(!enabled)('two-device convergence against the real server', () => {
   let cloud: RealCloud
@@ -30,9 +33,37 @@ describe.skipIf(!enabled)('two-device convergence against the real server', () =
     await cloud?.stop()
   })
 
+  /**
+   * A third writer (dashboard REST, same account) that changes the server right before a device's next push, so
+   * pushes meet the v2 rejections (version_mismatch + current_payload, not_found, "folder does not exist").
+   */
+  let race: (() => Promise<void>) | null = null
+  const racing: typeof fetch = async (input, init) => {
+    if (race && String(input).includes('/sync/push')) {
+      const r = race
+      race = null
+      await r()
+    }
+    return fetch(input, init)
+  }
+  function armThirdWriter(remoteId: string, rnd: () => number, n: number): void {
+    race = async () => {
+      const pool = (await cloud.snapshotAll(remoteId, ownerToken)).filter((e) => ['collection', 'folder', 'request'].includes(e.resource_type))
+      if (!pool.length) return
+      const e = pool[Math.floor(rnd() * pool.length)]!
+      const path = `/v1/workspaces/${remoteId}/${e.resource_type === 'collection' ? 'collections' : e.resource_type === 'folder' ? 'folders' : 'requests'}/${e.resource_id}`
+      const x = rnd()
+      let res
+      if (x < 0.5) res = await cloud.call('PATCH', path, { token: ownerToken, body: { name: `W${n}`, version: e.version } })
+      else if (x < 0.75 && e.resource_type !== 'collection') res = await cloud.call('PATCH', path, { token: ownerToken, body: { sort_order: Math.floor(rnd() * 6), version: e.version } })
+      else if (e.resource_type !== 'collection') res = await cloud.call('DELETE', path, { token: ownerToken })
+      if (res && res.status >= 300) throw new Error(`third writer ${path}: ${res.text}`)
+    }
+  }
+
   async function pair() {
-    const a = makeDevice(cloud, { signedIn: false, deviceName: 'A' })
-    const b = makeDevice(cloud, { signedIn: false, deviceName: 'B' })
+    const a = makeDevice(cloud, { signedIn: false, deviceName: 'A', fetchImpl: racing })
+    const b = makeDevice(cloud, { signedIn: false, deviceName: 'B', fetchImpl: racing })
     devices.push(a, b)
     await signInDevice(a, cloud, 'fuzz@it.test', PASSWORD)
     await signInDevice(b, cloud, 'fuzz@it.test', PASSWORD)
@@ -63,11 +94,13 @@ describe.skipIf(!enabled)('two-device convergence against the real server', () =
           const k = 2 + Math.floor(rnd() * 5)
           for (let i = 0; i < k; i++) await randomOp(d, ws, rnd, ++n)
         }
+        if (rnd() < 0.4) armThirdWriter(p.remoteId, rnd, ++n)
         const mode = rnd()
         if (mode < 0.35) { await p.a.core.sync.syncNow(p.wsA); await p.b.core.sync.syncNow(p.wsB) }
         else if (mode < 0.7) { await p.b.core.sync.syncNow(p.wsB); await p.a.core.sync.syncNow(p.wsA) }
         else if (mode < 0.85) await p.a.core.sync.syncNow(p.wsA)
       }
+      race = null
       for (let i = 0; i < 12; i++) {
         for (let r = 0; r < 2; r++) {
           await p.a.core.sync.syncNow(p.wsA)

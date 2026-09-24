@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
+import { checkRejectionContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
 
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
@@ -226,5 +227,104 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
     expect(s.openConflicts).toBeGreaterThan(0)
     expect((await a.api.listSyncConflicts(ws)).every((c) => c.kind === 'rejected')).toBe(true)
     expect(pendingCount(a, ws)).toBeGreaterThan(0)
+  })
+
+  it('speaks the protocol v2 rejection contract exactly as the fake server does (sync/wireContract.ts)', async () => {
+    let viewers = 0
+    await checkRejectionContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken,
+      viewerToken: async (wsId) => {
+        const email = `contract-viewer-${++viewers}@it.test`
+        await cloud.createUser(admin, email, PASSWORD)
+        await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
+        return cloud.login(email, PASSWORD)
+      },
+    })
+  })
+
+  describe('push rejections with a writer racing between pull and push', () => {
+    /** A device whose next push is preceded by `race` (a REST write by the owner), recording the pull/push sequence. */
+    async function racingDevice() {
+      const state: { race: (() => Promise<void>) | null; calls: string[] } = { race: null, calls: [] }
+      const racing: typeof fetch = async (input, init) => {
+        const url = String(input)
+        const m = /\/sync\/(pull|push)/.exec(url)
+        if (m) state.calls.push(m[1]!)
+        if (state.race && url.includes('/sync/push')) {
+          const r = state.race
+          state.race = null
+          await r()
+        }
+        return fetch(input, init)
+      }
+      const a = await device(emails.owner, { fetchImpl: racing })
+      const ws = a.workspace.id
+      const col = await a.api.createCollection(ws, 'Race')
+      const folder = await a.api.createFolder({ workspaceId: ws, collectionId: col.id, name: 'F' })
+      const req = await a.api.createRequest({ workspaceId: ws, collectionId: col.id, folderId: folder.id, name: 'R', method: 'GET', url: 'https://x/1', documentJson: DOC })
+      await a.api.publishWorkspace(ws)
+      const s = await a.core.sync.syncNow(ws)
+      const remoteId = s.remoteWorkspaceId!
+      const rest = async (method: string, path: string, body?: unknown) => {
+        const res = await cloud.call(method, `/v1/workspaces/${remoteId}${path}`, { token: ownerToken, body })
+        if (res.status >= 300) throw new Error(`${method} ${path}: ${res.text}`)
+        return res.json
+      }
+      const edit = async (fields: { name?: string; url?: string }) => {
+        const cur = (await a.api.listRequests(col.id)).find((r) => r.id === req.id)!
+        await a.api.updateRequest({ requestId: req.id, name: fields.name ?? cur.name, method: cur.method, url: fields.url ?? cur.url, documentJson: DOC, expectedVersion: cur.version })
+      }
+      return { a, ws, col, folder, req, remoteId, state, rest, edit }
+    }
+
+    it('version_mismatch: merged from current_payload and pushed again without another pull', async () => {
+      const { a, ws, req, remoteId, state, rest, edit } = await racingDevice()
+      await edit({ url: 'https://x/local' })
+      state.race = async () => {
+        const cur = (await rest('GET', `/requests/${req.id}`)).request as Json
+        await rest('PATCH', `/requests/${req.id}`, { sort_order: 7, version: cur.version })
+      }
+      state.calls.length = 0
+      const s = await a.core.sync.syncNow(ws)
+      expect(state.calls).toEqual(['pull', 'push', 'push'])
+      expect(s).toMatchObject({ state: 'idle', pendingChanges: 0, openConflicts: 0 })
+      const server = (await rest('GET', `/requests/${req.id}`)).request as Json
+      expect(server).toMatchObject({ url: 'https://x/local', sort_order: 7 })
+      expect(await serverState(remoteId)).toEqual(deviceState(a, ws))
+    })
+
+    it('not_found: an edit of a request deleted meanwhile becomes remote_deleted after one pull; keep_local re-creates it', async () => {
+      const { a, ws, req, remoteId, state, rest, edit } = await racingDevice()
+      await edit({ name: 'Edited here' })
+      state.race = async () => void (await rest('DELETE', `/requests/${req.id}`))
+      state.calls.length = 0
+      await a.core.sync.syncNow(ws)
+      expect(state.calls).toEqual(['pull', 'push', 'pull'])
+      const [c] = await a.api.listSyncConflicts(ws)
+      expect(c).toMatchObject({ kind: 'remote_deleted', entityId: req.id })
+      await a.api.resolveSyncConflict({ conflictId: c!.id, resolution: 'keep_local' })
+      const s = await a.core.sync.syncNow(ws)
+      expect(s).toMatchObject({ openConflicts: 0, pendingChanges: 0 })
+      expect(((await rest('GET', `/requests/${req.id}`)).request as Json).name).toBe('Edited here')
+      expect(await serverState(remoteId)).toEqual(deviceState(a, ws))
+    })
+
+    it('a move into a folder deleted meanwhile (server: invalid) pulls first and ends as remote_deleted, not quarantined', async () => {
+      const { a, ws, col, req, remoteId, state, rest } = await racingDevice()
+      const other = await a.api.createFolder({ workspaceId: ws, collectionId: col.id, name: 'Other' })
+      await a.core.sync.syncNow(ws)
+      await a.api.moveRequest({ requestId: req.id, targetCollectionId: col.id, targetFolderId: other.id, targetIndex: 0 })
+      state.race = async () => void (await rest('DELETE', `/folders/${other.id}`))
+      await a.core.sync.syncNow(ws)
+      const kinds = (await a.api.listSyncConflicts(ws)).map((c) => c.kind)
+      expect(kinds.length).toBeGreaterThan(0)
+      expect(kinds.every((k) => k === 'remote_deleted')).toBe(true)
+      const folderConflict = (await a.api.listSyncConflicts(ws)).find((c) => c.entityId === other.id)!
+      await a.api.resolveSyncConflict({ conflictId: folderConflict.id, resolution: 'keep_local' })
+      const s = await a.core.sync.syncNow(ws)
+      expect(s).toMatchObject({ openConflicts: 0, pendingChanges: 0 })
+      expect(await serverState(remoteId)).toEqual(deviceState(a, ws))
+    })
   })
 })
