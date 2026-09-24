@@ -17,6 +17,8 @@ export interface VariableRow {
   key: string
   value: string
   isSecret: boolean
+  /** Secret variable that arrived from the cloud: the value is not set on this device. */
+  secretMissing?: boolean
   createdAt: number
   updatedAt: number
   version: number

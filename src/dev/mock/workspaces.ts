@@ -45,7 +45,7 @@ function publicVariable(v: VariableRow): EnvironmentVariable {
     value: v.isSecret ? null : v.value,
     isSecret: v.isSecret,
     maskedValue: v.isSecret ? SECRET_MASK : null,
-    secretMissing: false,
+    secretMissing: v.isSecret && v.secretMissing === true,
     createdAt: v.createdAt,
     updatedAt: v.updatedAt,
     version: v.version,
@@ -163,6 +163,7 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
       const existing = must(s.variables, input.variableId, 'Variable')
       if (existing.environmentId !== input.environmentId) fail('invalid_input', 'Variable belongs to a different environment')
       existing.value = applyValue(existing, value, input.isSecret)
+      if (!input.isSecret || !isKeepMarker(value)) existing.secretMissing = false
       existing.key = key
       existing.isSecret = input.isSecret
       return publicVariable(touch(existing))

@@ -2,7 +2,7 @@
  * In-memory implementation of the whole SlingerIpcApi for running the renderer in a plain browser.
  * `installMockBackend()` sets `window.slinger` (when undefined) and `window.__slingerMock`.
  */
-import { createSyncApi } from './mock/sync'
+import { createSyncApi, type CloudOptions, type MockCloudControls } from './mock/sync'
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
@@ -27,12 +27,15 @@ export interface MockControls {
   failNext(method: keyof SlingerIpcApi, error?: Partial<IpcErrorPayload>): void
   /** Every call to `method` rejects until cleared with `failAlways(null)`. */
   failAlways(method: keyof SlingerIpcApi | null, error?: Partial<IpcErrorPayload>): void
+  /** Scripts the cloud side: sign-in approval, remote edits, roles, offline, auth expiry, conflicts. */
+  cloud: MockCloudControls
   calls: MockCall[]
 }
 
 export interface MockOptions {
   latencyMs?: number
   seed?: boolean
+  cloud?: CloudOptions
 }
 
 declare global {
@@ -72,13 +75,14 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const calls: MockCall[] = []
 
   const misc = createMiscApi()
+  const sync = createSyncApi(state, options.cloud)
   const impl: SlingerIpcApi = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
     ...createVersionApi(state),
     ...createHttpApi(state),
     ...misc,
-    ...createSyncApi(),
+    ...sync.api,
     async listHistory(workspaceId, limit) {
       const rows = state.history.filter((h) => h.workspaceId === workspaceId).sort((a, b) => b.createdAt - a.createdAt)
       return limit && limit > 0 ? rows.slice(0, limit) : rows
@@ -104,10 +108,24 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
         once.delete(method)
         return Promise.reject(toError(injected, method))
       }
-      const run = () =>
-        fn(...clone(args)).then(clone, (e: unknown) => {
-          throw toPlain(e)
-        })
+      const run = () => {
+        // Cloud sync: viewer workspaces reject writes (like the main-process triggers); linked workspaces get status/auto-sync.
+        let target: string | null = null
+        try {
+          target = sync.beforeWrite(method, clone(args))
+        } catch (e) {
+          return Promise.reject(toPlain(e))
+        }
+        return fn(...clone(args)).then(
+          (r) => {
+            sync.afterWrite(target)
+            return clone(r)
+          },
+          (e: unknown) => {
+            throw toPlain(e)
+          },
+        )
+      }
       return NO_LATENCY.has(method) ? run() : sleep(latency).then(run)
     }
   }
@@ -121,6 +139,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
       Object.assign(state, emptyState())
       if (seed) seedState(state)
       misc.resetSecureStore()
+      sync.reset()
       once.clear()
       always = null
       calls.length = 0
@@ -134,6 +153,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     failAlways(method, error) {
       always = method ? { method, error } : null
     },
+    cloud: sync.controls,
     calls,
   }
   controls.reset()
@@ -142,7 +162,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
 export function installMockBackend(): void {
   if (typeof window === 'undefined') return
-  const backend = createMockBackend()
+  // In the browser the device sign-in approves itself after a moment, and edits auto-sync with a short debounce.
+  const backend = createMockBackend({ cloud: { autoApproveMs: 2500, autoCycleMs: 1500, stepMs: 250 } })
   window.__slingerMock = backend
   if (window.slinger === undefined) window.slinger = backend
 }
