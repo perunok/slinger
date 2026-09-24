@@ -98,6 +98,37 @@ describe('read-only workspace', () => {
     expect(labels.some((l) => /New request|New folder|Rename|Delete/.test(l))).toBe(false)
   })
 
+  it('saved examples: listed and openable, but rename/duplicate/delete, F2/Delete and Save are unavailable', async () => {
+    const user = userEvent.setup()
+    await openLinked('Shared Docs')
+    render(CollectionsPanel)
+    const row = await screen.findByRole('treeitem', { name: /Reference/ })
+    if (row.getAttribute('aria-expanded') !== 'true') await user.click(row)
+    const request = await screen.findByRole('treeitem', { name: /Changelog/ })
+    request.focus()
+    await user.keyboard('{ArrowRight}')
+    const example = await screen.findByRole('treeitem', { name: /Latest/ })
+    await user.pointer({ keys: '[MouseRight]', target: example })
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.replace(/Enter/, '').trim())).toEqual(['Open'])
+    await user.keyboard('{Escape}')
+    example.focus()
+    await user.keyboard('{F2}')
+    expect(screen.queryByRole('dialog', { name: /Rename/ })).toBeNull()
+    await user.keyboard('{Delete}')
+    expect(screen.queryByRole('dialog', { name: /Delete/ })).toBeNull()
+    await user.pointer({ keys: '[MouseRight]', target: request })
+    const rmenu = await screen.findByRole('menu')
+    expect(within(rmenu).getAllByRole('menuitem').map((i) => i.textContent?.replace(/Enter|←|→/g, '').trim())).toEqual(['Open', 'Hide examples'])
+    await user.keyboard('{Escape}')
+    example.focus()
+    await user.keyboard('{Enter}')
+    const tab = tabsStore.active!
+    expect(tab.title).toBe('Latest')
+    tab.exampleDraft!.body = 'edited'
+    expect(await tabsStore.save(tab).catch(() => false)).toBe(false) // main/mock rejects with read_only
+  })
+
   it('an editable linked workspace keeps every action', async () => {
     await openLinked('Payments API', 'editor')
     render(CollectionsPanel)

@@ -12,7 +12,8 @@
   import { planDrop, type DragItem, type DropPosition, type DropTarget } from '../../lib/tree'
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
-  import { buildRows, rowKey, type TreeRowModel } from './rows'
+  import * as examples from '../examples/actions'
+  import { buildRows, exampleRowKey, rowKey, type TreeRowModel } from './rows'
   import TreeRow, { type DropHint } from './TreeRow.svelte'
 
   const ro = $derived(sync.blocked)
@@ -26,12 +27,18 @@
     | { t: 'newCollection' }
     | { t: 'newFolder'; collectionId: string; parentId: string | null }
     | { t: 'newRequest'; collectionId: string; folderId: string | null }
+    | { t: 'newExample'; requestId: string }
     | { t: 'rename'; row: TreeRowModel }
     | { t: 'delete'; row: TreeRowModel }
   let dlg = $state<Dlg | null>(null)
 
   const rows = $derived(buildRows({ collections: app.collections, folders: app.folders, requests: app.requests, expanded, filter }))
-  const activeRequestId = $derived(tabsStore.active?.requestId ?? null)
+  /** Row of the active tab: its request, or its example. */
+  const activeKey = $derived.by(() => {
+    const t = tabsStore.active
+    if (!t?.requestId) return null
+    return t.example ? exampleRowKey(t.requestId, t.example.index) : rowKey('request', t.requestId)
+  })
 
   const setExpanded = (key: string, open: boolean) => expandedStore.set(key, open)
   // First run: open the first collection so the tree is not blank.
@@ -57,8 +64,12 @@
     if (row.kind === 'request') {
       const r = app.requestById(row.id)
       if (r) tabsStore.openRequest(r)
+    } else if (row.kind === 'example' && row.exampleIndex !== undefined) {
+      examples.openExample(row.id, row.exampleIndex)
     }
   }
+  /** Requests open on Enter/click; only their chevron (or the arrow keys) shows the examples. */
+  const togglesOnActivate = (row: TreeRowModel) => row.expandable && row.kind !== 'request'
   function toggle(row: TreeRowModel) {
     setExpanded(row.key, !row.expanded)
     focusKey = row.key
@@ -71,7 +82,7 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Run collection…', 'Run folder…', 'Versions…', 'Export as Postman JSON…'])
+    const keep = new Set(['Open', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Versions…', 'Export as Postman JSON…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -98,9 +109,20 @@
         { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
       ]
     }
+    if (row.kind === 'example') {
+      return [
+        { label: 'Open', icon: 'file', hint: 'Enter', action: () => activate(row) },
+        { label: 'Duplicate', icon: 'copy', action: () => void duplicateExample(row) },
+        { separator: true, label: '' },
+        { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
+        { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
+      ]
+    }
     return [
       { label: 'Open', icon: 'file', hint: 'Enter', action: () => activate(row) },
+      ...(row.expandable ? [{ label: row.expanded ? 'Hide examples' : 'Show examples', icon: 'list', hint: row.expanded ? '←' : '→', action: () => toggle(row) }] : []),
       { label: 'Duplicate', icon: 'copy', action: () => void duplicate(row) },
+      { label: 'Add example', icon: 'plus', action: () => (dlg = { t: 'newExample', requestId: row.id }) },
       { separator: true, label: '' },
       { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
       { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
@@ -114,6 +136,12 @@
       const copy = await actions.duplicateRequest(r)
       tabsStore.openRequest(copy)
     })
+  }
+
+  async function duplicateExample(row: TreeRowModel) {
+    if (row.exampleIndex === undefined) return
+    const index = row.exampleIndex
+    await actions.runAction('Duplicate example', () => examples.duplicateExampleAt(row.id, index))
   }
 
   // ---- dialogs -----------------------------------------------------------
@@ -133,10 +161,13 @@
       setExpanded(rowKey('collection', d.collectionId), true)
       if (d.folderId) setExpanded(rowKey('folder', d.folderId), true)
       tabsStore.openRequest(r)
+    } else if (d.t === 'newExample') {
+      await examples.addExample(d.requestId, name)
     } else if (d.t === 'rename') {
       const { row } = d
       if (row.kind === 'collection') await actions.renameCollection(row.id, name)
       else if (row.kind === 'folder') await actions.renameFolder(row.id, row.collectionId, name)
+      else if (row.kind === 'example') await examples.renameExample(row.id, row.exampleIndex ?? -1, name)
       else {
         const r = app.requestById(row.id)
         if (r) await actions.renameRequest(r, name)
@@ -145,12 +176,19 @@
   }
 
   function deleteMessage(row: TreeRowModel): string {
-    if (row.kind === 'request') return `Delete the request “${row.label}”? This cannot be undone.`
+    if (row.kind === 'example') return `Delete the example “${row.label}”? This cannot be undone.`
+    if (row.kind === 'request') {
+      const n = row.count ?? 0
+      return n > 0
+        ? `Delete the request “${row.label}” and its ${n} saved example${n === 1 ? '' : 's'}? This cannot be undone.`
+        : `Delete the request “${row.label}”? This cannot be undone.`
+    }
     const n = row.count ?? 0
     return `Delete the ${row.kind} “${row.label}” and everything in it (${n} request${n === 1 ? '' : 's'})? This cannot be undone.`
   }
   async function confirmDelete(row: TreeRowModel) {
-    if (row.kind === 'collection') await actions.deleteCollection(row.id)
+    if (row.kind === 'example') await examples.deleteExampleAt(row.id, row.exampleIndex ?? -1)
+    else if (row.kind === 'collection') await actions.deleteCollection(row.id)
     else if (row.kind === 'folder') await actions.deleteFolder(row.id, row.collectionId)
     else {
       const r = app.requestById(row.id)
@@ -187,13 +225,14 @@
         return
       case 'ArrowLeft':
         e.preventDefault()
-        if (row.expandable && row.expanded && !filter) setExpanded(row.key, false)
+        // While filtering, folders are forced open; request rows (examples) still collapse.
+        if (row.expandable && row.expanded && (!filter || row.kind === 'request')) setExpanded(row.key, false)
         else if (row.parentKey) focusRow(row.parentKey)
         return
       case 'Enter':
       case ' ':
         e.preventDefault()
-        if (row.expandable) toggle(row)
+        if (togglesOnActivate(row)) toggle(row)
         else activate(row)
         return
       case 'F2':
@@ -234,20 +273,21 @@
     if (row.kind === 'folder') return y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'inside'
     return y < 0.5 ? 'before' : 'after'
   }
-  const targetOf = (row: TreeRowModel): DropTarget => (row.kind === 'collection' ? { kind: 'collection', collectionId: row.id } : { kind: row.kind, id: row.id })
+  const targetOf = (row: TreeRowModel): DropTarget =>
+    row.kind === 'collection' ? { kind: 'collection', collectionId: row.id } : { kind: row.kind === 'folder' ? 'folder' : 'request', id: row.id }
 
   function clearExpandTimer() {
     if (expandTimer) clearTimeout(expandTimer)
     expandTimer = null
   }
   function onDragStart(e: DragEvent, row: TreeRowModel) {
-    if (row.kind === 'collection' || ro) return e.preventDefault()
+    if ((row.kind !== 'folder' && row.kind !== 'request') || ro) return e.preventDefault()
     drag = { kind: row.kind, id: row.id }
     e.dataTransfer?.setData('text/plain', row.label)
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
   }
   function onDragOver(e: DragEvent, row: TreeRowModel) {
-    if (!drag) return
+    if (!drag || row.kind === 'example') return
     const position = positionFor(e, row)
     const plan = planDrop(dropContext(), drag, targetOf(row), position)
     if (plan && 'blocked' in plan) {
@@ -267,7 +307,7 @@
     const item = drag
     const position = positionFor(e, row)
     endDrag()
-    if (!item) return
+    if (!item || row.kind === 'example') return
     const plan = planDrop(dropContext(), item, targetOf(row), position)
     if (plan === null) return
     if ('blocked' in plan) return void toast.error('Cannot move here', plan.blocked)
@@ -306,10 +346,10 @@
     {#each rows as row (row.key)}
       <TreeRow
         {row}
-        active={row.kind === 'request' && row.id === activeRequestId}
+        active={row.key === activeKey}
         focused={row.key === focusKey}
         hint={hint?.key === row.key ? hint : null}
-        dragging={drag?.id === row.id && drag?.kind === row.kind}
+        dragging={row.kind !== 'example' && drag?.id === row.id && drag?.kind === row.kind}
         ontoggle={() => toggle(row)}
         onactivate={() => activate(row)}
         onfocusrow={() => (focusKey = row.key)}
@@ -352,6 +392,8 @@
     <NameDialog title="New folder" label="Folder name" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'newRequest'}
     <NameDialog title="New request" label="Request name" initial="New Request" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
+  {:else if dlg.t === 'newExample'}
+    <NameDialog title="Add example" label="Example name" initial="New example" submitLabel="Add" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'rename'}
     <NameDialog title="Rename {dlg.row.kind}" label="Name" initial={dlg.row.label} submitLabel="Rename" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'delete'}

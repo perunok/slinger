@@ -867,7 +867,8 @@ export function createSyncApi(
     const docs = newRemote('Shared Docs', 'viewer')
     const ref = rAdd(docs, 'collection', { name: 'Reference' })
     rAdd(docs, 'request', { collection_id: ref, folder_id: null, name: 'Status', method: 'GET', url: 'https://status.example.test', document_json: doc('Status', 'GET', 'https://status.example.test'), sort_order: 0 })
-    rAdd(docs, 'request', { collection_id: ref, folder_id: null, name: 'Changelog', method: 'GET', url: 'https://example.test/changelog', document_json: doc('Changelog', 'GET', 'https://example.test/changelog'), sort_order: 1 })
+    const changelog = { ...JSON.parse(doc('Changelog', 'GET', 'https://example.test/changelog')), responses: [{ name: 'Latest', code: 200, status: 'OK', header: [{ key: 'Content-Type', value: 'text/plain' }], body: '1.2.0: examples' }] }
+    rAdd(docs, 'request', { collection_id: ref, folder_id: null, name: 'Changelog', method: 'GET', url: 'https://example.test/changelog', document_json: JSON.stringify(changelog), sort_order: 1 })
 
     newRemote('Empty Team', 'owner')
   }

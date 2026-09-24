@@ -56,6 +56,7 @@
           onauxclick={(e) => e.button === 1 && tabsStore.requestClose([t.id])}
         >
           <span class="shrink-0 text-[10px] font-bold" style="color:{methodColor(t.draft.method)}">{t.draft.method.slice(0, 4)}</span>
+          {#if t.example}<span class="shrink-0 rounded bg-raised px-1 text-[10px] text-muted" title="Saved example">e.g.<span class="sr-only"> example</span></span>{/if}
           <span class="truncate">{t.title}</span>
           {#if t.dirty}<span class="h-2 w-2 shrink-0 rounded-full bg-warning" title="Unsaved changes" role="img" aria-label="Unsaved changes"></span>{/if}
         </button>

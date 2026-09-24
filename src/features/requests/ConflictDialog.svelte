@@ -8,6 +8,7 @@
 
   let { tab }: { tab: RequestTab } = $props()
   let busy = $state(false)
+  const gone = $derived(tab.example?.remote === 'gone')
   let error = $state<string | null>(null)
 
   async function run(fn: () => Promise<unknown>) {
@@ -29,13 +30,22 @@
     })
 </script>
 
-<Dialog title="Request changed elsewhere" onclose={() => (tab.conflict = null)} size="md" {busy}>
-  <p class="text-sm">
-    “{tab.title}” was modified after you opened it (stored version {tab.conflict?.serverRequest?.version ?? '?'}, yours is based on {tab.baseVersion}).
-  </p>
+<Dialog title={tab.example ? (gone ? 'Example deleted elsewhere' : 'Example changed elsewhere') : 'Request changed elsewhere'} onclose={() => (tab.conflict = null)} size="md" {busy}>
+  {#if tab.example}
+    <p class="text-sm">
+      {gone
+        ? `The example “${tab.title}” was deleted after you opened it.`
+        : `The example “${tab.title}” was modified after you opened it.`}
+      Other examples and the request itself are not affected.
+    </p>
+  {:else}
+    <p class="text-sm">
+      “{tab.title}” was modified after you opened it (stored version {tab.conflict?.serverRequest?.version ?? '?'}, yours is based on {tab.baseVersion}).
+    </p>
+  {/if}
   <ul class="mt-3 list-disc space-y-1 pl-5 text-sm text-muted">
-    <li><strong class="text-fg">Reload</strong> discards your edits and loads the stored version.</li>
-    <li><strong class="text-fg">Overwrite</strong> saves your edits over the stored version.</li>
+    <li><strong class="text-fg">Reload</strong> discards your edits and loads the stored version{gone ? ' (closes the tab)' : ''}.</li>
+    <li><strong class="text-fg">Overwrite</strong> {gone ? 'adds your version of the example back.' : 'saves your edits over the stored version.'}</li>
     <li><strong class="text-fg">Cancel</strong> keeps your unsaved edits in the tab.</li>
   </ul>
   <InlineError class="mt-3" message={error} />

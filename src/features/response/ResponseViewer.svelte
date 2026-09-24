@@ -4,6 +4,7 @@
 
 <script lang="ts">
   /** Full response view for a received HttpResponseData: chips, toolbar and Pretty/Raw/Preview/Headers/Cookies. */
+  import type { Snippet } from 'svelte'
   import type { HttpResponseData } from '../../../shared/types'
   import { settings } from '../../app/settings.svelte'
   import { toast } from '../../app/toast.svelte'
@@ -22,10 +23,16 @@
     data: HttpResponseData
     view?: ResponseTabId
     onviewchange?: (v: ResponseTabId) => void
+    /** Body type to assume when there is no Content-Type header (saved examples' preview language). */
+    mimeHint?: string
+    /** Hide the time chip (saved examples usually have no timing). */
+    showTiming?: boolean
+    /** Extra toolbar content, before the icon buttons. */
+    actions?: Snippet
   }
-  let { data, view = 'pretty', onviewchange }: Props = $props()
+  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions }: Props = $props()
 
-  const info = $derived(analyzeResponse(data))
+  const info = $derived(analyzeResponse(data, mimeHint))
   const cookieCount = $derived(parseSetCookies(data.headers).length)
   const tone = $derived(statusTone(data.status))
   let wrap = $state(settings.editorWrap)
@@ -80,10 +87,11 @@
 <div class="flex h-full min-h-0 flex-col" data-testid="response-viewer">
   <div class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
     <span class="rounded px-2 py-0.5 text-xs font-semibold {toneClass}" data-testid="status-chip">{data.status} {data.statusText}</span>
-    <span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="time-chip" title="Time to complete the request">{formatDuration(data.durationMs)}</span>
+    {#if showTiming}<span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="time-chip" title="Time to complete the request">{formatDuration(data.durationMs)}</span>{/if}
     <span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="size-chip" title="Body size">{formatBytes(data.bodyByteLength)}</span>
     {#if info.mime}<span class="hidden rounded bg-raised px-2 py-0.5 text-xs text-faint sm:inline">{info.mime}</span>{/if}
     <div class="ml-auto flex items-center gap-0.5">
+      {@render actions?.()}
       <IconButton icon="search" label="Search in response" disabled={!canEdit || info.text === null} onclick={() => editor?.openSearch()} />
       <IconButton icon="wrap" label="Toggle word wrap" active={wrap} onclick={() => (wrap = !wrap)} />
       <IconButton icon="copy" label="Copy response body" disabled={info.text === null} onclick={copyBody} />

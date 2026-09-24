@@ -92,8 +92,8 @@
     // A replace gives every folder/request a new id. Remember the layout and the clean open tabs
     // (reloading closes tabs whose request id vanished) so both can be carried over by name/path.
     const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }
-    const cleanTabs = tabsStore.tabs.filter((t) => t.requestId && !t.dirty && before.requests.some((r) => r.id === t.requestId))
-    const wasActive = tabsStore.active?.requestId ?? null
+    const cleanTabs = tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId))
+    const wasActive = tabsStore.active?.example ? null : (tabsStore.active?.requestId ?? null)
     const openedNames = new Map(cleanTabs.map((t) => [t.requestId!, t.draft.name]))
     await api().restoreCollectionVersion(v.id, mode)
     await app.reloadCollections()

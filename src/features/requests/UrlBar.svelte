@@ -12,8 +12,11 @@
     onsend: () => void
     oncancel: () => void
     onsave: () => void
+    /** Example tabs label the send button "Try" (it sends from a new tab). */
+    sendLabel?: string
+    sendTitle?: string
   }
-  let { tab, onsend, oncancel, onsave }: Props = $props()
+  let { tab, onsend, oncancel, onsave, sendLabel = 'Send', sendTitle = 'Send (Ctrl+Enter)' }: Props = $props()
 
   function setUrl(v: string) {
     tab.draft.url = v
@@ -46,7 +49,7 @@
   {#if tab.sending}
     <Button variant="danger" icon="stop" onclick={oncancel} class="w-24">Cancel</Button>
   {:else}
-    <Button variant="primary" icon="send" onclick={onsend} class="w-24" title="Send (Ctrl+Enter)">Send</Button>
+    <Button variant="primary" icon="send" onclick={onsend} class="w-24" title={sendTitle}>{sendLabel}</Button>
   {/if}
   <Button icon="save" onclick={onsave} loading={tab.saving} title={sync.blocked ? `${sync.blockedMessage} Saving is disabled.` : 'Save (Ctrl+S)'} disabled={sync.blocked || (!!tab.requestId && !tab.dirty)}>Save</Button>
 </div>

@@ -43,4 +43,18 @@ describe('buildRows', () => {
     expect(rows.filter((r) => r.kind === 'collection').map((r) => r.id)).toEqual(['c1'])
     expect(rows).toHaveLength(6)
   })
+  it('lists saved examples as children of an expanded request', () => {
+    const withExamples = { ...req('r1', null), documentJson: JSON.stringify({ responses: [{ name: 'ok', code: 200 }, { name: 'missing', code: 404 }] }) }
+    const input = { ...data, requests: [withExamples], expanded: new Set(['collection:c1']), filter: '' }
+    const collapsed = buildRows(input)
+    expect(collapsed.find((r) => r.key === 'request:r1')).toMatchObject({ expandable: true, expanded: false, count: 2 })
+    expect(collapsed.some((r) => r.kind === 'example')).toBe(false)
+    const rows = buildRows({ ...input, expanded: new Set(['collection:c1', 'request:r1']) })
+    expect(rows.filter((r) => r.kind === 'example')).toMatchObject([
+      { key: 'example:r1:0', id: 'r1', exampleIndex: 0, label: 'ok', code: 200, depth: 2, parentKey: 'request:r1', posInSet: 1, setSize: 2 },
+      { key: 'example:r1:1', id: 'r1', exampleIndex: 1, label: 'missing', code: 404, depth: 2, posInSet: 2, setSize: 2 },
+    ])
+    // A request without examples is a leaf.
+    expect(buildRows({ ...data, expanded: new Set(['collection:c1']), filter: '' }).find((r) => r.key === 'request:r1')).toMatchObject({ expandable: false, count: undefined })
+  })
 })

@@ -1,13 +1,33 @@
 <script lang="ts">
   /** What sits under the request editor: empty state, progress, inline error or the response viewer. */
   import { scopeStore } from '../../app/scope.svelte'
+  import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import NameDialog from '../../components/ui/NameDialog.svelte'
   import Spinner from '../../components/ui/Spinner.svelte'
+  import { defaultExampleName, openExample, saveResponseAsExample } from '../examples/actions'
   import type { RequestTab } from '../requests/tabs.svelte'
   import { tabsStore } from '../requests/tabs.svelte'
+  import { sync } from '../sync/syncStore.svelte'
   import ResponseViewer from './ResponseViewer.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
+
+  let naming = $state(false)
+  const saveTitle = $derived(
+    sync.blocked ? `${sync.blockedMessage} Saving is disabled.` : !tab.requestId ? 'Save the request first, then save its responses as examples' : 'Keep this response as a saved example of the request',
+  )
+
+  async function saveExample(name: string) {
+    const requestId = tab.requestId
+    const response = tab.response?.data
+    if (!requestId || !response) throw new Error('There is no response to save.')
+    const saved = await saveResponseAsExample(requestId, name, $state.snapshot(tab.draft), response)
+    toast.offer('Example saved', saved.note ? `“${name}”. ${saved.note}` : `“${name}” is listed under the request.`, {
+      label: 'Open example',
+      run: () => openExample(requestId, saved.index),
+    })
+  }
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-surface" aria-label="Response" role="region">
@@ -38,7 +58,11 @@
       </ul>
     {/if}
     <div class="min-h-0 flex-1">
-      <ResponseViewer data={tab.response.data} view={tab.responseView} onviewchange={(v) => (tab.responseView = v)} />
+      <ResponseViewer data={tab.response.data} view={tab.responseView} onviewchange={(v) => (tab.responseView = v)}>
+        {#snippet actions()}
+          <Button size="sm" icon="save" class="mr-1" disabled={sync.blocked || !tab.requestId} title={saveTitle} onclick={() => (naming = true)}>Save as example</Button>
+        {/snippet}
+      </ResponseViewer>
     </div>
   {:else if !tab.error}
     <div class="flex h-full flex-col items-center justify-center gap-1 text-sm text-muted">
@@ -47,3 +71,14 @@
     </div>
   {/if}
 </div>
+
+{#if naming && tab.response}
+  <NameDialog
+    title="Save as example"
+    label="Example name"
+    initial={defaultExampleName(tab.response.data)}
+    submitLabel="Save example"
+    onsubmit={saveExample}
+    oncancel={() => (naming = false)}
+  />
+{/if}

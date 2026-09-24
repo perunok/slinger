@@ -1,10 +1,26 @@
 /**
  * Open request tabs. Each tab owns an editable draft, its saved fingerprint (dirty tracking),
  * the last response and the in-flight run. Saving handles optimistic-concurrency conflicts.
+ *
+ * A tab can also show a saved example (`tab.example` set): `draft` is then the example's request
+ * part, `exampleDraft` its response part, and saving writes the example back into the parent
+ * request's document (`responses`), leaving every other example and the request itself as stored.
  */
 import type { ApiRequest, HttpResponseData } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
+import {
+  exampleFingerprint,
+  locateExample,
+  locatorFor,
+  parseExample,
+  readExamples,
+  serializeExample,
+  updateExamples,
+  type ExampleLocator,
+  type ExampleResponseDraft,
+  type ParsedExample,
+} from '../../lib/examples'
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
@@ -22,6 +38,20 @@ export interface ResponseView {
 
 export const serverKeyOf = (r: Pick<ApiRequest, 'name' | 'method' | 'url' | 'documentJson'>) =>
   `${r.name}\u0000${r.method}\u0000${r.url}\u0000${r.documentJson}`
+
+/** Where an example tab's example lives and what it looked like when loaded/saved. */
+export interface ExampleBinding extends ExampleLocator {
+  /** The stored example object; saving only replaces the fields that were edited. */
+  original: unknown
+  /** Parse of `original`, the reference for "was this field edited?". */
+  baseline: ParsedExample
+  requestFromParent: boolean
+  responseTime: number | null
+  /** Result of the last reconciliation with the stored request. */
+  remote: 'same' | 'changed' | 'gone'
+}
+
+export type ExampleSection = 'response' | 'body' | 'headers'
 
 export class RequestTab {
   id = nextId('t')
@@ -50,8 +80,17 @@ export class RequestTab {
   /** Set by cloud sync when this request changed or was deleted remotely while the tab has unsaved edits. */
   remoteNotice = $state<TabNotice | null>(null)
 
-  dirty = $derived(draftFingerprint(this.draft) !== this.savedFingerprint)
-  title = $derived(this.draft.name || 'Untitled Request')
+  /** Set for example tabs (see the file comment). */
+  example = $state.raw<ExampleBinding | null>(null)
+  exampleDraft = $state<ExampleResponseDraft | null>(null)
+  exampleSavedFingerprint = $state('')
+  exampleSection = $state<ExampleSection>('response')
+
+  dirty = $derived(
+    draftFingerprint(this.draft) !== this.savedFingerprint ||
+      (this.exampleDraft !== null && exampleFingerprint(this.exampleDraft) !== this.exampleSavedFingerprint),
+  )
+  title = $derived(this.exampleDraft ? this.exampleDraft.name.trim() || 'Untitled example' : this.draft.name || 'Untitled Request')
 
   constructor(init?: { request?: ApiRequest; draft?: RequestDraft; collectionId?: string | null; folderId?: string | null }) {
     if (init?.request) this.loadFrom(init.request)
@@ -65,6 +104,11 @@ export class RequestTab {
   }
 
   loadFrom(request: ApiRequest) {
+    if (this.example) {
+      const found = locateExample(readExamples(request.documentJson), this.example)
+      if (found) this.loadExample(request, found.index)
+      return
+    }
     this.requestId = request.id
     this.collectionId = request.collectionId
     this.folderId = request.folderId
@@ -73,6 +117,47 @@ export class RequestTab {
     this.savedFingerprint = draftFingerprint(this.draft)
     this.serverKey = serverKeyOf(request)
     this.remoteNotice = null
+  }
+
+  /** Binds this tab to the example at `index` of `request` and loads both halves into the drafts. */
+  loadExample(request: ApiRequest, index: number) {
+    this.bindExample(request, index)
+    const parsed = parseExample(this.example!.original, request)
+    this.draft = parsed.request
+    this.exampleDraft = parsed.response
+    this.savedFingerprint = draftFingerprint(parsed.request)
+    this.exampleSavedFingerprint = exampleFingerprint(parsed.response)
+    this.remoteNotice = null
+  }
+
+  /**
+   * Points the binding at the stored example without touching the drafts; the saved fingerprints
+   * follow the stored content so unsaved edits stay dirty and nothing else does.
+   */
+  rebaseExample(request: ApiRequest, index: number) {
+    this.bindExample(request, index)
+    const b = this.example!.baseline
+    this.savedFingerprint = draftFingerprint(b.request)
+    this.exampleSavedFingerprint = exampleFingerprint(b.response)
+  }
+
+  private bindExample(request: ApiRequest, index: number) {
+    const list = readExamples(request.documentJson)
+    const original = list[index]
+    const baseline = parseExample(original, request)
+    this.example = {
+      ...locatorFor(list, index),
+      original,
+      baseline,
+      requestFromParent: baseline.requestFromParent,
+      responseTime: baseline.responseTime,
+      remote: 'same',
+    }
+    this.requestId = request.id
+    this.collectionId = request.collectionId
+    this.folderId = request.folderId
+    this.baseVersion = request.version
+    this.serverKey = serverKeyOf(request)
   }
 }
 
@@ -89,12 +174,30 @@ class TabsStore {
   }
 
   openRequest(request: ApiRequest): RequestTab {
-    const existing = this.tabs.find((t) => t.requestId === request.id)
+    const existing = this.tabs.find((t) => t.requestId === request.id && !t.example)
     if (existing) {
       this.activeId = existing.id
       return existing
     }
     const tab = new RequestTab({ request })
+    this.tabs.push(tab)
+    this.activeId = tab.id
+    return tab
+  }
+
+  /** The open tab showing example `index` of the request, if any. */
+  findExample(requestId: string, index: number): RequestTab | null {
+    return this.tabs.find((t) => t.example && t.requestId === requestId && t.example.index === index) ?? null
+  }
+
+  openExample(request: ApiRequest, index: number): RequestTab {
+    const existing = this.findExample(request.id, index)
+    if (existing) {
+      this.activeId = existing.id
+      return existing
+    }
+    const tab = new RequestTab()
+    tab.loadExample(request, index)
     this.tabs.push(tab)
     this.activeId = tab.id
     return tab
@@ -153,13 +256,30 @@ class TabsStore {
    * adopt the new name/version and keep only the user's other edits dirty (no spurious conflict).
    */
   adoptRename(requestId: string) {
-    const t = this.tabs.find((x) => x.requestId === requestId)
+    const t = this.tabs.find((x) => x.requestId === requestId && !x.example)
     const server = app.requestById(requestId)
     if (!t || !server || !t.dirty) return
     t.draft.name = server.name
     t.baseVersion = server.version
     t.serverKey = serverKeyOf(server)
     t.savedFingerprint = draftFingerprint(parseDocument(server))
+  }
+
+  /**
+   * This window changed the request's examples (`responses`). A request tab with unsaved edits takes
+   * the new list into its draft and is rebased, so its next Save neither conflicts nor brings back the
+   * old list; other tabs are reconciled as after any reload.
+   */
+  afterExamplesWrite(updated: ApiRequest) {
+    app.upsertRequest(updated)
+    const t = this.tabs.find((x) => x.requestId === updated.id && !x.example)
+    if (t?.dirty) {
+      t.draft.extras = { ...t.draft.extras, responses: readExamples(updated.documentJson) }
+      t.baseVersion = updated.version
+      t.serverKey = serverKeyOf(updated)
+      t.savedFingerprint = draftFingerprint(parseDocument(updated))
+    }
+    this.syncWithServer()
   }
 
   /** Requests deleted elsewhere: drop their tabs without prompting (the data is gone). */
@@ -175,8 +295,13 @@ class TabsStore {
    */
   syncWithServer() {
     const gone: string[] = []
+    const goneExamples: string[] = []
     for (const t of this.tabs) {
       if (!t.requestId) continue
+      if (t.example) {
+        if (this.syncExampleTab(t) === 'close') goneExamples.push(t.id)
+        continue
+      }
       const server = app.requestById(t.requestId)
       if (!server) {
         if (t.dirty) {
@@ -203,6 +328,41 @@ class TabsStore {
       }
     }
     if (gone.length) this.dropRequests(gone)
+    if (goneExamples.length) this.closeNow(goneExamples)
+  }
+
+  /** Re-finds an example tab's example in the stored request. Clean tabs follow it; dirty ones are flagged. */
+  private syncExampleTab(t: RequestTab): 'keep' | 'close' {
+    const ex = t.example!
+    const server = app.requestById(t.requestId)
+    if (!server) {
+      if (!t.dirty) return 'close'
+      t.example = { ...ex, remote: 'gone' }
+      return 'keep'
+    }
+    t.collectionId = server.collectionId
+    t.folderId = server.folderId
+    if (server.version === t.baseVersion) return 'keep'
+    const list = readExamples(server.documentJson)
+    const found = locateExample(list, ex)
+    if (!found) {
+      if (!t.dirty) return 'close'
+      t.example = { ...ex, remote: 'gone' }
+      return 'keep'
+    }
+    if (!t.dirty && (found.changed || ex.requestFromParent)) {
+      t.loadExample(server, found.index)
+      return 'keep'
+    }
+    if (found.changed) {
+      t.example = { ...ex, index: found.index, remote: 'changed' }
+      return 'keep'
+    }
+    // Only other parts of the request changed: follow the example's new position.
+    t.example = { ...ex, index: found.index, count: list.length, remote: 'same' }
+    t.baseVersion = server.version
+    t.serverKey = serverKeyOf(server)
+    return 'keep'
   }
 
   // ---- saving -----------------------------------------------------------
@@ -210,6 +370,7 @@ class TabsStore {
   /** Saves a tab. Returns true on success. Unsaved new tabs need Save As (caller opens the dialog). */
   async save(tab: RequestTab, opts: { overwrite?: boolean } = {}): Promise<boolean> {
     if (!tab.requestId) return false
+    if (tab.example) return this.saveExample(tab, opts)
     tab.saving = true
     try {
       const s = serializeDraft(tab.draft)
@@ -229,6 +390,7 @@ class TabsStore {
       tab.conflict = null
       tab.remoteNotice = null
       app.upsertRequest(updated)
+      this.syncWithServer() // example tabs of this request follow their examples
       return true
     } catch (e) {
       if (isVersionConflict(e)) {
@@ -240,6 +402,83 @@ class TabsStore {
     } finally {
       tab.saving = false
     }
+  }
+
+  /**
+   * Saves an example tab into the parent request's document. The write is based on the latest stored
+   * request (updateRequest with its version), so edits to the request or to other examples made
+   * meanwhile are kept. It is a conflict only when THIS example changed or vanished since the tab
+   * loaded it; `overwrite` then writes it anyway (re-adding it if it was deleted).
+   */
+  private async saveExample(tab: RequestTab, opts: { overwrite?: boolean }): Promise<boolean> {
+    const ex = tab.example!
+    const draft = tab.exampleDraft!
+    tab.saving = true
+    try {
+      // Snapshot BEFORE the round trip: keystrokes typed while saving must stay "unsaved".
+      const requestFp = draftFingerprint(tab.draft)
+      const responseFp = exampleFingerprint(draft)
+      const serialized = serializeExample(ex.original, ex.baseline, { response: $state.snapshot(draft), request: $state.snapshot(tab.draft) })
+      let server = app.requestById(tab.requestId) ?? (await this.fetchServer(tab))
+      for (let attempt = 0; ; attempt++) {
+        if (!server) {
+          toast.error('Could not save example', 'Its request no longer exists. Use “Try” to keep the request in a new tab.')
+          return false
+        }
+        const list = readExamples(server.documentJson)
+        const found = locateExample(list, ex)
+        if ((!found || found.changed) && !opts.overwrite) {
+          tab.example = { ...ex, remote: found ? 'changed' : 'gone' }
+          tab.conflict = { serverRequest: server }
+          return false
+        }
+        const index = found ? found.index : list.length
+        const documentJson = updateExamples(server.documentJson, (l) => {
+          const next = [...l]
+          next[index] = serialized
+          return next
+        })
+        try {
+          const updated = await api().updateRequest({
+            requestId: server.id,
+            name: server.name,
+            method: server.method,
+            url: server.url,
+            documentJson,
+            expectedVersion: server.version,
+          })
+          tab.rebaseExample(updated, index)
+          tab.savedFingerprint = requestFp
+          tab.exampleSavedFingerprint = responseFp
+          tab.conflict = null
+          tab.remoteNotice = null
+          this.afterExamplesWrite(updated)
+          return true
+        } catch (e) {
+          // The cached request was stale: retry once on the fresh one (the example checks run again).
+          if (attempt === 0 && isVersionConflict(e)) {
+            server = await this.fetchServer(tab)
+            continue
+          }
+          throw e
+        }
+      }
+    } catch (e) {
+      if (isVersionConflict(e)) tab.conflict = { serverRequest: (await this.fetchServer(tab)) ?? null }
+      else toast.error('Could not save example', errorInfo(e).message)
+      return false
+    } finally {
+      tab.saving = false
+    }
+  }
+
+  /** "Try": sends the example's request in a new, unsaved request tab; the example is not touched. */
+  tryExample(tab: RequestTab): RequestTab {
+    const parent = app.requestById(tab.requestId)
+    const draft: RequestDraft = { ...$state.snapshot(tab.draft), name: parent?.name ?? tab.title, extras: {} }
+    const t = this.newTab({ collectionId: tab.collectionId, folderId: tab.folderId, draft })
+    void this.send(t)
+    return t
   }
 
   private async fetchServer(tab: RequestTab): Promise<ApiRequest | undefined> {
@@ -259,6 +498,17 @@ class TabsStore {
     const server = tab.conflict?.serverRequest ?? (await this.fetchServer(tab))
     if (!server) {
       toast.error('Could not reload request', 'The request no longer exists on the server.')
+      return
+    }
+    if (tab.example) {
+      const found = locateExample(readExamples(server.documentJson), tab.example)
+      tab.conflict = null
+      app.upsertRequest(server)
+      if (found) tab.loadExample(server, found.index)
+      else {
+        toast.info('Example deleted', 'The example no longer exists, so its tab was closed.')
+        this.closeNow([tab.id])
+      }
       return
     }
     tab.loadFrom(server)
@@ -294,6 +544,10 @@ class TabsStore {
   // ---- sending ----------------------------------------------------------
 
   async send(tab: RequestTab): Promise<ExecuteOutcome | null> {
+    if (tab.example) {
+      this.tryExample(tab)
+      return null
+    }
     if (tab.sending || !app.workspaceId) return null
     tab.sending = true
     tab.cancelled = false

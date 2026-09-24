@@ -103,7 +103,31 @@ const PETSTORE = {
     {
       name: 'pets',
       item: [
-        { name: 'List pets', request: { method: 'GET', header: [], url: { raw: 'https://mock.slinger.local/json?limit=10' } } },
+        {
+          name: 'List pets',
+          request: { method: 'GET', header: [], url: { raw: 'https://mock.slinger.local/json?limit=10' } },
+          // Saved examples, as Postman exports them (no ids).
+          response: [
+            {
+              name: 'Two pets',
+              originalRequest: { method: 'GET', header: [], url: { raw: 'https://mock.slinger.local/json?limit=2', host: ['mock', 'slinger', 'local'], path: ['json'], query: [{ key: 'limit', value: '2' }] } },
+              status: 'OK',
+              code: 200,
+              _postman_previewlanguage: 'json',
+              header: [{ key: 'Content-Type', value: 'application/json' }, { key: 'X-Total-Count', value: '2' }],
+              cookie: [],
+              body: '[{"id":1,"name":"Rex","tag":"dog"},{"id":2,"name":"Tom","tag":"cat"}]',
+            },
+            {
+              name: 'Server error',
+              status: 'Internal Server Error',
+              code: 500,
+              _postman_previewlanguage: 'html',
+              header: 'Content-Type: text/html',
+              body: '<!doctype html><html><body><h1>Oops</h1><p>The pet store is closed.</p></body></html>',
+            },
+          ],
+        },
         {
           name: 'Add pet',
           request: {
