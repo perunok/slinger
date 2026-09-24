@@ -199,6 +199,12 @@ export interface HttpRequestInput {
   requestId?: string | null
   requestName?: string | null
   workspaceId: string
+  /**
+   * ADDED (ts-rewrite main process): id used to cancel this run via
+   * cancelHttpRequest(requestRunId). Optional; 1-128 chars of [A-Za-z0-9._:-].
+   * A run id may only be in flight once at a time.
+   */
+  requestRunId?: string | null
 }
 
 export interface HttpResponseData {

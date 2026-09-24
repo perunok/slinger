@@ -49,6 +49,8 @@ export interface SlingerIpcApi {
   listEnvironmentVariables(environmentId: string): Promise<EnvironmentVariable[]>
   upsertEnvironmentVariable(input: UpsertEnvironmentVariableInput): Promise<EnvironmentVariable>
   deleteEnvironmentVariable(variableId: string): Promise<void>
+  /** ADDED: explicit reveal of a variable's value (the only way a secret value reaches the renderer). */
+  revealEnvironmentVariable(variableId: string): Promise<string>
 
   // Collections
   listCollections(workspaceId: string): Promise<Collection[]>
@@ -84,6 +86,12 @@ export interface SlingerIpcApi {
   importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
   defaultExportPath(fileName: string): Promise<string>
   writeExportFile(fileName: string, contents: string): Promise<void>
+  /**
+   * ADDED: opens a native folder picker; the chosen folder becomes the export
+   * directory used by defaultExportPath/writeExportFile for this session.
+   * Resolves to the chosen directory, or null if the dialog was cancelled.
+   */
+  chooseExportDirectory(): Promise<string | null>
 
   // Collection versions (semver snapshots; no git)
   listCollectionVersions(collectionId: string): Promise<CollectionVersion[]> // newest semver first
@@ -120,6 +128,7 @@ export const IPC_CHANNELS = [
   'listEnvironmentVariables',
   'upsertEnvironmentVariable',
   'deleteEnvironmentVariable',
+  'revealEnvironmentVariable',
   'listCollections',
   'createCollection',
   'renameCollection',
@@ -143,6 +152,7 @@ export const IPC_CHANNELS = [
   'importPostmanCollection',
   'defaultExportPath',
   'writeExportFile',
+  'chooseExportDirectory',
   'listCollectionVersions',
   'getCollectionVersion',
   'createCollectionVersion',
