@@ -360,6 +360,8 @@ function applyDelete(ctx: ApplyCtx, type: SyncEntityType, id: string, opId: stri
   if (container) {
     for (const d of subtree(db, type, id)) {
       if (survivors.has(k(d.type, d.id))) continue
+      // Only what the server itself deleted with the container: something moved in locally (not pushed) lives elsewhere remotely.
+      if (!serverCascades(db, { type, id }, d)) continue
       softDeleteRow(ctx, d.type, d.id)
       tombstoneRow(ctx, d.type, d.id)
       note(ctx, d.type, d.id, 'delete')
