@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install system libraries for Electron and the keychain
+        run: sudo apt-get update && sudo apt-get install -y xvfb libsecret-1-0 libnss3 libgbm1 libasound2t64 libgtk-3-0
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # Real Electron under a virtual display. `test:e2e` rebuilds better-sqlite3 for Electron's ABI.
+      - name: E2E
+        run: xvfb-run --auto-servernum npm run test:e2e
+        env:
+          CI: 'true'
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results
+            .e2e-tmp
+          if-no-files-found: ignore

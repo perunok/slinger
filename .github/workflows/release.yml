@@ -1,0 +1,87 @@
+name: Release
+
+# Builds installers on every OS. Tag pushes (v*) also attach them to a GitHub release;
+# manual runs (workflow_dispatch) only upload workflow artifacts.
+#
+# Optional signing secrets (builds are unsigned and still succeed when they are absent):
+#   macOS:   CSC_LINK (base64 .p12 or URL), CSC_KEY_PASSWORD,
+#            APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID  (notarization)
+#   Windows: WIN_CSC_LINK (base64 .pfx or URL), WIN_CSC_KEY_PASSWORD
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            args: --linux AppImage deb --x64
+          - os: windows-latest
+            name: win-x64
+            args: --win nsis --x64
+          - os: macos-15-intel
+            name: mac-x64
+            args: --mac dmg --x64
+          - os: macos-latest # Apple silicon
+            name: mac-arm64
+            args: --mac dmg --arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # scripts/package.mjs: build, rebuild better-sqlite3 for Electron, electron-builder, restore.
+      # Signing/notarization secrets are optional; empty values are ignored by electron-builder.
+      - name: Package
+        run: node scripts/package.mjs ${{ matrix.args }} --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slinger-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.exe
+            release/*.dmg
+            release/*.blockmap
+            release/latest*.yml
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-release/*.AppImage
+            dist-release/*.deb
+            dist-release/*.exe
+            dist-release/*.dmg
+          generate_release_notes: true
