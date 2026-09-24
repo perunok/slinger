@@ -76,3 +76,15 @@ describe('content security policy', () => {
     expect(directive(csp, 'base-uri')).toBe("base-uri 'none'")
   })
 })
+
+describe('permissions', () => {
+  const trusted = (url: string) => url.startsWith('app://slinger/')
+  it('allows only clipboard writes, only from the app origin', async () => {
+    const { isPermissionAllowed } = await import('../lib/permissions')
+    expect(isPermissionAllowed('clipboard-sanitized-write', 'app://slinger/index.html', trusted)).toBe(true)
+    expect(isPermissionAllowed('clipboard-sanitized-write', 'https://evil.example/', trusted)).toBe(false)
+    for (const p of ['clipboard-read', 'media', 'geolocation', 'notifications', 'openExternal']) {
+      expect(isPermissionAllowed(p, 'app://slinger/index.html', trusted), p).toBe(false)
+    }
+  })
+})

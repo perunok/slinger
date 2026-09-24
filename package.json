@@ -24,9 +24,12 @@
     "test:main": "vitest run --config vitest.config.ts",
     "test:renderer": "vitest run --config vite.config.ts",
     "test:watch": "vitest",
-    "typecheck": "npm run typecheck:main && npm run typecheck:renderer",
+    "typecheck": "npm run typecheck:main && npm run typecheck:e2e && npm run typecheck:renderer",
     "typecheck:main": "tsc -p tsconfig.electron.json --noEmit",
-    "typecheck:renderer": "svelte-check --tsconfig ./tsconfig.json"
+    "typecheck:renderer": "svelte-check --tsconfig ./tsconfig.json",
+    "test:e2e": "npm run build && node scripts/ensure-native.mjs electron && vitest run --config vitest.e2e.config.ts",
+    "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6",

@@ -9,6 +9,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
 import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
+import { isPermissionAllowed } from './lib/permissions'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { KeychainSecretStore } from './services/secrets'
@@ -78,8 +79,12 @@ function serveRenderer(): void {
 
 function hardenSession(): void {
   const ses = session.defaultSession
-  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
-  ses.setPermissionCheckHandler(() => false)
+  ses.setPermissionRequestHandler((_wc, permission, callback, details) =>
+    callback(isPermissionAllowed(permission, details.requestingUrl, isTrustedUrl)),
+  )
+  ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
+    isPermissionAllowed(permission, requestingOrigin, (url) => isTrustedUrl(url.endsWith('/') ? url : `${url}/`)),
+  )
   if (devServerUrl) {
     const csp = contentSecurityPolicy({ dev: true, devOrigin: devServerUrl })
     ses.webRequest.onHeadersReceived((details, callback) => {
@@ -106,6 +111,9 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      // Automated runs on a desktop session: render off-screen instead of throttling a hidden window
+      // (a hidden window only produces a frame every ~2 s, which makes UI automation crawl).
+      ...(process.env.SLINGER_HIDE_WINDOW ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   })
   win.once('ready-to-show', () => {
