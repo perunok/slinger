@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { postmanUrlToString } from '../services/postmanImport'
+import { buildPostmanCollection } from '../../src/lib/postman'
 import { makeEnv, SAMPLE_COLLECTION, scaffold, type TestEnv } from './helpers'
 
 let env: TestEnv
@@ -24,6 +25,18 @@ describe('Postman import', () => {
     expect(stored[0]).toMatchObject({ method: 'POST', name: 'Create Charge Detail' })
     expect(stored.map((r) => r.sortOrder)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
     for (const r of stored) expect(() => JSON.parse(r.documentJson)).not.toThrow()
+  })
+
+  it('keeps every saved example (16) and the renderer export writes them back byte for byte', async () => {
+    const text = readFileSync(SAMPLE_COLLECTION, 'utf8')
+    const original = JSON.parse(text)
+    const imported = await env.api.importPostmanCollection(wsId, text)
+    const requests = await env.api.listRequests(imported.collection.id)
+    const stored = requests.map((r) => JSON.parse(r.documentJson).responses as unknown[])
+    expect(stored.reduce((n, list) => n + list.length, 0)).toBe(16)
+    const exported = buildPostmanCollection({ collection: imported.collection, folders: await env.api.listFolders(imported.collection.id), requests })
+    expect(exported.item.map((i) => i.name)).toEqual(original.item.map((i: { name: string }) => i.name))
+    exported.item.forEach((item, i) => expect(JSON.stringify(item.response)).toBe(JSON.stringify(original.item[i].response)))
   })
 
   it('gives requests the nearest folder auth (folder auth is not stored on its own)', async () => {

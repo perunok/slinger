@@ -276,19 +276,39 @@ function buildUrl(doc: Json, fallbackUrl: string): PostmanUrl {
   return url
 }
 
-function requestItem(request: ApiRequest): PostmanItem {
-  const doc = parseDoc(request.documentJson)
-  const method = (asText(doc.method).trim() || request.method || 'GET').toUpperCase()
+/**
+ * Builds a Postman v2.1 `request` object from a request document (our item-shaped JSON). Also used
+ * for an example's `originalRequest` (lib/examples.ts), so both are written the same way.
+ */
+export function postmanRequestFromDocument(doc: Json, fallback: { method: string; url: string }): PostmanRequest {
+  const method = (asText(doc.method).trim() || fallback.method || 'GET').toUpperCase()
   const req: PostmanRequest = {
     method,
     header: exportHeaders(doc.headers),
-    url: buildUrl(doc, request.url),
+    url: buildUrl(doc, fallback.url),
   }
   const description = doc.description
   if (description !== null && description !== undefined && description !== '') req.description = description
   if (doc.body !== null && doc.body !== undefined) req.body = doc.body
   if (doc.auth !== null && doc.auth !== undefined) req.auth = doc.auth
-  const item: PostmanItem = { name: request.name, request: req }
+  return req
+}
+
+/** Postman v2.0/v2.1 `url` (string or object) to a plain URL string (same rules as the importer). */
+export function postmanUrlToString(url: unknown): string {
+  if (typeof url === 'string') return url
+  if (!isObj(url)) return ''
+  if (typeof url.raw === 'string') return url.raw
+  const join = (parts: unknown, sep: string) => (Array.isArray(parts) ? parts.filter((p): p is string => typeof p === 'string').join(sep) : '')
+  const host = join(url.host, '.')
+  const path = join(url.path, '/')
+  if (host && path) return `${host.replace(/\/+$/, '')}/${path}`
+  return host || path
+}
+
+function requestItem(request: ApiRequest): PostmanItem {
+  const doc = parseDoc(request.documentJson)
+  const item: PostmanItem = { name: request.name, request: postmanRequestFromDocument(doc, request) }
   if (Array.isArray(doc.scripts) && doc.scripts.length > 0) item.event = doc.scripts
   if (Array.isArray(doc.responses) && doc.responses.length > 0) item.response = doc.responses
   return item

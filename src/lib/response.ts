@@ -197,16 +197,20 @@ function languageFor(kind: BodyKind, mime: string): EditorLanguage {
 const JSON_MIME = /(^|\/|\+)json$/
 const XML_MIME = /^(?:application|text)\/xml$|\+xml$/
 
-export function analyzeResponse(res: HttpResponseData): ResponseBodyInfo {
+/**
+ * Classifies a response body. `mimeHint` is used only when the response has no Content-Type
+ * header (saved examples carry a `_postman_previewlanguage` instead).
+ */
+export function analyzeResponse(res: HttpResponseData, mimeHint = ''): ResponseBodyInfo {
   try {
-    return analyzeUnsafe(res)
+    return analyzeUnsafe(res, mimeHint)
   } catch {
     return { kind: 'empty', mime: '', language: 'text', text: null, base64: null, byteLength: 0 }
   }
 }
 
-function analyzeUnsafe(res: HttpResponseData): ResponseBodyInfo {
-  const headerMime = mimeOf(res?.headers)
+function analyzeUnsafe(res: HttpResponseData, mimeHint: string): ResponseBodyInfo {
+  const headerMime = mimeOf(res?.headers) || mimeHint.trim().toLowerCase()
   const b64 = typeof res?.bodyBase64 === 'string' && res.bodyBase64 ? res.bodyBase64 : null
   let text = typeof res?.bodyText === 'string' && res.bodyText ? res.bodyText : null
 
