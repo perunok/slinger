@@ -69,8 +69,14 @@ class Reject extends Error {
     public code: 'sync_conflict' | 'not_found' | 'invalid_request' | 'conflict',
     message: string,
     public currentVersion: number | null = null,
+    /** Structured reason of protocol v2 (branch on this, `code` is the legacy class). */
+    public reason: string = '',
+    public extra: { current_payload?: Payload | null; conflicting_resource_id?: string | null } = {},
   ) {
     super(message)
+    if (!this.reason) {
+      this.reason = code === 'sync_conflict' ? 'version_mismatch' : code === 'not_found' ? 'not_found' : code === 'invalid_request' ? (/exceeds/.test(message) ? 'too_large' : 'invalid') : 'id_in_use'
+    }
   }
 }
 
@@ -354,7 +360,7 @@ export class FakeCloud {
     const ops = (body.operations as Array<Record<string, unknown>>) ?? []
     if (ops.length > 500) throw new HttpError(400, 'invalid_request', 'too many operations (max 500)')
     const accepted: Array<{ operation_id: string; resource_id: string; resulting_version: number }> = []
-    const rejected: Array<{ operation_id: string; resource_id: string; code: string; message: string; current_version: number | null }> = []
+    const rejected: Array<{ operation_id: string; resource_id: string; code: string; reason: string; message: string; current_version: number | null; current_payload: Payload | null; conflicting_resource_id: string | null }> = []
     for (const op of ops) {
       const opId = String(op.operation_id)
       const rid = String(op.resource_id)
@@ -371,7 +377,7 @@ export class FakeCloud {
         accepted.push({ operation_id: opId, resource_id: rid, resulting_version: version })
       } catch (err) {
         if (!(err instanceof Reject)) throw err
-        rejected.push({ operation_id: opId, resource_id: rid, code: err.code, message: err.message, current_version: err.currentVersion })
+        rejected.push({ operation_id: opId, resource_id: rid, code: err.code, reason: err.reason, message: err.message, current_version: err.currentVersion, current_payload: err.extra.current_payload ?? null, conflicting_resource_id: err.extra.conflicting_resource_id ?? null })
       }
     }
     return { accepted, rejected, checkpoint: w.checkpoint }
@@ -449,12 +455,12 @@ export class FakeCloud {
     if (cur && op.resource_type === 'collection_version' && op.op === 'upsert') {
       // Immutable resource: an identical re-send is an idempotent success, anything else is refused.
       if (JSON.stringify(sortKeys(this.wire(cur))) === JSON.stringify(sortKeys(op.payload))) return cur.version
-      throw new Reject('conflict', 'collection versions are immutable')
+      throw new Reject('conflict', 'collection versions are immutable', null, 'immutable')
     }
     if (cur) {
-      if (op.base_version !== cur.version) throw new Reject('sync_conflict', 'base_version does not match the server version; pull and retry', cur.version)
+      if (op.base_version !== cur.version) throw new Reject('sync_conflict', 'base_version does not match the server version; pull and retry', cur.version, 'version_mismatch', { current_payload: this.wire(cur) })
     } else if (op.op === 'upsert' && op.base_version > 0) {
-      throw new Reject('sync_conflict', 'resource no longer exists on the server (deleted); pull and retry')
+      throw new Reject('sync_conflict', 'resource no longer exists on the server (deleted); pull and retry', null, 'not_found')
     }
     if (op.op === 'delete') {
       if (!cur) throw new Reject('not_found', `${op.resource_type} not found`)
@@ -473,7 +479,7 @@ export class FakeCloud {
       return version
     }
     this.validate(op.resource_type, p, false)
-    if (this.entities.has(id)) throw new Reject('conflict', 'resource id is already in use')
+    if (this.entities.has(id)) throw new Reject('conflict', 'resource id is already in use', null, 'id_in_use')
     this.checkRefs(w, op.resource_type, p, null)
     const stored: Entity = { type: op.resource_type, id, ws: w.id, version: 1, data: this.normalize(op.resource_type, p) }
     if (op.resource_type === 'collection_version') {
@@ -526,14 +532,14 @@ export class FakeCloud {
         if (!find('environment', d.environment_id)) throw new Reject('not_found', 'environment not found')
         if (cur && d.environment_id !== cur.data.environment_id) throw new Reject('invalid_request', "a variable's environment cannot change")
         const clash = [...this.entities.values()].find((e) => e.type === 'environment_variable' && e.ws === w.id && e.id !== cur?.id && e.data.environment_id === d.environment_id && e.data.key === d.key)
-        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists')
+        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists', null, 'duplicate_key', { conflicting_resource_id: clash.id })
         break
       }
       case 'collection_version': {
         if (!find('collection', d.collection_id)) throw new Reject('not_found', 'collection not found')
-        if (cur) throw new Reject('conflict', 'collection versions are immutable')
+        if (cur) throw new Reject('conflict', 'collection versions are immutable', null, 'immutable')
         const clash = [...this.entities.values()].find((e) => e.type === 'collection_version' && e.ws === w.id && e.data.collection_id === d.collection_id && e.data.semver === d.semver)
-        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists')
+        if (clash) throw new Reject('conflict', 'a resource with these unique values already exists', null, 'duplicate_key', { conflicting_resource_id: clash.id })
         break
       }
     }

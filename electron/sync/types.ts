@@ -44,12 +44,27 @@ export interface PushAccepted {
   resource_id: string
   resulting_version: number
 }
+/** Structured rejection reason of protocol v2 servers (branch on this when present; `code` is the legacy class). */
+export type RejectReason =
+  | 'version_mismatch'
+  | 'not_found'
+  | 'invalid'
+  | 'too_large'
+  | 'id_in_use'
+  | 'duplicate_key'
+  | 'immutable'
+  | 'forbidden'
+  | 'read_only'
+  | 'internal_error'
 export interface PushRejected {
   operation_id: string
   resource_id: string
   code: RejectCode
+  reason?: RejectReason
   message: string
   current_version: number | null
+  current_payload?: Payload | null
+  conflicting_resource_id?: string | null
 }
 export interface PushResponse {
   accepted: PushAccepted[]

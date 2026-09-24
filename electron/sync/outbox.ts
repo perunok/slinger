@@ -11,7 +11,7 @@ import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict
 import { canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire } from './mapping'
 import { parentOf, serverCascades, type EntityRef } from './rows'
 import { clearDirty, getEntity, markDirty, putEntity, setEntityState } from './store'
-import type { Payload, PushResponse, WireOp } from './types'
+import type { Payload, PushResponse, RejectReason, WireOp } from './types'
 
 export const MAX_OPS_PER_PUSH = 200
 /** Soft cap of one push request: chunks are filled up to this size, a single larger operation travels alone. */
@@ -235,6 +235,13 @@ export interface PushOutcome {
   conflicts: number
 }
 
+function legacyReason(code: string, type: SyncEntityType): RejectReason | undefined {
+  if (code === 'invalid_request') return 'invalid'
+  // A plain `conflict` on something that is neither a variable key nor a version label is an id clash.
+  if (code === 'conflict' && type !== 'environment_variable' && type !== 'collection_version') return 'id_in_use'
+  return undefined
+}
+
 /** Applies one push response. Must run inside `applyTx` (a rejected key clash renames a local variable). */
 export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushResponse): PushOutcome {
   const { db, workspaceId } = ctx
@@ -254,6 +261,20 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
     byOp.delete(r.operation_id)
     const { type, id } = b
     const local = b.op.op === 'upsert' ? b.op.payload : null
+    // v2 servers say WHY (reason); older ones only give the legacy code, from which the same decision is derived.
+    const reason = r.reason ?? legacyReason(r.code, type)
+    if (reason === 'id_in_use') {
+      quarantine(db, ctx.nowS, workspaceId, type, id, `This item's id is already used by another cloud workspace (${r.message}).`, local)
+      out.conflicts++
+      db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
+      continue
+    }
+    if (reason === 'too_large' || reason === 'invalid') {
+      quarantine(db, ctx.nowS, workspaceId, type, id, `The cloud rejected this item: ${r.message}`, local)
+      out.conflicts++
+      db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
+      continue
+    }
     switch (r.code) {
       case 'sync_conflict':
         out.retry.push(b)

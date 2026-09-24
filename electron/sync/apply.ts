@@ -73,6 +73,10 @@ function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: n
   const L = loadRow(db, type, id)
   const sent = opId != null && isSentOp(db, opId)
   if (sent) dropSentOp(db, opId!)
+  // Log entries written before protocol v2 carry no sort_order: unchanged (or 0 for a new row).
+  if ((type === 'folder' || type === 'request') && payload.sort_order === undefined) {
+    payload = { ...payload, sort_order: (L?.sort_order as number | undefined) ?? 0 }
+  }
   const canon = canonicalJson(payload)
 
   // 1. Our own operation coming back, or an old/duplicate one: reconcile only.
