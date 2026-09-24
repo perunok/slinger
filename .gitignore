@@ -19,3 +19,7 @@ src-tauri/src-tauri
 src-tauri/target-local
 .slinger-versioning/
 src-tauri/.slinger-versioning/
+
+# Electron
+/dist-electron
+/release

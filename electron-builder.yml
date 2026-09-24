@@ -1,0 +1,25 @@
+appId: dev.slinger.app
+productName: Slinger
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - dist-electron/**
+  - electron/migrations/**
+  - package.json
+# Native modules must live outside the asar archive to be loadable.
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/@napi-rs/**"
+# scripts/ensure-native.mjs (run by `npm run electron:build`) already rebuilds
+# better-sqlite3 for Electron's ABI; do not let electron-builder do it again.
+npmRebuild: false
+win:
+  target: [nsis]
+mac:
+  target: [dmg]
+  category: public.app-category.developer-tools
+linux:
+  target: [AppImage, deb]
+  category: Development
