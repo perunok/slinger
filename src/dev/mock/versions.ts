@@ -146,7 +146,7 @@ export function createVersionApi(s: MockState): VersionApi {
       must(s.collections, input.collectionId, 'Collection')
       const existing = s.versions.filter((v) => v.collectionId === input.collectionId).map((v) => v.version)
       const check = validateVersion(input.version, existing)
-      if (!check.ok) fail('invalid_input', check.reason, { reason: check.reason })
+      if (!check.ok) fail('invalid_input', check.reason, { reason: /already|duplicate/i.test(check.reason) ? 'duplicate_version' : check.reason })
       const notes = input.notes?.trim() ? input.notes.trim() : null
       return summary(addVersion(s, input.collectionId, input.version.trim(), notes))
     },

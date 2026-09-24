@@ -44,12 +44,22 @@ const CALL_LOG_CAP = 500
 /** These must start synchronously (cancel has to find the run); executeHttpRequest simulates its own timing. */
 const NO_LATENCY = new Set<string>(['executeHttpRequest', 'cancelHttpRequest'])
 
-function toError(error: Partial<IpcErrorPayload> | undefined, method: string): IpcError {
-  return new IpcError({
+/**
+ * The real preload rejects with a PLAIN object (contextBridge strips Error subclass fields),
+ * so the mock does too: `{name:'IpcError', code, message, details}` — never an Error instance.
+ */
+function toPlain(e: unknown): IpcErrorPayload & { name: 'IpcError' } {
+  if (e instanceof IpcError) return { name: 'IpcError', code: e.code, message: e.message, details: e.details }
+  return { name: 'IpcError', code: 'internal_error', message: e instanceof Error ? e.message : String(e) }
+}
+
+function toError(error: Partial<IpcErrorPayload> | undefined, method: string): IpcErrorPayload & { name: 'IpcError' } {
+  return {
+    name: 'IpcError',
     code: error?.code ?? 'internal_error',
     message: error?.message ?? `Injected failure in ${method}`,
     details: error?.details,
-  })
+  }
 }
 
 export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & MockControls {
@@ -92,7 +102,10 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
         once.delete(method)
         return Promise.reject(toError(injected, method))
       }
-      const run = () => fn(...clone(args)).then(clone)
+      const run = () =>
+        fn(...clone(args)).then(clone, (e: unknown) => {
+          throw toPlain(e)
+        })
       return NO_LATENCY.has(method) ? run() : sleep(latency).then(run)
     }
   }

@@ -5,6 +5,7 @@ type MiscApi = Pick<
   SlingerIpcApi,
   | 'defaultExportPath'
   | 'writeExportFile'
+  | 'chooseExportDirectory'
   | 'secureStoreGet'
   | 'secureStoreSet'
   | 'secureStoreDelete'
@@ -53,9 +54,14 @@ function download(fileName: string, contents: string, encoding: 'utf8' | 'base64
 export function createMiscApi(): MiscApi {
   let secure = loadSecure()
   let pickIndex = 0
+  let exportDir = '/home/user/Downloads'
   return {
     async defaultExportPath(fileName) {
-      return `/home/user/Downloads/${fileName}`
+      return `${exportDir}/${fileName}`
+    },
+    async chooseExportDirectory() {
+      exportDir = exportDir === '/home/user/Downloads' ? '/home/user/Exports' : '/home/user/Downloads'
+      return exportDir
     },
     async writeExportFile(fileName, contents, encoding = 'utf8') {
       if (!fileName.trim()) fail('invalid_input', 'File name must not be empty')

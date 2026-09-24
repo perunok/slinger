@@ -35,7 +35,7 @@ const rejects = async (p: Promise<unknown>) => {
   try {
     await p
   } catch (e) {
-    expect(e).toBeInstanceOf(IpcError)
+    expect(e).toMatchObject({ name: 'IpcError' })
     return e as IpcError
   }
   throw new Error('expected rejection')

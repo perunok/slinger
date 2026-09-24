@@ -50,6 +50,8 @@ export interface SlingerIpcApi {
   listEnvironmentVariables(environmentId: string): Promise<EnvironmentVariable[]>
   upsertEnvironmentVariable(input: UpsertEnvironmentVariableInput): Promise<EnvironmentVariable>
   deleteEnvironmentVariable(variableId: string): Promise<void>
+  /** ADDED: explicit reveal of a variable's value (the only way a secret value reaches the renderer). */
+  revealEnvironmentVariable(variableId: string): Promise<string>
 
   // Collections
   listCollections(workspaceId: string): Promise<Collection[]>
@@ -84,8 +86,14 @@ export interface SlingerIpcApi {
   // Postman import/export
   importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
   defaultExportPath(fileName: string): Promise<string>
-  /** `encoding` (renderer addition, optional): 'base64' means `contents` is base64 of raw bytes (binary response bodies). Default 'utf8'. */
+  /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
   writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
+  /**
+   * ADDED: opens a native folder picker; the chosen folder becomes the export
+   * directory used by defaultExportPath/writeExportFile for this session.
+   * Resolves to the chosen directory, or null if the dialog was cancelled.
+   */
+  chooseExportDirectory(): Promise<string | null>
 
   // Collection versions (semver snapshots; no git)
   listCollectionVersions(collectionId: string): Promise<CollectionVersion[]> // newest semver first
@@ -107,10 +115,8 @@ export interface SlingerIpcApi {
   // App
   getAppVersion(): Promise<string>
 
-  // --- Renderer-driven additions (slinger-ui branch) ---
-  /** Returns the plaintext value of a secret environment variable (the only way the renderer can read one). */
-  revealEnvironmentVariable(variableId: string): Promise<string>
-  /** Native open-file dialog; resolves to an absolute path or null when cancelled. */
+  // --- Renderer-driven additions (slinger-ui branch; not yet implemented by the main process) ---
+  /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
   pickFile(options?: PickFileOptions): Promise<string | null>
 }
 
@@ -128,6 +134,7 @@ export const IPC_CHANNELS = [
   'listEnvironmentVariables',
   'upsertEnvironmentVariable',
   'deleteEnvironmentVariable',
+  'revealEnvironmentVariable',
   'listCollections',
   'createCollection',
   'renameCollection',
@@ -151,6 +158,7 @@ export const IPC_CHANNELS = [
   'importPostmanCollection',
   'defaultExportPath',
   'writeExportFile',
+  'chooseExportDirectory',
   'listCollectionVersions',
   'getCollectionVersion',
   'createCollectionVersion',
@@ -163,7 +171,6 @@ export const IPC_CHANNELS = [
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
   'getAppVersion',
-  'revealEnvironmentVariable',
   'pickFile',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 

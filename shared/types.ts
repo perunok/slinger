@@ -115,12 +115,6 @@ export interface UpdateRequestInput {
   expectedVersion: number
 }
 
-/**
- * NOTE on `targetIndex` (MoveRequestInput / MoveFolderInput): index among the
- * siblings of the SAME kind (requests among requests, folders among folders) in
- * the target container, counted after the moved item has been removed from its
- * old position. Folders always render before requests inside a container.
- */
 export interface MoveRequestInput {
   requestId: string
   targetCollectionId: string
@@ -206,10 +200,11 @@ export interface HttpRequestInput {
   requestName?: string | null
   workspaceId: string
   /**
-   * Renderer-assigned id for this execution. Pass the same id to
-   * `cancelHttpRequest(requestRunId)` to abort the in-flight request.
+   * ADDED (ts-rewrite main process): id used to cancel this run via
+   * cancelHttpRequest(requestRunId). Optional; 1-128 chars of [A-Za-z0-9._:-].
+   * A run id may only be in flight once at a time.
    */
-  requestRunId?: string
+  requestRunId?: string | null
 }
 
 export interface HttpResponseData {
