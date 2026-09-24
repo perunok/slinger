@@ -82,6 +82,8 @@ export interface Fault {
   headers?: Record<string, string>
   /** How many matching requests to affect (default 1). */
   times?: number
+  /** Let this many matching requests through untouched first. */
+  skip?: number
 }
 
 export interface FakeCloudOptions {
@@ -185,6 +187,10 @@ export class FakeCloud {
     if (!cur) return
     this.cascadeDelete(w, cur, null, null)
   }
+  /** Simulates a server reset: every registered sync client id becomes unknown. */
+  forgetClients(): void {
+    this.clients.clear()
+  }
   clearRecorded(): void {
     this.requests.length = 0
   }
@@ -225,8 +231,12 @@ export class FakeCloud {
     const key = `${method} ${url.pathname}`
     this.requests.push({ method, path: url.pathname, query: url.searchParams, body, userId })
 
-    const fault = this.faults.find((f) => (typeof f.match === 'string' ? f.match === key : f.match.test(key)))
-    if (fault) {
+    const fault0 = this.faults.find((f) => (typeof f.match === 'string' ? f.match === key : f.match.test(key)))
+    let fault: Fault | undefined = fault0
+    if (fault && (fault.skip ?? 0) > 0) {
+      fault.skip = (fault.skip ?? 0) - 1
+      fault = undefined
+    } else if (fault) {
       fault.times = (fault.times ?? 1) - 1
       if (fault.times <= 0) this.faults.splice(this.faults.indexOf(fault), 1)
       if (fault.action === 'status') return this.send(res, fault.status ?? 500, fault.body ?? { error: { code: 'internal_error', message: 'injected failure' } }, fault.headers)
