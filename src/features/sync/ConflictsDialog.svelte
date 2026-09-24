@@ -30,7 +30,10 @@
   const openCount = $derived(conflicts.filter((c) => c.status === 'open').length)
   const status = $derived(sync.current)
 
-  onMount(() => void sync.loadConflicts(showResolved))
+  onMount(() => {
+    sync.clearConflictToast()
+    void sync.loadConflicts(showResolved)
+  })
 
   $effect(() => {
     // Keep the focused conflict valid as the list changes (resolved/removed).

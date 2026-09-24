@@ -57,7 +57,7 @@ describe('screenshots', () => {
       await capture(app, join(OUT, `${theme}-main.png`))
       for (const [label, open, dialogName] of [
         ['environments', () => page.getByRole('button', { name: 'Manage environments' }).click(), 'Environments'],
-        ['cloud', () => page.getByRole('button', { name: 'Cloud' }).click(), 'Cloud'],
+        ['cloud', () => page.getByRole('button', { name: 'Cloud', exact: true }).click(), 'Cloud'],
         ['shortcuts', () => page.getByRole('button', { name: 'Keyboard shortcuts' }).click(), 'Keyboard shortcuts'],
       ] as const) {
         await open()

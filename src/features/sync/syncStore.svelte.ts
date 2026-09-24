@@ -436,6 +436,12 @@ export class SyncStore {
 
   // ---- conflicts ---------------------------------------------------------------
 
+  /** The conflict center is open, so the "N sync conflicts" toast is redundant. */
+  clearConflictToast(): void {
+    if (this.#conflictToast !== null) toast.dismiss(this.#conflictToast)
+    this.#conflictToast = null
+  }
+
   async openConflicts(workspaceId: string): Promise<void> {
     if (workspaceId !== app.workspaceId) await app.selectWorkspace(workspaceId)
     ui.conflictsOpen = true
