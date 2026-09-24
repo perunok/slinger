@@ -105,10 +105,13 @@ export function toSyncConflict(db: Db, c: ConflictRow): SyncConflict {
   const conflicting = new Set(JSON.parse(c.groups) as string[])
   const groups: SyncConflictGroup[] = []
   if (c.kind === 'edit_edit') {
+    const detail = (p: Payload | null): string | null =>
+      p ? JSON.stringify({ name: p.name ?? null, method: p.method ?? null, url: p.url ?? null, document_json: p.document_json ?? null }) : null
     for (const g of Object.keys(GROUPS[c.entity_type]) as GroupName[]) {
       groups.push({
         group: g, label: GROUP_LABELS[g], conflicting: conflicting.has(g),
         base: displayGroup(db, c.entity_type, g, base), local: displayGroup(db, c.entity_type, g, local), remote: displayGroup(db, c.entity_type, g, remote),
+        ...(c.entity_type === 'request' && g === 'content' ? { baseDetail: detail(base), localDetail: detail(local), remoteDetail: detail(remote) } : {}),
       })
     }
   }

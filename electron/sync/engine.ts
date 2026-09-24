@@ -67,6 +67,8 @@ interface Runtime {
   lastRoleCheckMs: number
   dirtySince: number | null
   debounce: unknown
+  /** Counts last announced in a status event (the scheduler's watcher announces local edits). */
+  announced: { pending: number; open: number } | null
 }
 
 /** Raised inside a cycle when the workspace is gone or the user lost access (not an error state). */
@@ -83,7 +85,7 @@ export class SyncEngine {
   rt(workspaceId: string): Runtime {
     let r = this.rts.get(workspaceId)
     if (!r) {
-      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, dirtySince: null, debounce: null }
+      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, dirtySince: null, debounce: null, announced: null }
       this.rts.set(workspaceId, r)
     }
     return r
@@ -135,7 +137,9 @@ export class SyncEngine {
   }
 
   emitStatus(workspaceId: string): void {
-    this.deps.emit({ type: 'status', status: this.status(workspaceId) })
+    const status = this.status(workspaceId)
+    this.rt(workspaceId).announced = { pending: status.pendingChanges, open: status.openConflicts }
+    this.deps.emit({ type: 'status', status })
   }
 
   emitApplied(workspaceId: string, changed: ChangeLog): void {

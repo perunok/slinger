@@ -15,7 +15,7 @@ import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
-import { KeychainSecretStore } from './services/secrets'
+import { KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
 
 const APP_SCHEME = 'app'
 const APP_ORIGIN = `${APP_SCHEME}://slinger`
@@ -46,7 +46,9 @@ function loadKeychain(): KeychainSecretStore {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Entry } = require('@napi-rs/keyring')
-    return new KeychainSecretStore(Entry)
+    // Automated runs (e2e) give every profile its own keychain service so two profiles on one machine never share secrets.
+    const namespace = process.env.SLINGER_KEYCHAIN_NAMESPACE?.trim()
+    return new KeychainSecretStore(Entry, namespace ? `${KEYCHAIN_SERVICE}.${namespace}` : undefined)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     // Keep the app usable; only secret operations fail (with a clear io_error).

@@ -12,11 +12,14 @@ export const DEBOUNCE_MS = 1_500
 export const FOCUSED_INTERVAL_MS = 60_000
 export const BLURRED_INTERVAL_MS = 300_000
 export const START_DELAY_MS = 2_000
+/** Local edits are announced (status event with the new pending count) at most this often, even with auto sync off. */
+export const WATCH_MS = 1_000
 
 export class SyncScheduler {
   private focused = true
   private poller: unknown = null
   private startTimer: unknown = null
+  private watcher: unknown = null
 
   constructor(
     private readonly db: Db,
@@ -33,12 +36,18 @@ export class SyncScheduler {
     }
     this.poller = this.timers.setTimeout(loop, POLL_MS)
     this.startTimer = this.timers.setTimeout(() => this.syncAll(false), START_DELAY_MS)
+    const watch = () => {
+      this.watch()
+      this.watcher = this.timers.setTimeout(watch, WATCH_MS)
+    }
+    this.watcher = this.timers.setTimeout(watch, WATCH_MS)
   }
 
   stop(): void {
     if (this.poller) this.timers.clearTimeout(this.poller)
     if (this.startTimer) this.timers.clearTimeout(this.startTimer)
-    this.poller = this.startTimer = null
+    if (this.watcher) this.timers.clearTimeout(this.watcher)
+    this.poller = this.startTimer = this.watcher = null
     for (const l of this.engine.activeLinks()) {
       const rt = this.engine.rt(l.workspace_id)
       if (rt.debounce) this.timers.clearTimeout(rt.debounce)
@@ -59,6 +68,18 @@ export class SyncScheduler {
       const rt = this.engine.rt(l.workspace_id)
       if (!ignoreBackoff && rt.nextRetryAtMs && this.clock.now() < rt.nextRetryAtMs) continue
       void this.engine.runCycle(l.workspace_id)
+    }
+  }
+
+  /** Announces changed pending/conflict counts (local edits happen without any cycle) so the UI badge stays current. */
+  watch(): void {
+    for (const l of this.engine.activeLinks()) {
+      const rt = this.engine.rt(l.workspace_id)
+      if (rt.running) continue
+      const pending = (this.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty WHERE workspace_id = ?').get(l.workspace_id) as { n: number }).n
+      const open = (this.db.prepare("SELECT COUNT(*) AS n FROM sync_conflicts WHERE workspace_id = ? AND status = 'open'").get(l.workspace_id) as { n: number }).n
+      if (!rt.announced) rt.announced = { pending, open } // first sight: nothing to announce
+      else if (rt.announced.pending !== pending || rt.announced.open !== open) this.engine.emitStatus(l.workspace_id)
     }
   }
 

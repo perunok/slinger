@@ -8,6 +8,7 @@ import type {
   CloudSignInStart,
   LinkRemoteWorkspaceInput,
   RemoteWorkspace,
+  RemoteWorkspaceCounts,
   RemoteWorkspacePreview,
   ResolveSyncConflictInput,
   SyncConflict,
@@ -153,18 +154,38 @@ export class SyncService {
     const base = this.auth.baseUrl()
     try {
       const info = await this.cloud.getWorkspace(remoteWorkspaceId)
-      let remoteEmpty: boolean | null = null
+      let counts: RemoteWorkspaceCounts | null = null
       try {
         const clientId = await this.engine.ensureClient(base)
-        remoteEmpty = (await this.cloud.pull(remoteWorkspaceId, clientId, 0, 1)).operations.length === 0
+        counts = await this.countRemote(remoteWorkspaceId, clientId)
       } catch (err) {
         if (!(err instanceof CloudApiError && err.isNetwork)) throw err
       }
+      const remoteEmpty = counts ? counts.collections + counts.folders + counts.requests + counts.environments === 0 : null
       const row = this.db.prepare('SELECT workspace_id FROM cloud_links WHERE api_base_url = ? AND remote_workspace_id = ?').get(base, remoteWorkspaceId) as { workspace_id: string } | undefined
-      return { id: info.id, name: info.name, role: info.role ?? 'viewer', remoteEmpty, linkedLocalWorkspaceId: row?.workspace_id ?? null }
+      return { id: info.id, name: info.name, role: info.role ?? 'viewer', remoteEmpty, linkedLocalWorkspaceId: row?.workspace_id ?? null, counts }
     } catch (err) {
       throw toIpcError(err)
     }
+  }
+
+  /** Counts what a remote workspace holds by walking its snapshot (bounded: 10 pages of 500 entities). */
+  private async countRemote(remoteWorkspaceId: string, clientId: string): Promise<RemoteWorkspaceCounts> {
+    const counts: RemoteWorkspaceCounts = { collections: 0, folders: 0, requests: 0, environments: 0, truncated: false }
+    let cursor: string | null = null
+    for (let page = 0; page < 10; page++) {
+      const res = await this.cloud.snapshot(remoteWorkspaceId, clientId, cursor, 500)
+      for (const e of res.entities) {
+        if (e.resource_type === 'collection') counts.collections++
+        else if (e.resource_type === 'folder') counts.folders++
+        else if (e.resource_type === 'request') counts.requests++
+        else if (e.resource_type === 'environment') counts.environments++
+      }
+      if (!res.next_cursor) return counts
+      cursor = res.next_cursor
+    }
+    counts.truncated = true
+    return counts
   }
 
   // ---- sync --------------------------------------------------------------------------------------------------------

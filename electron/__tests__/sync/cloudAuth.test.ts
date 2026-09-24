@@ -53,8 +53,10 @@ describe('device sign-in', () => {
     expect(JSON.stringify(start)).not.toMatch(/device_code|dc_/)
     expect((await d.api.getCloudSession()).status).toBe('signingIn')
 
-    d.timers.advance(1000) // still pending: no approval yet
+    d.timers.advance(1000) // first poll: still pending, no approval yet
     await until(() => cloud.requestsTo(/device\/poll$/).length === 1)
+    // The next poll is armed only once the previous one has been answered and handled: wait for that, do not race it.
+    await until(() => d.timers.count === 1)
     expect((await d.api.getCloudSession()).status).toBe('signingIn')
 
     cloud.approveDevice(start.userCode, user.id)

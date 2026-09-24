@@ -365,6 +365,17 @@ export interface RemoteWorkspacePreview {
   /** null when it could not be determined (offline mid-call). */
   remoteEmpty: boolean | null
   linkedLocalWorkspaceId: string | null
+  /** Additive: what the remote workspace holds (null when it could not be counted, e.g. offline). */
+  counts?: RemoteWorkspaceCounts | null
+}
+
+export interface RemoteWorkspaceCounts {
+  collections: number
+  folders: number
+  requests: number
+  environments: number
+  /** true when the workspace is larger than the counting limit (the numbers are lower bounds). */
+  truncated: boolean
 }
 
 export type SyncState =
@@ -425,6 +436,14 @@ export interface SyncConflictGroup {
   base: string | null
   local: string | null
   remote: string | null
+  /**
+   * Additive (request `content` group only): JSON text of `{name, method, url, document_json}` for each side, so the
+   * renderer can diff headers/body/auth instead of only comparing the fingerprint in `base`/`local`/`remote`.
+   * Never contains secret values (secret variables carry none on the wire).
+   */
+  baseDetail?: string | null
+  localDetail?: string | null
+  remoteDetail?: string | null
 }
 
 export interface SyncConflict {

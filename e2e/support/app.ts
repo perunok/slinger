@@ -1,5 +1,6 @@
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -23,6 +24,8 @@ export async function launch(userDataDir: string, extraEnv: Record<string, strin
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     SLINGER_USER_DATA_DIR: userDataDir,
+    // One keychain service per profile: two profiles on one machine must not share tokens or secret values.
+    SLINGER_KEYCHAIN_NAMESPACE: `e2e-${createHash('sha256').update(userDataDir).digest('hex').slice(0, 12)}`,
     ...extraEnv,
   }
   delete env.ELECTRON_RUN_AS_NODE

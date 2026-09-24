@@ -123,6 +123,23 @@ describe('auto sync scheduling', () => {
     expect((await d.api.getSyncStatus(ws)).autoSync).toBe(true)
   })
 
+  it('announces local edits with a status event (pending count) even when auto sync is off', async () => {
+    await d.api.setAutoSync(ws, false)
+    d.core.sync.start()
+    d.timers.advance(1_000) // first sight: nothing to announce yet
+    d.events.length = 0
+    await d.api.createCollection(ws, 'Edit 1')
+    await d.api.createCollection(ws, 'Edit 2')
+    d.timers.advance(1_000)
+    const statuses = d.statusEvents()
+    expect(statuses).toHaveLength(1) // debounced: two edits, one event
+    expect(statuses[0]).toMatchObject({ pendingChanges: 2, autoSync: false, state: 'idle' })
+    d.timers.advance(1_000)
+    expect(d.statusEvents()).toHaveLength(1) // unchanged counts are not re-announced
+    await d.api.syncNow(ws)
+    expect(d.statusEvents().at(-1)).toMatchObject({ pendingChanges: 0 })
+  })
+
   it('stop() cancels every timer', () => {
     d.core.sync.start()
     d.core.sync.stop()

@@ -414,6 +414,24 @@ describe('linking', () => {
     expect(cState).toEqual(liveState(p.b, p.wsB))
   })
 
+  it('preview reports what the remote workspace holds', async () => {
+    const p = await makePair(cloud, async (a, ws) => {
+      const c = await col(a, ws, 'Shared')
+      const f = await a.api.createFolder({ workspaceId: ws, collectionId: c.id, name: 'F' })
+      await req(a, ws, c.id, 'R1', f.id)
+      await req(a, ws, c.id, 'R2')
+      await a.api.createEnvironment(ws, 'E')
+    })
+    const viewer = cloud.createUser('v@x.com')
+    cloud.setRole(p.remoteId, viewer.id, 'viewer')
+    const v = dev(viewer.id)
+    expect(await v.api.previewRemoteWorkspace(p.remoteId)).toMatchObject({
+      remoteEmpty: false, role: 'viewer', counts: { collections: 1, folders: 1, requests: 2, environments: 1, truncated: false },
+    })
+    const empty = cloud.createWorkspace('Empty', p.userId)
+    expect(await p.a.api.previewRemoteWorkspace(empty.id)).toMatchObject({ remoteEmpty: true, counts: { collections: 0, requests: 0 } })
+  })
+
   it('refuses unsafe links with sync_blocked', async () => {
     const p = await makePair(cloud, async (a, ws) => void (await col(a, ws)))
     await expect(p.b.api.linkRemoteWorkspace({ remoteWorkspaceId: p.remoteId, localWorkspaceId: p.wsB })).rejects.toMatchObject({ code: 'sync_blocked' }) // already linked

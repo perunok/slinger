@@ -4,9 +4,8 @@
  * device, edits flow both ways, a conflicting edit shows up in B's conflict center and is resolved there.
  * Skipped unless SLINGER_E2E_CLOUD_URL is set (see cloud.e2e.test.ts).
  *
- * Caveat: both instances use the same OS keychain service. If the machine has a real keychain, the second
- * sign-in replaces the first device's stored tokens; run this spec on a machine/CI job where the keychain
- * falls back to memory (headless Linux without a secret service) or accept the re-login it may force.
+ * Each profile gets its own keychain service (SLINGER_KEYCHAIN_NAMESPACE, set by support/app.ts), so the two
+ * devices do not share tokens or secret values even though they run on one machine.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -93,7 +92,7 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
     expect(names).toEqual({ col: 'Payments', requests: ['Create token'], folders: ['Auth'] })
   })
 
-  it("the secret's value stays on A: B shows it as not set and gets its own value", async (ctx) => {
+  it("the secret's value stays on A: B shows it as not set and gets its own value", async () => {
     const vars = await b.page.evaluate(async (w) => {
       const env = (await window.slinger.listEnvironments(w)).find((e) => e.name === 'Production')!
       return window.slinger.listEnvironmentVariables(env.id)
@@ -101,12 +100,6 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
     const secret = vars.find((v) => v.key === 'apiKey')!
     expect(secret.isSecret).toBe(true)
     expect(vars.find((v) => v.key === 'baseUrl')).toMatchObject({ value: 'https://pay.example.test', secretMissing: false })
-    // Both profiles run on ONE machine and share its OS keychain, and entity ids are equal on both devices, so B can
-    // find A's secret under the same keychain entry. That is an artifact of this setup, not of the product.
-    if (!secret.secretMissing) {
-      const seen = await b.page.evaluate((id) => window.slinger.revealEnvironmentVariable(id), secret.id)
-      if (seen === 'A-ONLY-SECRET-1234') ctx.skip()
-    }
     expect(secret.secretMissing).toBe(true)
     // UI: open the environment editor on Production and set a value through "Set value".
     await b.page.getByRole('button', { name: /Manage environments|environments/i }).first().click()

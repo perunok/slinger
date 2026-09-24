@@ -79,6 +79,11 @@ describe('edit-edit conflicts', () => {
     expect(content.local).toContain('From B')
     expect(content.remote).toContain('From A')
     expect(c.groups.find((g) => g.group === 'location')!.conflicting).toBe(false)
+    // full field detail of the request content group, for diffing headers/body/auth in the UI
+    expect(JSON.parse(content.localDetail!)).toMatchObject({ name: 'From B', method: 'POST', url: 'https://x/login', document_json: DOC })
+    expect(JSON.parse(content.remoteDetail!)).toMatchObject({ name: 'From A' })
+    expect(JSON.parse(content.baseDetail!)).toMatchObject({ name: 'Login' })
+    expect(c.groups.find((g) => g.group === 'order')!.localDetail).toBeUndefined()
     // B keeps its value locally; the server still has A's; the entity is not pushed while conflicted.
     expect((await version(p.b, p.s.col, p.s.req)).name).toBe('From B')
     expect(cloud.entity(p.s.req)!.data.name).toBe('From A')
