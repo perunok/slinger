@@ -1,9 +1,11 @@
-import { app, BrowserWindow, dialog, net, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, net, powerMonitor, protocol, session, shell } from 'electron'
 import { existsSync } from 'node:fs'
+import { hostname } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { IPC_EVENT_CHANNELS } from '../shared/ipc-contract'
 import { openDatabase, type Db } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
@@ -200,6 +202,19 @@ if (!app.requestSingleInstanceLock()) {
       db,
       secrets: loadKeychain(),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
+      sync: {
+        // Push channel to the trusted main window only; payloads are plain JSON.
+        emit: (event) => {
+          if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send(IPC_EVENT_CHANNELS[0], event)
+          }
+        },
+        appVersion: app.getVersion(),
+        // Electron's network stack honours the system proxy; cloud traffic never goes through request history.
+        fetchImpl: ((input: string | URL | Request, init?: RequestInit) =>
+          net.fetch(input instanceof URL ? input.toString() : (input as string | Request), init)) as typeof fetch,
+        defaultDeviceName: hostname(),
+      },
     })
     const api = createIpcApi(core, {
       appVersion: app.getVersion(),
@@ -225,6 +240,11 @@ if (!app.requestSingleInstanceLock()) {
     hardenSession()
     mainWindow = createWindow()
     mainWindow.on('closed', () => (mainWindow = null))
+    // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
+    mainWindow.on('focus', () => core?.sync.notifyFocus(true))
+    mainWindow.on('blur', () => core?.sync.notifyFocus(false))
+    powerMonitor.on('resume', () => core?.sync.notifyResume())
+    if (!process.env.SLINGER_SMOKE_TEST) core.sync.start()
     if (process.env.SLINGER_SMOKE_TEST) {
       mainWindow.webContents.once('did-finish-load', () => void runSmokeTest(mainWindow!))
     }
@@ -237,6 +257,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', () => {
+    core?.sync.stop()
     core?.authCallbacks.closeAll()
     db?.close()
     db = null

@@ -6,6 +6,9 @@ export const KEYCHAIN_SERVICE = 'Slinger'
 /** Keys under this prefix hold environment secrets and are unreachable via the generic passthrough. */
 export const ENV_VAR_SECRET_PREFIX = 'slinger:env-var:'
 
+/** Cloud session tokens (electron/cloud/auth.ts) live under this prefix, keyed by API base URL. */
+export const CLOUD_TOKEN_PREFIX = 'slinger.cloud.tokens:'
+
 export const envVarSecretKey = (variableId: string): string => `${ENV_VAR_SECRET_PREFIX}${variableId}`
 
 export interface SecretStore {
@@ -70,7 +73,8 @@ export function assertGenericSecureKey(key: unknown): string {
   if (typeof key !== 'string' || key.length === 0 || key.length > 256) {
     throw invalidInput('secure store key must be 1-256 characters')
   }
-  if (key.toLowerCase().startsWith(ENV_VAR_SECRET_PREFIX)) {
+  const lower = key.toLowerCase()
+  if (lower.startsWith(ENV_VAR_SECRET_PREFIX) || lower.startsWith(CLOUD_TOKEN_PREFIX)) {
     throw invalidInput('this key namespace is reserved')
   }
   return key

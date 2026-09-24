@@ -10,6 +10,8 @@ import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
 import type { SecretStore } from './secrets'
+import type { SyncEvent } from '../../shared/types'
+import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
 
 export interface CoreDeps {
   db: Db
@@ -17,6 +19,12 @@ export interface CoreDeps {
   /** Directory holding the numbered .sql migrations; migrations run when it is provided. */
   migrationsDir?: string
   exportFiles?: ExportFiles
+  /** Cloud sync wiring (all optional; sensible defaults for tests). */
+  sync?: {
+    /** Receives every SyncEvent (main forwards them to the renderer). */
+    emit?: (event: SyncEvent) => void
+    appVersion?: string
+  } & Partial<Omit<SyncServiceDeps, 'db' | 'secrets' | 'emit' | 'appVersion'>>
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -33,6 +41,7 @@ export interface Core {
   authCallbacks: BrowserAuthCallbacks
   exportFiles: ExportFiles
   fileGrants: FileGrants
+  sync: SyncService
 }
 
 export function createCore(deps: CoreDeps): Core {
@@ -53,6 +62,13 @@ export function createCore(deps: CoreDeps): Core {
     authCallbacks: new BrowserAuthCallbacks(),
     exportFiles: deps.exportFiles ?? new ExportFiles(),
     fileGrants,
+    sync: createSyncService({
+      db,
+      secrets,
+      emit: deps.sync?.emit ?? (() => {}),
+      appVersion: deps.sync?.appVersion ?? '0.0.0',
+      ...deps.sync,
+    }),
   }
   // First launch: make sure there is always a workspace to work in.
   core.workspaces.ensureDefault()
