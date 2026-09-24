@@ -78,8 +78,11 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
     const row = dialog.getByRole('list', { name: 'Cloud workspaces' }).locator('li', { hasText: wsName })
     await row.getByRole('button', { name: /Link/ }).click()
     const link = b.page.getByRole('dialog', { name: 'Link a cloud workspace' })
-    // remote counts from the preview (engine counts what the cloud holds)
-    await expect.poll(() => link.getByTestId('link-preview').innerText()).toContain('It already has content: 1 collection, 1 request, 1 environment')
+    // remote counts from the preview (engine counts what the cloud holds): Payments + its request, and A's environments
+    const envsOnA = (await a.page.evaluate(async (w) => window.slinger.listEnvironments(w), wsA)).length
+    await expect
+      .poll(() => link.getByTestId('link-preview').innerText())
+      .toContain(`It already has content: 1 collection, 1 request, ${envsOnA} environment${envsOnA === 1 ? '' : 's'}.`)
     await link.getByRole('button', { name: 'Link and download' }).click()
     await link.waitFor({ state: 'detached' })
     await closeDialog(b.page, 'Cloud')
