@@ -1,13 +1,13 @@
 /**
- * The ONLY place cloud API paths live. The backend is being rewritten: adjust here.
+ * The ONLY place cloud API paths live (matches slinger-admin server/openapi.yaml).
  * All paths are relative to the configured API base URL.
  */
 export const endpoints = {
-  deviceStart: '/v1/account/device/start',
-  devicePoll: '/v1/account/device/poll',
-  refresh: '/v1/account/refresh',
-  logout: '/v1/account/logout',
-  me: '/v1/account/me',
+  deviceStart: '/v1/auth/device/start',
+  devicePoll: '/v1/auth/device/poll',
+  refresh: '/v1/auth/refresh',
+  logout: '/v1/auth/logout',
+  me: '/v1/me',
   workspaces: '/v1/workspaces',
   workspace: (id: string) => `/v1/workspaces/${encodeURIComponent(id)}`,
 } as const

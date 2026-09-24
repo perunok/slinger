@@ -30,13 +30,13 @@ describe('CloudClient', () => {
   it('parses success and sends bearer + normalized url', async () => {
     exec.mockResolvedValueOnce(res(200, { user: { id: '1', email: 'a@b.c' } }))
     expect((await client.me()).email).toBe('a@b.c')
-    expect(exec.mock.calls[0][0].url).toBe('https://x.test/v1/account/me')
+    expect(exec.mock.calls[0][0].url).toBe('https://x.test/v1/me')
     expect(sentAuth(0)).toBe('Bearer A1')
   })
 
   it('maps non-2xx to CloudApiError', async () => {
     exec.mockResolvedValueOnce(res(409, { error: { code: 'slug_taken', message: 'Slug taken' } }))
-    await expect(client.createWorkspace('n', 's')).rejects.toMatchObject({ status: 409, code: 'slug_taken', message: 'Slug taken' })
+    await expect(client.createWorkspace('n')).rejects.toMatchObject({ status: 409, code: 'slug_taken', message: 'Slug taken' })
   })
 
   it('refreshes once on 401 and retries', async () => {

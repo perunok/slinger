@@ -8,10 +8,6 @@ import { CloudApiError, type CloudConfig, type CloudUser, type CloudWorkspace, t
 
 const msg = (e: unknown) => errorInfo(e).message
 
-export function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'workspace'
-}
-
 class CloudStore {
   config = $state<CloudConfig>(loadConfig())
   status = $state<'unknown' | 'signedOut' | 'signedIn'>('unknown')
@@ -127,7 +123,7 @@ class CloudStore {
     const local = app.workspace
     if (!local) return
     await this.#run(async () => {
-      const created = await this.client().createWorkspace(local.name, slugify(local.name))
+      const created = await this.client().createWorkspace(local.name)
       this.#setLink(created, local.id)
       this.workspaces = await this.client().listWorkspaces()
     })

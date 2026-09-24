@@ -143,8 +143,9 @@ export class CloudClient {
   async listWorkspaces(): Promise<CloudWorkspace[]> {
     return (await this.request<{ items: CloudWorkspace[] }>('GET', endpoints.workspaces)).items ?? []
   }
-  async createWorkspace(name: string, slug: string): Promise<CloudWorkspace> {
-    return (await this.request<{ workspace: CloudWorkspace }>('POST', endpoints.workspaces, { body: { name, slug } }))
+  /** The server derives a unique slug (min 3 chars, must be free) when none is sent. */
+  async createWorkspace(name: string): Promise<CloudWorkspace> {
+    return (await this.request<{ workspace: CloudWorkspace }>('POST', endpoints.workspaces, { body: { name } }))
       .workspace
   }
   /** Best effort server-side revoke; the caller clears local tokens regardless. */
