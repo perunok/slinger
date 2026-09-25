@@ -21,9 +21,10 @@ delete every workspace, "Personal" is recreated the next time you start the app.
 
 In the **Collections** sidebar:
 
-- **New collection** (plus button), then right-click a collection for **New request**, **New folder**, **Run collection...**,
-  **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
-- Right-click a folder for **New request**, **New subfolder**, **Run folder...**, **Scripts...**, **Rename**, **Delete**.
+- **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New folder**,
+  **Run collection...**, **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
+- Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**, **Rename**, **Delete**.
+- Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
 - Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete**.
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
 - In the tree, F2 renames and Delete deletes the selected item. Deleting asks for confirmation and cannot be undone from the UI.
@@ -45,7 +46,8 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   `{{variables}}`. Imported Postman requests with other auth types (for example OAuth 2.0) are sent without authorization and a
   warning says so; OAuth 2.0 is not implemented.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
-- **Docs:** free-text description stored with the request (exported to Postman).
+- **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
+  see [Documentation](#documentation-markdown).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
   (net/http), PHP (cURL) or PowerShell, with a Copy button. Unresolved variables are left as-is in snippets.
@@ -260,19 +262,50 @@ Right-click a collection and choose **Versions...**. A version is an immutable s
   (asks for confirmation; suggests creating a version first). Replacing gives requests new ids, so open tabs for them are closed.
 - **Delete** removes a version (it cannot be edited).
 
+## Documentation (Markdown)
+
+Requests, folders and collections can carry documentation written in Markdown (Postman calls it the *description*; imported
+collections keep theirs).
+
+- **Where:** a request's **Docs** section; for a collection or folder, **Overview & docs** in its context menu (or the (i) button
+  when hovering it in the tree). The overview tab shows the name, where it lives, how many requests and folders it holds (with a
+  count per method), buttons for **Run**, **Scripts**, **Versions**, and its documentation.
+- **Preview / Edit / Split:** docs open rendered (**Preview**) when there is something to show; an empty doc offers **Add
+  documentation**. **Edit** shows a Markdown editor (same font size and line-wrap setting as the other editors); **Split** shows the
+  editor and the live preview side by side. The choice is remembered per tab.
+- **Saving:** request docs save with the request (**Save**, Ctrl+S). Collection and folder docs save with the overview's **Save**
+  button or Ctrl+S. They are kept on this device, included in collection versions and exported to Postman; **cloud sync does not
+  carry collection and folder docs yet** (request docs sync with the request).
+- **What renders:** GitHub-flavoured Markdown: headings (hover one for a `#` link to it), **bold**, *italic*, ~~strikethrough~~,
+  lists and task lists (`- [x] done`), tables, block quotes, horizontal rules, inline `code` and fenced code blocks with syntax
+  colours for JSON, JavaScript/TypeScript, XML, HTML and CSS (in the current theme's colours). Bare URLs become links.
+- **Variables:** `{{name}}` in docs is shown as a highlighted token. Docs never resolve variables, so no value (and no secret) is
+  ever shown there.
+- **Links:** web (`http`, `https`) and `mailto:` links open in your system browser or mail app; `#section` links scroll within the
+  doc. Other links (relative paths, custom schemes) do nothing.
+- **Images:** images embedded as `data:` URLs are shown. Remote images are **not loaded** (the app never fetches content for docs);
+  they appear as a placeholder with their alt text and an **Open image** link that opens the image in your browser.
+- **HTML:** simple formatting HTML (for example `<b>`, `<br>`, `<details>`, `<kbd>`) is kept; scripts, styles, forms, frames and
+  event handlers are removed.
+- **Plain-text docs:** Postman descriptions imported as `text/plain` are shown exactly as written (no Markdown) and are marked
+  "Plain text"; they stay plain text when edited and exported.
+- **Read-only workspaces:** docs are view-only (Preview) for viewers of a shared cloud workspace.
+
 ## Import and export (Postman)
 
 - **Import:** use the upload button in the Collections header (or **Import from Postman** on the empty state). Drop or choose a
   Postman **collection (v2.x)** or **environment** `.json`. The preview shows what will be imported. Collection-level variables
   can optionally become a new environment. Pre-request and test scripts are imported at every level (collection, folders,
-  requests) and run like scripts written in Slinger; the preview and the success message show how many. Postman "globals" files
+  requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
+  collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). Postman "globals" files
   are rejected; export an environment instead. Disabled environment variables are skipped. Saved examples (`response[]`) are
   imported with their requests; the preview shows how many.
 - **Export:** right-click a collection, **Export as Postman JSON...**, then **Save to file** (optionally **Choose folder...**
   first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
   exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
-  imported.
+  imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
+  in (a string, or `{content, type}`); docs you did not edit are written back unchanged.
 
 ## Cloud account and sync
 

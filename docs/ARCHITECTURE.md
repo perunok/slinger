@@ -59,8 +59,9 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 73 methods, grouped as
-workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`),
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 75 methods, grouped as
+workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
+`setCollectionDescription`, `setFolderDescription`),
 requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`, `grantedFiles`.
@@ -104,6 +105,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0003_integrity` | unique live `(environment_id, key)`, sibling-order indexes, trigger `collection_versions_immutable` |
 | `0004_sync` | sync bookkeeping tables, change-capture and read-only triggers (see Cloud sync) |
 | `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; local-only, not synced), read-only triggers for it |
+| `0006_descriptions` | nullable `description` + `description_type` on `collections` and `folders` (documentation; local-only, not synced), read-only triggers for them |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables and collection versions carry
 `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters `deleted = 0` and also
@@ -328,6 +330,41 @@ cache) and is a conflict only when that example changed or vanished. Tree/menu m
 same single `updateRequest`, and open request tabs of the parent are rebased so their next Save neither conflicts nor restores the
 old list. Binary bodies saved from a live response are base64 with `_slinger_body_encoding: "base64"`.
 
+**Documentation rendering** (`src/components/markdown`, `src/lib/description.ts`). Descriptions are Markdown (GFM via `marked`)
+rendered to HTML and sanitised by DOMPurify before `{@html}`; nothing else in the app injects author HTML.
+
+- *Storage.* A request's description stays inside `document_json` (`description`, verbatim: a string or Postman's
+  `{content, type}`); an untouched value is written back unchanged, an edited one as a string except that an object keeps its shape
+  (so `text/plain` stays plain). Collections and folders have `description` (text) and `description_type` (NULL for the string form,
+  else the object's MIME type) from migration 0006, set by `setCollectionDescription` / `setFolderDescription` (the type is kept
+  while there is text), imported from `info.description` / folder `description`, exported back in the same shape, and captured in
+  version snapshots (`collectionDescription(Type)`, folder `description(Type)`). **Sync:** the cloud protocol has no field for
+  collection/folder descriptions (the server's collection and folder schemas carry only name/location/order), so, like
+  `scripts_json`, the columns are local-only in v1: the 0004 change-capture triggers ignore them (schema-drift test classifies them
+  as ignored) and the read-only triggers still refuse edits for viewers. Request descriptions sync as part of `document_json`.
+- *Sanitiser policy* (`render.ts`). Allowlisted tags only: text formatting, headings, lists, tables, `blockquote`, `pre`/`code`,
+  `details`/`summary`, `hr`, `br`, `img`, `a`, and `input` (forced to a disabled checkbox, for task lists). Allowed attributes: `href`,
+  `src`, `alt`, `title`, table `align`/`colspan`/`rowspan`, list `start`/`reversed`, `open`, `width`/`height`, `checked`/`disabled`,
+  `aria-label`/`aria-hidden`, our `data-anchor`, and `class` filtered to the classes the renderer itself emits (`md-*`, `tok-*`), so
+  author HTML cannot reuse app utility classes to overlay the UI. Everything else goes: `script`, `style` (tag and attribute),
+  `iframe`/`object`/`embed`, `form`/`button`, SVG and MathML, `meta`/`base`/`link`, `template`, event handlers, `id`/`name` (no DOM
+  clobbering; heading anchors use `data-anchor`), other `data-*`, `srcset`, `target`. URLs must match
+  `http(s):`, `mailto:`, `#fragment` or a scheme-less relative reference; `javascript:`, `vbscript:`, `data:` links, `file:` and
+  custom schemes are removed.
+- *Links.* The rendered view (`MarkdownView.svelte`) intercepts every click (and middle click/drag) on a link: `http(s)`/`mailto`
+  go to `openExternalUrl` (main re-validates: http, https and mailto only), `#fragment` scrolls to the matching `data-anchor`
+  inside the doc, anything else shows a note and does nothing. The app window is never navigated (the main process additionally
+  denies `window.open` and untrusted navigation).
+- *Images.* Only `data:image/*` sources render (CSP `img-src 'self' data: blob:`). Remote and relative images are never fetched:
+  they become a placeholder with the alt text and, for http(s) URLs, an **Open image** link (to the system browser). A main-process
+  image proxy was considered and rejected for v1: it would let any imported collection make the app issue network requests.
+- *Code and variables.* Fenced code is highlighted statically with the CodeMirror Lezer parsers (JSON, JS/TS, XML, HTML, CSS) into
+  `tok-*` classes coloured by the `--syn-*` tokens. `{{variables}}` in prose, inline code and code blocks become `md-var` tokens;
+  docs never resolve variables, so no value (or secret) can appear.
+- *UI.* `DocsEditor.svelte` (Preview default / Edit / Split with a CodeMirror Markdown editor; preview-only when `sync.blocked`) is
+  used by the request Docs section and by collection/folder overview tabs (`features/overview/OverviewView.svelte`: a `RequestTab`
+  with `overview` set; `overviewDraft` holds unsaved text, Save/Ctrl+S calls the description IPC method).
+
 **Theming tokens.** `src/styles/themes.css` defines each palette as CSS variables on `[data-theme='<id>']`; `<html data-theme>`
 selects one (`light`, `dark`, `midnight`, `solarized`, `contrast`; `system` resolves to light or dark from
 `prefers-color-scheme`). `public/theme-init.js` applies the stored theme before first paint. Components use tokens only (Tailwind
@@ -370,5 +407,5 @@ Example: `renameFoo(fooId, name)`.
 ## Roadmap / not built
 
 Not present in the code: OAuth 2.0 request auth, `pm.sendRequest` and module `require` in scripts, cloud sync of collection/folder
-scripts, persisted collection variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and
+scripts and collection/folder documentation, loading remote images in docs, persisted collection variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and
 auto-update.

@@ -31,12 +31,15 @@ components/
   editor/                   CodeEditor (multi-line CM6), TemplateInput (single-line CM6),
                             cm/{theme,languages,template,sync,pmCompletion}.ts
   kv/KeyValueTable.svelte   params / headers / form-data / urlencoded tables
+  markdown/                 render.ts (marked + DOMPurify policy, code highlighting, {{var}} tokens), MarkdownView
+                            (rendered docs, link interception), DocsEditor (Preview/Edit/Split), markdown.css
 features/
   workspaces/  collections/ (tree, DnD, actions)  requests/ (tabs store, editor panels, send)
   response/    environments/ history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog, session-only pm scopes)
-lib/                        pure logic, no DOM: template, urlParams, kv, request (document model),
+  overview/ (collection/folder overview tab: counts + documentation)
+lib/                        pure logic, no DOM: template, urlParams, kv, request (document model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc
@@ -89,6 +92,9 @@ Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes
   (scripts, responses, source, settings) are preserved on save. Our own additions: `params` (rows incl. disabled ones)
   and `settings.timeoutMs`. See `lib/request.ts`. Request scripts are the Postman `event` array under `scripts`; edit them
   with `lib/scripts.ts` `withScript` (returns the same array when nothing changed, so untouched documents stay byte-identical).
+* Documentation (Markdown descriptions) is rendered only through `components/markdown/render.ts` (DOMPurify allowlist); never
+  `{@html}` author content anywhere else. Links go through `openExternalUrl`; remote images are not loaded. See ARCHITECTURE.md,
+  "Documentation rendering".
 * Scripts run only in the main process (`runScripts`); `features/requests/execute.ts` is the one place that calls it (single send
   and runner). The browser mock does not execute scripts (it answers with a console note).
 * Cloud tokens, HTTP and the sync engine live in the main process; the renderer only calls the account/sync IPC methods and subscribes to `onSyncEvent` (`features/sync/syncStore.svelte.ts`). Tokens never reach the renderer.
