@@ -39,8 +39,17 @@
   } as const
 </script>
 
-<div class="flex h-full min-h-0 flex-col {cls}" data-testid="{idPrefix}-scripts">
-  <Tabs {tabs} value={active} onchange={(v) => onactivechange(v as ScriptListen)} label="Script type" idPrefix="{idPrefix}-script" class="px-2" />
+<div class="flex h-full min-h-0 {cls}" data-testid="{idPrefix}-scripts">
+  <Tabs
+    {tabs}
+    value={active}
+    onchange={(v) => onactivechange(v as ScriptListen)}
+    label="Script type"
+    idPrefix="{idPrefix}-script"
+    orientation="vertical"
+    class="w-32 shrink-0 py-2"
+  />
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col">
   <p class="px-3 pt-1.5 text-xs text-muted">{HINT[active]}{scopeHint ? ` ${scopeHint}` : ''}</p>
   <div class="min-h-0 flex-1 p-2" role="tabpanel" id="{idPrefix}-script-panel-{active}" aria-labelledby="{idPrefix}-script-{active}">
     {#key active}
@@ -56,5 +65,6 @@
         class="rounded border border-border"
       />
     {/key}
+  </div>
   </div>
 </div>
