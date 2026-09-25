@@ -46,18 +46,97 @@ function folder(c: Ctx, name: string, parent: ApiFolder | null = null): ApiFolde
   return addFolder(c.s, { workspaceId: c.workspaceId, collectionId: c.collectionId, parentFolderId: parent?.id ?? null, name })
 }
 
+/** Rich Markdown documentation for the browser dev mode (docs rendering, links, variables, images). */
+const DEMO_API_DOCS = `# Demo API
+
+A small **mock** API served by the browser dev backend. Every request lives under \`{{baseUrl}}\`.
+
+## Authentication
+
+Most endpoints accept a bearer token:
+
+\`\`\`http
+Authorization: Bearer {{apiToken}}
+\`\`\`
+
+> Tokens are secrets: docs show the variable, never its value.
+
+## Endpoints
+
+| Method | Path | Description |
+|:-------|:-----|:------------|
+| \`GET\` | \`/json\` | Sample JSON document |
+| \`POST\` | \`/echo\` | Echoes the request back |
+| \`GET\` | \`/png\` | A tiny image |
+
+### Status
+
+- [x] JSON, XML, HTML and CSV samples
+- [x] Binary downloads
+- [ ] ~~SOAP~~ (not planned)
+
+## Example response
+
+\`\`\`json
+{
+  "id": 42,
+  "name": "Ada Lovelace",
+  "active": true,
+  "roles": ["admin"],
+  "manager": null
+}
+\`\`\`
+
+See the [Postman collection format](https://schema.postman.com/) or mail [the team](mailto:api@example.test).
+Jump to [Authentication](#authentication).
+
+![Mock logo](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAVElEQVR4nGP4TyXAQA+DrJu+oSGSDcI0gqBx6AbhNwKPcQzkmYJpFg0MItUUNLOobRB5piCbNWoQ/Q0afOloUOY1Us1C00izgg2/cXgU06XwJwkAAC1UIjShuY8rAAAAAElFTkSuQmCC) ![Remote banner](https://example.test/banner.png)
+
+---
+
+<details><summary>Raw HTML is sanitised</summary>
+
+<b>Bold</b> stays; <script>alert(1)</script> and <img src=x onerror=alert(1)> do not.
+
+</details>
+`
+
+const USERS_DOCS = `## Users
+
+Create, read and delete users. Admin endpoints live in **Admin** and need \`{{apiToken}}\`.
+
+1. Create a user with *Create user*
+2. Fetch it with *Get user*
+`
+
+const GET_USER_DOCS = `Fetches a user by id. \`userId\` comes from the active environment.
+
+### Query parameters
+
+| Name | Type | Required | Notes |
+|------|------|:--------:|-------|
+| \`userId\` | integer | yes | from \`{{userId}}\` |
+| \`verbose\` | boolean | no | adds audit fields |
+
+\`\`\`js
+pm.test('has an id', () => pm.expect(pm.response.json().id).to.be.a('number'))
+\`\`\`
+`
+
 function seedDemoApi(s: MockState, workspaceId: string): string {
   const collection = addCollection(s, workspaceId, 'Demo API')
+  collection.description = DEMO_API_DOCS
   const c: Ctx = { s, workspaceId, collectionId: collection.id }
   const json = [{ key: 'Accept', value: 'application/json' }]
 
   const users = folder(c, 'Users')
+  users.description = USERS_DOCS
   const admin = folder(c, 'Admin', users)
   const auth = folder(c, 'Auth')
   const files = folder(c, 'Files')
 
   req(c, users, 'Get user', 'GET', '{{baseUrl}}/json?userId={{userId}}&verbose=true', {
-    description: 'Fetches a user by id. `userId` comes from the active environment.',
+    description: GET_USER_DOCS,
     headers: [...json, { key: 'X-Debug', value: '1', disabled: true }],
   })
   req(c, users, 'Create user', 'POST', '{{baseUrl}}/echo', {
@@ -98,10 +177,11 @@ function seedDemoApi(s: MockState, workspaceId: string): string {
 }
 
 const PETSTORE = {
-  info: { name: 'Petstore (imported)' },
+  info: { name: 'Petstore (imported)', description: { content: 'The classic **Petstore**, imported from a Postman v2.1 file.', type: 'text/markdown' } },
   item: [
     {
       name: 'pets',
+      description: { content: 'Plain-text folder notes (text/plain):\n  *not* Markdown, shown verbatim.', type: 'text/plain' },
       item: [
         {
           name: 'List pets',
