@@ -26,8 +26,13 @@ export async function duplicateWorkspace(sourceId: string, name: string, onProgr
   const ws = await api().createWorkspace(name)
   step()
 
+  // Names are unique per workspace; only sync can leave two same-named environments in the source, so number the copies.
+  const usedNames = new Set<string>()
   for (const { e, vars } of varsByEnv) {
-    const env = await api().createEnvironment(ws.id, e.name)
+    let envName = e.name
+    for (let i = 2; usedNames.has(envName.trim().toLowerCase()); i++) envName = `${e.name} (${i})`
+    usedNames.add(envName.trim().toLowerCase())
+    const env = await api().createEnvironment(ws.id, envName)
     step()
     for (const v of vars) {
       let value = v.value ?? ''
