@@ -6,7 +6,7 @@
  * parsed with the host's own JSON.parse, type-checked and size-limited; scope state lives in Maps, so a
  * script-chosen key such as "__proto__" can never reach an object prototype on this side.
  */
-import { randomInt, randomUUID } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import type {
   ScriptConsoleEntry,
   ScriptConsoleLevel,
@@ -378,6 +378,13 @@ export class RunHost {
         this.test(typeof a0 === 'string' ? a0 : envText(a0), status, typeof args[2] === 'string' ? args[2] : null)
         return undefined
       }
+      case 'random': {
+        // crypto.getRandomValues inside the sandbox (QuickJS has no CSPRNG); the Web Crypto limit of 65536 bytes.
+        if (typeof a0 !== 'number' || !Number.isInteger(a0) || a0 < 0 || a0 > 65_536) throw new ScriptApiError('crypto.getRandomValues: at most 65536 bytes per call')
+        return randomBytes(a0).toString('hex')
+      }
+      case 'randomUUID':
+        return randomUUID()
       case 'request.set':
         this.request = checkRequestData(a0)
         this.requestChanged = true

@@ -5,6 +5,7 @@ import { build } from 'esbuild'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rawPlugin } from './esbuild-raw.mjs'
+import { sandboxLibsEsbuildPlugin } from './sandbox-libs.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const common = {
@@ -25,13 +26,14 @@ await build({
   external: ['electron', 'better-sqlite3', '@napi-rs/*'],
   plugins: [rawPlugin],
 })
-// Script sandbox worker (worker_threads): QuickJS (WebAssembly inlined) + the pm prelude, no native modules.
+// Script sandbox worker (worker_threads): QuickJS (WebAssembly inlined) + the pm prelude + the built-in script
+// libraries as source text (scripts/sandbox-libs.mjs), no native modules.
 await build({
   ...common,
   entryPoints: { 'script-worker': 'electron/scripts/worker.ts' },
   outdir: 'dist-electron',
   outExtension: { '.js': '.cjs' },
-  plugins: [rawPlugin],
+  plugins: [rawPlugin, sandboxLibsEsbuildPlugin],
 })
 await build({
   ...common,
