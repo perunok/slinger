@@ -97,7 +97,7 @@
   >
     {#if kind !== 'classic'}
       {#key seq}
-        <LoadingCharacter {kind} {phase} startedAt={start} {reduced} class="max-w-xl" />
+        <LoadingCharacter {kind} {phase} startedAt={start} {reduced} />
       {/key}
     {/if}
     {#if inFlow}
