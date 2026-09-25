@@ -11,8 +11,12 @@ import variant from '@jitl/quickjs-singlefile-cjs-release-sync'
 import { newQuickJSWASMModuleFromVariant, type QuickJSContext, type QuickJSHandle, type QuickJSWASMModule } from 'quickjs-emscripten-core'
 import type { ScriptSource } from '../../shared/types'
 import PRELUDE from './prelude.js?raw'
+import LIBRARIES from 'virtual:sandbox-libs'
 import { RunHost, ScriptApiError } from './host'
 import type { ScriptJob, ScriptJobResult, ScriptRunnerDeps } from './job'
+
+/** Names of the built-in libraries (require()), comma-separated, as the prelude asks for them. */
+const LIBRARY_NAMES = Object.keys(LIBRARIES).join(',')
 
 let modulePromise: Promise<QuickJSWASMModule> | null = null
 
@@ -100,6 +104,15 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
       })
       ctx.setProp(ctx.global, '__slinger_call', bridge)
       bridge.dispose()
+      // Built-in libraries: text only. With no argument, the library names; with a name, that library's bundled
+      // source ('' for an unknown name), which the prelude evaluates INSIDE this context on the first require().
+      const libs = ctx.newFunction('__slinger_lib', (nameH?: QuickJSHandle) => {
+        if (nameH === undefined || ctx.typeof(nameH) !== 'string') return ctx.newString(LIBRARY_NAMES)
+        const name = ctx.getString(nameH)
+        return ctx.newString(Object.hasOwn(LIBRARIES, name) ? LIBRARIES[name] : '')
+      })
+      ctx.setProp(ctx.global, '__slinger_lib', libs)
+      libs.dispose()
 
       const prelude = ctx.evalCode(PRELUDE, 'slinger-prelude.js', { type: 'global', strict: false })
       if (prelude.error) {

@@ -18,8 +18,9 @@ you opt into the (still minimal) cloud panel.
   hex preview for binary bodies.
 - Pre-request and test scripts with a Postman-compatible `pm` API (`pm.environment`, `pm.variables`, `pm.request`,
   `pm.response`, `pm.test`, `pm.expect`, ...) at collection, folder and request level, run in a QuickJS (WebAssembly) sandbox in
-  the main process with time, memory and output limits; Tests and Console tabs in the response area. No network access from
-  scripts (`pm.sendRequest` is not supported).
+  the main process with time, memory and output limits; Tests and Console tabs in the response area. Postman's built-in
+  libraries work (`require('crypto-js')`, `lodash`/`_`, `moment`, `uuid`, `chai`, `ajv`, `tv4`, `xml2js`/`xml2Json`,
+  `csv-parse/lib/sync`, `cheerio`). No network access from scripts (`pm.sendRequest` is not supported).
 - Collection runner (sequential, delay, stop on first failure) that runs the scripts, carries variables from one request to the
   next and reports test counts.
 - Request history per workspace (every attempt is recorded, secrets are not).
@@ -122,7 +123,7 @@ auto-update is configured.
 ## Roadmap / not built
 
 These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key), `pm.sendRequest` and
-`require` of modules in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
+Node modules / `postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
 `pm.collectionVariables` / `pm.globals` (session-only), realtime collaboration and plugins/extensions.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
