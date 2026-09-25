@@ -11,6 +11,7 @@ import { invalidInput, notFound, versionConflict } from '../lib/errors'
 import { assertUuid, newId } from '../lib/ids'
 import { cleanMethod, cleanName, nowSeconds } from '../lib/text'
 import {
+  cleanDescription,
   cleanScriptsJson,
   MAX_DOCUMENT_JSON_BYTES,
   nextSortOrder,
@@ -134,6 +135,20 @@ export class FolderRepository {
       .prepare('UPDATE folders SET name = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0')
       .run(cleanName(name, 'folder name'), nowSeconds(), id.toLowerCase())
     return this.get(id)
+  }
+
+  /**
+   * Replaces the folder's description text (local-only; refused on read-only cloud workspaces by a trigger).
+   * The stored Postman shape (`description_type`) is kept while there is text and dropped when it is cleared.
+   */
+  setDescription(id: string, description: string | null): ApiFolder {
+    const row = requireFolder(this.db, id)
+    const clean = cleanDescription(description)
+    this.db
+      .prepare(`UPDATE folders SET description = ?, description_type = CASE WHEN ? IS NULL THEN NULL ELSE description_type END, updated_at = ?
+                WHERE id = ? AND deleted = 0`)
+      .run(clean, clean, nowSeconds(), row.id)
+    return this.get(row.id)
   }
 
   /** Replaces the folder-level scripts (local-only; refused on read-only cloud workspaces by a trigger). */

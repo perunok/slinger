@@ -73,6 +73,8 @@ export interface SlingerIpcApi {
   deleteCollection(collectionId: string): Promise<void>
   /** ADDED (scripts): replaces the collection's Postman `event` array (JSON text, or null to clear). Local-only. */
   setCollectionScripts(collectionId: string, scriptsJson: string | null): Promise<Collection>
+  /** ADDED (docs): replaces the collection's description text (null or blank clears it; the stored type is kept). Local-only. */
+  setCollectionDescription(collectionId: string, description: string | null): Promise<Collection>
 
   // Folders
   listFolders(collectionId: string): Promise<ApiFolder[]>
@@ -82,6 +84,8 @@ export interface SlingerIpcApi {
   deleteFolder(folderId: string): Promise<void>
   /** ADDED (scripts): replaces the folder's Postman `event` array (JSON text, or null to clear). Local-only. */
   setFolderScripts(folderId: string, scriptsJson: string | null): Promise<ApiFolder>
+  /** ADDED (docs): replaces the folder's description text (see setCollectionDescription). Local-only. */
+  setFolderDescription(folderId: string, description: string | null): Promise<ApiFolder>
 
   // Requests
   listRequests(collectionId: string): Promise<ApiRequest[]>
@@ -200,12 +204,14 @@ export const IPC_CHANNELS = [
   'renameCollection',
   'deleteCollection',
   'setCollectionScripts',
+  'setCollectionDescription',
   'listFolders',
   'createFolder',
   'renameFolder',
   'moveFolder',
   'deleteFolder',
   'setFolderScripts',
+  'setFolderDescription',
   'listRequests',
   'createRequest',
   'updateRequest',

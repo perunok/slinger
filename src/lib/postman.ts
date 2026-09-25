@@ -7,6 +7,7 @@
  * never encoded or split.
  */
 import type { ApiFolder, ApiRequest, Collection } from '../../shared/types'
+import { postmanDescription } from './description'
 
 export const POSTMAN_SCHEMA_V21 = 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
 
@@ -58,6 +59,8 @@ export interface PostmanRequest {
 
 export interface PostmanItem {
   name: string
+  /** Folder documentation (requests keep theirs on `request.description`). */
+  description?: unknown
   item?: PostmanItem[]
   request?: PostmanRequest
   event?: unknown[]
@@ -65,7 +68,7 @@ export interface PostmanItem {
 }
 
 export interface PostmanCollectionV21 {
-  info: { _postman_id: string; name: string; schema: string }
+  info: { _postman_id: string; name: string; description?: unknown; schema: string }
   item: PostmanItem[]
   /** Collection-level pre-request / test scripts (stored verbatim in `Collection.scriptsJson`). */
   event?: unknown[]
@@ -328,7 +331,10 @@ function requestItem(request: ApiRequest): PostmanItem {
 }
 
 function folderItem(f: ApiFolder, item: PostmanItem[]): PostmanItem {
-  const out: PostmanItem = { name: f.name, item }
+  const out: PostmanItem = { name: f.name }
+  const description = postmanDescription(f.description, f.descriptionType)
+  if (description !== undefined) out.description = description
+  out.item = item
   const events = eventsFromJson(f.scriptsJson)
   if (events) out.event = events
   return out
@@ -375,7 +381,10 @@ export function buildPostmanCollection({ collection, folders, requests }: Export
       item.push(folderItem(f, itemsFor(f.id)))
     }
   }
-  const out: PostmanCollectionV21 = { info: { _postman_id: collection.id, name: collection.name, schema: POSTMAN_SCHEMA_V21 }, item }
+  const info: PostmanCollectionV21['info'] = { _postman_id: collection.id, name: collection.name, schema: POSTMAN_SCHEMA_V21 }
+  const description = postmanDescription(collection.description, collection.descriptionType)
+  if (description !== undefined) info.description = description
+  const out: PostmanCollectionV21 = { info, item }
   const events = eventsFromJson(collection.scriptsJson)
   if (events) out.event = events
   return out

@@ -2,6 +2,7 @@ import type { PostmanImportResult } from '../../../shared/types'
 import { addCollection, addFolder, addRequest, must, type MockState } from './store'
 import { fail } from './util'
 import { countScripts } from '../../lib/scripts'
+import { columnsFromPostman } from '../../lib/description'
 
 const eventJson = (event: unknown): string | null => (Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null)
 
@@ -61,6 +62,7 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   const scratch: MockState = { ...s, collections: [], folders: [], requests: [] }
   const collection = addCollection(scratch, workspace.id, collectionName)
   collection.scriptsJson = eventJson(parsed.event)
+  Object.assign(collection, columnsFromPostman(info.description))
   const counter = { scripts: countScripts(parsed.event) }
   walk(scratch, workspace.id, collection.id, items, null, counter)
   if (scratch.requests.length === 0) fail('invalid_input', 'No requests found in Postman collection')
@@ -83,6 +85,7 @@ function walk(s: MockState, workspaceId: string, collectionId: string, items: un
         name: trimmedOr(raw.name, 'Untitled Folder'),
       })
       folder.scriptsJson = eventJson(raw.event)
+      Object.assign(folder, columnsFromPostman(raw.description))
       walk(s, workspaceId, collectionId, raw.item, folder.id, counter)
       continue
     }

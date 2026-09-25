@@ -187,6 +187,7 @@ const runScriptsInput = z.object({
   continueOnError: z.boolean().optional(),
 })
 const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()
+const description = z.string().max(4 * 1024 * 1024).nullable()
 
 /** Parses `args` against a tuple schema and turns zod failures into invalid_input errors. */
 function parseArgs<T extends z.ZodType>(schema: T, args: unknown[]): z.infer<T> {
@@ -256,6 +257,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
       return core.collections.setScripts(id, json)
     },
+    setCollectionDescription: async (...a) => {
+      const [id, text] = parseArgs(z.tuple([uuid, description]), a)
+      return core.collections.setDescription(id, text)
+    },
 
     // Folders
     listFolders: async (...a) => core.folders.list(parseArgs(z.tuple([uuid]), a)[0]),
@@ -269,6 +274,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     setFolderScripts: async (...a) => {
       const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
       return core.folders.setScripts(id, json)
+    },
+    setFolderDescription: async (...a) => {
+      const [id, text] = parseArgs(z.tuple([uuid, description]), a)
+      return core.folders.setDescription(id, text)
     },
 
     // Requests

@@ -45,6 +45,7 @@
     "@codemirror/lang-html": "^6",
     "@codemirror/lang-javascript": "^6",
     "@codemirror/lang-json": "^6",
+    "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/lang-xml": "^6",
     "@codemirror/language": "^6",
     "@codemirror/search": "^6",
@@ -54,6 +55,8 @@
     "@lezer/highlight": "^1",
     "@napi-rs/keyring": "^2.1.0",
     "better-sqlite3": "^12.11.1",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14",
     "quickjs-emscripten-core": "^0.32.0",
     "uuid": "^14.0.2",
     "zod": "^4.6.5"

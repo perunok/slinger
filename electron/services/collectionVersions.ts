@@ -12,6 +12,7 @@ import { IpcError, invalidInput, notFound } from '../lib/errors'
 import { assertUuid, newId } from '../lib/ids'
 import { nowSeconds } from '../lib/text'
 import {
+  descriptionTypeOf,
   requireCollection,
   toCollection,
   type CollectionRow,
@@ -40,6 +41,9 @@ const snapshotSchema = z.object({
   collectionName: z.string(),
   // Scripts (migration 0005) are optional: snapshots taken before them have none.
   collectionScriptsJson: z.string().nullish(),
+  // Descriptions (migration 0006) likewise.
+  collectionDescription: z.string().nullish(),
+  collectionDescriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
   folders: z.array(
     z.object({
       id: z.string(),
@@ -47,6 +51,8 @@ const snapshotSchema = z.object({
       name: z.string(),
       sortOrder: z.number(),
       scriptsJson: z.string().nullish(),
+      description: z.string().nullish(),
+      descriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
     }),
   ),
   requests: z.array(
@@ -143,6 +149,8 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       name: f.name,
       sortOrder: f.sort_order,
       ...(f.scripts_json ? { scriptsJson: f.scripts_json } : {}),
+      ...(f.description ? { description: f.description } : {}),
+      ...(f.description && descriptionTypeOf(f.description_type) ? { descriptionType: descriptionTypeOf(f.description_type) } : {}),
     }))
     const requests = (
       db
@@ -160,6 +168,10 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
     const snapshot: CollectionSnapshot = {
       collectionName: collection.name,
       ...(collection.scripts_json ? { collectionScriptsJson: collection.scripts_json } : {}),
+      ...(collection.description ? { collectionDescription: collection.description } : {}),
+      ...(collection.description && descriptionTypeOf(collection.description_type)
+        ? { collectionDescriptionType: descriptionTypeOf(collection.description_type) }
+        : {}),
       folders,
       requests,
     }
@@ -177,14 +189,21 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
   })()
 }
 
+/** The collection description columns a snapshot restores (older snapshots have none: restoring clears it). */
+function snapshotDescription(snapshot: CollectionSnapshot): [string | null, string | null] {
+  const text = snapshot.collectionDescription ?? null
+  return [text, text ? (snapshot.collectionDescriptionType ?? null) : null]
+}
+
 /** Inserts snapshot content into `collectionId` with brand-new ids; returns counts. */
 function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnapshot): void {
   const now = nowSeconds()
   const idMap = new Map<string, string>()
   const pending = [...snapshot.folders]
   const insertFolder = db.prepare(
-    `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+    `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
+       version, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
   )
   // Parents first, regardless of the order stored in the snapshot.
   while (pending.length) {
@@ -194,7 +213,8 @@ function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnap
       if (f.parentFolderId !== null && !idMap.has(f.parentFolderId)) continue
       const id = newId()
       insertFolder.run(id, collection.workspace_id, collection.id,
-        f.parentFolderId === null ? null : idMap.get(f.parentFolderId)!, f.name, f.sortOrder, f.scriptsJson ?? null, now, now)
+        f.parentFolderId === null ? null : idMap.get(f.parentFolderId)!, f.name, f.sortOrder, f.scriptsJson ?? null,
+        f.description ?? null, f.description ? (f.descriptionType ?? null) : null, now, now)
       idMap.set(f.id, id)
       pending.splice(i, 1)
     }
@@ -233,9 +253,10 @@ export function restoreCollectionVersion(
     if (mode === 'copy') {
       const id = newId()
       db.prepare(
-        `INSERT INTO collections (id, workspace_id, name, scripts_json, version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
-      ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null, now, now)
+        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null,
+        ...snapshotDescription(snapshot), now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
       materialize(db, created, snapshot)
       return toCollection(created)
@@ -246,7 +267,8 @@ export function restoreCollectionVersion(
       ).run(now, source.id)
     }
     materialize(db, source, snapshot)
-    db.prepare('UPDATE collections SET scripts_json = ?, updated_at = ?, version = version + 1 WHERE id = ?').run(snapshot.collectionScriptsJson ?? null, now, source.id)
+    db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+      .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), now, source.id)
     return toCollection(db.prepare('SELECT * FROM collections WHERE id = ?').get(source.id) as CollectionRow)
   })()
 }

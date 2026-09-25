@@ -18,9 +18,19 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
   return {
     collectionName: collection.name,
     ...(collection.scriptsJson ? { collectionScriptsJson: collection.scriptsJson } : {}),
+    ...(collection.description ? { collectionDescription: collection.description } : {}),
+    ...(collection.description && collection.descriptionType ? { collectionDescriptionType: collection.descriptionType } : {}),
     folders: s.folders
       .filter((f) => f.collectionId === collectionId)
-      .map((f) => ({ id: f.id, parentFolderId: f.parentFolderId, name: f.name, sortOrder: f.sortOrder, ...(f.scriptsJson ? { scriptsJson: f.scriptsJson } : {}) })),
+      .map((f) => ({
+        id: f.id,
+        parentFolderId: f.parentFolderId,
+        name: f.name,
+        sortOrder: f.sortOrder,
+        ...(f.scriptsJson ? { scriptsJson: f.scriptsJson } : {}),
+        ...(f.description ? { description: f.description } : {}),
+        ...(f.description && f.descriptionType ? { descriptionType: f.descriptionType } : {}),
+      })),
     requests: s.requests
       .filter((r) => r.collectionId === collectionId)
       .map((r) => ({
@@ -73,6 +83,8 @@ function materialize(
       name: f.name,
       sortOrder: f.sortOrder,
       scriptsJson: f.scriptsJson ?? null,
+      description: f.description ?? null,
+      descriptionType: f.description ? (f.descriptionType ?? null) : null,
       createdAt: previous.folders.get(id)?.createdAt ?? now,
       updatedAt: now,
       version: (previous.folders.get(id)?.version ?? 0) + 1,
@@ -104,12 +116,16 @@ function restoreReplace(s: MockState, collection: Collection, snapshot: Collecti
   const resolve = (id: string) => fresh.get(id) ?? (fresh.set(id, uuid()), fresh.get(id) as string)
   materialize(s, collection, clone(snapshot), resolve, { folders: new Map(), requests: new Map() })
   collection.scriptsJson = snapshot.collectionScriptsJson ?? null
+  collection.description = snapshot.collectionDescription ?? null
+  collection.descriptionType = snapshot.collectionDescription ? (snapshot.collectionDescriptionType ?? null) : null
   return touch(collection)
 }
 
 function restoreCopy(s: MockState, source: VersionRow): Collection {
   const copy = addCollection(s, source.workspaceId, `${source.snapshot.collectionName} (v${source.version})`)
   copy.scriptsJson = source.snapshot.collectionScriptsJson ?? null
+  copy.description = source.snapshot.collectionDescription ?? null
+  copy.descriptionType = source.snapshot.collectionDescription ? (source.snapshot.collectionDescriptionType ?? null) : null
   const resolve = (): ((id: string) => string) => {
     const map = new Map<string, string>()
     return (id) => map.get(id) ?? (map.set(id, uuid()), map.get(id) as string)

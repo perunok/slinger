@@ -18,6 +18,12 @@ export interface Workspace {
   version: number
 }
 
+/**
+ * ADDED (docs): the Postman shape a collection/folder description was imported as. `null` = a plain string
+ * (Markdown, the usual case); otherwise the `type` of a `{content, type}` object, written back on export.
+ */
+export type DescriptionType = 'text/markdown' | 'text/plain'
+
 export interface Collection {
   id: string
   workspaceId: string
@@ -27,6 +33,12 @@ export interface Collection {
    * Local-only: not carried by cloud sync in v1. Optional so older fixtures stay valid; main always sets it.
    */
   scriptsJson?: string | null
+  /**
+   * ADDED (docs): the collection's documentation (Postman `description`; Markdown unless `descriptionType` is
+   * 'text/plain'), or null. Local-only like `scriptsJson`. Optional so older fixtures stay valid; main always sets it.
+   */
+  description?: string | null
+  descriptionType?: DescriptionType | null
   createdAt: number
   updatedAt: number
   version: number
@@ -41,6 +53,9 @@ export interface ApiFolder {
   sortOrder: number
   /** ADDED (scripts): the folder's Postman `event` array as JSON text, or null (see Collection.scriptsJson). */
   scriptsJson?: string | null
+  /** ADDED (docs): the folder's documentation, see Collection.description. */
+  description?: string | null
+  descriptionType?: DescriptionType | null
   createdAt: number
   updatedAt: number
   version: number
@@ -280,7 +295,10 @@ export interface CollectionSnapshot {
   collectionName: string
   /** ADDED (scripts): collection-level scripts (Postman `event` JSON) at snapshot time; absent in older snapshots. */
   collectionScriptsJson?: string | null
-  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson'>>
+  /** ADDED (docs): collection description at snapshot time; absent in older snapshots or when empty. */
+  collectionDescription?: string | null
+  collectionDescriptionType?: DescriptionType | null
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
   >

@@ -7,6 +7,7 @@
  */
 import type { ApiRequest } from '../../shared/types'
 import { dataRows, ensureTrailingEmpty, newRow, type KvRow } from './kv'
+import { writeDescription } from './description'
 import { mergeParamsFromUrl } from './urlParams'
 
 export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
@@ -37,7 +38,13 @@ export interface RequestDraft {
   name: string
   method: string
   url: string
+  /** Documentation text (Markdown, or plain text when the stored value is a text/plain object). */
   description: string
+  /**
+   * The stored Postman `description` value (string, `{content, type}` or null) this draft was loaded from.
+   * Never edited by the UI; saving writes it back unchanged while `description` still matches it.
+   */
+  descriptionSource?: unknown
   params: KvRow[]
   headers: KvRow[]
   body: BodyDraft
@@ -248,6 +255,7 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     method: (str(doc.method) || request.method || 'GET').toUpperCase(),
     url,
     description: descriptionText(doc.description),
+    descriptionSource: doc.description,
     params: seedParams(doc, url),
     headers: ensureTrailingEmpty(rowsFromList(doc.headers)),
     body: parseBody(doc.body),
@@ -329,7 +337,7 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   doc.name = name
   doc.method = d.method
   doc.url = d.url
-  doc.description = d.description || null
+  doc.description = writeDescription(d.descriptionSource, d.description)
   doc.headers = rowsToList(d.headers)
   doc.body = serializeBody(d.body)
   doc.auth = serializeAuth(d.auth)

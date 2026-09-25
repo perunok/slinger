@@ -1,4 +1,4 @@
-import type { ApiFolder, ApiRequest, Collection, Environment, Workspace } from '../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, DescriptionType, Environment, Workspace } from '../../shared/types'
 import type { Db } from '../db/database'
 import { invalidInput, notFound } from '../lib/errors'
 import { assertUuid } from '../lib/ids'
@@ -18,6 +18,8 @@ export interface CollectionRow {
   workspace_id: string
   name: string
   scripts_json?: string | null
+  description?: string | null
+  description_type?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -30,6 +32,8 @@ export interface FolderRow {
   name: string
   sort_order: number
   scripts_json?: string | null
+  description?: string | null
+  description_type?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -70,6 +74,8 @@ export const toCollection = (r: CollectionRow): Collection => ({
   workspaceId: r.workspace_id,
   name: r.name,
   scriptsJson: r.scripts_json ?? null,
+  description: r.description ?? null,
+  descriptionType: descriptionTypeOf(r.description_type),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -82,6 +88,8 @@ export const toFolder = (r: FolderRow): ApiFolder => ({
   name: r.name,
   sortOrder: r.sort_order,
   scriptsJson: r.scripts_json ?? null,
+  description: r.description ?? null,
+  descriptionType: descriptionTypeOf(r.description_type),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -188,4 +196,35 @@ export function cleanScriptsJson(value: unknown): string | null {
   }
   if (!Array.isArray(parsed)) throw invalidInput('scriptsJson must be a JSON array (Postman "event" list)')
   return parsed.length === 0 ? null : value
+}
+
+export const MAX_DESCRIPTION_BYTES = 2 * 1024 * 1024
+const DESCRIPTION_TYPES = new Set(['text/markdown', 'text/plain'])
+
+/** Stored `description_type` -> API value (anything unknown reads as "plain string form"). */
+export function descriptionTypeOf(value: string | null | undefined): DescriptionType | null {
+  return value && DESCRIPTION_TYPES.has(value) ? (value as DescriptionType) : null
+}
+
+/** Validates a collection/folder description; empty or whitespace-only text is stored as NULL. */
+export function cleanDescription(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string') throw invalidInput('description must be a string or null')
+  if (Buffer.byteLength(value, 'utf8') > MAX_DESCRIPTION_BYTES) throw invalidInput('description is too large (2 MB max)')
+  return value.trim() === '' ? null : value
+}
+
+/**
+ * A Postman `description` (a string, or `{content, type}`) -> stored text + type. The type is kept only for
+ * the object form so export can write the same shape back; an unknown type is treated as Markdown.
+ */
+export function descriptionFromPostman(value: unknown): { text: string | null; type: DescriptionType | null } {
+  if (typeof value === 'string') return { text: value.trim() === '' ? null : value, type: null }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>
+    const content = typeof o.content === 'string' ? o.content : ''
+    if (content.trim() === '') return { text: null, type: null }
+    return { text: content, type: o.type === 'text/plain' ? 'text/plain' : 'text/markdown' }
+  }
+  return { text: null, type: null }
 }

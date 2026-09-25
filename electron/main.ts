@@ -155,12 +155,12 @@ function createWindow(): BrowserWindow {
   win.once('ready-to-show', () => {
     if (!process.env.SLINGER_SMOKE_TEST && !process.env.SLINGER_HIDE_WINDOW) win.show()
   })
-  // Links open in the user's browser (http/https only); the app window itself never navigates away.
+  // Links open in the user's browser (http/https/mailto only); the app window itself never navigates away.
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
       void shell.openExternal(assertExternalUrl(url))
     } catch {
-      /* not an http(s) URL: ignore */
+      /* not an http(s)/mailto URL: ignore */
     }
     return { action: 'deny' }
   })

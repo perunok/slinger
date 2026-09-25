@@ -137,14 +137,15 @@ describe('export files', () => {
 })
 
 describe('openExternalUrl', () => {
-  it('opens http/https only', async () => {
+  it('opens http/https (and mailto: links from docs) only', async () => {
     await env.api.openExternalUrl('https://example.com/a?b=1')
     await env.api.openExternalUrl('http://localhost:3000')
-    expect(env.opened).toEqual(['https://example.com/a?b=1', 'http://localhost:3000/'])
-    for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'ftp://x.com', 'data:text/html,hi', 'mailto:a@b.c', 'app://slinger/x', 'not a url', '', '   ']) {
+    await env.api.openExternalUrl('mailto:a@b.c')
+    expect(env.opened).toEqual(['https://example.com/a?b=1', 'http://localhost:3000/', 'mailto:a@b.c'])
+    for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'ftp://x.com', 'data:text/html,hi', 'app://slinger/x', 'not a url', '', '   ']) {
       await expect(env.api.openExternalUrl(bad), bad).rejects.toMatchObject({ code: 'invalid_input' })
     }
-    expect(env.opened.length).toBe(2)
+    expect(env.opened.length).toBe(3)
   })
 })
 

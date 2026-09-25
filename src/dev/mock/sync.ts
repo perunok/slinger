@@ -821,9 +821,11 @@ export function createSyncApi(
         ws = s.versions.find((v) => v.id === a0(args))?.workspaceId ?? null
         break
       case 'setCollectionScripts':
-      case 'setFolderScripts': {
-        // Local-only (not synced), but still refused for viewers, like the real triggers from migration 0005.
-        const target = method === 'setCollectionScripts' ? wsOfCollection(String(a0(args))) : (s.folders.find((f) => f.id === a0(args))?.workspaceId ?? null)
+      case 'setFolderScripts':
+      case 'setCollectionDescription':
+      case 'setFolderDescription': {
+        // Local-only (not synced), but still refused for viewers, like the real triggers from migrations 0005/0006.
+        const target = method === 'setCollectionScripts' || method === 'setCollectionDescription' ? wsOfCollection(String(a0(args))) : (s.folders.find((f) => f.id === a0(args))?.workspaceId ?? null)
         if (target && links.get(target)?.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')
         return null
       }

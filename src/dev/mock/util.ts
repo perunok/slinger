@@ -1,4 +1,4 @@
-import { IpcError, type IpcErrorPayload } from '../../../shared/types'
+import { IpcError, type DescriptionType, type IpcErrorPayload } from '../../../shared/types'
 
 export const nowSec = (): number => Math.floor(Date.now() / 1000)
 
@@ -59,4 +59,13 @@ export function cleanScriptsJson(value: string | null): string | null {
   }
   if (!Array.isArray(parsed)) fail('invalid_input', 'scriptsJson must be a JSON array (Postman "event" list)')
   return parsed.length === 0 ? null : value
+}
+
+/** Same rules as the main process (repositories setDescription): blank clears text and type; the type is kept otherwise. */
+export function setDescription(row: { description?: string | null; descriptionType?: DescriptionType | null }, value: string | null): void {
+  if (value !== null && typeof value !== 'string') fail('invalid_input', 'description must be a string or null')
+  const clean = value === null || value.trim() === '' ? null : value
+  row.description = clean
+  if (clean === null) row.descriptionType = null
+  else row.descriptionType ??= null
 }
