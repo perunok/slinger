@@ -746,10 +746,15 @@ describe('import and export', () => {
     await expect.poll(() => page.getByText('Copied to clipboard').count()).toBeGreaterThan(0)
     await dialog.getByRole('button', { name: 'Save to file' }).click()
     await dialog.waitFor({ state: 'hidden' }) // the dialog closes itself once the file is written
-    await expect.poll(() => readdirSync(exportDir).some((f) => f.endsWith('.json'))).toBe(true)
-    const file = readdirSync(exportDir).find((f) => f.endsWith('.json'))!
+    const isColA = (f: string) => f.startsWith('Col A') && f.endsWith('.slinger_collection.json')
+    await expect.poll(() => readdirSync(exportDir).some(isColA)).toBe(true)
+    const file = readdirSync(exportDir).find(isColA)!
     const exported = JSON.parse(readFileSync(join(exportDir, file), 'utf8'))
     expect(exported.info.schema).toMatch(/v2\.1/)
+    // Named after the latest version, which travels in info.version with the whole history in info._slinger.
+    expect(file).toBe(`Col A v${exported.info.version}.slinger_collection.json`)
+    expect(exported.info._slinger.versions.map((v: { version: string }) => v.version)).toContain(exported.info.version)
+    expect(exported.info._slinger.versions.every((v: { snapshot?: unknown }) => v.snapshot)).toBe(true)
     expect(JSON.stringify(exported)).toContain('Echo')
     expect(JSON.stringify(exported)).not.toContain(SECRET)
     // The example saved from the live PNG response travels in the item's `response` list.
@@ -757,6 +762,30 @@ describe('import and export', () => {
     expect(image.response).toHaveLength(1)
     expect(image.response[0]).toMatchObject({ name: 'png ok', code: 200, status: 'OK', _slinger_body_encoding: 'base64', body: PNG.toString('base64') })
     expect(image.response[0].originalRequest.url.raw).toBe('{{baseUrl}}/binary.png')
+  })
+
+  it('re-importing the exported file restores the version history', async () => {
+    const file = readdirSync(exportDir).find((f) => f.startsWith('Col A') && f.endsWith('.slinger_collection.json'))!
+    const exported = JSON.parse(readFileSync(join(exportDir, file), 'utf8'))
+    const before = await page.evaluate(async () => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      return (await window.slinger.listCollections(ws.id)).map((c) => c.id)
+    })
+    // Renamed copy, so later tests still find exactly one "Col A" in the tree.
+    const copy = join(tmp, 'History roundtrip.slinger_collection.json')
+    writeFileSync(copy, JSON.stringify({ ...exported, info: { ...exported.info, name: 'History roundtrip' } }))
+    await page.getByRole('button', { name: 'Import Postman collection' }).click()
+    await page.getByLabel('Postman file').setInputFiles(copy)
+    await page.getByTestId('import-history').waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+    await expect.poll(() => page.getByText('Version history restored').count()).toBeGreaterThan(0)
+    const restored = await page.evaluate(async (known) => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      const col = (await window.slinger.listCollections(ws.id)).find((c) => !known.includes(c.id))!
+      return (await window.slinger.listCollectionVersions(col.id)).map((v) => [v.version, v.notes])
+    }, before)
+    const expected = exported.info._slinger.versions.map((v: { version: string; notes: string | null }) => [v.version, v.notes]).reverse()
+    expect(restored).toEqual(expected)
   })
 
   it('exports the imported collection with untouched examples identical to the source file', async () => {
@@ -773,6 +802,43 @@ describe('import and export', () => {
     for (let i = 1; i < original.item.length; i++) expect(JSON.stringify(exported.item[i].response)).toBe(JSON.stringify(original.item[i].response))
     expect(exported.item[0].response[0]).toEqual({ ...original.item[0].response[0], name: 'success edited', status: 'Accepted', code: 202 })
     expect(JSON.stringify(exported.item[0].response[1])).toBe(JSON.stringify(original.item[0].response[1]))
+  })
+})
+
+describe('environment export', () => {
+  const envFiles = () => readdirSync(exportDir).filter((f) => f.endsWith('.slinger_environment.json'))
+
+  it('Ctrl+K exports an environment without secret values', async () => {
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.getByRole('combobox', { name: 'Search requests and commands' }).fill('> export environment')
+    await page.keyboard.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Export environment' })
+    await dialog.getByRole('button', { name: /Choose folder/ }).click()
+    await dialog.getByRole('button', { name: 'Save to file' }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await expect.poll(() => envFiles().length).toBe(1)
+    const text = readFileSync(join(exportDir, envFiles()[0]!), 'utf8')
+    const env = JSON.parse(text)
+    expect(env._postman_variable_scope).toBe('environment')
+    expect(env.values.find((v: { key: string }) => v.key === 'token')).toMatchObject({ type: 'secret', value: '' })
+    expect(text).not.toContain(SECRET)
+    rmSync(join(exportDir, envFiles()[0]!))
+  })
+
+  it('"Include secret values" (explicit opt-in) writes the secret', async () => {
+    await page.getByRole('button', { name: 'Manage environments' }).click()
+    const editor = page.getByRole('dialog', { name: 'Environments' })
+    await editor.getByRole('button', { name: 'Export environment…' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Export environment' })
+    await dialog.getByLabel(/Include secret values/).check()
+    await dialog.getByTestId('secret-warning').waitFor()
+    await dialog.getByRole('button', { name: 'Save to file' }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await editor.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect.poll(() => envFiles().length).toBe(1)
+    const text = readFileSync(join(exportDir, envFiles()[0]!), 'utf8')
+    expect(JSON.parse(text).values.find((v: { key: string }) => v.key === 'token')).toMatchObject({ type: 'secret', value: SECRET })
+    rmSync(join(exportDir, envFiles()[0]!)) // never leave a plaintext secret behind
   })
 })
 
