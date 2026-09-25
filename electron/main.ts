@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, net, powerMonitor, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeTheme, net, powerMonitor, protocol, screen, session, shell } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
@@ -15,6 +15,16 @@ import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
+import {
+  clampBounds,
+  DEFAULT_BACKGROUND,
+  DEFAULT_SIZE,
+  MIN_SIZE,
+  readWindowState,
+  WINDOW_STATE_FILE,
+  writeWindowState,
+  type WindowState,
+} from './lib/windowState'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
@@ -41,6 +51,17 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let core: Core | null = null
 let db: Db | null = null
+let windowState: WindowState = {}
+const windowStateFile = () => join(app.getPath('userData'), WINDOW_STATE_FILE)
+/** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
+const automatedWindow = () => !!(process.env.SLINGER_SMOKE_TEST || process.env.SLINGER_HIDE_WINDOW)
+
+// SLINGER_STARTUP_TIMING=1 prints one `STARTUP_TIMING {...}` line: main-process milestones (ms since process start)
+// and the renderer's own marks (ms since navigation start; see src/app/bootSkeleton.ts).
+const startupTiming = process.env.SLINGER_STARTUP_TIMING ? ({} as Record<string, number>) : null
+const timeMark = (name: string) => {
+  if (startupTiming) startupTiming[name] = Math.round(performance.now())
+}
 
 const isTrustedUrl = (url: string): boolean =>
   url.startsWith(`${APP_ORIGIN}/`) || (devServerUrl !== null && url.startsWith(devServerUrl))
@@ -132,15 +153,18 @@ function linuxWindowIcon(): { icon?: string } {
 }
 
 function createWindow(): BrowserWindow {
+  // Remembered geometry, fitted onto the displays that exist now (null: default size, centred).
+  const bounds = windowState.bounds ? clampBounds(windowState.bounds, screen.getAllDisplays().map((d) => d.workArea), MIN_SIZE) : null
   const win = new BrowserWindow({
     ...linuxWindowIcon(),
-    width: 1400,
-    height: 900,
-    minWidth: 900,
-    minHeight: 600,
+    ...(bounds ?? DEFAULT_SIZE),
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     show: false,
     title: 'Slinger',
-    backgroundColor: '#0f172a',
+    // The last theme's --bg (reported by the renderer), so the window never flashes another colour before the
+    // launch skeleton paints; before the first report, the default light/dark theme's --bg.
+    backgroundColor: windowState.backgroundColor ?? DEFAULT_BACKGROUND[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'],
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -153,9 +177,24 @@ function createWindow(): BrowserWindow {
       ...(process.env.SLINGER_HIDE_WINDOW ? { offscreen: true, backgroundThrottling: false } : {}),
     },
   })
+  // ready-to-show fires after the first paint, which is the static launch skeleton in index.html (it needs no JS).
   win.once('ready-to-show', () => {
-    if (!process.env.SLINGER_SMOKE_TEST && !process.env.SLINGER_HIDE_WINDOW) win.show()
+    timeMark('readyToShow')
+    if (automatedWindow()) return
+    if (windowState.maximized) win.maximize()
+    win.show()
   })
+  win.on('close', () => {
+    if (automatedWindow()) return
+    windowState = { ...windowState, bounds: win.getNormalBounds(), maximized: win.isMaximized() }
+    writeWindowState(windowStateFile(), windowState)
+  })
+  if (startupTiming) {
+    win.webContents.once('did-finish-load', () => {
+      timeMark('didFinishLoad')
+      void reportStartupTiming(win)
+    })
+  }
   // Links open in the user's browser (http/https/mailto only); the app window itself never navigates away.
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -168,8 +207,28 @@ function createWindow(): BrowserWindow {
   win.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) event.preventDefault()
   })
+  timeMark('loadURL')
   void win.loadURL(devServerUrl ?? `${APP_ORIGIN}/index.html`)
   return win
+}
+
+/** Waits (up to 30 s) for the renderer to remove the launch skeleton, then prints main + renderer timings. */
+async function reportStartupTiming(win: BrowserWindow): Promise<void> {
+  let renderer: unknown = null
+  for (let i = 0; i < 300 && !win.isDestroyed(); i++) {
+    renderer = await win.webContents.executeJavaScript('window.__slingerStartup ?? null').catch(() => null)
+    if (renderer) break
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  console.log('STARTUP_TIMING ' + JSON.stringify({ main: startupTiming, renderer }))
+}
+
+/** Renderer-reported theme background: paint the live window with it and remember it for the next launch. */
+function setWindowBackground(color: string): void {
+  if (windowState.backgroundColor === color) return
+  windowState = { ...windowState, backgroundColor: color }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(color)
+  writeWindowState(windowStateFile(), windowState)
 }
 
 /** Headless self-check used by `SLINGER_SMOKE_TEST=1`: exercises preload + IPC + error transport. */
@@ -249,6 +308,8 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   void app.whenReady().then(() => {
+    timeMark('appReady')
+    windowState = readWindowState(windowStateFile())
     db = openDatabase(join(app.getPath('userData'), 'slinger.db'))
     core = createCore({
       db,
@@ -287,6 +348,7 @@ if (!app.requestSingleInstanceLock()) {
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
         return result.canceled ? null : (result.filePaths[0] ?? null)
       },
+      setWindowBackground,
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
