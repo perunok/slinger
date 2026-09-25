@@ -20,6 +20,7 @@ in-memory mock backend from `src/dev/`.
 main.ts                     boot: install mock if no window.slinger, mount <App/>
 app/                        shell + cross-feature state
   App.svelte TopBar Sidebar EmptyState shortcuts.ts
+  bootSkeleton.ts           removes index.html's static launch skeleton once the first workspace loaded (or on error)
   state.svelte.ts           workspaces, collections/folders/requests, environments, active env
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope every template input reads
@@ -79,6 +80,11 @@ Settings (`app/settings.svelte.ts`) apply both attributes; persisted as JSON in 
 (`{ theme, accent, systemLight, systemDark }`, see `lib/appearance.ts`). `theme: 'system'` follows `prefers-color-scheme`
 using the chosen `systemLight` / `systemDark` themes. The 0.2.0 key `slinger.theme` is migrated once and removed.
 `public/theme-init.js` applies the same settings before first paint (keep it in step with `lib/appearance.ts`).
+`styles/themes.css` is loaded through `styles/boot.css`, linked from `index.html`'s `<head>` (render-blocking, so the launch skeleton
+in `index.html` is themed on its first frame; `app.css` does not import it again). The skeleton uses tokens only and its classes
+are prefixed `bs-` (Tailwind scans `index.html`); `themes.test.ts` checks `index.html`, `boot.css` and `theme-init.js` for literal
+colours too. `lib/windowBackground.ts` reports the resolved `--bg` to main so the native window matches (see docs/ARCHITECTURE.md,
+"Startup sequence"). In the browser, `?mockLatency=<ms>` slows the mock backend down to look at the skeleton.
 Components use tokens only: Tailwind classes (`bg-surface`, `text-fg`, `border-border`, `bg-accent text-accent-fg`,
 `text-accent-text`, `ring-focus`, ...) map to the variables in `tailwind.config.js`; CodeMirror (`components/editor/cm/theme.ts`)
 uses `var(--...)` so editors follow automatically.

@@ -411,6 +411,34 @@ granted).
 maximum lifetime) and `waitForBrowserAuthCallback` resolves with the query parameters; it exists in the API but the current
 cloud panel signs in with the device-code flow instead.
 
+## Startup sequence
+
+The goal is that the first frame already looks like Slinger, in the user's theme, and that nothing flashes:
+
+1. **Main** (`app.whenReady`): reads `<userData>/window-state.json` (`electron/lib/windowState.ts`: last theme background, normal
+   bounds, maximised; each field validated on its own, a corrupt file is ignored), opens the database, registers IPC, then
+   `createWindow()` with `show: false`, `backgroundColor` = the remembered `--bg` (before the first report: the default light or
+   dark theme's `--bg` per `nativeTheme`), and the remembered bounds clamped onto the displays that exist now (off-screen or
+   unplugged monitor: default size, centred; too large: shrunk; partly off-screen: moved inside).
+2. **First paint** (`index.html`, no JS needed): `public/theme-init.js` sets `data-theme`/`data-accent` from localStorage, and the
+   render-blocking `src/styles/boot.css` (which `@import`s `themes.css`, so tokens load once, before first paint, in dev and in the
+   build) styles the static `#boot-skeleton`: top bar, sidebar tree, request editor, response pane, with a transform-only
+   shimmer (off under `prefers-reduced-motion`). `ready-to-show` fires on that frame and the window is shown (maximised first if it
+   was).
+3. **Renderer boot** (`src/main.ts`): mounts `<App/>` beneath the skeleton; `settings.init()` applies the theme and
+   `reportWindowBackground()` sends the resolved `--bg` over `setWindowBackground` (zod: CSS hex/rgb, normalised to `#rrggbb`), which
+   repaints the live window and persists it for the next launch (again on every theme/accent change).
+4. **Skeleton removal** (`src/app/bootSkeleton.ts`, from an `$effect` on `app.ready`, i.e. workspaces + the active workspace's
+   collections and environments loaded): removed at once when that took under 100 ms since mount (the usual local case), otherwise
+   cross-faded over 150 ms (`pointer-events: none` while fading) and removed. A startup error (`app.fatalError`, or `boot()`
+   itself throwing) removes it at once so the error is visible. On close, main stores the window's normal bounds + maximised.
+
+`SLINGER_STARTUP_TIMING=1` prints one `STARTUP_TIMING {main, renderer}` line (main: ms since process start; renderer: ms since
+navigation start, `window.__slingerStartup`, also `performance.mark('slinger:*')`); a renderer built/served with
+`VITE_SLINGER_STARTUP_TIMING=1` logs its part with `console.debug`. Packaged Linux build, hidden window, warm profile: skeleton
+first paint ~140 ms, app mounted ~190 ms, data loaded and skeleton removed ~220 ms (no fade needed). e2e: `launch()` and
+`reloadApp()` wait for `#boot-skeleton` to detach.
+
 ## Renderer
 
 State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tree, environments, active environment),
