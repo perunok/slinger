@@ -7,7 +7,6 @@
 </script>
 
 <header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
-  <span class="text-sm font-bold tracking-wide text-accent-text">Slinger</span>
   <WorkspaceSwitcher />
   <SyncChip />
   {#if window.__slingerMock}
