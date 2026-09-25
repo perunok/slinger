@@ -5,9 +5,79 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Slinger</title>
     <script src="/theme-init.js"></script>
+    <!-- Theme tokens + launch skeleton styles: render-blocking so the first frame is already themed (see boot.css). -->
+    <link rel="stylesheet" href="/src/styles/boot.css" />
   </head>
   <body>
     <div id="root"></div>
+    <!-- Launch skeleton: static, painted before any script runs; removed by src/app/bootSkeleton.ts. -->
+    <div id="boot-skeleton" class="boot-skeleton" aria-hidden="true">
+      <div class="bs-top">
+        <div class="bs-block is-button bs-w-140px"></div>
+        <div class="bs-block bs-w-56px"></div>
+        <div class="bs-top-right">
+          <div class="bs-block is-button bs-w-160px"></div>
+          <div class="bs-block is-button bs-w-120px"></div>
+          <div class="bs-block is-icon"></div>
+          <div class="bs-block is-icon"></div>
+          <div class="bs-block is-icon"></div>
+        </div>
+      </div>
+      <div class="bs-body">
+        <div class="bs-side">
+          <div class="bs-tabs">
+            <div class="bs-block bs-w-72px"></div>
+            <div class="bs-block bs-w-56px"></div>
+          </div>
+          <div class="bs-filter"><div class="bs-block is-input"></div></div>
+          <div class="bs-tree">
+            <div class="bs-row"><div class="bs-block is-icon"></div><div class="bs-block bs-w-60"></div></div>
+            <div class="bs-row is-nested"><div class="bs-block bs-w-24px"></div><div class="bs-block bs-w-50"></div></div>
+            <div class="bs-row is-nested"><div class="bs-block bs-w-24px"></div><div class="bs-block bs-w-70"></div></div>
+            <div class="bs-row is-nested"><div class="bs-block bs-w-24px"></div><div class="bs-block bs-w-45"></div></div>
+            <div class="bs-row"><div class="bs-block is-icon"></div><div class="bs-block bs-w-55"></div></div>
+            <div class="bs-row is-nested"><div class="bs-block bs-w-24px"></div><div class="bs-block bs-w-65"></div></div>
+            <div class="bs-row is-nested"><div class="bs-block bs-w-24px"></div><div class="bs-block bs-w-40"></div></div>
+            <div class="bs-row"><div class="bs-block is-icon"></div><div class="bs-block bs-w-50"></div></div>
+          </div>
+        </div>
+        <div class="bs-main">
+          <div class="bs-tabs">
+            <div class="bs-block bs-w-140px"></div>
+            <div class="bs-block bs-w-120px"></div>
+          </div>
+          <div class="bs-url">
+            <div class="bs-block is-input bs-w-84px"></div>
+            <div class="bs-block is-input is-grow"></div>
+            <div class="bs-block is-button is-accent bs-w-72px"></div>
+          </div>
+          <div class="bs-tabs">
+            <div class="bs-block bs-w-56px"></div>
+            <div class="bs-block bs-w-40px"></div>
+            <div class="bs-block bs-w-64px"></div>
+            <div class="bs-block bs-w-40px"></div>
+            <div class="bs-block bs-w-56px"></div>
+          </div>
+          <div class="bs-lines">
+            <div class="bs-block bs-w-40"></div>
+            <div class="bs-block bs-w-65"></div>
+            <div class="bs-block bs-w-50"></div>
+          </div>
+          <div class="bs-response">
+            <div class="bs-tabs">
+              <div class="bs-block bs-w-72px"></div>
+              <div class="bs-block bs-w-56px"></div>
+            </div>
+            <div class="bs-lines">
+              <div class="bs-block bs-w-75"></div>
+              <div class="bs-block bs-w-60"></div>
+              <div class="bs-block bs-w-80"></div>
+              <div class="bs-block bs-w-45"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

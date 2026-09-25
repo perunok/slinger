@@ -168,7 +168,9 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 export function installMockBackend(): void {
   if (typeof window === 'undefined') return
   // In the browser the device sign-in approves itself after a moment, and edits auto-sync with a short debounce.
-  const backend = createMockBackend({ cloud: { autoApproveMs: 2500, autoCycleMs: 1500, stepMs: 250 } })
+  // `?mockLatency=<ms>` slows every call down, e.g. to look at the launch skeleton.
+  const latencyMs = Number(new URLSearchParams(location.search).get('mockLatency')) || undefined
+  const backend = createMockBackend({ latencyMs, cloud: { autoApproveMs: 2500, autoCycleMs: 1500, stepMs: 250 } })
   window.__slingerMock = backend
   if (window.slinger === undefined) window.slinger = backend
 }
