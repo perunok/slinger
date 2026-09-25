@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
 import type { Page } from 'playwright-core'
-import { capture, launch, ROOT, stubDialogs, type Launched } from './support/app'
+import { capture, launch, reloadApp, ROOT, stubDialogs, type Launched } from './support/app'
 import { PNG, startTarget } from './support/server'
 
 const EXAMPLE = join(ROOT, 'example-postman-collection.json')
@@ -395,7 +395,7 @@ describe('collection runner', () => {
         await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name: `run-${n}`, method: 'GET', url: `{{baseUrl}}/runner/${n}`, documentJson: JSON.stringify({ headers: [], body: null }) })
       }
     })
-    await page.reload()
+    await reloadApp(page)
     await item(/^Run C/).waitFor()
     const before = target.requests.length
     await contextMenu(item(/^Run C/), 'Run collection…')
@@ -418,7 +418,7 @@ describe('collection runner: 3xx', () => {
         await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name, method: 'GET', url: `{{baseUrl}}/redirect/${path}`, documentJson: JSON.stringify({ headers: [], body: null }) })
       }
     })
-    await page.reload()
+    await reloadApp(page)
     await item(/^Redirect C/).waitFor()
     await contextMenu(item(/^Redirect C/), 'Run collection…')
     const dialog = page.getByRole('dialog')
@@ -472,7 +472,7 @@ describe('scripts', () => {
         }),
       })
     })
-    await page.reload()
+    await reloadApp(page)
     await item(/^Script C/).waitFor()
   })
 
@@ -568,7 +568,7 @@ describe('scripts', () => {
         documentJson: JSON.stringify({ headers: [{ key: 'Authorization', value: 'Bearer {{authToken}}', type: 'text' }], body: null }),
       })
     })
-    await page.reload()
+    await reloadApp(page)
     await item(/^Token C/).waitFor()
     await reveal(/whoami$/, /^Token C/)
     const tokensBefore = target.issuedTokens.length

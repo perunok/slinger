@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'playwright-core'
-import { launch, type Launched } from './support/app'
+import { launch, reloadApp, type Launched } from './support/app'
 import { BASE, closeDialog, openCloud, signInThroughUi } from './support/cloud'
 
 describe.skipIf(!BASE)('cloud account and publish against slinger-admin', () => {
@@ -37,7 +37,7 @@ describe.skipIf(!BASE)('cloud account and publish against slinger-admin', () => 
       const col = await window.slinger.createCollection(ws.id, 'Published collection')
       await window.slinger.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'Ping', method: 'GET', url: 'https://example.test/ping', documentJson: '{}' })
     }, wsName)
-    await page.reload()
+    await reloadApp(page)
     await page.getByRole('combobox', { name: 'Workspace' }).waitFor()
   })
   afterAll(async () => {
