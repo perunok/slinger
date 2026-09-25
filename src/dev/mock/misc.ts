@@ -13,6 +13,7 @@ type MiscApi = Pick<
   | 'prepareBrowserAuthCallback'
   | 'waitForBrowserAuthCallback'
   | 'getAppVersion'
+  | 'setWindowBackground'
   | 'pickFile'
   | 'grantedFiles'
 > & { resetSecureStore(): void }
@@ -101,6 +102,9 @@ export function createMiscApi(): MiscApi {
     },
     async getAppVersion() {
       return '0.0.0-dev'
+    },
+    async setWindowBackground() {
+      /* no native window in the browser */
     },
     async pickFile() {
       const name = PICK_NAMES[pickIndex++ % PICK_NAMES.length]

@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { capture, launch, ROOT, type Launched } from './support/app'
+import { capture, launch, reloadApp, ROOT, type Launched } from './support/app'
 import { startTarget } from './support/server'
 
 const OUT = join(ROOT, 'test-results', 'screenshots')
@@ -33,7 +33,7 @@ beforeAll(async () => {
     await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'Create charge', method: 'POST', url: '{{baseUrl}}/v1/charges', documentJson: doc })
     await s.createCollectionVersion({ collectionId: col.id, version: '1.0.0', notes: 'first cut' })
   }, target.url)
-  await ctx.page.reload()
+  await reloadApp(ctx.page)
   await ctx.page.getByRole('treeitem', { name: /Payments API/ }).waitFor()
 })
 afterAll(async () => {

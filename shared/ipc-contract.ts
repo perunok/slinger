@@ -152,6 +152,11 @@ export interface SlingerIpcApi {
 
   // App
   getAppVersion(): Promise<string>
+  /**
+   * ADDED (launch): the resolved theme background (CSS hex or rgb() colour). Main paints the window with it now and
+   * remembers it for the next launch (window-state.json), so the native window never flashes a different colour.
+   */
+  setWindowBackground(color: string): Promise<void>
 
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
@@ -251,6 +256,7 @@ export const IPC_CHANNELS = [
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
   'getAppVersion',
+  'setWindowBackground',
   'pickFile',
   'getCloudConfig',
   'setCloudConfig',

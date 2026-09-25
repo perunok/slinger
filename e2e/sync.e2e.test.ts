@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'playwright-core'
-import { launch, type Launched } from './support/app'
+import { launch, reloadApp, type Launched } from './support/app'
 import { BASE, closeDialog, openCloud, signInThroughUi } from './support/cloud'
 
 describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
@@ -52,7 +52,7 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
       const col = (await window.slinger.listCollections(w)).find((c) => c.name === 'Payments')!
       return (await window.slinger.listRequests(col.id))[0]!.id
     }, wsA)
-    await a.page.reload()
+    await reloadApp(a.page)
     await a.page.getByRole('combobox', { name: 'Workspace' }).waitFor()
   })
   afterAll(async () => {
@@ -163,7 +163,7 @@ describe.skipIf(!BASE)('two-device sync against slinger-admin', () => {
     await syncNow(a.page, wsA)
     const st = await syncNow(b.page, wsB)
     expect(st.openConflicts).toBe(1)
-    await b.page.reload()
+    await reloadApp(b.page)
     await b.page.getByRole('combobox', { name: 'Workspace' }).waitFor()
     const chip = b.page.getByTestId('sync-chip')
     await expect.poll(() => chip.getAttribute('data-kind')).toBe('conflicts')

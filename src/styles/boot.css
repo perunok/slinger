@@ -1,0 +1,196 @@
+/*
+ * Launch skeleton (the static #boot-skeleton markup in index.html).
+ *
+ * Loaded by a <link> in index.html's <head>, together with the theme tokens it @imports, so both are
+ * render-blocking: the very first frame already shows the skeleton in the theme that public/theme-init.js put on
+ * <html>. (In a production build Vite folds this file into the head stylesheet; in `vite dev` the rest of the CSS is
+ * injected by JS after the bundle runs, which would be too late.) Colours come only from theme tokens.
+ *
+ * src/app/bootSkeleton.ts fades it out and removes it once the app has mounted and loaded its first workspace.
+ */
+@import './themes.css';
+
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.boot-skeleton {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+  cursor: progress;
+  opacity: 1;
+  transition: opacity 150ms ease-out;
+}
+.boot-skeleton.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bs-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.bs-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.bs-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.bs-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 24%;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.bs-tabs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  height: 34px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
+}
+.bs-filter {
+  padding: 8px;
+}
+.bs-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 12px;
+}
+.bs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bs-row.is-nested {
+  padding-left: 18px;
+}
+
+.bs-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+}
+.bs-url {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.bs-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.bs-response {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+/* Placeholder blocks. Widths come from the bs-w-* helpers below (prefixed: Tailwind scans index.html and has its own w-*). */
+.bs-block {
+  position: relative;
+  flex: none;
+  height: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.bs-block.is-input {
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  box-sizing: border-box;
+}
+.bs-block.is-grow {
+  flex: 1;
+}
+.bs-block.is-accent {
+  background: var(--accent-soft);
+}
+.bs-block.is-icon {
+  width: 14px;
+  height: 14px;
+}
+.bs-block.is-button {
+  height: 28px;
+}
+
+.bs-w-24px { width: 24px; }
+.bs-w-40 { width: 40%; }
+.bs-w-45 { width: 45%; }
+.bs-w-50 { width: 50%; }
+.bs-w-55 { width: 55%; }
+.bs-w-60 { width: 60%; }
+.bs-w-65 { width: 65%; }
+.bs-w-70 { width: 70%; }
+.bs-w-75 { width: 75%; }
+.bs-w-80 { width: 80%; }
+.bs-w-40px { width: 40px; }
+.bs-w-56px { width: 56px; }
+.bs-w-64px { width: 64px; }
+.bs-w-72px { width: 72px; }
+.bs-w-84px { width: 84px; }
+.bs-w-120px { width: 120px; }
+.bs-w-140px { width: 140px; }
+.bs-w-160px { width: 160px; }
+
+/* Shimmer: a soft highlight slides across each block (transform only, so it stays on the compositor). */
+.bs-block::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 7%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: bs-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes bs-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-skeleton {
+    transition: none;
+  }
+  .bs-block::after {
+    animation: none;
+    display: none;
+  }
+}

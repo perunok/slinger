@@ -93,10 +93,14 @@ describe('colours only come from themes.css', () => {
   const sources = {
     ...import.meta.glob(['../**/*.svelte', '../**/*.ts', '!../**/*.test.ts', '!../dev/**'], { query: '?raw', import: 'default', eager: true }),
     './app.css': appCss,
+    // the launch skeleton (static markup + its stylesheet) and the pre-paint theme script
+    './boot.css': read('./boot.css'),
+    '../../index.html': read('../../index.html'),
+    '../../public/theme-init.js': read('../../public/theme-init.js'),
   } as Record<string, string>
   const known = new Set<string>([...THEME_TOKENS, 'font-sans', 'font-mono', 'font-size', 'radius'])
 
-  it('components, stores and app.css contain no literal colours', () => {
+  it('components, stores, app.css and the launch skeleton contain no literal colours', () => {
     expect(Object.keys(sources).length).toBeGreaterThan(100)
     const hits: string[] = []
     for (const [file, src] of Object.entries(sources)) {

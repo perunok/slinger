@@ -1,4 +1,4 @@
-@import './themes.css';
+/* Theme tokens (themes.css) load earlier, from index.html via boot.css, so they apply before first paint. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

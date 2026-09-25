@@ -39,7 +39,22 @@ export async function launch(userDataDir: string, extraEnv: Record<string, strin
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`))
   page.setDefaultTimeout(8_000)
   await page.waitForSelector('[aria-label="Sidebar"]', { timeout: 30_000 })
+  await bootSkeletonGone(page)
   return { app, page, problems }
+}
+
+/**
+ * The launch skeleton (index.html) covers the UI until the first workspace has loaded, then fades out; wait until
+ * it has left the DOM so clicks and screenshots hit the real UI.
+ */
+export async function bootSkeletonGone(page: Page): Promise<void> {
+  await page.waitForSelector('#boot-skeleton', { state: 'detached', timeout: 30_000 })
+}
+
+/** page.reload() that also waits for the launch skeleton to go away. */
+export async function reloadApp(page: Page): Promise<void> {
+  await page.reload()
+  await bootSkeletonGone(page)
 }
 
 /** Screenshot that also works for a hidden window (page.screenshot needs a visible compositor). */

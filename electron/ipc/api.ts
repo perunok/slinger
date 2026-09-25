@@ -8,6 +8,7 @@ import { importPostmanCollection, replaceCollectionFromPostman } from '../servic
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import type { Core } from '../services/core'
+import { cssColorSchema } from '../lib/windowState'
 import { createSyncIpc } from './syncApi'
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,8 @@ export interface PlatformDeps {
   /** Shows a native open-file dialog (single selection); resolves to the chosen absolute path or null. */
   pickFile(options: PickFileOptions): Promise<string | null>
   appVersion: string
+  /** Paints + remembers the window background (already validated and normalised to `#rrggbb`). Optional: tests omit it. */
+  setWindowBackground?(color: string): void
 }
 
 /**
@@ -376,5 +379,6 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),
+    setWindowBackground: async (...a) => platform.setWindowBackground?.(parseArgs(z.tuple([cssColorSchema]), a)[0]),
   }
 }

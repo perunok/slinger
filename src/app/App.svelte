@@ -31,6 +31,7 @@
   import { handleShortcut } from './shortcuts'
   import Sidebar from './Sidebar.svelte'
   import { app } from './state.svelte'
+  import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
   import { ui } from './ui.svelte'
 
@@ -41,6 +42,11 @@
     return () => {
       scopeStore.createVariable = null
     }
+  })
+
+  // The launch skeleton (index.html) covers the UI until the first workspace has loaded, or startup failed.
+  $effect(() => {
+    if (app.ready) dismissBootSkeleton(app.fatalError ? 'error' : 'ready')
   })
 </script>
 
