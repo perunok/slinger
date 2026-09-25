@@ -13,6 +13,8 @@ class UiState {
   /** Environment editor; `newVariable` pre-fills a row (from the "create variable" popover). */
   envEditor = $state<{ open: boolean; environmentId?: string; newVariable?: string }>({ open: false })
   runner = $state<{ collectionId: string; folderId: string | null } | null>(null)
+  /** Collection- or folder-level scripts editor. */
+  scriptsFor = $state<{ kind: 'collection' | 'folder'; id: string } | null>(null)
   versionsFor = $state<string | null>(null)
   saveAsTabId = $state<string | null>(null)
   exportCollectionId = $state<string | null>(null)

@@ -216,8 +216,9 @@ describe('schema drift guard', () => {
       collection_versions: ['deleted'],
     }
     const ignored: Record<string, string[]> = {
-      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
-      folders: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
+      // scripts_json (0005): collection/folder scripts are local-only in v1 (the cloud protocol has no field for them)
+      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json'],
+      folders: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json'],
       requests: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environments: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environment_variables: ['id', 'secret_ref', 'secret_missing', 'version', 'created_at', 'updated_at'],

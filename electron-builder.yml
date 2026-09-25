@@ -20,6 +20,9 @@ files:
   - "!node_modules/@lezer/**"
   - "!node_modules/zod/**"
   - "!node_modules/uuid/**"
+  # QuickJS (the script sandbox) is inlined into dist-electron/script-worker.cjs.
+  - "!node_modules/quickjs-emscripten-core/**"
+  - "!node_modules/@jitl/**"
   # better-sqlite3 ships the SQLite amalgamation and build intermediates; only the .node file is needed.
   - "!node_modules/better-sqlite3/{deps,src}/**"
   - "!node_modules/better-sqlite3/build/{Release/obj,Release/.deps,deps,gyp,*.mk,Makefile,config.gypi}"

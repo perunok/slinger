@@ -22,6 +22,12 @@ that are not obvious from the types:
 * `HttpRequestInput.requestRunId?: string | null` (1-128 chars `[A-Za-z0-9._:-]`): pass the same id
   to `cancelHttpRequest`. A run id cannot be in flight twice.
 * `shared/ipc-errors.ts` (helpers above).
+* Scripts: `runScripts(input)` runs a chain of pre-request or test scripts in the main-process sandbox and resolves with
+  `RunScriptsResult` (script failures are in `errors[]`, not rejections; environment writes are already saved when it resolves,
+  `environmentChanged` says to reload variables). `cancelHttpRequest(runId)` also cancels a script run with that `runId`.
+  `setCollectionScripts(id, json|null)` / `setFolderScripts(id, json|null)` store the Postman `event` array (`[]` is stored as
+  null); `Collection.scriptsJson` / `ApiFolder.scriptsJson` carry it (local-only, not synced). `HttpRequestInput.scriptSessionId`
+  names the script session whose secret reads are redacted from history.
 
 ## Behavior
 * Timestamps are Unix **seconds**.

@@ -45,6 +45,29 @@ describe('parsePostmanFile', () => {
     const r = parsePostmanFile(readFileSync(join(__dirname, '..', '..', '..', 'example-postman-collection.json'), 'utf8'))
     expect(r).toMatchObject({ ok: true, file: { kind: 'collection', requests: 8, examples: 16 } })
   })
+  it('counts scripts at collection, folder and request level (non-empty, enabled only)', () => {
+    const ev = (listen: string, code: string, extra = {}) => ({ listen, script: { type: 'text/javascript', exec: [code] }, ...extra })
+    const text = JSON.stringify({
+      info: { name: 'S' },
+      event: [ev('prerequest', 'a()'), ev('test', '')],
+      item: [
+        { name: 'F', event: [ev('test', 'b()')], item: [{ name: 'R', event: [ev('prerequest', 'c()'), ev('test', 'd()', { disabled: true })], request: { method: 'GET', url: 'x' } }] },
+      ],
+    })
+    expect(parsePostmanFile(text)).toMatchObject({ ok: true, file: { scripts: 3 } })
+  })
+
+  it('shows the script count and imports collection and folder scripts', async () => {
+    await setup()
+    const ev = [{ listen: 'prerequest', script: { type: 'text/javascript', exec: ['pm.variables.set("x", 1)'] } }]
+    await pick(collection({ event: ev }))
+    expect(await screen.findByTestId('import-scripts')).toHaveTextContent('1 (pre-request and test, all levels)')
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(app.collections.some((c) => c.name === 'Pets')).toBe(true))
+    expect(app.collections.find((c) => c.name === 'Pets')!.scriptsJson).toBe(JSON.stringify(ev))
+    expect(toast.items.find((t) => t.kind === 'success')?.detail).toMatch(/1 script/)
+  })
+
   it('recognises environments', () => {
     const r = parsePostmanFile(JSON.stringify({ name: 'Prod', _postman_variable_scope: 'environment', values: [{ key: 'a', value: '1', type: 'default', enabled: true }, { key: 's', value: 'x', type: 'secret' }, { key: 'off', value: '', enabled: false }] }))
     expect(r).toMatchObject({ ok: true, file: { kind: 'environment', name: 'Prod', skippedDisabled: 1 } })

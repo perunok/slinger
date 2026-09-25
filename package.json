@@ -1,6 +1,6 @@
 {
   "name": "slinger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "productName": "Slinger",
   "desktopName": "slinger.desktop",
@@ -50,9 +50,11 @@
     "@codemirror/search": "^6",
     "@codemirror/state": "^6",
     "@codemirror/view": "^6",
+    "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@lezer/highlight": "^1",
     "@napi-rs/keyring": "^2.1.0",
     "better-sqlite3": "^12.11.1",
+    "quickjs-emscripten-core": "^0.32.0",
     "uuid": "^14.0.2",
     "zod": "^4.6.5"
   },

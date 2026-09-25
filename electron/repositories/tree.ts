@@ -11,6 +11,7 @@ import { invalidInput, notFound, versionConflict } from '../lib/errors'
 import { assertUuid, newId } from '../lib/ids'
 import { cleanMethod, cleanName, nowSeconds } from '../lib/text'
 import {
+  cleanScriptsJson,
   MAX_DOCUMENT_JSON_BYTES,
   nextSortOrder,
   requireCollection,
@@ -133,6 +134,14 @@ export class FolderRepository {
       .prepare('UPDATE folders SET name = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0')
       .run(cleanName(name, 'folder name'), nowSeconds(), id.toLowerCase())
     return this.get(id)
+  }
+
+  /** Replaces the folder-level scripts (local-only; refused on read-only cloud workspaces by a trigger). */
+  setScripts(id: string, scriptsJson: string | null): ApiFolder {
+    const row = requireFolder(this.db, id)
+    const clean = cleanScriptsJson(scriptsJson)
+    this.db.prepare('UPDATE folders SET scripts_json = ?, updated_at = ? WHERE id = ? AND deleted = 0').run(clean, nowSeconds(), row.id)
+    return this.get(row.id)
   }
 
   /** Moves within the same collection. Rejects moving a folder into itself or its own descendants. */

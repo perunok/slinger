@@ -9,6 +9,7 @@ import { createIpcApi } from '../ipc/api'
 import { createCore, type Core } from '../services/core'
 import { ExportFiles } from '../services/exportFiles'
 import { MemorySecretStore } from '../services/secrets'
+import { InlineExecutor } from '../scripts/inline'
 import type { HttpRequestInput } from '../../shared/types'
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url))
@@ -29,7 +30,7 @@ export function makeEnv(): TestEnv {
   const db = openDatabase(':memory:')
   const secrets = new MemorySecretStore()
   const exportDir = mkdtempSync(join(tmpdir(), 'slinger-export-'))
-  const core = createCore({ db, secrets, migrationsDir: MIGRATIONS_DIR, exportFiles: new ExportFiles(exportDir) })
+  const core = createCore({ db, secrets, migrationsDir: MIGRATIONS_DIR, exportFiles: new ExportFiles(exportDir), scriptExecutor: new InlineExecutor() })
   const opened: string[] = []
   const picked: { result: string | null; calls: unknown[] } = { result: null, calls: [] }
   const api = createIpcApi(core, {

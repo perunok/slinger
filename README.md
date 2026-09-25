@@ -16,14 +16,20 @@ you opt into the (still minimal) cloud panel.
   (`{{$guid}}`, `{{$timestamp}}`, ...). Variables are highlighted, hoverable and autocompleted in every input.
 - Response viewer: Pretty / Raw / Preview (HTML, image, PDF, CSV table), headers, cookies, search, copy, save to file,
   hex preview for binary bodies.
-- Collection runner (sequential, delay, stop on first failure).
+- Pre-request and test scripts with a Postman-compatible `pm` API (`pm.environment`, `pm.variables`, `pm.request`,
+  `pm.response`, `pm.test`, `pm.expect`, ...) at collection, folder and request level, run in a QuickJS (WebAssembly) sandbox in
+  the main process with time, memory and output limits; Tests and Console tabs in the response area. No network access from
+  scripts (`pm.sendRequest` is not supported).
+- Collection runner (sequential, delay, stop on first failure) that runs the scripts, carries variables from one request to the
+  next and reports test counts.
 - Request history per workspace (every attempt is recorded, secrets are not).
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).
-- Import Postman collections and environments (v2.x), export collections as Postman v2.1 JSON.
+- Import Postman collections (including collection, folder and request scripts) and environments (v2.x), export collections as
+  Postman v2.1 JSON.
 - Five themes plus "follow the OS", adjustable font size, keyboard shortcuts.
-- Cloud panel: device-code sign-in to a Slinger Cloud server and creating/linking a remote workspace. Collection
-  sync is **not** built (see Roadmap).
+- Cloud panel: device-code sign-in to a Slinger Cloud server, publishing/linking a workspace and collection sync
+  ([docs/SYNC_DESIGN.md](docs/SYNC_DESIGN.md)).
 
 ## Requirements
 
@@ -58,8 +64,8 @@ renderer installs an in-memory mock backend (`src/dev/`), flagged "Mock backend"
 `better-sqlite3` is compiled for one ABI at a time; `scripts/ensure-native.mjs` switches automatically before `npm test`,
 `electron:dev` and `electron:build`.
 
-At the time of writing, `npm run typecheck` reports 0 errors and `npm test` passes 198 main-process tests
-(10 files) and 472 renderer tests (37 files). The e2e suite was not run for this documentation.
+At the time of writing, `npm run typecheck` reports 0 errors and `npm test` passes 469 main-process tests
+(26 files) and 710 renderer tests (55 files); the main e2e spec (`e2e/slinger.e2e.test.ts`) passes 38 steps.
 
 ## Where your data lives
 
@@ -115,9 +121,9 @@ auto-update is configured.
 
 ## Roadmap / not built
 
-These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key), pre-request/test
-scripts (Postman scripts are preserved on import/export but never run), realtime collaboration, plugins/extensions, and a sync
-engine (the `cloud_links` table created by migration 0001 is unused; collection upload/download is not implemented).
+These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key), `pm.sendRequest` and
+`require` of modules in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
+`pm.collectionVariables` / `pm.globals` (session-only), realtime collaboration and plugins/extensions.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
 ## Contributing

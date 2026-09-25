@@ -37,6 +37,8 @@ import type {
   RemoteWorkspace,
   RemoteWorkspacePreview,
   ResolveSyncConflictInput,
+  RunScriptsInput,
+  RunScriptsResult,
   SyncConflict,
   SyncEvent,
   SyncStatus,
@@ -69,6 +71,8 @@ export interface SlingerIpcApi {
   createCollection(workspaceId: string, name: string): Promise<Collection>
   renameCollection(collectionId: string, name: string): Promise<Collection>
   deleteCollection(collectionId: string): Promise<void>
+  /** ADDED (scripts): replaces the collection's Postman `event` array (JSON text, or null to clear). Local-only. */
+  setCollectionScripts(collectionId: string, scriptsJson: string | null): Promise<Collection>
 
   // Folders
   listFolders(collectionId: string): Promise<ApiFolder[]>
@@ -76,6 +80,8 @@ export interface SlingerIpcApi {
   renameFolder(folderId: string, name: string): Promise<ApiFolder>
   moveFolder(input: MoveFolderInput): Promise<ApiFolder>
   deleteFolder(folderId: string): Promise<void>
+  /** ADDED (scripts): replaces the folder's Postman `event` array (JSON text, or null to clear). Local-only. */
+  setFolderScripts(folderId: string, scriptsJson: string | null): Promise<ApiFolder>
 
   // Requests
   listRequests(collectionId: string): Promise<ApiRequest[]>
@@ -92,7 +98,13 @@ export interface SlingerIpcApi {
 
   // HTTP execution
   executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData>
+  /** Cancels an HTTP request or a script run (RunScriptsInput.runId) with this id. */
   cancelHttpRequest(requestRunId: string): Promise<void>
+  /**
+   * ADDED (scripts): runs a chain of pre-request or test scripts in the main-process QuickJS sandbox. Environment
+   * writes are persisted before it resolves; script failures are reported in `errors`, not as a rejection.
+   */
+  runScripts(input: RunScriptsInput): Promise<RunScriptsResult>
   /** Internal cloud API transport: same network stack, but never recorded in history and no file access. */
   cloudFetch(input: CloudFetchInput): Promise<HttpResponseData>
 
@@ -187,11 +199,13 @@ export const IPC_CHANNELS = [
   'createCollection',
   'renameCollection',
   'deleteCollection',
+  'setCollectionScripts',
   'listFolders',
   'createFolder',
   'renameFolder',
   'moveFolder',
   'deleteFolder',
+  'setFolderScripts',
   'listRequests',
   'createRequest',
   'updateRequest',
@@ -203,6 +217,7 @@ export const IPC_CHANNELS = [
   'deleteHistoryEntry',
   'executeHttpRequest',
   'cancelHttpRequest',
+  'runScripts',
   'cloudFetch',
   'importPostmanCollection',
   'defaultExportPath',

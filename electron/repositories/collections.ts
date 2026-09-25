@@ -2,6 +2,7 @@ import type { Collection } from '../../shared/types'
 import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
 import {
+  cleanScriptsJson,
   requireCollection,
   requireWorkspace,
   toCollection,
@@ -49,6 +50,14 @@ export class CollectionRepository {
       .prepare('UPDATE collections SET name = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0')
       .run(cleanName(name, 'collection name'), nowSeconds(), id.toLowerCase())
     return this.get(id)
+  }
+
+  /** Replaces the collection-level scripts (local-only; refused on read-only cloud workspaces by a trigger). */
+  setScripts(id: string, scriptsJson: string | null): Collection {
+    const row = requireCollection(this.db, id)
+    const clean = cleanScriptsJson(scriptsJson)
+    this.db.prepare('UPDATE collections SET scripts_json = ?, updated_at = ? WHERE id = ? AND deleted = 0').run(clean, nowSeconds(), row.id)
+    return this.get(row.id)
   }
 
   /** Soft-deletes the collection with its folders, requests and versions in one transaction. */

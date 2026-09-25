@@ -3,7 +3,7 @@
  *
  * Request documents already keep the Postman item shape (see request.ts), so headers, body,
  * auth, scripts (`scripts` -> `event`) and `responses` (-> `response`) are passed through
- * verbatim; only the URL is decomposed and query params are rebuilt. `{{variables}}` are
+ * verbatim, as are collection/folder scripts (`scriptsJson` -> `event`); only the URL is decomposed and query params are rebuilt. `{{variables}}` are
  * never encoded or split.
  */
 import type { ApiFolder, ApiRequest, Collection } from '../../shared/types'
@@ -67,6 +67,19 @@ export interface PostmanItem {
 export interface PostmanCollectionV21 {
   info: { _postman_id: string; name: string; schema: string }
   item: PostmanItem[]
+  /** Collection-level pre-request / test scripts (stored verbatim in `Collection.scriptsJson`). */
+  event?: unknown[]
+}
+
+/** A stored `scriptsJson` (Postman `event` array as JSON text) back to the array; null when empty or invalid. */
+export function eventsFromJson(json: string | null | undefined): unknown[] | null {
+  if (!json) return null
+  try {
+    const v = JSON.parse(json)
+    return Array.isArray(v) && v.length > 0 ? v : null
+  } catch {
+    return null
+  }
 }
 
 export interface ExportPostmanInput {
@@ -314,6 +327,13 @@ function requestItem(request: ApiRequest): PostmanItem {
   return item
 }
 
+function folderItem(f: ApiFolder, item: PostmanItem[]): PostmanItem {
+  const out: PostmanItem = { name: f.name, item }
+  const events = eventsFromJson(f.scriptsJson)
+  if (events) out.event = events
+  return out
+}
+
 type Sortable = { sortOrder: number; name: string; id: string }
 function bySibling(a: Sortable, b: Sortable): number {
   if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder
@@ -342,7 +362,7 @@ export function buildPostmanCollection({ collection, folders, requests }: Export
     for (const f of [...(foldersByParent.get(parent) ?? [])].sort(bySibling)) {
       if (seen.has(f.id)) continue
       seen.add(f.id)
-      out.push({ name: f.name, item: itemsFor(f.id) })
+      out.push(folderItem(f, itemsFor(f.id)))
     }
     for (const r of [...(requestsByFolder.get(parent) ?? [])].sort(bySibling)) out.push(requestItem(r))
     return out
@@ -352,10 +372,13 @@ export function buildPostmanCollection({ collection, folders, requests }: Export
   for (const f of [...folders].sort(bySibling)) {
     if (!seen.has(f.id)) {
       seen.add(f.id)
-      item.push({ name: f.name, item: itemsFor(f.id) })
+      item.push(folderItem(f, itemsFor(f.id)))
     }
   }
-  return { info: { _postman_id: collection.id, name: collection.name, schema: POSTMAN_SCHEMA_V21 }, item }
+  const out: PostmanCollectionV21 = { info: { _postman_id: collection.id, name: collection.name, schema: POSTMAN_SCHEMA_V21 }, item }
+  const events = eventsFromJson(collection.scriptsJson)
+  if (events) out.event = events
+  return out
 }
 
 export function exportPostmanCollection(input: ExportPostmanInput): string {

@@ -78,6 +78,7 @@ const httpRequestInput = z.object({
   workspaceId: uuid,
   requestRunId: z.string().max(128).nullish(),
   historyUrl: z.string().max(100_000).nullish(),
+  scriptSessionId: z.string().max(128).nullish(),
 })
 
 const cloudFetchInput = z.object({
@@ -134,6 +135,58 @@ const createVersionInput = z.object({
   version: z.string().min(1).max(128),
   notes: z.string().max(10_000).nullish(),
 })
+
+// ---- scripts ----------------------------------------------------------------
+
+const scriptKv = z.object({ key: z.string().max(8192), value: z.string().max(65_536), disabled: z.boolean().optional() })
+const scriptRequest = z.object({
+  method: z.string().min(1).max(32),
+  url: z.string().max(100_000),
+  headers: z.array(scriptKv).max(500),
+  body: z.object({
+    mode: z.enum(['none', 'raw', 'urlencoded', 'formdata', 'file', 'other']),
+    raw: z.string().max(10 * 1024 * 1024).optional(),
+    language: z.string().max(32).optional(),
+    urlencoded: z.array(scriptKv).max(1000).optional(),
+    formdata: z.array(scriptKv).max(1000).optional(),
+  }),
+})
+const scriptResponse = z.object({
+  code: z.number().int().min(0).max(999),
+  status: z.string().max(1024),
+  headers: z.array(requestHeader).max(1000),
+  body: z.string().max(64 * 1024 * 1024).nullable(),
+  responseTime: z.number().min(0),
+  size: z.number().min(0),
+})
+/** Scope values are JSON data; the whole record is capped by its serialized size. */
+const scriptVariables = z
+  .record(z.string().max(256), z.unknown())
+  .refine((v) => JSON.stringify(v).length <= 20 * 1024 * 1024, { message: 'variables are too large' })
+const runScriptsInput = z.object({
+  runId: z.string().max(128),
+  sessionId: z.string().max(128),
+  workspaceId: uuid,
+  environmentId: uuid.nullable(),
+  event: z.enum(['prerequest', 'test']),
+  scripts: z
+    .array(z.object({ origin: z.enum(['collection', 'folder', 'request']), name: z.string().max(500), code: z.string().max(1_000_000) }))
+    .max(110),
+  request: scriptRequest,
+  response: scriptResponse.nullish(),
+  variables: scriptVariables,
+  collectionVariables: scriptVariables,
+  globals: scriptVariables,
+  info: z.object({
+    requestName: z.string().max(500),
+    requestId: z.string().max(128).nullable(),
+    iteration: z.number().int().min(0),
+    iterationCount: z.number().int().min(0),
+  }),
+  timeoutMs: z.number().int().min(1).max(60_000).optional(),
+  continueOnError: z.boolean().optional(),
+})
+const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()
 
 /** Parses `args` against a tuple schema and turns zod failures into invalid_input errors. */
 function parseArgs<T extends z.ZodType>(schema: T, args: unknown[]): z.infer<T> {
@@ -199,6 +252,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       return core.collections.rename(id, n)
     },
     deleteCollection: async (...a) => core.collections.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
+    setCollectionScripts: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
+      return core.collections.setScripts(id, json)
+    },
 
     // Folders
     listFolders: async (...a) => core.folders.list(parseArgs(z.tuple([uuid]), a)[0]),
@@ -209,6 +266,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     moveFolder: async (...a) => core.folders.move(parseArgs(z.tuple([moveFolderInput]), a)[0]),
     deleteFolder: async (...a) => core.folders.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
+    setFolderScripts: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
+      return core.folders.setScripts(id, json)
+    },
 
     // Requests
     listRequests: async (...a) => core.requests.list(parseArgs(z.tuple([uuid]), a)[0]),
@@ -232,7 +293,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     // HTTP execution
     executeHttpRequest: async (...a) => core.http.execute(parseArgs(z.tuple([httpRequestInput]), a)[0]),
     cloudFetch: async (...a) => core.http.fetchInternal(parseArgs(z.tuple([cloudFetchInput]), a)[0]),
-    cancelHttpRequest: async (...a) => core.http.cancel(parseArgs(z.tuple([z.string().max(128)]), a)[0]),
+    cancelHttpRequest: async (...a) => {
+      const [runId] = parseArgs(z.tuple([z.string().max(128)]), a)
+      core.http.cancel(runId)
+      core.scripts.cancel(runId)
+    },
+    runScripts: async (...a) => core.scripts.run(parseArgs(z.tuple([runScriptsInput]), a)[0]),
 
     // Postman import/export
     importPostmanCollection: async (...a) => {

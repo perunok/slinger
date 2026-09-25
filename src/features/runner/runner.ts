@@ -2,8 +2,9 @@
  * Collection runner logic: runs items sequentially through an injectable executor.
  * No Svelte and no IPC in here; the dialog wires in `executeDraft` / `cancelRun`.
  */
-import type { ApiFolder, ApiRequest, RequestHeader } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, RequestHeader, ScriptConsoleEntry, ScriptErrorInfo, ScriptTestResult } from '../../../shared/types'
 import { errorInfo } from '../../lib/ipc'
+import { testCounts } from '../../lib/scripts'
 import { buildTree, type TreeNode } from '../../lib/tree'
 import type { ExecuteOutcome } from '../requests/execute'
 
@@ -28,6 +29,10 @@ export interface RunRow {
   headers: RequestHeader[]
   bodyPreview: string | null
   bodyTruncated: boolean
+  /** pm.test results of this request's test scripts. */
+  tests: ScriptTestResult[]
+  scriptErrors: ScriptErrorInfo[]
+  console: ScriptConsoleEntry[]
 }
 
 export interface RunOptions {
@@ -108,7 +113,20 @@ export function collectRunItems(folders: ApiFolder[], requests: ApiRequest[], fo
 }
 
 function blankRow(item: RunItem): RunRow {
-  return { item, status: 'pending', statusCode: null, statusText: '', durationMs: null, reason: null, headers: [], bodyPreview: null, bodyTruncated: false }
+  return {
+    item,
+    status: 'pending',
+    statusCode: null,
+    statusText: '',
+    durationMs: null,
+    reason: null,
+    headers: [],
+    bodyPreview: null,
+    bodyTruncated: false,
+    tests: [],
+    scriptErrors: [],
+    console: [],
+  }
 }
 
 export function summarize(state: Pick<RunState, 'rows' | 'startedAt' | 'finishedAt'>) {
@@ -121,7 +139,23 @@ export function summarize(state: Pick<RunState, 'rows' | 'startedAt' | 'finished
     else if (r.status === 'skipped' || r.status === 'cancelled' || r.status === 'pending') skipped++
   }
   const totalMs = state.startedAt !== null && state.finishedAt !== null ? state.finishedAt - state.startedAt : 0
-  return { passed, failed, skipped, total: state.rows.length, totalMs }
+  let testsPassed = 0
+  let testsFailed = 0
+  let testsSkipped = 0
+  for (const r of state.rows) {
+    const c = testCounts({ tests: r.tests, errors: r.scriptErrors })
+    testsPassed += c.passed
+    testsFailed += c.failed
+    testsSkipped += c.skipped
+  }
+  return {
+    passed,
+    failed,
+    skipped,
+    total: state.rows.length,
+    totalMs,
+    tests: { passed: testsPassed, failed: testsFailed, skipped: testsSkipped, total: testsPassed + testsFailed + testsSkipped },
+  }
 }
 
 export class CollectionRun {
@@ -238,24 +272,26 @@ export class CollectionRun {
   }
 
   #toRow(item: RunItem, outcome: ExecuteOutcome, elapsed: number): RunRow {
-    const base = blankRow(item)
+    const scripts = outcome.scripts
+    const base: RunRow = { ...blankRow(item), tests: scripts.tests, scriptErrors: scripts.errors, console: scripts.console }
     if (outcome.ok) {
       const res = outcome.response
       const text = res.bodyText
       const preview =
         text !== null ? text.slice(0, BODY_PREVIEW_CHARS) : res.bodyBase64 !== null ? `(binary body, ${res.bodyByteLength} bytes)` : null
       const verdict = classifyStatus(res.status, { treat3xxAsPass: this.#options.treat3xxAsPass })
-      const failed = !verdict.passed
+      const counts = testCounts(scripts)
       const detail = res.statusText ? ` ${res.statusText}` : ''
+      const reasons: string[] = []
+      if (!verdict.passed) reasons.push(`HTTP ${res.status}${detail}${res.status >= 300 && res.status < 400 ? ' (redirect did not end in a 2xx response)' : ''}`)
+      if (counts.failed > 0) reasons.push(`${counts.failed} of ${counts.total} test${counts.total === 1 ? '' : 's'} failed`)
       return {
         ...base,
-        status: failed ? 'failed' : 'passed',
+        status: reasons.length ? 'failed' : 'passed',
         statusCode: res.status,
         statusText: res.statusText,
         durationMs: res.durationMs,
-        reason: failed
-          ? `HTTP ${res.status}${detail}${res.status >= 300 && res.status < 400 ? ' (redirect did not end in a 2xx response)' : ''}`
-          : null,
+        reason: reasons.length ? reasons.join('; ') : null,
         headers: res.headers,
         bodyPreview: preview,
         bodyTruncated: text !== null && text.length > BODY_PREVIEW_CHARS,
@@ -277,7 +313,7 @@ export function resultsToJson(name: string, state: RunState): string {
       collection: name,
       startedAt: state.startedAt ? new Date(state.startedAt).toISOString() : null,
       totalMs: s.totalMs,
-      summary: { passed: s.passed, failed: s.failed, skipped: s.skipped, total: s.total },
+      summary: { passed: s.passed, failed: s.failed, skipped: s.skipped, total: s.total, tests: s.tests },
       results: state.rows.map((r) => ({
         name: r.item.name,
         method: r.item.method,
@@ -286,6 +322,8 @@ export function resultsToJson(name: string, state: RunState): string {
         statusCode: r.statusCode,
         durationMs: r.durationMs,
         reason: r.reason,
+        tests: r.tests.map((t) => ({ name: t.name, status: t.status, error: t.error })),
+        scriptErrors: r.scriptErrors.map((e) => ({ source: e.source, message: e.message })),
       })),
     },
     null,

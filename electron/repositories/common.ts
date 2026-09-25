@@ -1,6 +1,6 @@
 import type { ApiFolder, ApiRequest, Collection, Environment, Workspace } from '../../shared/types'
 import type { Db } from '../db/database'
-import { notFound } from '../lib/errors'
+import { invalidInput, notFound } from '../lib/errors'
 import { assertUuid } from '../lib/ids'
 
 export type { Db }
@@ -17,6 +17,7 @@ export interface CollectionRow {
   id: string
   workspace_id: string
   name: string
+  scripts_json?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -28,6 +29,7 @@ export interface FolderRow {
   parent_folder_id: string | null
   name: string
   sort_order: number
+  scripts_json?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -67,6 +69,7 @@ export const toCollection = (r: CollectionRow): Collection => ({
   id: r.id,
   workspaceId: r.workspace_id,
   name: r.name,
+  scriptsJson: r.scripts_json ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -78,6 +81,7 @@ export const toFolder = (r: FolderRow): ApiFolder => ({
   parentFolderId: r.parent_folder_id,
   name: r.name,
   sortOrder: r.sort_order,
+  scriptsJson: r.scripts_json ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -166,3 +170,22 @@ export function nextSortOrder(
 }
 
 export const MAX_DOCUMENT_JSON_BYTES = 10 * 1024 * 1024
+export const MAX_SCRIPTS_JSON_BYTES = 2 * 1024 * 1024
+
+/**
+ * Validates a collection/folder `scripts_json` value: null, or JSON text of an array (the Postman `event`
+ * list, stored verbatim). An empty array is stored as NULL.
+ */
+export function cleanScriptsJson(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string') throw invalidInput('scriptsJson must be a string or null')
+  if (Buffer.byteLength(value, 'utf8') > MAX_SCRIPTS_JSON_BYTES) throw invalidInput('scripts are too large (2 MB max)')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw invalidInput('scriptsJson must be valid JSON')
+  }
+  if (!Array.isArray(parsed)) throw invalidInput('scriptsJson must be a JSON array (Postman "event" list)')
+  return parsed.length === 0 ? null : value
+}

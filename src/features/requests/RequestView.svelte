@@ -14,6 +14,8 @@
   import DocsPanel from './DocsPanel.svelte'
   import HeadersPanel from './HeadersPanel.svelte'
   import ParamsPanel from './ParamsPanel.svelte'
+  import ScriptsPanel from './ScriptsPanel.svelte'
+  import { editorCode } from '../../lib/scripts'
   import SettingsPanel from './SettingsPanel.svelte'
   import UrlBar from './UrlBar.svelte'
   import { tabsStore, type RequestSection, type RequestTab } from './tabs.svelte'
@@ -28,6 +30,7 @@
       { id: 'auth', label: 'Authorization', badge: d.auth.kind !== 'none' ? '•' : undefined },
       { id: 'headers', label: 'Headers', badge: count(dataRows(d.headers).filter((r) => r.enabled).length) },
       { id: 'body', label: 'Body', badge: d.body.kind !== 'none' ? '•' : undefined },
+      { id: 'scripts', label: 'Scripts', badge: editorCode(d.extras.scripts, 'prerequest').trim() || editorCode(d.extras.scripts, 'test').trim() ? '•' : undefined },
       { id: 'docs', label: 'Docs' },
       { id: 'settings', label: 'Settings' },
       { id: 'code', label: 'Code' },
@@ -70,6 +73,7 @@
           {:else if tab.section === 'auth'}<AuthPanel {tab} />
           {:else if tab.section === 'headers'}<HeadersPanel {tab} />
           {:else if tab.section === 'body'}<BodyPanel {tab} />
+          {:else if tab.section === 'scripts'}<ScriptsPanel {tab} />
           {:else if tab.section === 'docs'}<DocsPanel {tab} />
           {:else if tab.section === 'settings'}<SettingsPanel {tab} />
           {:else}<CodePanel {tab} />

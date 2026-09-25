@@ -18,6 +18,7 @@
   import { tabsStore } from '../features/requests/tabs.svelte'
   import UnsavedDialog from '../features/requests/UnsavedDialog.svelte'
   import RunnerDialog from '../features/runner/RunnerDialog.svelte'
+  import ScriptsDialogHost from '../features/scripts/ScriptsDialogHost.svelte'
   import SettingsDialog from '../features/settings/SettingsDialog.svelte'
   import ShortcutsDialog from '../features/settings/ShortcutsDialog.svelte'
   import VersionsDialog from '../features/versions/VersionsDialog.svelte'
@@ -88,6 +89,7 @@
 <EnvironmentEditor />
 <VersionsDialog />
 <RunnerDialog />
+<ScriptsDialogHost />
 <ExportCollectionDialog />
 <ImportPostmanDialog open={ui.importOpen} onclose={() => (ui.importOpen = false)} />
 <SaveAsDialog />

@@ -1,4 +1,5 @@
 /** Recognises Postman collection (v2.x) and environment exports before anything is sent to the backend. */
+import { countScripts } from '../../lib/scripts'
 
 export interface CollectionVariable {
   key: string
@@ -7,7 +8,16 @@ export interface CollectionVariable {
 }
 
 export type PostmanFile =
-  | { kind: 'collection'; name: string; folders: number; requests: number; examples: number; variables: CollectionVariable[] }
+  | {
+      kind: 'collection'
+      name: string
+      folders: number
+      requests: number
+      examples: number
+      /** Pre-request + test scripts with code, at collection, folder and request level. */
+      scripts: number
+      variables: CollectionVariable[]
+    }
   | { kind: 'environment'; name: string; variables: CollectionVariable[]; skippedDisabled: number }
 
 export type ParseResult = { ok: true; file: PostmanFile } | { ok: false; error: string }
@@ -31,25 +41,28 @@ function variablesOf(list: unknown, secretByType: boolean): { vars: CollectionVa
   return { vars, skipped }
 }
 
-function countItems(items: unknown[]): { folders: number; requests: number; examples: number } {
+function countItems(items: unknown[]): { folders: number; requests: number; examples: number; scripts: number } {
   let folders = 0
   let requests = 0
   let examples = 0
+  let scripts = 0
   for (const it of items) {
     if (!isObj(it)) continue
+    scripts += countScripts(it.event)
     if (Array.isArray(it.item)) {
       folders++
       const inner = countItems(it.item)
       folders += inner.folders
       requests += inner.requests
       examples += inner.examples
+      scripts += inner.scripts
     } else if (it.request !== undefined) {
       requests++
       // Saved examples (`response[]`) are kept with their request.
       if (Array.isArray(it.response)) examples += it.response.length
     }
   }
-  return { folders, requests, examples }
+  return { folders, requests, examples, scripts }
 }
 
 export function parsePostmanFile(text: string): ParseResult {
@@ -78,8 +91,11 @@ export function parsePostmanFile(text: string): ParseResult {
   if (!Array.isArray(data.item)) {
     return { ok: false, error: 'This does not look like a Postman collection v2.x: it has no "item" array.' }
   }
-  const { folders, requests, examples } = countItems(data.item)
+  const { folders, requests, examples, scripts } = countItems(data.item)
   if (requests === 0) return { ok: false, error: 'This collection contains no requests.' }
   const name = info && typeof info.name === 'string' && info.name.trim() ? info.name.trim() : 'Imported Collection'
-  return { ok: true, file: { kind: 'collection', name, folders, requests, examples, variables: variablesOf(data.variable, false).vars } }
+  return {
+    ok: true,
+    file: { kind: 'collection', name, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars },
+  }
 }

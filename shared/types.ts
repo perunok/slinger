@@ -22,6 +22,11 @@ export interface Collection {
   id: string
   workspaceId: string
   name: string
+  /**
+   * ADDED (scripts): the collection's Postman `event` array (pre-request / test scripts) as JSON text, or null.
+   * Local-only: not carried by cloud sync in v1. Optional so older fixtures stay valid; main always sets it.
+   */
+  scriptsJson?: string | null
   createdAt: number
   updatedAt: number
   version: number
@@ -34,6 +39,8 @@ export interface ApiFolder {
   parentFolderId: string | null
   name: string
   sortOrder: number
+  /** ADDED (scripts): the folder's Postman `event` array as JSON text, or null (see Collection.scriptsJson). */
+  scriptsJson?: string | null
   createdAt: number
   updatedAt: number
   version: number
@@ -213,6 +220,11 @@ export interface HttpRequestInput {
    * with secrets left as `{{name}}` placeholders and without auth query parameters here.
    */
   historyUrl?: string | null
+  /**
+   * ADDED (scripts): the script session of this send / collection run (RunScriptsInput.sessionId). Secret values
+   * that scripts of the session read are replaced by `{{name}}` in the history entry.
+   */
+  scriptSessionId?: string | null
 }
 
 export interface HttpResponseData {
@@ -255,6 +267,8 @@ export interface PostmanImportResult {
   collection: Collection
   folders: ApiFolder[]
   requests: ApiRequest[]
+  /** ADDED (scripts): non-empty pre-request/test scripts imported (collection + folders + requests). */
+  scriptCount?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +278,9 @@ export interface PostmanImportResult {
 /** Frozen copy of a collection's content at the time a version was created. */
 export interface CollectionSnapshot {
   collectionName: string
-  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder'>>
+  /** ADDED (scripts): collection-level scripts (Postman `event` JSON) at snapshot time; absent in older snapshots. */
+  collectionScriptsJson?: string | null
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
   >
@@ -298,6 +314,119 @@ export type RestoreCollectionVersionMode =
   | 'replace'
   /** Create a new collection named "<name> (v<version>)" from the snapshot; live collection untouched. */
   | 'copy'
+
+// ---------------------------------------------------------------------------
+// Scripts (Postman-compatible pre-request / test scripts, run in the main process in a QuickJS sandbox)
+// ---------------------------------------------------------------------------
+
+export type ScriptEventName = 'prerequest' | 'test'
+
+/** One script of the chain; the chain is ordered collection -> folders (outer to inner) -> request. */
+export interface ScriptSource {
+  origin: 'collection' | 'folder' | 'request'
+  /** Name of the collection / folder / request, used in console, test and error labels. */
+  name: string
+  code: string
+}
+
+export interface ScriptKeyValue {
+  key: string
+  value: string
+  disabled?: boolean
+}
+
+/** The request as scripts see it (`pm.request`). Templates are unresolved in pre-request scripts. */
+export interface ScriptRequestData {
+  method: string
+  url: string
+  headers: ScriptKeyValue[]
+  body: {
+    mode: 'none' | 'raw' | 'urlencoded' | 'formdata' | 'file' | 'other'
+    raw?: string
+    /** Raw body language (json, text, xml, html, javascript). */
+    language?: string
+    urlencoded?: ScriptKeyValue[]
+    formdata?: ScriptKeyValue[]
+  }
+}
+
+/** The response as test scripts see it (`pm.response`). */
+export interface ScriptResponseData {
+  code: number
+  status: string
+  headers: RequestHeader[]
+  /** Decoded body text (null for binary bodies); capped before it enters the sandbox. */
+  body: string | null
+  responseTime: number
+  size: number
+}
+
+/** Plain JSON values a script stored with pm.variables / pm.collectionVariables / pm.globals. */
+export type ScriptVariables = Record<string, unknown>
+
+export interface RunScriptsInput {
+  /** Cancellation handle (also accepted by cancelHttpRequest); same grammar as requestRunId. */
+  runId: string
+  /** Groups the script runs of one send or one collection run (history redaction of secrets they read). */
+  sessionId: string
+  workspaceId: string
+  /** Active environment (pm.environment), or null. */
+  environmentId: string | null
+  event: ScriptEventName
+  scripts: ScriptSource[]
+  request: ScriptRequestData
+  response?: ScriptResponseData | null
+  /** Local scope (pm.variables.set) of this send / collection run. */
+  variables: ScriptVariables
+  /** Session-only scopes (not persisted in v1). */
+  collectionVariables: ScriptVariables
+  globals: ScriptVariables
+  info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
+  /** Per-script time limit in ms (default 5000, max 60000). */
+  timeoutMs?: number
+  /** Pre-request only: keep running the remaining scripts after one fails (default false). */
+  continueOnError?: boolean
+}
+
+export type ScriptConsoleLevel = 'log' | 'info' | 'warn' | 'error'
+
+export interface ScriptConsoleEntry {
+  level: ScriptConsoleLevel
+  message: string
+  /** Epoch milliseconds. */
+  timestamp: number
+  /** e.g. "Pre-request · collection “Payments”". */
+  source: string
+}
+
+export interface ScriptTestResult {
+  name: string
+  status: 'passed' | 'failed' | 'skipped'
+  error: string | null
+  source: string
+}
+
+export interface ScriptErrorInfo {
+  source: string
+  kind: 'error' | 'timeout' | 'cancelled' | 'memory' | 'internal'
+  message: string
+}
+
+export interface RunScriptsResult {
+  event: ScriptEventName
+  /** Scripts that failed (uncaught error, timeout, cancel, memory). Empty when all ran. */
+  errors: ScriptErrorInfo[]
+  /** The request after pre-request mutations, or null when no script changed it. Never saved. */
+  request: ScriptRequestData | null
+  variables: ScriptVariables
+  collectionVariables: ScriptVariables
+  globals: ScriptVariables
+  /** True when the active environment was written (the renderer reloads its variables). */
+  environmentChanged: boolean
+  console: ScriptConsoleEntry[]
+  tests: ScriptTestResult[]
+  durationMs: number
+}
 
 // ---------------------------------------------------------------------------
 // Secure storage (OS keychain, proxied through the main process)

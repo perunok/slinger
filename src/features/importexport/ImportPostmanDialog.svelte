@@ -100,7 +100,11 @@
           envError = errorInfo(e).message
         }
       }
-      toast.success('Collection imported', `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}`)
+      const scripts = result.scriptCount ?? 0
+      toast.success(
+        'Collection imported',
+        `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}${scripts ? `, ${scripts} script${scripts === 1 ? '' : 's'}` : ''}`,
+      )
       if (envError) toast.error('Collection imported, but the environment could not be created', envError)
       onclose()
     } catch (e) {
@@ -146,6 +150,7 @@
           <dt class="text-muted">Folders</dt><dd>{parsed.folders}</dd>
           <dt class="text-muted">Requests</dt><dd>{parsed.requests}</dd>
           <dt class="text-muted">Saved examples</dt><dd data-testid="import-examples">{parsed.examples}</dd>
+          <dt class="text-muted">Scripts</dt><dd data-testid="import-scripts">{parsed.scripts > 0 ? `${parsed.scripts} (pre-request and test, all levels)` : 'none'}</dd>
           <dt class="text-muted">Collection variables</dt><dd>{parsed.variables.length > 0 ? `${parsed.variables.length} defined` : 'none'}</dd>
         </dl>
         {#if parsed.variables.length > 0}
@@ -160,7 +165,7 @@
             </span>
           </label>
         {:else}
-          <p class="text-xs text-muted">Collection-level variables, scripts and tests are not imported.</p>
+          <p class="text-xs text-muted">The collection has no collection-level variables.</p>
         {/if}
       {:else if parsed?.kind === 'environment'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, net, powerMonitor, protocol, session, shell } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { Worker } from 'node:worker_threads'
 import { hostname } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -16,6 +17,7 @@ import { isPermissionAllowed } from './lib/permissions'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
+import { WorkerExecutor } from './scripts/executor'
 
 const APP_SCHEME = 'app'
 const APP_ORIGIN = `${APP_SCHEME}://slinger`
@@ -67,6 +69,20 @@ function loadKeychain(): KeychainSecretStore {
       },
     )
   }
+}
+
+/**
+ * Script sandbox workers. The bundle is read as text and started with `eval: true`, so it also works from inside
+ * the asar archive (worker_threads cannot load a file path inside app.asar). It needs only Node built-ins.
+ */
+function scriptExecutor(): WorkerExecutor {
+  let source: string | null = null
+  return new WorkerExecutor({
+    spawn: () => {
+      source ??= readFileSync(join(__dirname, 'script-worker.cjs'), 'utf8')
+      return new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 } })
+    },
+  })
 }
 
 function serveRenderer(): void {
@@ -178,17 +194,27 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       body: { mode: 'formData', formData: [{ key: 'a', value: 'b', type: 'text', enabled: true }] }, workspaceId: ws.id })
     out.http = { status: http.status, body: http.bodyText }
     out.history = (await window.slinger.listHistory(ws.id)).length
-    try {
+    if (__KEYCHAIN__) try {
       const env = await window.slinger.ensureDefaultEnvironment(ws.id)
       const v = await window.slinger.upsertEnvironmentVariable({ environmentId: env.id, key: 'SMOKE_SECRET', value: 'hunter2', isSecret: true })
       out.secretListed = JSON.stringify(v).includes('hunter2')
       out.secretRevealed = (await window.slinger.revealEnvironmentVariable(v.id)) === 'hunter2'
       await window.slinger.deleteEnvironmentVariable(v.id)
     } catch (e) { out.keychainError = e.message }
+    try {
+      const s = await window.slinger.runScripts({ runId: 'run_smoke', sessionId: 'smoke', workspaceId: ws.id, environmentId: null, event: 'test',
+        scripts: [{ origin: 'request', name: 'smoke', code: "console.log('from sandbox'); pm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200)); pm.test('require is blocked', () => { let blocked = false; try { require('fs') } catch (e) { blocked = true }; pm.expect(blocked).to.equal(true) })" }],
+        request: { method: 'GET', url: 'http://x', headers: [], body: { mode: 'none' } },
+        response: { code: 200, status: 'OK', headers: [], body: 'ok', responseTime: 1, size: 2 },
+        variables: {}, collectionVariables: {}, globals: {}, info: { requestName: 'smoke', requestId: null, iteration: 0, iterationCount: 1 } })
+      out.scripts = { passed: s.tests.filter((t) => t.status === 'passed').length, errors: s.errors.length, console: s.console.map((c) => c.message) }
+    } catch (e) { out.scriptsError = e.message }
     return out
   })()`
   try {
-    const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)))
+    // SLINGER_SMOKE_NO_KEYCHAIN skips the secret round trip (a locked desktop keyring would wait for an unlock prompt).
+    const keychain = process.env.SLINGER_SMOKE_NO_KEYCHAIN ? 'false' : 'true'
+    const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
     target.close()
     app.exit(0)
@@ -214,6 +240,7 @@ if (!app.requestSingleInstanceLock()) {
       db,
       secrets: loadKeychain(),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
+      scriptExecutor: scriptExecutor(),
       sync: {
         // Push channel to the trusted main window only; payloads are plain JSON.
         emit: (event) => {

@@ -17,9 +17,10 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
   const collection = must(s.collections, collectionId, 'Collection')
   return {
     collectionName: collection.name,
+    ...(collection.scriptsJson ? { collectionScriptsJson: collection.scriptsJson } : {}),
     folders: s.folders
       .filter((f) => f.collectionId === collectionId)
-      .map((f) => ({ id: f.id, parentFolderId: f.parentFolderId, name: f.name, sortOrder: f.sortOrder })),
+      .map((f) => ({ id: f.id, parentFolderId: f.parentFolderId, name: f.name, sortOrder: f.sortOrder, ...(f.scriptsJson ? { scriptsJson: f.scriptsJson } : {}) })),
     requests: s.requests
       .filter((r) => r.collectionId === collectionId)
       .map((r) => ({
@@ -71,6 +72,7 @@ function materialize(
       parentFolderId: f.parentFolderId === null ? null : resolve(f.parentFolderId),
       name: f.name,
       sortOrder: f.sortOrder,
+      scriptsJson: f.scriptsJson ?? null,
       createdAt: previous.folders.get(id)?.createdAt ?? now,
       updatedAt: now,
       version: (previous.folders.get(id)?.version ?? 0) + 1,
@@ -101,11 +103,13 @@ function restoreReplace(s: MockState, collection: Collection, snapshot: Collecti
   const fresh = new Map<string, string>()
   const resolve = (id: string) => fresh.get(id) ?? (fresh.set(id, uuid()), fresh.get(id) as string)
   materialize(s, collection, clone(snapshot), resolve, { folders: new Map(), requests: new Map() })
+  collection.scriptsJson = snapshot.collectionScriptsJson ?? null
   return touch(collection)
 }
 
 function restoreCopy(s: MockState, source: VersionRow): Collection {
   const copy = addCollection(s, source.workspaceId, `${source.snapshot.collectionName} (v${source.version})`)
+  copy.scriptsJson = source.snapshot.collectionScriptsJson ?? null
   const resolve = (): ((id: string) => string) => {
     const map = new Map<string, string>()
     return (id) => map.get(id) ?? (map.set(id, uuid()), map.get(id) as string)

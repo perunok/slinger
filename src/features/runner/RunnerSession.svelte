@@ -12,7 +12,8 @@
   import { parseDocument } from '../../lib/request'
   import { formatDuration, statusTone } from '../../lib/response'
   import { slugify } from '../importexport/slugify'
-  import { cancelRun, executeDraft } from '../requests/execute'
+  import { cancelRun, executeDraft, newScriptRun } from '../requests/execute'
+  import { testCounts } from '../../lib/scripts'
   import { collectRunItems, CollectionRun, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
 
   interface Props {
@@ -56,6 +57,8 @@
     if (chosen.length === 0) return
     expanded = new Set()
     exportError = null
+    // One script context for the whole run: pm.variables set by one request reach the next ones.
+    const scriptRun = newScriptRun()
     const r = new CollectionRun(
       chosen,
       { delayMs, stopOnFailure, treat3xxAsPass },
@@ -64,6 +67,9 @@
           executeDraft(parseDocument(item.request), {
             workspaceId,
             requestId: item.request.id,
+            collectionId: item.request.collectionId,
+            folderId: item.request.folderId,
+            run: scriptRun,
             onRunId: hooks.onRunId,
             wasCancelled: hooks.wasCancelled,
           }),
@@ -182,6 +188,7 @@
         </div>
         <p class="text-xs text-muted">A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</p>
         <p class="text-xs text-muted">Requests run one after another exactly like Send: templates, secrets and auth of the active environment apply.</p>
+        <p class="text-xs text-muted">Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets are available to the requests after it, and failed tests fail the request.</p>
       {/if}
     </div>
   {:else}
@@ -199,6 +206,13 @@
           <span class={summary.failed ? 'text-danger' : 'text-muted'}>{summary.failed} failed</span>,
           <span class="text-muted">{summary.skipped} skipped</span>
           <span class="text-muted"> in {formatDuration(summary.totalMs)}{view.stopped ? ' (stopped)' : ''}</span>
+          {#if summary.tests.total > 0}
+            <span class="ml-2 border-l border-border pl-2" data-testid="summary-tests">
+              Tests: <span class="text-success">{summary.tests.passed} passed</span>,
+              <span class={summary.tests.failed ? 'text-danger' : 'text-muted'}>{summary.tests.failed} failed</span>{#if summary.tests.skipped},
+                <span class="text-muted">{summary.tests.skipped} skipped</span>{/if}
+            </span>
+          {/if}
         </div>
       {/if}
       <InlineError message={exportError} />
@@ -222,6 +236,10 @@
               </span>
               <span class="w-14 shrink-0 text-xs font-semibold" style="color: {methodColor(row.item.method)}">{row.item.method}</span>
               <span class="min-w-0 flex-1 truncate" title={row.item.url}>{row.item.name}</span>
+              {#if row.tests.length || row.scriptErrors.length}
+                {@const c = testCounts({ tests: row.tests, errors: row.scriptErrors })}
+                <span class="rounded px-1.5 py-0.5 text-xs {c.failed ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}" data-testid="row-tests" title="Tests passed / total">{c.passed}/{c.total}</span>
+              {/if}
               {#if row.statusCode !== null}
                 <span class="rounded px-1.5 py-0.5 text-xs font-medium {TONE[statusTone(row.statusCode)]}">{row.statusCode}</span>
               {/if}
@@ -247,6 +265,21 @@
             {/if}
             {#if open && canOpen}
               <div class="border-t border-border bg-raised px-3 py-2 text-xs">
+                {#if row.tests.length || row.scriptErrors.length}
+                  <p class="mb-1 font-medium">Tests</p>
+                  <ul class="mb-2" aria-label="Tests of {row.item.name}">
+                    {#each row.scriptErrors as e, i (i)}<li class="text-danger">Script error ({e.source}): {e.message}</li>{/each}
+                    {#each row.tests as t, i (i)}
+                      <li class={t.status === 'passed' ? 'text-success' : t.status === 'failed' ? 'text-danger' : 'text-muted'}>
+                        {t.status === 'passed' ? '✓' : t.status === 'failed' ? '✗' : '–'} {t.name}{t.error ? `: ${t.error}` : ''}
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                {#if row.console.length}
+                  <p class="mb-1 font-medium">Console</p>
+                  <pre class="mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono">{row.console.map((c) => `[${c.level}] ${c.message}`).join('\n')}</pre>
+                {/if}
                 {#if row.headers.length > 0}
                   <p class="mb-1 font-medium">Response headers</p>
                   <dl class="mb-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">

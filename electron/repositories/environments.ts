@@ -219,6 +219,49 @@ export class EnvironmentRepository {
     return toVariable(this.getVariableRow(existing.id))
   }
 
+  /**
+   * A script's `pm.environment.set(key, value)`: writes exactly `value` (an empty string clears a plain variable,
+   * unlike upsertVariable where "" means "keep"). A secret stays secret and its new value goes to the keychain;
+   * an unknown key becomes a new plain variable. Returns whether the variable is secret.
+   */
+  setValueFromScript(environmentId: string, key: string, value: string): { secret: boolean } {
+    const env = requireEnvironment(this.db, environmentId)
+    const clean = cleanKey(key)
+    if (value.length > MAX_VALUE_LENGTH) throw invalidInput('variable value is too large')
+    const existing = this.db
+      .prepare('SELECT * FROM environment_variables WHERE environment_id = ? AND key = ? AND deleted = 0')
+      .get(env.id, clean) as VariableRow | undefined
+    if (!existing) {
+      this.upsertVariable({ environmentId: env.id, key: clean, value, isSecret: false })
+      return { secret: false }
+    }
+    const now = nowSeconds()
+    if (existing.is_secret === 1) {
+      if (value === '') throw invalidInput(`"${clean}" is a secret variable and cannot be empty`)
+      const ref = existing.secret_ref ?? envVarSecretKey(existing.id)
+      this.secrets.set(ref, value)
+      this.db
+        .prepare('UPDATE environment_variables SET secret_ref = ?, secret_missing = 0, updated_at = ?, version = version + 1 WHERE id = ?')
+        .run(ref, now, existing.id)
+      return { secret: true }
+    }
+    if (existing.value !== value) {
+      this.db
+        .prepare('UPDATE environment_variables SET value = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+        .run(value, now, existing.id)
+    }
+    return { secret: false }
+  }
+
+  /** A script's `pm.environment.unset(key)`; unknown keys are ignored. */
+  unsetFromScript(environmentId: string, key: string): void {
+    const env = requireEnvironment(this.db, environmentId)
+    const row = this.db
+      .prepare('SELECT id FROM environment_variables WHERE environment_id = ? AND key = ? AND deleted = 0')
+      .get(env.id, cleanKey(key)) as { id: string } | undefined
+    if (row) this.deleteVariable(row.id)
+  }
+
   deleteVariable(id: string): void {
     const row = this.getVariableRow(id)
     this.db
