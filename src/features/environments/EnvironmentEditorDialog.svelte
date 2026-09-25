@@ -18,6 +18,7 @@
   import EnvironmentList from './EnvironmentList.svelte'
   import EnvironmentTable from './EnvironmentTable.svelte'
   import NameDialog from './NameDialog.svelte'
+  import { envNameIssue } from './envLogic'
   import SaveStatus from './SaveStatus.svelte'
 
   const model = new EnvModel()
@@ -150,6 +151,7 @@
   <NameDialog
     title="New environment"
     confirmLabel="Create"
+    validate={(name) => envNameIssue(app.environments, name)}
     oncancel={() => (dialog = null)}
     onsubmit={async (name) => {
       if (!(await model.flush()).ok) throw new Error('Save or fix pending changes first.')
@@ -159,7 +161,12 @@
   />
 {:else if dialog?.kind === 'rename'}
   {@const env = dialog.env}
-  <NameDialog title="Rename environment" confirmLabel="Rename" initial={env.name} oncancel={() => (dialog = null)} onsubmit={(name) => renameEnv(env.id, name)} />
+  <NameDialog
+    title="Rename environment"
+    confirmLabel="Rename"
+    initial={env.name}
+    validate={(name) => envNameIssue(app.environments, name, env.id)}
+    oncancel={() => (dialog = null)} onsubmit={(name) => renameEnv(env.id, name)} />
 {:else if dialog?.kind === 'delete'}
   {@const env = dialog.env}
   <ConfirmDialog

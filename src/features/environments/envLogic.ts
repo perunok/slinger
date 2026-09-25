@@ -153,3 +153,21 @@ export function summarizeStatus(c: StatusCounts): { kind: StatusKind; label: str
   if (n > 0) return { kind: 'unsaved', label: `${n} unsaved change${n === 1 ? '' : 's'}` }
   return { kind: 'saved', label: 'All changes saved' }
 }
+
+// ---- environment names -------------------------------------------------
+
+/** Environment names compare trimmed and case-insensitively (same rule as the backend). */
+export const envNameKey = (name: string): string => name.trim().toLowerCase()
+
+/** The live environment called `name`, ignoring `exceptId` (the one being renamed). */
+export function findEnvByName<E extends { id: string; name: string }>(envs: readonly E[], name: string, exceptId?: string): E | null {
+  const wanted = envNameKey(name)
+  return envs.find((e) => e.id !== exceptId && envNameKey(e.name) === wanted) ?? null
+}
+
+/** Inline validation for the create/rename dialog; null when the name is usable. */
+export function envNameIssue(envs: readonly { id: string; name: string }[], raw: string, exceptId?: string): string | null {
+  if (!raw.trim()) return 'Name is required'
+  const clash = findEnvByName(envs, raw, exceptId)
+  return clash ? `An environment named "${clash.name.trim()}" already exists.` : null
+}

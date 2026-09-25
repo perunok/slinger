@@ -150,6 +150,18 @@ describe('secrets', () => {
     for (const key of ['b', 'c', 'a']) await api.upsertEnvironmentVariable({ environmentId: env.id, key, value: '', isSecret: false })
     expect((await api.listEnvironmentVariables(env.id)).map((v) => v.key)).toEqual(['a', 'b', 'c'])
   })
+
+  it('rejects duplicate environment names like the real backend', async () => {
+    const { ws } = await setup()
+    const a = await api.createEnvironment(ws.id, 'Prod')
+    const b = await api.createEnvironment(ws.id, 'QA')
+    const err = await rejects(api.createEnvironment(ws.id, '  prod '))
+    expect(err).toMatchObject({ code: 'invalid_input', message: 'An environment named "Prod" already exists.', details: { reason: 'duplicate_name' } })
+    expect((await rejects(api.renameEnvironment(b.id, 'PROD'))).details).toMatchObject({ reason: 'duplicate_name' })
+    expect((await api.renameEnvironment(a.id, 'PROD')).name).toBe('PROD')
+    await api.deleteEnvironment(a.id)
+    expect((await api.createEnvironment(ws.id, 'Prod')).name).toBe('Prod')
+  })
 })
 
 describe('http and history', () => {

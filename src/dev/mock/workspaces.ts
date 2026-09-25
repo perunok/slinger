@@ -73,6 +73,12 @@ function applyValue(existing: VariableRow, value: string, isSecret: boolean): st
 export function createWorkspaceApi(s: MockState): WorkspaceApi {
   const workspace = (id: string) => must(s.workspaces, id, 'Workspace')
   const environment = (id: string) => must(s.environments, id, 'Environment')
+  /** Same rule as the real backend: unique per workspace, trimmed and case-insensitive. */
+  const assertEnvNameFree = (workspaceId: string, name: string, exceptId?: string) => {
+    const wanted = name.trim().toLowerCase()
+    const clash = s.environments.find((e) => e.workspaceId === workspaceId && e.id !== exceptId && e.name.trim().toLowerCase() === wanted)
+    if (clash) fail('invalid_input', `An environment named "${clash.name.trim()}" already exists.`, { reason: 'duplicate_name', name: clash.name })
+  }
   const byCreated = <T extends { createdAt: number }>(rows: T[]): T[] => [...rows].sort((a, b) => a.createdAt - b.createdAt)
 
   return {
@@ -141,11 +147,15 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
     },
     async createEnvironment(workspaceId, name) {
       workspace(workspaceId)
-      return addEnvironment(s, workspaceId, cleanName(name, 'Environment'))
+      const clean = cleanName(name, 'Environment')
+      assertEnvNameFree(workspaceId, clean)
+      return addEnvironment(s, workspaceId, clean)
     },
     async renameEnvironment(environmentId, name) {
       const row = environment(environmentId)
-      row.name = cleanName(name, 'Environment')
+      const clean = cleanName(name, 'Environment')
+      assertEnvNameFree(row.workspaceId, clean, row.id)
+      row.name = clean
       return touch(row)
     },
     async deleteEnvironment(environmentId) {

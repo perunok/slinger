@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffBulk, duplicateKeys, findDuplicates, newRow, parseBulk, rowIssue, serializeBulk, summarizeStatus, validateKey, valueToSend } from './envLogic'
+import { diffBulk, duplicateKeys, envNameIssue, findDuplicates, findEnvByName, newRow, parseBulk, rowIssue, serializeBulk, summarizeStatus, validateKey, valueToSend } from './envLogic'
 
 const row = (key: string, value = '', extra = {}) => newRow('e1', { key, value, ...extra })
 
@@ -65,5 +65,23 @@ describe('summarizeStatus', () => {
     expect(summarizeStatus({ dirty: 1, saving: 0, errors: 0, blocked: 1 }).label).toBe('2 unsaved changes')
     expect(summarizeStatus({ dirty: 1, saving: 0, errors: 0, blocked: 0 }).label).toBe('1 unsaved change')
     expect(summarizeStatus({ dirty: 0, saving: 0, errors: 0, blocked: 0 }).label).toBe('All changes saved')
+  })
+})
+
+describe('environment names', () => {
+  const envs = [
+    { id: 'a', name: 'Prod ' },
+    { id: 'b', name: 'QA' },
+  ]
+  it('matches trimmed and case-insensitively', () => {
+    expect(findEnvByName(envs, '  prod')?.id).toBe('a')
+    expect(findEnvByName(envs, 'prod', 'a')).toBeNull()
+    expect(findEnvByName(envs, 'dev')).toBeNull()
+  })
+  it('reports required and duplicate names, allowing a case change of the renamed one', () => {
+    expect(envNameIssue(envs, '  ')).toMatch(/required/)
+    expect(envNameIssue(envs, 'PROD')).toBe('An environment named "Prod" already exists.')
+    expect(envNameIssue(envs, 'PROD', 'a')).toBeNull()
+    expect(envNameIssue(envs, 'qa', 'a')).toMatch(/"QA" already exists/)
   })
 })

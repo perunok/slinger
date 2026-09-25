@@ -2,14 +2,12 @@
 import type { Environment } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { api } from '../../lib/ipc'
+import { envNameIssue, findEnvByName } from './envLogic'
 
 function checkName(raw: string, exceptId?: string): string {
-  const name = raw.trim()
-  if (!name) throw new Error('Name is required')
-  if (app.environments.some((e) => e.id !== exceptId && e.name.toLowerCase() === name.toLowerCase())) {
-    throw new Error(`An environment named "${name}" already exists`)
-  }
-  return name
+  const issue = envNameIssue(app.environments, raw, exceptId)
+  if (issue) throw new Error(issue)
+  return raw.trim()
 }
 
 function workspace(): string {
@@ -45,7 +43,7 @@ export interface DuplicateResult {
  */
 export async function duplicateEnv(source: Environment): Promise<DuplicateResult> {
   let name = `${source.name} copy`
-  for (let i = 2; app.environments.some((e) => e.name.toLowerCase() === name.toLowerCase()); i++) name = `${source.name} copy ${i}`
+  for (let i = 2; findEnvByName(app.environments, name); i++) name = `${source.name} copy ${i}`
   const vars = await api().listEnvironmentVariables(source.id)
   const env = await api().createEnvironment(workspace(), name)
   let copied = 0
