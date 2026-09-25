@@ -73,9 +73,9 @@
 {/snippet}
 
 <Dialog title="About Slinger" onclose={() => (ui.aboutOpen = false)} size="lg">
-  <div class="grid gap-6 pb-1" data-testid="about">
+  <div class="grid grid-cols-1 gap-6 pb-1" data-testid="about">
     <!-- 1. Header -->
-    <section aria-labelledby="about-name" class="about-hero flex flex-wrap items-center gap-4 rounded-lg border border-border p-4">
+    <section aria-labelledby="about-name" class="about-hero flex min-w-0 flex-wrap items-center gap-4 rounded-lg border border-border p-4">
       <img src={appIcon} alt="Slinger icon" width="72" height="72" class="h-[72px] w-[72px] shrink-0 rounded-2xl" draggable="false" />
       <div class="min-w-0 flex-1">
         <h3 id="about-name" class="text-2xl font-bold tracking-tight">Slinger</h3>
@@ -90,7 +90,7 @@
     </section>
 
     <!-- 2. Developer -->
-    <section aria-labelledby="about-dev" class="grid gap-3">
+    <section aria-labelledby="about-dev" class="grid grid-cols-1 gap-3">
       <h3 id="about-dev" class="about-heading">Developer</h3>
       <div class="flex flex-wrap items-center gap-3">
         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-bold" aria-hidden="true">{initials}</span>
@@ -123,20 +123,20 @@
     </section>
 
     <!-- 3. Inspiration -->
-    <section aria-labelledby="about-story" class="grid gap-2">
+    <section aria-labelledby="about-story" class="grid grid-cols-1 gap-2">
       <h3 id="about-story" class="about-heading">Why Slinger</h3>
-      <blockquote class="grid gap-2 border-l-2 border-accent pl-3 text-sm leading-relaxed">
+      <blockquote class="grid grid-cols-1 gap-2 border-l-2 border-accent pl-3 text-sm leading-relaxed">
         {#each INSPIRATION as p, i (i)}<p>{p}</p>{/each}
       </blockquote>
     </section>
 
     <!-- 4. Manifesto -->
-    <section aria-labelledby="about-manifesto" class="grid gap-3">
+    <section aria-labelledby="about-manifesto" class="grid grid-cols-1 gap-3">
       <div class="flex items-center gap-2">
         <SlingGlyph kind="sling" size={30} />
         <h3 id="about-manifesto" class="about-heading">The Sling Manifesto</h3>
       </div>
-      <ol class="grid gap-x-5 gap-y-3 sm:grid-cols-2" aria-labelledby="about-manifesto">
+      <ol class="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2" aria-labelledby="about-manifesto">
         {#each MANIFESTO as m, i (m.title)}
           <li class="flex items-start gap-2.5">
             <SlingGlyph kind="stone" n={i + 1} size={30} class="mt-0.5 shrink-0" />
@@ -151,7 +151,7 @@
     </section>
 
     <!-- 5. Acknowledgements -->
-    <section aria-labelledby="about-thanks" class="grid gap-2">
+    <section aria-labelledby="about-thanks" class="grid grid-cols-1 gap-2">
       <h3 id="about-thanks" class="about-heading">Acknowledgements</h3>
       <details class="rounded-lg border border-border">
         <summary class="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-hover">
@@ -159,11 +159,11 @@
           <span class="font-medium">Standing on the shoulders of</span>
           <span class="ml-auto text-xs text-faint">{ACKNOWLEDGEMENTS.length} open-source projects</span>
         </summary>
-        <div class="grid gap-3 border-t border-border px-3 py-2">
+        <div class="grid grid-cols-1 gap-3 border-t border-border px-3 py-2">
           {#each groups as g (g.id)}
             <div>
               <h4 class="mb-1 text-xs font-semibold text-muted">{g.title}</h4>
-              <ul class="grid gap-0.5" aria-label={g.title}>
+              <ul class="grid grid-cols-1 gap-0.5" aria-label={g.title}>
                 {#each g.items as a (a.name)}
                   <li class="flex flex-wrap items-baseline gap-x-2 text-sm" data-testid="ack-item">
                     {@render link(a.homepage, a.name, 'font-medium')}
