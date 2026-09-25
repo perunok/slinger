@@ -55,7 +55,7 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
 example in another window), Save reports "Request changed elsewhere" and lets you **Reload from stored** or **Overwrite**.
-Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) searches saved requests; type `>` to list commands such as switching the theme or accent.
+Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) searches saved requests; type `>` to list commands such as switching the theme, accent or loading animation.
 
 ## Variables and environments
 
@@ -82,6 +82,11 @@ headless Linux without a Secret Service) saving a secret fails with an error whi
 `{{$time}}` (UTC), `{{$randomInt}}` (0-999999), `{{$randomString}}`, `{{$randomBoolean}}`, `{{$randomEmail}}`.
 
 ## Reading the response
+
+While a request is in flight the pane shows a small animated character running back and forth along a track (see **Loading
+animation** in Settings), "Sending request…" with the elapsed time, and **Cancel**. When the response arrives it is shown at
+once; the character plays a short finish on top (under half a second): the runner cheers, the shuttle lands, the pebble hits
+its target. On an error (no response, or a 4xx/5xx status) it stumbles in the error colour; on Cancel it simply disappears.
 
 After Send the pane shows status, time and size. Views: **Pretty** (formatted, foldable JSON/XML/HTML; CSV as a table), **Raw**
 (hex preview for binary content), **Preview** (HTML in a fully sandboxed frame, images, PDF), **Headers** and **Cookies**
@@ -130,6 +135,7 @@ Right-click a collection or folder and choose **Run collection...** / **Run fold
 between requests (ms) and optionally **Stop on first failure**, then run. Requests run sequentially in tree order using the active
 environment; each row shows status, time and, expanded, headers and a body preview. A row passes on a 2xx status only (redirects are followed first, so a remaining 3xx means the redirect did not end in a 2xx); 3xx, 4xx, 5xx and
 network errors fail, unless you tick **Treat 3xx as pass**; requests with unresolved variables are skipped with the reason. You can stop a running run.
+While the run is going, a small version of the loading character runs along the progress bar.
 Runner requests are recorded in History.
 
 Scripts run for every request exactly as for **Send** (collection, folder and request scripts). A failing test fails its row
@@ -465,11 +471,16 @@ Settings (Ctrl+, or the sun icon):
 - **Accent colour.** Buttons, selected items, focus rings and text selection use the accent. **Theme default** keeps each
   theme's own accent; or pick Blue, Indigo, Violet, Purple, Fuchsia, Pink, Rose, Red, Orange, Amber, Yellow, Lime, Green,
   Emerald, Teal, Cyan, Sky or Slate, which then applies on top of whatever theme is active (it adapts to light and dark themes).
+- **Loading animation**, shown while a request is in flight: **Random** (default; a different character for each send),
+  **Runner** (a little pixel-art runner), **Shuttle** (a space shuttle with a flickering flame among faint stars), **Pebble** (a
+  pebble shot from a slingshot, bouncing off a target) or **Classic spinner**. The characters are drawn in the accent colour, so
+  they suit every theme. The chosen character runs in its card as a preview. With *reduce motion* turned on in the operating
+  system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
 
 Changes apply instantly and are remembered. Quick switch without opening Settings: press Ctrl+K and type `>` followed by
-`theme` or `accent` (for example `> theme nord` or `> accent teal`), then Enter.
+`theme`, `accent` or `loading` (for example `> theme nord`, `> accent teal` or `> loading shuttle`), then Enter.
 
 All themes are checked for readable contrast (WCAG AA, 4.5:1 for text) with every accent colour; the two High Contrast themes
 meet AAA (7:1). A theme chosen in version 0.2.0 carries over automatically.
@@ -484,7 +495,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme or accent) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |

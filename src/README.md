@@ -27,7 +27,8 @@ app/                        shell + cross-feature state
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
-                            NameDialog, ContextMenu, Tabs, SplitPane, ToastHost, InlineError, Spinner
+                            NameDialog, ContextMenu, Tabs, SplitPane, ToastHost, InlineError, Spinner,
+                            LoadingCharacter (the animated "sending" runner / shuttle / pebble; lib/loader.ts)
   editor/                   CodeEditor (multi-line CM6), TemplateInput (single-line CM6),
                             cm/{theme,languages,template,sync,pmCompletion}.ts
   kv/KeyValueTable.svelte   params / headers / form-data / urlencoded tables
@@ -43,7 +44,7 @@ lib/                        pure logic, no DOM: template, urlParams, kv, request
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
-                            themes (theme/accent registry), appearance (persisted theme settings), contrast + themeAudit (WCAG checks)
+                            themes (theme/accent registry), appearance (persisted theme settings), loader (sending animation: pick, lap speed, sprite), contrast + themeAudit (WCAG checks)
 dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
 styles/                     themes.css (tokens) + app.css (tailwind, CM overlays)
 ```
