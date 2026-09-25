@@ -9,6 +9,8 @@ import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
+import { ScriptService } from './scriptService'
+import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
 import type { SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
@@ -19,6 +21,8 @@ export interface CoreDeps {
   /** Directory holding the numbered .sql migrations; migrations run when it is provided. */
   migrationsDir?: string
   exportFiles?: ExportFiles
+  /** Where scripts run: the app passes a WorkerExecutor, tests an InlineExecutor. Without one, scripts are unavailable. */
+  scriptExecutor?: ScriptExecutor
   /** Cloud sync wiring (all optional; sensible defaults for tests). */
   sync?: {
     /** Receives every SyncEvent (main forwards them to the renderer). */
@@ -38,6 +42,7 @@ export interface Core {
   requests: RequestRepository
   history: HistoryRepository
   http: HttpService
+  scripts: ScriptService
   authCallbacks: BrowserAuthCallbacks
   exportFiles: ExportFiles
   fileGrants: FileGrants
@@ -49,16 +54,19 @@ export function createCore(deps: CoreDeps): Core {
   const { db, secrets } = deps
   const history = new HistoryRepository(db)
   const fileGrants = new FileGrants()
+  const environments = new EnvironmentRepository(db, secrets)
+  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor())
   const core: Core = {
     db,
     secrets,
     workspaces: new WorkspaceRepository(db, secrets),
-    environments: new EnvironmentRepository(db, secrets),
+    environments,
     collections: new CollectionRepository(db),
     folders: new FolderRepository(db),
     requests: new RequestRepository(db),
     history,
-    http: new HttpService(history, fileGrants),
+    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text)),
+    scripts,
     authCallbacks: new BrowserAuthCallbacks(),
     exportFiles: deps.exportFiles ?? new ExportFiles(),
     fileGrants,

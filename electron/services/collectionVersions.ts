@@ -38,12 +38,15 @@ interface VersionRow {
 
 const snapshotSchema = z.object({
   collectionName: z.string(),
+  // Scripts (migration 0005) are optional: snapshots taken before them have none.
+  collectionScriptsJson: z.string().nullish(),
   folders: z.array(
     z.object({
       id: z.string(),
       parentFolderId: z.string().nullable(),
       name: z.string(),
       sortOrder: z.number(),
+      scriptsJson: z.string().nullish(),
     }),
   ),
   requests: z.array(
@@ -134,7 +137,13 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       db
         .prepare('SELECT * FROM folders WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, id')
         .all(collection.id) as FolderRow[]
-    ).map((f) => ({ id: f.id, parentFolderId: f.parent_folder_id, name: f.name, sortOrder: f.sort_order }))
+    ).map((f) => ({
+      id: f.id,
+      parentFolderId: f.parent_folder_id,
+      name: f.name,
+      sortOrder: f.sort_order,
+      ...(f.scripts_json ? { scriptsJson: f.scripts_json } : {}),
+    }))
     const requests = (
       db
         .prepare('SELECT * FROM requests WHERE collection_id = ? AND deleted = 0 ORDER BY sort_order, id')
@@ -148,7 +157,12 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       documentJson: r.document_json,
       sortOrder: r.sort_order,
     }))
-    const snapshot: CollectionSnapshot = { collectionName: collection.name, folders, requests }
+    const snapshot: CollectionSnapshot = {
+      collectionName: collection.name,
+      ...(collection.scripts_json ? { collectionScriptsJson: collection.scripts_json } : {}),
+      folders,
+      requests,
+    }
     const id = newId()
     db.prepare(
       `INSERT INTO collection_versions (id, workspace_id, collection_id, version, version_major, version_minor,
@@ -169,8 +183,8 @@ function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnap
   const idMap = new Map<string, string>()
   const pending = [...snapshot.folders]
   const insertFolder = db.prepare(
-    `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+    `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, version, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
   )
   // Parents first, regardless of the order stored in the snapshot.
   while (pending.length) {
@@ -180,7 +194,7 @@ function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnap
       if (f.parentFolderId !== null && !idMap.has(f.parentFolderId)) continue
       const id = newId()
       insertFolder.run(id, collection.workspace_id, collection.id,
-        f.parentFolderId === null ? null : idMap.get(f.parentFolderId)!, f.name, f.sortOrder, now, now)
+        f.parentFolderId === null ? null : idMap.get(f.parentFolderId)!, f.name, f.sortOrder, f.scriptsJson ?? null, now, now)
       idMap.set(f.id, id)
       pending.splice(i, 1)
     }
@@ -219,9 +233,9 @@ export function restoreCollectionVersion(
     if (mode === 'copy') {
       const id = newId()
       db.prepare(
-        `INSERT INTO collections (id, workspace_id, name, version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, 1, 0, ?, ?)`,
-      ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), now, now)
+        `INSERT INTO collections (id, workspace_id, name, scripts_json, version, deleted, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
+      ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null, now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
       materialize(db, created, snapshot)
       return toCollection(created)
@@ -232,7 +246,7 @@ export function restoreCollectionVersion(
       ).run(now, source.id)
     }
     materialize(db, source, snapshot)
-    db.prepare('UPDATE collections SET updated_at = ?, version = version + 1 WHERE id = ?').run(now, source.id)
+    db.prepare('UPDATE collections SET scripts_json = ?, updated_at = ?, version = version + 1 WHERE id = ?').run(snapshot.collectionScriptsJson ?? null, now, source.id)
     return toCollection(db.prepare('SELECT * FROM collections WHERE id = ?').get(source.id) as CollectionRow)
   })()
 }

@@ -19,6 +19,8 @@ export class HttpService {
   constructor(
     private readonly history: HistoryRepository,
     private readonly files?: FileAccess,
+    /** Replaces secret values that scripts of a session read with `{{name}}` (ScriptService.redact). */
+    private readonly redact: (sessionId: string | null | undefined, text: string) => string = (_s, t) => t,
   ) {}
 
   async execute(input: HttpRequestInput): Promise<HttpResponseData> {
@@ -87,8 +89,9 @@ export class HttpService {
         requestId: isUuid(input.requestId) ? input.requestId : null,
         requestName: input.requestName ?? null,
         method: (input.method || 'GET').trim().toUpperCase().slice(0, 32) || 'GET',
-        url: normalizeUrl(input.historyUrl ?? input.url ?? '').slice(0, 8192),
+        url: this.redact(input.scriptSessionId, normalizeUrl(input.historyUrl ?? input.url ?? '')).slice(0, 8192),
         ...result,
+        errorMessage: result.errorMessage === null ? null : this.redact(input.scriptSessionId, result.errorMessage),
       })
     } catch (err) {
       // A history failure (e.g. workspace deleted mid-request) must never hide the HTTP outcome.

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, net, powerMonitor, protocol, session, shell } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { Worker } from 'node:worker_threads'
 import { hostname } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -16,6 +17,7 @@ import { isPermissionAllowed } from './lib/permissions'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
+import { WorkerExecutor } from './scripts/executor'
 
 const APP_SCHEME = 'app'
 const APP_ORIGIN = `${APP_SCHEME}://slinger`
@@ -67,6 +69,20 @@ function loadKeychain(): KeychainSecretStore {
       },
     )
   }
+}
+
+/**
+ * Script sandbox workers. The bundle is read as text and started with `eval: true`, so it also works from inside
+ * the asar archive (worker_threads cannot load a file path inside app.asar). It needs only Node built-ins.
+ */
+function scriptExecutor(): WorkerExecutor {
+  let source: string | null = null
+  return new WorkerExecutor({
+    spawn: () => {
+      source ??= readFileSync(join(__dirname, 'script-worker.cjs'), 'utf8')
+      return new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } })
+    },
+  })
 }
 
 function serveRenderer(): void {
@@ -204,6 +220,7 @@ if (!app.requestSingleInstanceLock()) {
       db,
       secrets: loadKeychain(),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
+      scriptExecutor: scriptExecutor(),
       sync: {
         // Push channel to the trusted main window only; payloads are plain JSON.
         emit: (event) => {

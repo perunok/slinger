@@ -18,6 +18,8 @@ interface FolderDraft {
   parentTempId: number | null
   name: string
   sortOrder: number
+  /** The folder's Postman `event` array (verbatim JSON), or null. */
+  scriptsJson: string | null
 }
 interface RequestDraft {
   folderTempId: number | null
@@ -47,6 +49,26 @@ interface Collected {
   folders: FolderDraft[]
   requests: RequestDraft[]
   nextTempId: number
+  /** Non-empty pre-request/test scripts seen (collection + folders + requests). */
+  scriptCount: number
+}
+
+/** Stored verbatim when it is a non-empty array; Postman `event` entries are not otherwise interpreted here. */
+function eventJson(event: unknown): string | null {
+  return Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null
+}
+
+/** Number of pre-request/test entries with code in a Postman `event` array. */
+export function countScripts(event: unknown): number {
+  if (!Array.isArray(event)) return 0
+  let n = 0
+  for (const e of event) {
+    if (!isObject(e) || e.disabled === true || (e.listen !== 'prerequest' && e.listen !== 'test') || !isObject(e.script)) continue
+    const exec = e.script.exec
+    const code = Array.isArray(exec) ? exec.filter((l) => typeof l === 'string').join('\n') : typeof exec === 'string' ? exec : ''
+    if (code.trim()) n++
+  }
+  return n
 }
 
 function collect(
@@ -63,7 +85,8 @@ function collect(
     if (!isObject(item)) continue
     if (Array.isArray(item.item)) {
       const tempId = out.nextTempId++
-      out.folders.push({ tempId, parentTempId, name: str(item.name) ?? 'Untitled Folder', sortOrder: folderOrder++ })
+      out.folders.push({ tempId, parentTempId, name: str(item.name) ?? 'Untitled Folder', sortOrder: folderOrder++, scriptsJson: eventJson(item.event) })
+      out.scriptCount += countScripts(item.event)
       collect(item.item, tempId, item.auth ?? inheritedAuth, depth + 1, out)
       continue
     }
@@ -72,6 +95,7 @@ function collect(
     const name = str(item.name) ?? 'Untitled Request'
     const method = (str(request.method) ?? 'GET').toUpperCase()
     const url = postmanUrlToString(request.url)
+    out.scriptCount += countScripts(item.event)
     out.requests.push({
       folderTempId: parentTempId,
       name,
@@ -116,28 +140,29 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
   const info = isObject(parsed.info) ? parsed.info : {}
   const collectionName = (str(info.name) ?? 'Imported Collection').slice(0, 200)
 
-  const out: Collected = { folders: [], requests: [], nextTempId: 1 }
+  const out: Collected = { folders: [], requests: [], nextTempId: 1, scriptCount: countScripts(parsed.event) }
   collect(parsed.item, null, parsed.auth ?? null, 0, out)
+  const collectionScripts = eventJson(parsed.event)
   if (out.requests.length === 0) throw invalidInput('No requests found in Postman collection')
 
   return db.transaction((): PostmanImportResult => {
     const now = nowSeconds()
     const collectionId = newId()
     db.prepare(
-      `INSERT INTO collections (id, workspace_id, name, version, deleted, created_at, updated_at)
-       VALUES (?, ?, ?, 1, 0, ?, ?)`,
-    ).run(collectionId, workspace.id, collectionName, now, now)
+      `INSERT INTO collections (id, workspace_id, name, scripts_json, version, deleted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, 0, ?, ?)`,
+    ).run(collectionId, workspace.id, collectionName, collectionScripts, now, now)
 
     const folderIds = new Map<number, string>()
     const insertFolder = db.prepare(
-      `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, version, deleted, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, version, deleted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     )
     // Drafts are produced parent-before-child, so parents are always inserted first.
     for (const f of out.folders) {
       const id = newId()
       insertFolder.run(id, workspace.id, collectionId,
-        f.parentTempId === null ? null : folderIds.get(f.parentTempId)!, f.name.slice(0, 200), f.sortOrder, now, now)
+        f.parentTempId === null ? null : folderIds.get(f.parentTempId)!, f.name.slice(0, 200), f.sortOrder, f.scriptsJson, now, now)
       folderIds.set(f.tempId, id)
     }
     const insertRequest = db.prepare(
@@ -159,6 +184,6 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
       toFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(id) as FolderRow))
     const requests: ApiRequest[] = requestIds.map((id) =>
       toRequest(db.prepare('SELECT * FROM requests WHERE id = ?').get(id) as RequestRow))
-    return { collection, folders, requests }
+    return { collection, folders, requests, scriptCount: out.scriptCount }
   })()
 }
