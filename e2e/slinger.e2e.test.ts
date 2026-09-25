@@ -523,6 +523,69 @@ describe('import and export', () => {
     expect(count).toBeGreaterThanOrEqual(8)
   })
 
+  it('lists the imported saved examples under their requests and opens one', async () => {
+    const col = item(/^thub-collection/)
+    if ((await col.getAttribute('aria-expanded')) !== 'true') await col.click()
+    const request = item(/Create Charge Detail$/)
+    expect(await request.getAttribute('aria-expanded')).toBe('false')
+    await request.getByTestId('examples-toggle').click() // the chevron expands without opening the request
+    await item(/^201 success$/).waitFor()
+    await item(/^400 failure$/).waitFor()
+    expect(await page.getByRole('tab', { name: /Create Charge Detail/ }).count()).toBe(0)
+    await item(/^201 success$/).click()
+    const view = page.getByTestId('example-view')
+    await view.waitFor()
+    const saved = page.getByRole('region', { name: 'Example response' })
+    expect(await saved.getByTestId('status-chip').innerText()).toBe('201 Created')
+    await expect.poll(() => saved.innerText()).toContain('"SUCCESS"')
+    expect(await page.getByRole('textbox', { name: 'Request URL' }).innerText()).toContain('/api/v1/transferhub/charge-details')
+  })
+
+  it('edits and saves an example into its request; the other example stays byte-identical', async () => {
+    await page.getByRole('textbox', { name: 'Example name' }).fill('success edited')
+    await page.getByRole('spinbutton', { name: 'Status code' }).fill('202')
+    await expect.poll(() => page.getByRole('textbox', { name: 'Status text' }).inputValue()).toBe('Accepted')
+    await save()
+    await item(/^202 success edited$/).waitFor()
+    const original = JSON.parse(readFileSync(EXAMPLE, 'utf8')).item[0].response
+    const stored = await page.evaluate(async () => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      const col = (await window.slinger.listCollections(ws.id)).find((c) => c.name === 'thub-collection')!
+      const r = (await window.slinger.listRequests(col.id)).find((x) => x.name === 'Create Charge Detail')!
+      return JSON.parse(r.documentJson).responses
+    })
+    expect(JSON.stringify(stored[0])).toBe(JSON.stringify({ ...original[0], name: 'success edited', status: 'Accepted', code: 202 }))
+    expect(JSON.stringify(stored[1])).toBe(JSON.stringify(original[1]))
+  })
+
+  it('"Try" sends the example request from a new tab and leaves the example alone', async () => {
+    const before = target.requests.length
+    await page.getByRole('button', { name: 'Try', exact: true }).click()
+    await response().getByTestId('status-chip').waitFor()
+    expect(target.requests.slice(before).map((r) => r.url)).toEqual(['/api/v1/transferhub/charge-details'])
+    expect(await page.getByTestId('example-view').count()).toBe(0) // a request tab is active now
+    await page.getByRole('tab', { name: /success edited/ }).waitFor()
+  })
+
+  it('saves a live binary response as an example (base64) that shows as an image', async () => {
+    // "Image" was restored from version 1.0.0 without its (never saved) URL: set and save it first,
+    // since Save as example needs a stored request. Its response carries no secret (no auth).
+    await item(/Image$/).click()
+    await typeInto(page.getByRole('textbox', { name: 'Request URL' }), '{{baseUrl}}/binary.png')
+    await save()
+    await send()
+    await response().getByRole('button', { name: 'Save as example' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Save as example' })
+    expect(await dialog.getByRole('textbox', { name: 'Example name' }).inputValue()).toBe('200 OK')
+    await dialog.getByRole('textbox', { name: 'Example name' }).fill('png ok')
+    await dialog.getByRole('button', { name: 'Save example' }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await item(/^200 png ok$/).click() // listed (and expanded) under the request right away
+    const img = page.getByRole('region', { name: 'Example response' }).getByRole('img', { name: 'Response body' })
+    await img.waitFor()
+    expect(await img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(1)
+  })
+
   it('exports a collection as Postman v2.1 JSON to the chosen folder', async () => {
     await contextMenu(item(/^Col A/), 'Export as Postman JSON…')
     const dialog = page.getByRole('dialog', { name: 'Export collection' })
@@ -537,6 +600,27 @@ describe('import and export', () => {
     expect(exported.info.schema).toMatch(/v2\.1/)
     expect(JSON.stringify(exported)).toContain('Echo')
     expect(JSON.stringify(exported)).not.toContain(SECRET)
+    // The example saved from the live PNG response travels in the item's `response` list.
+    const image = exported.item.find((i: { name: string }) => i.name === 'Image')
+    expect(image.response).toHaveLength(1)
+    expect(image.response[0]).toMatchObject({ name: 'png ok', code: 200, status: 'OK', _slinger_body_encoding: 'base64', body: PNG.toString('base64') })
+    expect(image.response[0].originalRequest.url.raw).toBe('{{baseUrl}}/binary.png')
+  })
+
+  it('exports the imported collection with untouched examples identical to the source file', async () => {
+    await contextMenu(item(/^thub-collection/), 'Export as Postman JSON…')
+    const dialog = page.getByRole('dialog', { name: 'Export collection' })
+    await dialog.getByRole('button', { name: /Choose folder/ }).click()
+    await dialog.getByRole('button', { name: 'Save to file' }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await expect.poll(() => readdirSync(exportDir).some((f) => f.startsWith('thub-collection'))).toBe(true)
+    const exported = JSON.parse(readFileSync(join(exportDir, readdirSync(exportDir).find((f) => f.startsWith('thub-collection'))!), 'utf8'))
+    const original = JSON.parse(readFileSync(EXAMPLE, 'utf8'))
+    expect(exported.item.map((i: { name: string }) => i.name)).toEqual(original.item.map((i: { name: string }) => i.name))
+    expect(exported.item.reduce((n: number, i: { response?: unknown[] }) => n + (i.response?.length ?? 0), 0)).toBe(16)
+    for (let i = 1; i < original.item.length; i++) expect(JSON.stringify(exported.item[i].response)).toBe(JSON.stringify(original.item[i].response))
+    expect(exported.item[0].response[0]).toEqual({ ...original.item[0].response[0], name: 'success edited', status: 'Accepted', code: 202 })
+    expect(JSON.stringify(exported.item[0].response[1])).toBe(JSON.stringify(original.item[0].response[1]))
   })
 })
 
