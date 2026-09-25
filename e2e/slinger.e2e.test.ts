@@ -774,6 +774,34 @@ describe('import and export', () => {
     expect(exported.item[0].response[0]).toEqual({ ...original.item[0].response[0], name: 'success edited', status: 'Accepted', code: 202 })
     expect(JSON.stringify(exported.item[0].response[1])).toBe(JSON.stringify(original.item[0].response[1]))
   })
+
+  it('re-importing the same file replaces the collection in place after a safety version', async () => {
+    const before = await page.evaluate(async () => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      return (await window.slinger.listCollections(ws.id)).filter((c) => c.name === 'thub-collection').map((c) => c.id)
+    })
+    expect(before).toHaveLength(1)
+    await page.getByRole('button', { name: 'Import Postman collection' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Postman file').setInputFiles(EXAMPLE)
+    const replace = dialog.getByRole('radio', { name: /Replace existing "thub-collection"/ })
+    await replace.waitFor()
+    expect(await replace.isChecked()).toBe(true)
+    await dialog.getByRole('radio', { name: /Import as a copy named "thub-collection \(2\)"/ }).waitFor()
+    await dialog.getByRole('button', { name: 'Replace', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    const after = await page.evaluate(async () => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      const cols = (await window.slinger.listCollections(ws.id)).filter((c) => c.name.startsWith('thub-collection'))
+      const versions = await window.slinger.listCollectionVersions(cols[0]!.id)
+      const r = (await window.slinger.listRequests(cols[0]!.id)).find((x) => x.name === 'Create Charge Detail')!
+      return { ids: cols.map((c) => c.id), versions: versions.map((v) => [v.version, v.notes]), firstExample: JSON.parse(r.documentJson).responses[0].name }
+    })
+    expect(after.ids).toEqual(before)
+    expect(after.versions).toEqual([['0.0.1', 'Automatic snapshot before re-import from example-postman-collection.json']])
+    // The example edited above is back to the file's content.
+    expect(after.firstExample).toBe(JSON.parse(readFileSync(EXAMPLE, 'utf8')).item[0].response[0].name)
+  })
 })
 
 describe('markdown docs', () => {
