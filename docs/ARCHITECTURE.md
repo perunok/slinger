@@ -18,9 +18,9 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback
-  lib/               errors, ids, text, csp, permissions
+  lib/               errors, ids, text, csp, permissions, windowState, appMenu (application menu template)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
-shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts - imported by main AND renderer, no Node/DOM deps
+shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names) - imported by main AND renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
@@ -28,7 +28,7 @@ scripts/             build-main.mjs (main, preload and script-worker bundles), s
 test/                renderer test setup
 ```
 
-Only `main.ts`, `preload.ts` and `ipc/handlers.ts` import `electron`; everything else is plain Node so the whole business layer
+Only `main.ts`, `preload.ts` and `ipc/handlers.ts` import `electron` at runtime (`lib/appMenu.ts` imports its types only); everything else is plain Node so the whole business layer
 is unit-tested without launching Electron.
 
 ## Process model and isolation
@@ -87,7 +87,44 @@ object** `{ name: 'IpcError', code, message, details? }`. It is not `instanceof 
 `details.code === 'folder_cycle'`), `io_error`, `network_error` (`details.cancelled` / `details.timedOut`), `internal_error`.
 Non-`IpcError` exceptions become `internal_error` with only the message (no stack) and are logged in main.
 
+**Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`) and
+`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)). The preload exposes each as a subscribe function that
+returns an unsubscribe function; the raw `ipcRenderer` event never reaches the page.
+
 Behavior notes for callers are in `NOTES-FOR-FRONTEND.md` at the repository root.
+
+## Application menu
+
+Electron's default menu is replaced at startup (`installAppMenu()` in `main.ts`), so there are no electronjs.org help links.
+`electron/lib/appMenu.ts` builds the template as plain data (`buildAppMenuTemplate({ platform, isPackaged, devTools, send,
+openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` only supplies the callbacks and calls
+`Menu.setApplicationMenu`.
+
+- **macOS:** Slinger (About Slinger, Settings… Cmd+,, Services, Hide / Hide Others / Show All, Quit), File, Edit, View, Window,
+  Help. **Windows/Linux:** File, Edit, View, Help (About Slinger at the bottom of Help, Settings… and Quit/Exit in File, Alt
+  mnemonics).
+- **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
+  macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
+  **Help:** User Guide, Keyboard Shortcuts, Release Notes, Report an Issue, View License (GitHub links opened through
+  `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
+- **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
+  `import`, `exportCollection`, `settings`, `about`, `shortcuts`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
+  (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
+  button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
+  collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
+- **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,` and `/`: the
+  menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
+  macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
+  page did not `preventDefault`, and as a belt-and-braces guard the renderer drops a menu command that arrives within 300 ms of the
+  same command run from the keyboard. **Ctrl/Cmd+W is never bound to closing the window**: it is File > Close Tab (the request
+  tab); macOS Window > Close Window uses Shift+Cmd+W. The menu's other accelerators (zoom Ctrl/Cmd+0 / = / -, full screen, the
+  Edit roles, Quit, dev-only Reload Ctrl/Cmd+R and DevTools) do not overlap renderer shortcuts.
+- **Zoom** uses Chromium zoom levels in 0.5 steps (about 40 % to 250 %) and is remembered as `zoomLevel` in `window-state.json`,
+  re-applied on every page load.
+- `app.setName('Slinger')` fixes the role labels (About/Hide/Quit Slinger); `setAboutPanelOptions` is a fallback for the native
+  macOS About panel (the menu opens the in-app About dialog).
 
 ## Database
 
@@ -524,11 +561,12 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
-| Smoke | `SLINGER_SMOKE_TEST=1 SLINGER_USER_DATA_DIR=<tmp> electron .` | headless check of preload, IPC, error transport, HTTP, keychain, CSP header and the script worker (a test script plus `require('crypto-js')` HMAC checked against Node); prints `SMOKE_RESULT {...}` |
+| Smoke | `SLINGER_SMOKE_TEST=1 SLINGER_USER_DATA_DIR=<tmp> electron .` | headless check of preload, IPC, error transport, HTTP, keychain, CSP header, the script worker (a test script plus `require('crypto-js')` HMAC checked against Node) and the application menu (`menu.top` labels, `menu.about`: About Slinger under Help, or the app menu on macOS); prints `SMOKE_RESULT {...}` |
 
 `better-sqlite3` is built for one ABI at a time; `scripts/ensure-native.mjs` records the current target and switches
 between Node (tests) and Electron (app). Env vars used by tooling: `SLINGER_USER_DATA_DIR`, `SLINGER_DEV_SERVER_URL`,
-`SLINGER_VITE_PORT`, `SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW` (off-screen rendering for automation).
+`SLINGER_VITE_PORT`, `SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW` (off-screen rendering for automation), `SLINGER_DEVTOOLS=1`
+(Reload / Developer Tools menu items in a packaged build).
 
 ## Adding an IPC method end to end
 

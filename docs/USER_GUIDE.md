@@ -5,6 +5,7 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 ## Layout
 
+- **Menu bar:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
 - **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
   Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
@@ -542,6 +543,28 @@ The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) ope
 - **Acknowledgements:** the open-source projects Slinger is built on, with versions and licences (expand "Standing on the shoulders
   of"; each name links to the project). Installed apps also include their full licence texts in `THIRD_PARTY_LICENSES.txt` in the
   app's resources folder.
+
+## Menus
+
+Slinger has its own menu bar (on macOS at the top of the screen).
+
+| Menu | Items |
+| --- | --- |
+| **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
+| **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
+| **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
+| **View** | Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
+| **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
+
+- **Export Collection…** exports the collection of the active tab (a request or a collection/folder overview). With no such tab
+  open, Slinger tells you how to pick one; you can also use Export in a collection's menu in the sidebar.
+- **Close Tab** (Ctrl/Cmd+W) closes the request tab, never the window. On macOS, Close Window is Shift+Cmd+W.
+- The zoom level is remembered for the next launch.
+- Help links open in your web browser.
+- Menu items for dialogs do nothing while another dialog is open (Settings and Keyboard Shortcuts still open), the same as the
+  keyboard shortcuts.
+- Development builds also show Reload and Toggle Developer Tools under View.
 
 ## Keyboard shortcuts
 
