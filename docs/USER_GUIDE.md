@@ -6,7 +6,7 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 ## Layout
 
 - **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
-  Keyboard shortcuts, Settings.
+  Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
 - **Main area:** request tabs, the request editor, and the response pane below it.
 
@@ -530,6 +530,19 @@ Changes apply instantly and are remembered. Quick switch without opening Setting
 All themes are checked for readable contrast (WCAG AA, 4.5:1 for text) with every accent colour; the two High Contrast themes
 meet AAA (7:1). A theme chosen in version 0.2.0 carries over automatically.
 
+## About Slinger
+
+The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) opens **About Slinger**:
+
+- The app version and **Copy version info**, which copies the Slinger, Electron, Chromium, Node and V8 versions and the OS
+  (name, release, architecture) for a bug report. Nothing else is included: no host name, user name, paths or data.
+- The developer, and links to the source code, releases, the issue tracker, the licence and the cloud server. Links open in your
+  web browser.
+- Why Slinger exists and **The Sling Manifesto** (also in the [README](../README.md#manifesto)).
+- **Acknowledgements:** the open-source projects Slinger is built on, with versions and licences (expand "Standing on the shoulders
+  of"; each name links to the project). Installed apps also include their full licence texts in `THIRD_PARTY_LICENSES.txt` in the
+  app's resources folder.
+
 ## Keyboard shortcuts
 
 Taken from the shortcut handler and the in-app list (Ctrl+/):
@@ -540,7 +553,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; export a collection or an environment) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; export a collection or an environment; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |

@@ -65,7 +65,7 @@ workspaces, environments (+ `revealEnvironmentVariable`), collections and folder
 `setCollectionDescription`, `setFolderDescription`),
 requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
-`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`, `grantedFiles`.
+`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only), `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:

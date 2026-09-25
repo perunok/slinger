@@ -5,6 +5,8 @@ Your workspaces, collections, environments and history live in a SQLite file on 
 live in the operating system keychain. There is no account requirement and nothing is synced anywhere unless
 you opt into the (still minimal) cloud panel.
 
+Small, fast, yours: read [the Sling Manifesto](#manifesto).
+
 ## Features
 
 - Workspaces, collections, nested folders and requests, with drag-and-drop ordering and a "Go to request" quick open.
@@ -128,6 +130,24 @@ Node modules / `postman-collection` in scripts, cloud sync of collection- and fo
 `pm.collectionVariables` / `pm.globals` (session-only), realtime collaboration and plugins/extensions.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
+## Manifesto
+
+**The Sling Manifesto**
+
+1. **A sling is small.** Carry less, hit harder. No account, no telemetry, ready in a blink.
+2. **The stone is yours.** Your collections live on your machine. Sync is a choice, never a leash.
+3. **Aim before you release.** Every request is visible, inspectable and repeatable. No magic.
+4. **One stone, one target.** Do one thing well: send requests, read responses, prove they work.
+5. **Giants fall.** You don't need a heavyweight platform to take on a heavyweight API.
+6. **Anyone can pick up a sling.** Open source, MIT licensed, built in the open, yours to fork.
+7. **Practice makes the throw.** Scripts, runners and versions help you repeat what works.
+8. **Leave no trace you didn't choose.** Secrets stay in your OS keychain, never in history.
+
+*Aim true. Travel light. Sling on.*
+
+The same text is in the app (About Slinger, the question-mark icon in the top bar); it lives in
+`src/features/about/credits.ts`, so keep the two in step.
+
 ## Contributing
 
 Work on a branch, keep `npm run typecheck` and `npm test` green, and add tests next to the code you change
@@ -137,4 +157,6 @@ migration; add the next numbered file. Adding an IPC method is a four-file chang
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE). The open-source packages Slinger builds on are listed in the app (About Slinger,
+Acknowledgements); `vite build` writes their licence texts to `dist/THIRD_PARTY_LICENSES.txt`, which packaged apps ship in their
+resources folder.

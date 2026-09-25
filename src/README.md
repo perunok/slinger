@@ -41,6 +41,8 @@ features/
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog, session-only pm scopes)
   overview/ (collection/folder overview tab: counts + documentation)
+  about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
+          `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
 lib/                        pure logic, no DOM: template, urlParams, kv, request (document model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
