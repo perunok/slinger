@@ -60,10 +60,10 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 75 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 76 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`),
-requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
+requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
@@ -107,6 +107,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0004_sync` | sync bookkeeping tables, change-capture and read-only triggers (see Cloud sync) |
 | `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; local-only, not synced), read-only triggers for it |
 | `0006_descriptions` | nullable `description` + `description_type` on `collections` and `folders` (documentation; local-only, not synced), read-only triggers for them |
+| `0007_import_source` | nullable `collections.source_postman_id` (the `info._postman_id` a collection was imported or replaced from; local-only, not synced) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables and collection versions carry
 `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters `deleted = 0` and also
@@ -327,6 +328,18 @@ major/minor/patch/prerelease columns), not by creation time. Restore modes: `cop
 `"<name> (v<version>)"`; `replace` soft-deletes the live folders/requests and recreates the snapshot in one transaction with
 **new ids** (the renderer refetches and closes affected tabs). Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
 runs in the renderer on snapshots.
+
+**Re-import (replace).** `replaceCollectionFromPostman(collectionId, fileContents, sourceName?)` (`services/postmanImport.ts`)
+reuses the importer's parser (`parsePostmanCollection`), then in one transaction: creates an automatic safety version (the next
+patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`), soft-deletes the live
+folders/requests (so the sync dirty-set triggers propagate the deletions), inserts the file's tree with new ids in file order, and
+updates the collection's scripts, description and `source_postman_id`. The collection keeps its id, name and versions; any
+failure rolls everything back. The renderer (`ImportPostmanDialog`, `importexport/reimport.ts`) matches the file to live
+collections of the workspace by `_postman_id` first (a collection's own id, as Slinger exports use it, or its local
+`source_postman_id`), else by trimmed case-insensitive name. After a replace it maps old ids to new ones with
+`versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs at their successor (`tabsStore.followReplaced`); dirty
+tabs are detached by the normal reconcile. "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
+record the source id, so the next re-import targets the original.
 
 ## Files, dialogs and the OS
 

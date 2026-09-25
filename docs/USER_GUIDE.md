@@ -384,6 +384,20 @@ collections keep theirs).
   collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). Postman "globals" files
   are rejected; export an environment instead. Disabled environment variables are skipped. Saved examples (`response[]`) are
   imported with their requests; the preview shows how many.
+- **Importing a collection that already exists:** if the workspace already has the collection (same Postman `_postman_id`,
+  which Slinger remembers from the earlier import on this device and which Slinger's own exports carry, otherwise the same name,
+  ignoring case and surrounding spaces), the dialog asks what to do:
+  - **Replace existing "X"** (default): the collection's folders, requests (with their saved examples), scripts and
+    descriptions are replaced by the file's content. The collection itself stays, with its name, versions and sync link. First
+    an automatic version snapshot of the current content is created (the next patch version, notes
+    `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Expanded
+    folders stay expanded and open request tabs without unsaved changes switch to the new content; tabs with unsaved changes keep
+    your edits (save them again to keep them). If several collections match, pick which one to replace. Not available in a
+    read-only (viewer) workspace.
+  - **Import as a copy** named `X (2)`, `X (3)`, ... so the names stay distinguishable. The existing collection is untouched.
+  - **Cancel.**
+
+  Environments are handled the same way in both cases (merged into a same-named environment, see above).
 - **Export:** right-click a collection, **Export as Postman JSON...**, then **Save to file** (optionally **Choose folder...**
   first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
   exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
