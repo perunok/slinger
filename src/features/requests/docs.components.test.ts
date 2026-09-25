@@ -10,6 +10,7 @@ import { toast } from '../../app/toast.svelte'
 import MarkdownView from '../../components/markdown/MarkdownView.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import CollectionsPanel from '../collections/CollectionsPanel.svelte'
+import ExampleView from '../examples/ExampleView.svelte'
 import OverviewView from '../overview/OverviewView.svelte'
 import { sync } from '../sync/syncStore.svelte'
 import DocsPanel from './DocsPanel.svelte'
@@ -215,5 +216,24 @@ describe('collection / folder overview', () => {
     await backend.deleteFolder(admin.id)
     await app.reloadCollection(admin.collectionId)
     expect(tabsStore.find(tab.id)).toBeNull()
+  })
+})
+
+describe('example tabs', () => {
+  it('show the parent request docs read-only in a Docs section (only when there are docs)', async () => {
+    const r = request('List pets')
+    const tab = tabsStore.openExample(r, 0)
+    render(ExampleView, { tab })
+    expect(screen.queryByRole('tab', { name: 'Docs' })).toBeNull()
+    cleanup()
+    const doc = JSON.parse(r.documentJson)
+    doc.description = '## Pets\n\nReturns `{{limit}}` pets.'
+    app.upsertRequest(await backend.updateRequest({ requestId: r.id, name: r.name, method: r.method, url: r.url, documentJson: JSON.stringify(doc), expectedVersion: r.version }))
+    render(ExampleView, { tab })
+    await fireEvent.click(screen.getByRole('tab', { name: 'Docs' }))
+    const docs = screen.getByTestId('example-docs')
+    expect(within(docs).getByRole('heading', { name: /Pets/ })).toBeInTheDocument()
+    expect(docs.querySelector('.md-var')).toHaveTextContent('{{limit}}')
+    expect(within(docs).queryByRole('button', { name: 'Edit' })).toBeNull()
   })
 })

@@ -20,14 +20,25 @@
   import { sync } from '../sync/syncStore.svelte'
   import TabNoticeBanner from '../sync/TabNoticeBanner.svelte'
   import ExampleResponseEditor from './ExampleResponseEditor.svelte'
+  import MarkdownView from '../../components/markdown/MarkdownView.svelte'
+  import { readDescription } from '../../lib/description'
 
   let { tab }: { tab: RequestTab } = $props()
   const parent = $derived(app.requestById(tab.requestId))
   const ex = $derived(tab.example!)
   const draft = $derived(tab.exampleDraft!)
 
-  const SECTIONS: RequestSection[] = ['params', 'auth', 'headers', 'body']
-  const section = $derived(SECTIONS.includes(tab.section) ? tab.section : 'params')
+  /** The parent request's documentation, shown read-only (examples have no docs of their own here). */
+  function docsOf(documentJson: string) {
+    try {
+      return readDescription((JSON.parse(documentJson || '{}') as { description?: unknown } | null)?.description)
+    } catch {
+      return null
+    }
+  }
+  const parentDocs = $derived(parent ? docsOf(parent.documentJson) : null)
+  const SECTIONS: RequestSection[] = ['params', 'auth', 'headers', 'body', 'docs']
+  const section = $derived(SECTIONS.includes(tab.section) && (tab.section !== 'docs' || parentDocs?.text.trim()) ? tab.section : 'params')
   const sections = $derived.by(() => {
     const d = tab.draft
     const count = (n: number) => (n > 0 ? String(n) : undefined)
@@ -36,6 +47,7 @@
       { id: 'auth', label: 'Authorization', badge: d.auth.kind !== 'none' ? '•' : undefined },
       { id: 'headers', label: 'Headers', badge: count(dataRows(d.headers).filter((r) => r.enabled).length) },
       { id: 'body', label: 'Body', badge: d.body.kind !== 'none' ? '•' : undefined },
+      ...(parentDocs?.text.trim() ? [{ id: 'docs', label: 'Docs' }] : []),
     ]
   })
 
@@ -92,6 +104,11 @@
           {#if section === 'params'}<ParamsPanel {tab} />
           {:else if section === 'auth'}<AuthPanel {tab} />
           {:else if section === 'headers'}<HeadersPanel {tab} />
+          {:else if section === 'docs' && parentDocs}
+            <div class="px-4 py-3" data-testid="example-docs">
+              <p class="mb-2 text-xs text-muted">Documentation of the request “{parent?.name}” (edit it in the request's Docs section).</p>
+              <MarkdownView source={parentDocs.text} format={parentDocs.format} label="Request documentation" />
+            </div>
           {:else}<BodyPanel {tab} />
           {/if}
         </div>

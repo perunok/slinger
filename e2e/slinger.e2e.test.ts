@@ -730,6 +730,77 @@ describe('import and export', () => {
   })
 })
 
+describe('markdown docs', () => {
+  const DOCS_COLLECTION = {
+    info: {
+      name: 'Docs API',
+      schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      description: [
+        '# Docs API',
+        '',
+        'Base URL: `{{baseUrl}}`. Read the [API guide](https://docs.example.test/guide).',
+        '',
+        '| Endpoint | Method |',
+        '|----------|--------|',
+        '| /users   | GET    |',
+        '',
+        '![remote](https://images.example.test/logo.png) <script>window.__docsPwned = 1</script>',
+      ].join('\n'),
+    },
+    item: [
+      {
+        name: 'List users',
+        request: {
+          method: 'GET',
+          url: '{{baseUrl}}/users',
+          description: { content: '## Users endpoint\n\n- [x] paginated', type: 'text/markdown' },
+        },
+      },
+    ],
+  }
+
+  it('imports a collection with Markdown docs, renders them, and opens links in the system browser', async () => {
+    const file = join(tmp, 'docs-collection.json')
+    writeFileSync(file, JSON.stringify(DOCS_COLLECTION, null, 2))
+    // Record instead of launching a real browser.
+    await ctx.app.evaluate(({ shell }) => {
+      const g = globalThis as unknown as { __opened: string[] }
+      g.__opened = []
+      shell.openExternal = (async (url: string) => void g.__opened.push(url)) as never
+    })
+    await page.getByRole('button', { name: 'Import Postman collection' }).click()
+    await page.getByLabel('Postman file').setInputFiles(file)
+    await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
+    await item(/^Docs API/).waitFor()
+
+    await contextMenu(item(/^Docs API/), 'Overview & docs')
+    const overview = page.getByTestId('overview-view')
+    await overview.waitFor()
+    const doc = overview.getByTestId('markdown-view')
+    await doc.getByRole('heading', { name: /Docs API/, level: 1 }).waitFor()
+    expect(await doc.getByRole('table').getByRole('cell', { name: '/users' }).count()).toBe(1)
+    expect(await doc.locator('.md-var').first().innerText()).toBe('{{baseUrl}}')
+    expect(await doc.locator('.md-img-blocked').innerText()).toContain('remote')
+    expect(await doc.locator('script, img[src^="http"]').count()).toBe(0)
+    expect(await page.evaluate(() => (window as unknown as { __docsPwned?: number }).__docsPwned)).toBeUndefined()
+
+    const before = page.url()
+    await doc.getByRole('link', { name: 'API guide' }).click()
+    await expect
+      .poll(() => ctx.app.evaluate(() => (globalThis as unknown as { __opened: string[] }).__opened))
+      .toEqual(['https://docs.example.test/guide'])
+    expect(page.url()).toBe(before)
+
+    // The request's own docs ({content, type} object) render in its Docs tab.
+    await item(/^Docs API/).click()
+    await item(/List users$/).click()
+    await page.getByRole('tab', { name: 'Docs' }).click()
+    await page.getByTestId('markdown-view').getByRole('heading', { name: /Users endpoint/ }).waitFor()
+    await capture(ctx.app, join(SHOTS, 'markdown-docs.png'))
+    expect(ctx.problems.filter((p) => /Content Security Policy|img-src/i.test(p))).toEqual([])
+  })
+})
+
 describe('themes', () => {
   const themes = ['light', 'dark', 'midnight', 'solarized', 'contrast']
 
