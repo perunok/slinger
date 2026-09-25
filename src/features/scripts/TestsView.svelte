@@ -21,7 +21,7 @@
     </span>
     <div class="ml-auto flex gap-0.5" role="radiogroup" aria-label="Show tests">
       {#each ['all', 'passed', 'failed', 'skipped'] as f (f)}
-        <label class="cursor-pointer rounded px-2 py-0.5 has-[:checked]:bg-accent-soft has-[:checked]:text-fg has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent text-muted hover:text-fg">
+        <label class="cursor-pointer rounded px-2 py-0.5 has-[:checked]:bg-accent-soft has-[:checked]:text-fg has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus text-muted hover:text-fg">
           <input type="radio" class="sr-only" name="tests-filter" value={f} checked={filter === f} onchange={() => (filter = f as Filter)} />
           {f[0].toUpperCase() + f.slice(1)}
         </label>

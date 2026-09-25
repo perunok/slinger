@@ -13,7 +13,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   db/                database.ts (open + pragmas), migrate.ts (runner)
   migrations/        0001_init.sql ... 0005_scripts.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
-                     sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests)
+                     sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
+                     libs/ (build-time Node shims for the bundled script libraries)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      secrets, exportFiles, externalUrl, authCallback
@@ -23,7 +24,7 @@ shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts - import
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
-scripts/             build-main.mjs (main, preload and script-worker bundles), electron-dev.mjs, ensure-native.mjs
+scripts/             build-main.mjs (main, preload and script-worker bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs
 test/                renderer test setup
 ```
 
@@ -221,8 +222,9 @@ the keychain; coalesced to the last write per key). The IPC call resolves with a
   (`Object.prototype`, `pm` itself) is visible to the folder or request script. Shared state (variables, environment, request) lives
   on the host side.
 - The context has only ECMAScript built-ins plus `prelude.js`: no module loader (code is evaluated as global code, `import` is a
-  syntax error, dynamic `import()` fails), no `std`/`os` modules, no `process`, `require` (a stub that throws), `fetch`, timers
-  (stubs that throw), file system or network. `pm.sendRequest` throws "not supported".
+  syntax error, dynamic `import()` fails), no `std`/`os` modules, no `process`, `fetch`, timers (stubs that throw), file system
+  or network. `pm.sendRequest` throws "not supported". `require` only knows the built-in libraries below; any other name
+  (`fs`, `crypto`, `path`, `node:*`, ...) throws an error listing the available modules.
 - The **only bridge** is one host function `__slinger_call(op, argsJson) -> resultJson`: strings in, strings out. The prelude
   captures it in a closure and deletes the global before user code runs. The host (`scripts/host.ts`) parses with its own
   `JSON.parse`, type-checks and size-limits every argument, and keeps scopes in `Map`s, so script-chosen keys like `__proto__`
@@ -235,6 +237,21 @@ the keychain; coalesced to the last write per key). The IPC call resolves with a
   does not stop within 2 s is terminated too. A runtime that was interrupted (timeout, cancel) is never freed: freeing one that was
   interrupted inside a promise job trips a QuickJS assertion that aborts the whole WASM module, so the module instance is dropped
   instead (V8 reclaims its memory) and the next script loads a fresh one (about 10 ms). Any other engine failure does the same.
+- **Built-in libraries** (Postman parity: `crypto-js`, `lodash`, `moment`, `uuid`, `chai`, `tv4`, `ajv`, `xml2js`,
+  `csv-parse/lib/sync`, `cheerio`; versions pinned in `package.json` devDependencies). `scripts/sandbox-libs.mjs` bundles each one
+  with esbuild at build time (browser platform, ES2020, minified) into a `(function (module, exports) {...})` text; Node built-ins
+  they touch are pure-JS packages (`events`, `buffer`) or the throwing/no-op shims in `scripts/libs/`. The texts reach
+  `sandbox.ts` as the virtual module `virtual:sandbox-libs` (esbuild plugin for the worker bundle, Vite plugin for vitest) and are
+  **only ever evaluated inside QuickJS**: a second host function `__slinger_lib(name)` returns the text (strings only, captured and
+  deleted by the prelude like `__slinger_call`), and the prelude evaluates it in the script's own context on the first `require`
+  of that name (cached per context, so a script that uses none pays nothing; each script of a chain loads its own copy). The
+  globals `_`, `CryptoJS`, `tv4`, `cheerio` are lazy getters for the same modules, `xml2Json` uses xml2js with Postman's options,
+  `atob`/`btoa` are the prelude's. QuickJS has no secure random source, so `crypto.getRandomValues` / `crypto.randomUUID` (used
+  by crypto-js and uuid) call host ops `random` (at most 65536 bytes, Node `randomBytes`) and `randomUUID`. Libraries get no other
+  capability: they run under the same deadline, heap and stack limits as the script (tested for loading and after loading).
+  Cost (worker bundle +~0.9 MB of text; first `require` in a script, warm engine, median): crypto-js 16 ms, lodash 20, moment
+  12, uuid 2, chai 10, tv4 4, ajv 23, xml2js 18, csv-parse 9, cheerio 51, all ten 151 ms; all ten fit in a 4 MB heap, so the
+  64 MB limit is unchanged. `postman-collection` is not bundled (1.2 MB, mostly iconv-lite and faker; ~100 ms to load).
 - **Cancellation.** `cancelHttpRequest(runId)` also cancels a script run with that id: main sets a flag in a `SharedArrayBuffer`
   that the interrupt handler polls; a script waiting for a keychain read is woken up. The renderer uses one run id for a whole send
   (pre-request -> HTTP -> tests), so Cancel and the runner's Stop work at every stage.
@@ -256,7 +273,8 @@ to apply environment operations for a read-only workspace as a second line of de
 Node APIs, other scripts' state, or the host process (escape, prototype pollution, resource exhaustion: CPU, memory, stack,
 output). Out of scope / accepted: a script can read non-secret environment values and any secret it names, and can put them into
 the request it is attached to (that is what pre-request scripts are for; users should review untrusted collections); it can write
-the active environment of a writable workspace. QuickJS itself is the trust anchor for memory safety (WASM confines a QuickJS bug
+the active environment of a writable workspace. The bundled libraries are third-party code but get no more trust than a
+script: they are evaluated inside the same QuickJS context, after the host functions were hidden. QuickJS itself is the trust anchor for memory safety (WASM confines a QuickJS bug
 to the worker's linear memory; the worker can be terminated).
 
 **Storage and sync.** Request scripts: `requests.document_json` key `scripts` (synced, versioned, exported). Collection/folder
@@ -378,11 +396,11 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, the esbuild-bundled worker, ScriptService) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
-| Smoke | `SLINGER_SMOKE_TEST=1 SLINGER_USER_DATA_DIR=<tmp> electron .` | headless check of preload, IPC, error transport, HTTP, keychain and CSP header; prints `SMOKE_RESULT {...}` |
+| Smoke | `SLINGER_SMOKE_TEST=1 SLINGER_USER_DATA_DIR=<tmp> electron .` | headless check of preload, IPC, error transport, HTTP, keychain, CSP header and the script worker (a test script plus `require('crypto-js')` HMAC checked against Node); prints `SMOKE_RESULT {...}` |
 
 `better-sqlite3` is built for one ABI at a time; `scripts/ensure-native.mjs` records the current target and switches
 between Node (tests) and Electron (app). Env vars used by tooling: `SLINGER_USER_DATA_DIR`, `SLINGER_DEV_SERVER_URL`,
@@ -406,6 +424,6 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: OAuth 2.0 request auth, `pm.sendRequest` and module `require` in scripts, cloud sync of collection/folder
-scripts and collection/folder documentation, loading remote images in docs, persisted collection variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and
-auto-update.
+Not present in the code: OAuth 2.0 request auth, `pm.sendRequest` and `require` of Node modules or `postman-collection` in scripts,
+cloud sync of collection/folder scripts and collection/folder documentation, loading remote images in docs, persisted collection
+variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.

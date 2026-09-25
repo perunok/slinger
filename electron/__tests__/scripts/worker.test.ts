@@ -5,6 +5,7 @@
  * terminate of a stuck worker, and that the main thread stays responsive during a long script.
  */
 import { build } from 'esbuild'
+import { createHmac } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { rawPlugin } from '../../../scripts/esbuild-raw.mjs'
+import { sandboxLibsEsbuildPlugin } from '../../../scripts/sandbox-libs.mjs'
 import { WorkerExecutor } from '../../scripts/executor'
 import { DEFAULT_LIMITS } from '../../scripts/job'
 import { job, script } from './harness'
@@ -33,7 +35,7 @@ beforeAll(async () => {
     format: 'cjs',
     target: 'node20',
     logLevel: 'silent',
-    plugins: [rawPlugin],
+    plugins: [rawPlugin, sandboxLibsEsbuildPlugin],
   })
   source = readFileSync(join(dir, 'script-worker.cjs'), 'utf8')
   executor = new WorkerExecutor({
@@ -64,6 +66,20 @@ describe('WorkerExecutor with the bundled worker', () => {
     expect(a.errors).toEqual([])
     expect(b.variables).toEqual({ n: 2 })
     expect(spawned - before).toBeLessThanOrEqual(1)
+  })
+
+  it('loads the built-in libraries inside the eval-started worker (the packaged path)', async () => {
+    const code = `
+      const CryptoJS = require('crypto-js')
+      pm.variables.set('sig', CryptoJS.HmacSHA256('payload', 'key').toString(CryptoJS.enc.Hex))
+      pm.variables.set('id', require('uuid').v4())
+      pm.variables.set('sum', _.sum([1, 2, 3]))
+    `
+    const r = await executor.run(job({ scripts: [script(code)] }), io())
+    expect(r.errors).toEqual([])
+    expect(r.variables.sig).toBe(createHmac('sha256', 'key').update('payload').digest('hex'))
+    expect(r.variables.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(r.variables.sum).toBe(6)
   })
 
   it('reads a secret synchronously through the main thread, only when asked', async () => {

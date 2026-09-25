@@ -61,7 +61,7 @@
     <legend class="mb-1 text-xs font-medium">How do you want to restore?</legend>
     {#each options as o (o.id)}
       <label
-        class="flex cursor-pointer items-start gap-2 rounded border p-2.5 focus-within:ring-2 focus-within:ring-accent {mode === o.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-hover'}"
+        class="flex cursor-pointer items-start gap-2 rounded border p-2.5 focus-within:ring-2 focus-within:ring-focus {mode === o.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-hover'}"
       >
         <input type="radio" name="restore-mode" value={o.id} bind:group={mode} class="mt-1" />
         <span>

@@ -34,7 +34,7 @@
       role="option"
       aria-selected={selected}
       tabindex={selected || (selectedId === null && idx === 0) ? 0 : -1}
-      class="cursor-pointer rounded border px-2.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent {selected ? 'border-accent bg-accent-soft' : 'border-transparent hover:bg-hover'}"
+      class="cursor-pointer rounded border px-2.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-focus {selected ? 'border-accent bg-accent-soft' : 'border-transparent hover:bg-hover'}"
       onclick={() => onselect(v.id)}
       onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onselect(v.id))}
     >

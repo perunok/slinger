@@ -174,7 +174,7 @@
               max="60000"
               bind:value={delayText}
               aria-invalid={delayInvalid || undefined}
-              class="h-8 w-32 rounded border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-accent {delayInvalid ? 'border-danger' : 'border-border'}"
+              class="h-8 w-32 rounded border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-focus {delayInvalid ? 'border-danger' : 'border-border'}"
             />
           </div>
           <label class="flex items-center gap-2 pb-1.5 text-sm">

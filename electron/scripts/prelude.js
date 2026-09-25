@@ -4,11 +4,14 @@
  *
  * The only bridge to the host is `__slinger_call(op, argsJson) -> resultJson` (strings in, strings out). This
  * file captures it in a closure and deletes the global, so user code can only reach the host through `pm`.
+ * `__slinger_lib(name) -> source text` hands out the built-in libraries (crypto-js, lodash, ...), which are
+ * evaluated here, inside QuickJS, on their first require(); it is captured and deleted the same way.
  * Loaded as text (see sandbox.ts); plain ES2020, no imports.
  */
-;(function (call) {
+;(function (call, lib) {
   'use strict'
   var G = globalThis
+  var globalEval = G.eval
   var stringify = JSON.stringify
   var parse = JSON.parse
   var hasOwn = Object.prototype.hasOwnProperty
@@ -984,6 +987,70 @@
     return out
   }
 
+  // -------------------------------------------------------------------------
+  // Built-in libraries (require) and crypto.getRandomValues
+  // -------------------------------------------------------------------------
+
+  var LIBRARIES = lib().split(',')
+  var BUILTINS = { atob: atob, btoa: btoa }
+  var SUPPORTED = LIBRARIES.concat(keysOf(BUILTINS)).sort().join(', ')
+  var loaded = Object.create(null)
+  var loading = Object.create(null)
+
+  function requireModule(name) {
+    if (typeof name !== 'string') throw new TypeError('require() expects a module name')
+    if (hasOwn.call(loaded, name)) return loaded[name]
+    var exported
+    if (hasOwn.call(BUILTINS, name)) exported = BUILTINS[name]
+    else if (LIBRARIES.indexOf(name) !== -1) {
+      // The bundle is `(function (module, exports) { ... })`; it runs in this script's context like its own code.
+      var factory = globalEval(lib(name))
+      var mod = { exports: {} }
+      loading[name] = true
+      try {
+        factory.call(mod.exports, mod, mod.exports)
+      } finally {
+        loading[name] = false
+      }
+      exported = mod.exports
+    } else {
+      throw new Error(
+        "require('" + name + "') is not supported in Slinger scripts. Available modules: " + SUPPORTED +
+          '. Node modules (fs, http, crypto, ...), files and the network are not available.',
+      )
+    }
+    loaded[name] = exported
+    return exported
+  }
+
+  // Postman's xml2Json(text): xml2js with Postman's options.
+  function xml2Json(text) {
+    var result = {}
+    requireModule('xml2js').parseString(text, { explicitArray: false, async: false, trim: true, mergeAttrs: false }, function (err, value) {
+      if (!err) result = value
+    })
+    return result
+  }
+
+  // A Web Crypto subset: QuickJS has no secure random source, so getRandomValues / randomUUID come from the host's
+  // CSPRNG (used by crypto-js's WordArray.random and AES with a passphrase, and by uuid).
+  var U8 = Uint8Array
+  var INTEGER_ARRAYS = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'BigInt64Array', 'BigUint64Array']
+  var cryptoObj = {
+    getRandomValues: function (array) {
+      if (!array || INTEGER_ARRAYS.indexOf(objToString.call(array).slice(8, -1)) === -1) {
+        throw new TypeError('crypto.getRandomValues: the argument must be an integer typed array')
+      }
+      var hex = host('random', [array.byteLength])
+      var bytes = new U8(array.buffer, array.byteOffset, array.byteLength)
+      for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+      return array
+    },
+    randomUUID: function () {
+      return host('randomUUID')
+    },
+  }
+
   var timerMsg = unsupported('Timers (setTimeout / setInterval)', 'scripts run synchronously; use promises instead')
 
   G.pm = pm
@@ -995,9 +1062,33 @@
   G.setImmediate = timerMsg
   G.clearTimeout = function () {}
   G.clearInterval = function () {}
-  G.require = function (name) {
-    throw new Error("require('" + name + "') is not supported in Slinger scripts: no modules, file system or network are available.")
+  G.require = requireModule
+  G.crypto = cryptoObj
+
+  // Postman's library globals. Loaded on first use (a script that never touches them pays nothing); assigning or
+  // declaring the name in a script simply replaces the global.
+  function lazyGlobal(name, module) {
+    function own(v) {
+      defineProperty(G, name, { value: v, writable: true, configurable: true, enumerable: false })
+    }
+    defineProperty(G, name, {
+      get: function () {
+        // A library may look at its own global while it loads (lodash reads `root._` for noConflict).
+        if (loading[module]) return undefined
+        var v = requireModule(module)
+        own(v)
+        return v
+      },
+      set: own,
+      configurable: true,
+      enumerable: false,
+    })
   }
+  lazyGlobal('_', 'lodash')
+  lazyGlobal('CryptoJS', 'crypto-js')
+  lazyGlobal('tv4', 'tv4')
+  lazyGlobal('cheerio', 'cheerio')
+  G.xml2Json = xml2Json
 
   // Legacy (pre-pm) Postman sandbox API.
   G.tests = {}
@@ -1044,5 +1135,6 @@
       }
     })
   }
-})(globalThis.__slinger_call)
+})(globalThis.__slinger_call, globalThis.__slinger_lib)
 delete globalThis.__slinger_call
+delete globalThis.__slinger_lib

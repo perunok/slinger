@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, net, powerMonitor, protocol, session, shell } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
+import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
 import { hostname } from 'node:os'
 import { createServer } from 'node:http'
@@ -203,11 +204,11 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     } catch (e) { out.keychainError = e.message }
     try {
       const s = await window.slinger.runScripts({ runId: 'run_smoke', sessionId: 'smoke', workspaceId: ws.id, environmentId: null, event: 'test',
-        scripts: [{ origin: 'request', name: 'smoke', code: "console.log('from sandbox'); pm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200)); pm.test('require is blocked', () => { let blocked = false; try { require('fs') } catch (e) { blocked = true }; pm.expect(blocked).to.equal(true) })" }],
+        scripts: [{ origin: 'request', name: 'smoke', code: "console.log('from sandbox'); pm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200)); pm.test('require is blocked', () => { let blocked = false; try { require('fs') } catch (e) { blocked = true }; pm.expect(blocked).to.equal(true) }); const CryptoJS = require('crypto-js'); pm.variables.set('hmac', CryptoJS.HmacSHA256('smoke', 'key').toString(CryptoJS.enc.Base64))" }],
         request: { method: 'GET', url: 'http://x', headers: [], body: { mode: 'none' } },
         response: { code: 200, status: 'OK', headers: [], body: 'ok', responseTime: 1, size: 2 },
         variables: {}, collectionVariables: {}, globals: {}, info: { requestName: 'smoke', requestId: null, iteration: 0, iterationCount: 1 } })
-      out.scripts = { passed: s.tests.filter((t) => t.status === 'passed').length, errors: s.errors.length, console: s.console.map((c) => c.message) }
+      out.scripts = { passed: s.tests.filter((t) => t.status === 'passed').length, errors: s.errors.length, console: s.console.map((c) => c.message), hmac: s.variables.hmac }
     } catch (e) { out.scriptsError = e.message }
     return out
   })()`
@@ -215,6 +216,8 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     // SLINGER_SMOKE_NO_KEYCHAIN skips the secret round trip (a locked desktop keyring would wait for an unlock prompt).
     const keychain = process.env.SLINGER_SMOKE_NO_KEYCHAIN ? 'false' : 'true'
     const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
+    // A library bundled into the script worker (require('crypto-js')) must give the same HMAC as Node.
+    if (result?.scripts) result.scripts.hmacOk = result.scripts.hmac === createHmac('sha256', 'key').update('smoke').digest('base64')
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
     target.close()
     app.exit(0)

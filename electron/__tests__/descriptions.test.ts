@@ -96,7 +96,8 @@ describe('Postman import of collection and folder descriptions', () => {
     expect(JSON.stringify(out.info.description)).toBe(JSON.stringify(src.info.description))
     const [md, noDocs, blank] = out.item
     expect(JSON.stringify(md!.description)).toBe(JSON.stringify(src.item[0]!.description))
-    expect(JSON.stringify(md!.item![0]!.description)).toBe(JSON.stringify(src.item[0]!.item![0]!.description))
+    const srcFolder = src.item[0]!.item![0]! as { description?: unknown }
+    expect(JSON.stringify(md!.item![0]!.description)).toBe(JSON.stringify(srcFolder.description))
     expect(JSON.stringify(md!.item![0]!.item![0]!.request!.description)).toBe(JSON.stringify({ content: 'obj', type: 'text/plain' }))
     expect(noDocs).not.toHaveProperty('description')
     expect(noDocs!.item![0]!.request!.description).toBe('Request **docs**')

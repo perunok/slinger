@@ -43,7 +43,7 @@
       <li role="treeitem" aria-expanded={isOpen} aria-selected="false">
         <button
           type="button"
-          class="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent"
+          class="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
           style="padding-left: {depth * 14 + 4}px"
           onclick={() => (collapsed = toggle(collapsed, node.id))}
         >
@@ -59,7 +59,7 @@
         <button
           type="button"
           aria-expanded={isOpen}
-          class="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent"
+          class="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
           style="padding-left: {depth * 14 + 4}px"
           onclick={() => (open = toggle(open, node.id))}
         >

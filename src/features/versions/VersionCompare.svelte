@@ -69,7 +69,7 @@
     <select
       id="cmp-target"
       bind:value={against}
-      class="h-8 rounded border border-border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+      class="h-8 rounded border border-border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-focus"
     >
       <option value="current">Current collection</option>
       {#each others as v (v.id)}<option value={v.id}>v{v.version}</option>{/each}
