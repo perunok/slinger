@@ -53,7 +53,8 @@ one is installed (`node_modules/.slinger-native-target`) and switches on demand,
 inside Electron 33's Node 20, so the project pins `^12`.)
 
 `SLINGER_SMOKE_TEST=1 SLINGER_USER_DATA_DIR=<tmp> electron .` runs a headless self-check
-(preload, IPC, error transport, HTTP, keychain, CSP header) and prints `SMOKE_RESULT {...}`.
+(preload, IPC, error transport, HTTP, keychain, CSP header, script worker incl. `require('crypto-js')`) and prints
+`SMOKE_RESULT {...}`.
 
 ## Database and migrations
 

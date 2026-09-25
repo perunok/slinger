@@ -158,7 +158,7 @@ request tests. Because pre-request scripts run before `{{templates}}` are resolv
   runner) interrupts a running script. Console output is capped at 1000 messages / 512 KB per send, a single message at 10 000
   characters, and 1000 tests; a response body larger than 8 MB is cut to its first 8 MB for `pm.response`.
 - Scripts run in an isolated sandbox (see "Security" below): **no network** (`pm.sendRequest` is not supported and throws a clear
-  error), **no files**, **no `require`/`import`** of modules (lodash, moment, crypto-js, ... are not available), no timers
+  error), **no files**, no Node modules and no `import` (only Postman's built-in libraries, see below), no timers
   (`setTimeout`/`setInterval` throw), no access to the app or the operating system. Promises work (async `pm.test` callbacks are
   awaited while the script runs).
 
@@ -209,8 +209,33 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.info.eventName/requestName/requestId/iteration/iterationCount` | |
 | `console.log/info/warn/error/debug` | Console tab |
 | `btoa`, `atob` | Latin-1 base64 |
+| `require(name)`, `_`, `CryptoJS`, `tv4`, `cheerio`, `xml2Json`, `crypto.getRandomValues/randomUUID` | built-in libraries, see below |
 | Legacy: `postman.setEnvironmentVariable/getEnvironmentVariable/clearEnvironmentVariable`, `postman.setGlobalVariable/...`, `tests["name"] = bool`, `responseBody`, `responseCode`, `responseHeaders`, `responseTime`, `environment`, `globals`, `request`, `iteration` | old Postman sandbox names |
-| `pm.sendRequest`, `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` | not supported: throw an error |
+| `pm.sendRequest`, `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` of other modules | not supported: throw an error |
+
+**Built-in libraries.** The libraries Postman's sandbox provides are available through `require()` (and Postman's globals), so
+scripts like `const CryptoJS = require('crypto-js')` run unchanged. They run inside the same sandbox as your script, are loaded
+the first time a script uses them (roughly 2-50 ms each; a script that uses none pays nothing), and count towards the script's
+time and memory limits.
+
+| Module | `require` name / global | Notes |
+| --- | --- | --- |
+| crypto-js 4.2 | `require('crypto-js')`, global `CryptoJS` | all algorithms: `MD5`, `SHA1`, `SHA256`, `SHA512`, `SHA3`, `HmacSHA256`, ..., `AES`/`TripleDES` encrypt and decrypt, `enc.Base64/Hex/Utf8/Latin1`, `PBKDF2`. Random values (salts, `WordArray.random`) come from the operating system's secure generator. `PBKDF2` without options uses Postman's crypto-js 3 defaults (SHA1, 1 iteration); it costs about 0.2 ms per iteration, so keep `iterations` in the thousands |
+| lodash 4 | `require('lodash')`, global `_` | both are lodash 4 |
+| moment 2 | `require('moment')` | English locale only |
+| uuid | `require('uuid')` | `uuid.v4()` (also `uuid()`), `v1`, `v3`, `v5`, `v6`, `v7`, `validate`, `version`; v4 uses the secure generator |
+| atob, btoa | `require('atob')`, `require('btoa')`, globals | Latin-1 base64 |
+| chai 4 | `require('chai')` | the real chai (`expect`, `assert`, `should`); `pm.expect` is Slinger's own chai-style implementation |
+| tv4 1.3 | `require('tv4')`, global `tv4` | JSON Schema draft 4 |
+| ajv 6 | `require('ajv')` | the same major version as Postman (`new Ajv({ logger: console })`, `validate`, `compile`) |
+| xml2js 0.6 | `require('xml2js')`, global `xml2Json(text)` | `xml2Json` uses Postman's options (`explicitArray: false`, `trim: true`); invalid XML gives `{}` |
+| csv-parse 4 | `require('csv-parse/lib/sync')` | synchronous API only; option names as in csv-parse 4 (`columns`, `skip_empty_lines`, `cast`, ...) |
+| cheerio 0.22 | `require('cheerio')`, global `cheerio` | Postman's (deprecated) version: `cheerio.load(html)` |
+| Web Crypto subset | global `crypto` | `crypto.getRandomValues(typedArray)` (at most 65536 bytes) and `crypto.randomUUID()` only; no `crypto.subtle` |
+
+Not available: `postman-collection` (too large for the sandbox), `require('crypto-js/sha256')`-style sub-paths (use
+`require('crypto-js').SHA256`), and Node modules (`fs`, `http`, `crypto`, `path`, `os`, `buffer`, `url`, `util`, ...). Requiring
+anything else fails with an error that lists the available modules.
 
 **Examples.**
 
@@ -224,9 +249,12 @@ pm.environment.set('authToken', body.token)
 
 ```js
 // Pre-request script on a folder: sign every request inside it.
+const CryptoJS = require('crypto-js')
 const ts = pm.variables.replaceIn('{{$timestamp}}')
+const signature = CryptoJS.HmacSHA256(pm.request.method + '\n' + ts, pm.environment.get('apiSecret')).toString(CryptoJS.enc.Base64)
 pm.request.headers.upsert({ key: 'X-Timestamp', value: ts })
-pm.request.headers.upsert({ key: 'X-Request-Id', value: pm.variables.replaceIn('{{$guid}}') })
+pm.request.headers.upsert({ key: 'X-Signature', value: signature })
+pm.request.headers.upsert({ key: 'X-Request-Id', value: require('uuid').v4() })
 ```
 
 **Sync and versions.** Request scripts are part of the request, so cloud sync, collection versions and Postman export carry
