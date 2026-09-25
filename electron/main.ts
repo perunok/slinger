@@ -194,17 +194,27 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
       body: { mode: 'formData', formData: [{ key: 'a', value: 'b', type: 'text', enabled: true }] }, workspaceId: ws.id })
     out.http = { status: http.status, body: http.bodyText }
     out.history = (await window.slinger.listHistory(ws.id)).length
-    try {
+    if (__KEYCHAIN__) try {
       const env = await window.slinger.ensureDefaultEnvironment(ws.id)
       const v = await window.slinger.upsertEnvironmentVariable({ environmentId: env.id, key: 'SMOKE_SECRET', value: 'hunter2', isSecret: true })
       out.secretListed = JSON.stringify(v).includes('hunter2')
       out.secretRevealed = (await window.slinger.revealEnvironmentVariable(v.id)) === 'hunter2'
       await window.slinger.deleteEnvironmentVariable(v.id)
     } catch (e) { out.keychainError = e.message }
+    try {
+      const s = await window.slinger.runScripts({ runId: 'run_smoke', sessionId: 'smoke', workspaceId: ws.id, environmentId: null, event: 'test',
+        scripts: [{ origin: 'request', name: 'smoke', code: "console.log('from sandbox'); pm.test('status is 200', () => pm.expect(pm.response.code).to.equal(200)); pm.test('require is blocked', () => { let blocked = false; try { require('fs') } catch (e) { blocked = true }; pm.expect(blocked).to.equal(true) })" }],
+        request: { method: 'GET', url: 'http://x', headers: [], body: { mode: 'none' } },
+        response: { code: 200, status: 'OK', headers: [], body: 'ok', responseTime: 1, size: 2 },
+        variables: {}, collectionVariables: {}, globals: {}, info: { requestName: 'smoke', requestId: null, iteration: 0, iterationCount: 1 } })
+      out.scripts = { passed: s.tests.filter((t) => t.status === 'passed').length, errors: s.errors.length, console: s.console.map((c) => c.message) }
+    } catch (e) { out.scriptsError = e.message }
     return out
   })()`
   try {
-    const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)))
+    // SLINGER_SMOKE_NO_KEYCHAIN skips the secret round trip (a locked desktop keyring would wait for an unlock prompt).
+    const keychain = process.env.SLINGER_SMOKE_NO_KEYCHAIN ? 'false' : 'true'
+    const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
     target.close()
     app.exit(0)
