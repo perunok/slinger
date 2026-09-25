@@ -29,6 +29,18 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.
 export const BODY_ENCODING_KEY = '_slinger_body_encoding'
 /** Largest body (characters, base64 included) stored in an example. Documents are synced as one item. */
 export const EXAMPLE_BODY_LIMIT = 5_000_000
+/** The main process refuses request documents above this (electron/repositories/common.ts MAX_DOCUMENT_JSON_BYTES). */
+export const REQUEST_DOCUMENT_LIMIT_BYTES = 10 * 1024 * 1024
+
+/** Throws a readable error when a request document (examples included) would exceed the storage limit. */
+export function assertDocumentFits(documentJson: string): void {
+  const bytes = new TextEncoder().encode(documentJson).length
+  if (bytes > REQUEST_DOCUMENT_LIMIT_BYTES) {
+    throw new Error(
+      `The request with its saved examples would take ${formatBytes(bytes)}, above the ${formatBytes(REQUEST_DOCUMENT_LIMIT_BYTES)} a request can hold. Delete or shorten some examples first.`,
+    )
+  }
+}
 
 export type PreviewLanguage = 'json' | 'xml' | 'html' | 'text' | 'javascript'
 

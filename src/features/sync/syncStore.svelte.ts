@@ -277,8 +277,9 @@ export class SyncStore {
     if (acc.environments || acc.truncated) await app.reloadEnvironments()
     for (const [tabId, notice] of planNotices(facts(), affected, originals, (id) => app.requestById(id))) {
       const tab = tabsStore.find(tabId)
-      // An example tab only cares about its own example: other edits to the request were merged in.
-      if (tab && !(tab.example && tab.example.remote === 'same' && notice.kind === 'changed')) tab.remoteNotice = notice
+      // An example tab only cares about its own example: other edits to the request were merged in, and
+      // an example deleted in the cloud has its own banner in the example view (remote === 'gone').
+      if (tab && !(tab.example && tab.example.remote !== 'changed' && notice.kind === 'changed')) tab.remoteNotice = notice
     }
   }
 

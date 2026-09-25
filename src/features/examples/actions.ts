@@ -7,6 +7,7 @@ import type { ApiRequest, HttpResponseData } from '../../../shared/types'
 import { expandedStore } from '../../app/expanded.svelte'
 import { app } from '../../app/state.svelte'
 import {
+  assertDocumentFits,
   blankExample,
   duplicateExample,
   exampleFromResponse,
@@ -38,6 +39,7 @@ export async function mutateExamples(requestId: string, fn: (list: unknown[]) =>
   let request = requireRequest(requestId)
   for (let attempt = 0; ; attempt++) {
     const documentJson = updateExamples(request.documentJson, fn)
+    assertDocumentFits(documentJson)
     try {
       const updated = await api().updateRequest({
         requestId: request.id,

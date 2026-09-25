@@ -40,7 +40,7 @@
 {#if tabsStore.pendingClose}
   <Dialog title="Unsaved changes" onclose={cancel} size="sm" {busy}>
     <p class="text-sm">
-      {dirty.length === 1 ? `“${dirty[0]?.title}” has` : `${dirty.length} requests have`} unsaved changes. Closing will discard them.
+      {dirty.length === 1 ? `“${dirty[0]?.title}” has` : `${dirty.length} tabs have`} unsaved changes. Closing will discard them.
     </p>
     {#if dirty.length > 1}
       <ul class="mt-2 list-disc pl-5 text-sm text-muted">

@@ -7,8 +7,15 @@ import { serverKeyOf, tabsStore, type RequestTab } from '../requests/tabs.svelte
 /** Discard the unsaved edits and load the cloud version. */
 export function reloadFromCloud(tab: RequestTab): void {
   const server = tab.requestId ? app.requestById(tab.requestId) : undefined
-  if (server) tab.loadFrom(server)
   tab.remoteNotice = null
+  if (server && tab.example) {
+    // An example tab reloads its own example; if the cloud deleted it there is nothing left to show.
+    const found = locateExample(readExamples(server.documentJson), tab.example)
+    if (found) tab.loadExample(server, found.index)
+    else tabsStore.closeNow([tab.id])
+    return
+  }
+  if (server) tab.loadFrom(server)
 }
 
 /** Keep the unsaved edits: rebase the tab on the current stored version so the next Save overwrites it on purpose. */

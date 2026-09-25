@@ -69,7 +69,7 @@
     {/if}
   </div>
   <TabNoticeBanner {tab} />
-  {#if ex.remote === 'gone'}
+  {#if ex.remote === 'gone' && tab.remoteNotice?.kind !== 'deleted'}
     <div role="status" class="flex items-center gap-2 border-b border-warning bg-warning-soft px-3 py-1.5 text-xs" data-testid="example-gone">
       <span class="text-warning"><Icon name="alert" size={14} /></span>
       This example was deleted elsewhere. Your edits are kept here; saving adds it back.

@@ -6,6 +6,8 @@ import { createMockBackend } from '../dev/mockBackend'
 import {
   BODY_ENCODING_KEY,
   EXAMPLE_BODY_LIMIT,
+  REQUEST_DOCUMENT_LIMIT_BYTES,
+  assertDocumentFits,
   blankExample,
   duplicateExample,
   exampleFingerprint,
@@ -263,6 +265,12 @@ describe('creating examples', () => {
     expect(bin.example[BODY_ENCODING_KEY]).toBeUndefined()
     expect(bin.note).toMatch(/too large/)
     expect(() => exampleFromResponse({ name: 'n', request, response: { ...base, bodyText: big, bodyBase64: null, bodyByteLength: big.length } })).toThrow(/too large/)
+  })
+
+  it('refuses a request document (examples included) above the storage limit with a readable message', () => {
+    expect(() => assertDocumentFits('x'.repeat(REQUEST_DOCUMENT_LIMIT_BYTES))).not.toThrow()
+    // Counted in UTF-8 bytes, like the main process: 2 bytes per "é".
+    expect(() => assertDocumentFits('é'.repeat(REQUEST_DOCUMENT_LIMIT_BYTES / 2 + 1))).toThrow(/Delete or shorten some examples/)
   })
 
   it('makes blank examples and duplicates', () => {

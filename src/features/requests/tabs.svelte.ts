@@ -10,6 +10,7 @@ import type { ApiRequest, HttpResponseData } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import {
+  assertDocumentFits,
   exampleFingerprint,
   locateExample,
   locatorFor,
@@ -107,6 +108,7 @@ export class RequestTab {
     if (this.example) {
       const found = locateExample(readExamples(request.documentJson), this.example)
       if (found) this.loadExample(request, found.index)
+      else this.example = { ...this.example, remote: 'gone' }
       return
     }
     this.requestId = request.id
@@ -438,6 +440,7 @@ class TabsStore {
           next[index] = serialized
           return next
         })
+        assertDocumentFits(documentJson)
         try {
           const updated = await api().updateRequest({
             requestId: server.id,
