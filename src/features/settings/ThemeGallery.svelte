@@ -76,14 +76,14 @@
       <div class="col-span-1 grid content-center gap-2 text-xs sm:col-span-3">
         <label class="flex items-center gap-2">
           <Icon name="sun" size={14} class="shrink-0 text-muted" />
-          <span class="w-28 shrink-0 text-muted">When the OS is light</span>
+          <span class="w-36 shrink-0 whitespace-nowrap text-muted">When the OS is light</span>
           <select class="min-w-0 flex-1 sm:max-w-56" value={settings.systemLight} onchange={(e) => settings.setSystemTheme('light', e.currentTarget.value)}>
             {#each lights as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
           </select>
         </label>
         <label class="flex items-center gap-2">
           <Icon name="moon" size={14} class="shrink-0 text-muted" />
-          <span class="w-28 shrink-0 text-muted">When the OS is dark</span>
+          <span class="w-36 shrink-0 whitespace-nowrap text-muted">When the OS is dark</span>
           <select class="min-w-0 flex-1 sm:max-w-56" value={settings.systemDark} onchange={(e) => settings.setSystemTheme('dark', e.currentTarget.value)}>
             {#each darks as t (t.id)}<option value={t.id}>{t.label}</option>{/each}
           </select>

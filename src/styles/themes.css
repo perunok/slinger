@@ -750,8 +750,8 @@
   --text-faint: #6e7681;
   --accent: #4493f8;
   --accent-fg: #000204;
-  --accent-soft: #1a304d;
-  --accent-text: #4a99ff;
+  --accent-soft: #182b44;
+  --accent-text: #4493f8;
   --focus-ring: #4493f8;
   --selection: #18355a;
   --danger: #f85149;
@@ -801,8 +801,8 @@
   --text-faint: #8c95c0;
   --accent: #bd93f9;
   --accent-fg: #0f0f14;
-  --accent-soft: #4c4365;
-  --accent-text: #caa7ff;
+  --accent-soft: #463f5d;
+  --accent-text: #c59ffe;
   --focus-ring: #bd93f9;
   --selection: #564872;
   --danger: #ff7973;
@@ -852,8 +852,8 @@
   --text-faint: #8b96ab;
   --accent: #88c0d0;
   --accent-fg: #121418;
-  --accent-soft: #445663;
-  --accent-text: #98d0e0;
+  --accent-soft: #40505d;
+  --accent-text: #91cada;
   --focus-ring: #88c0d0;
   --selection: #485e6a;
   --danger: #f9959c;
@@ -903,8 +903,8 @@
   --text-faint: #a89984;
   --accent: #fe8019;
   --accent-fg: #0d0e0f;
-  --accent-soft: #5b3d24;
-  --accent-text: #fe9652;
+  --accent-soft: #533a25;
+  --accent-text: #fe9148;
   --focus-ring: #fe8019;
   --selection: #6a411e;
   --danger: #ff7965;
@@ -954,7 +954,7 @@
   --text-faint: #7f849c;
   --accent: #cba6f7;
   --accent-fg: #0b0b11;
-  --accent-soft: #483f5e;
+  --accent-soft: #413956;
   --accent-text: #cba6f7;
   --focus-ring: #cba6f7;
   --selection: #55486c;
@@ -1005,8 +1005,8 @@
   --text-faint: #838ba7;
   --accent: #ca9ee6;
   --accent-fg: #12141b;
-  --accent-soft: #554d6c;
-  --accent-text: #e1b4fe;
+  --accent-soft: #4f4966;
+  --accent-text: #daaef7;
   --focus-ring: #ca9ee6;
   --selection: #605376;
   --danger: #fe999a;
@@ -1056,8 +1056,8 @@
   --text-faint: #737aa2;
   --accent: #7aa2f7;
   --accent-fg: #0a0a0d;
-  --accent-soft: #313b58;
-  --accent-text: #7da5fa;
+  --accent-soft: #2d3650;
+  --accent-text: #7aa2f7;
   --focus-ring: #7aa2f7;
   --selection: #384668;
   --danger: #f7768e;
@@ -1107,8 +1107,8 @@
   --text-faint: #7f848e;
   --accent: #61afef;
   --accent-fg: #0f1113;
-  --accent-soft: #364b61;
-  --accent-text: #72bfff;
+  --accent-soft: #334659;
+  --accent-text: #6bb9f9;
   --focus-ring: #61afef;
   --selection: #37546e;
   --danger: #f8828a;
@@ -1158,7 +1158,7 @@
   --text-faint: #a09d89;
   --accent: #66d9ef;
   --accent-fg: #0d0e0d;
-  --accent-soft: #365253;
+  --accent-soft: #344b4b;
   --accent-text: #66d9ef;
   --focus-ring: #66d9ef;
   --selection: #365e64;
@@ -1209,7 +1209,7 @@
   --text-faint: #6e6a86;
   --accent: #c4a7e7;
   --accent-fg: #0b0a10;
-  --accent-soft: #473e5a;
+  --accent-soft: #403953;
   --accent-text: #c4a7e7;
   --focus-ring: #c4a7e7;
   --selection: #534866;
@@ -1260,7 +1260,7 @@
   --text-faint: #707a8c;
   --accent: #ffcc66;
   --accent-fg: #0e1016;
-  --accent-soft: #595042;
+  --accent-soft: #504a40;
   --accent-text: #ffcc66;
   --focus-ring: #ffcc66;
   --selection: #5e533f;
@@ -1311,7 +1311,7 @@
   --text-faint: #636a76;
   --accent: #e6b450;
   --accent-fg: #050609;
-  --accent-soft: #413725;
+  --accent-soft: #383122;
   --accent-text: #e6b450;
   --focus-ring: #e6b450;
   --selection: #554628;
@@ -1362,8 +1362,8 @@
   --text-faint: #859289;
   --accent: #a7c080;
   --accent-fg: #101315;
-  --accent-soft: #4a564c;
-  --accent-text: #b7d08f;
+  --accent-soft: #455149;
+  --accent-text: #b0ca89;
   --focus-ring: #a7c080;
   --selection: #4b5747;
   --danger: #fe9495;
@@ -1413,8 +1413,8 @@
   --text-faint: #8a8980;
   --accent: #7e9cd8;
   --accent-fg: #0a0a0d;
-  --accent-soft: #363d52;
-  --accent-text: #8aa9e5;
+  --accent-soft: #32384b;
+  --accent-text: #84a2df;
   --focus-ring: #7e9cd8;
   --selection: #39445d;
   --danger: #ef717f;
@@ -1464,8 +1464,8 @@
   --text-faint: #8e88ab;
   --accent: #ff7edb;
   --accent-fg: #0d0c13;
-  --accent-soft: #5a395d;
-  --accent-text: #fe8cdd;
+  --accent-soft: #513556;
+  --accent-text: #ff7edb;
   --focus-ring: #ff7edb;
   --selection: #6b3c67;
   --danger: #fe7373;
@@ -1515,8 +1515,8 @@
   --text-faint: #7c8893;
   --accent: #6699cc;
   --accent-fg: #0a1114;
-  --accent-soft: #2d4558;
-  --accent-text: #81b5ea;
+  --accent-soft: #2a4152;
+  --accent-text: #7bafe3;
   --focus-ring: #6699cc;
   --selection: #324c63;
   --danger: #fe767b;
