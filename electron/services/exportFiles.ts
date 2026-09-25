@@ -5,7 +5,21 @@ import { basename, join, resolve } from 'node:path'
 import { invalidInput, ioError } from '../lib/errors'
 
 export const MAX_EXPORT_BYTES = 256 * 1024 * 1024
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
+/** ext4/most Linux file systems allow 255 BYTES per name (an Amharic letter is 3 bytes); Windows/macOS 255 UTF-16 units. */
+export const MAX_FILE_NAME_BYTES = 255
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i
+
+/**
+ * Cuts `name` to MAX_FILE_NAME_BYTES of UTF-8 on a code-point boundary, keeping a (compound) extension such
+ * as ".slinger_collection.json" intact.
+ */
+function fitFileName(name: string): string {
+  if (Buffer.byteLength(name, 'utf8') <= MAX_FILE_NAME_BYTES) return name
+  const ext = /(\.[A-Za-z0-9_-]{1,32}){1,3}$/.exec(name)?.[0] ?? ''
+  const chars = Array.from(name.slice(0, name.length - ext.length))
+  while (chars.length > 0 && Buffer.byteLength(chars.join('') + ext, 'utf8') > MAX_FILE_NAME_BYTES) chars.pop()
+  return chars.join('').replace(/[. ]+$/, '') + ext
+}
 
 /**
  * Reduces an arbitrary string to a safe single path segment: takes the part after the last
@@ -20,7 +34,9 @@ export function sanitizeFileName(fileName: unknown): string {
     last
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u001f\u007f]/g, '')
-      .replace(/[<>:"|?*]/g, '_')
+      // Lone surrogates cannot be encoded in a file name; bidi controls can disguise an extension.
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+      .replace(/[<>:"|?*\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '_')
       .trim()
       .replace(/[. ]+$/, ''),
   )
@@ -28,7 +44,9 @@ export function sanitizeFileName(fileName: unknown): string {
     throw invalidInput('export file name is not valid')
   }
   if (WINDOWS_RESERVED.test(cleaned)) throw invalidInput('export file name is reserved')
-  return cleaned.slice(0, 200)
+  const fitted = fitFileName(cleaned)
+  if (!fitted || /^\.+$/.test(fitted)) throw invalidInput('export file name is not valid')
+  return fitted
 }
 
 export function defaultExportDirectory(): string {

@@ -110,6 +110,29 @@ describe('export files', () => {
     }
   })
 
+  it('keeps Slinger export names (spaces, case, Unicode) and caps them at 255 UTF-8 bytes without splitting characters', () => {
+    for (const name of ['enat uat v1.2.0.slinger_collection.json', 'የኢትዮጵያ ኤፒአይ v0.1.0.slinger_collection.json', 'Café 🚀 Prod.slinger_environment.json', 'CON_.slinger_environment.json']) {
+      expect(sanitizeFileName(name)).toBe(name)
+    }
+    const long = sanitizeFileName(`${'ሀ'.repeat(200)} v1.2.0.slinger_collection.json`)
+    expect(Buffer.byteLength(long, 'utf8')).toBeLessThanOrEqual(255)
+    expect(long.endsWith('.slinger_collection.json')).toBe(true)
+    expect(long.startsWith('ሀሀ')).toBe(true)
+    expect(Buffer.from(long, 'utf8').toString('utf8')).toBe(long)
+    const emoji = sanitizeFileName(`${'🚀'.repeat(100)}.json`)
+    expect(Buffer.byteLength(emoji, 'utf8')).toBeLessThanOrEqual(255)
+    expect(emoji).toMatch(/^(🚀)+\.json$/u)
+    // Lone surrogates are dropped, bidi overrides cannot disguise the extension.
+    expect(sanitizeFileName('a\uD800b.json')).toBe('ab.json')
+    expect(sanitizeFileName('invoice\u202Enosj.exe')).toBe('invoice_nosj.exe')
+  })
+
+  it('writes names with spaces and Unicode into the export directory', async () => {
+    await env.api.writeExportFile('የኢትዮጵያ ኤፒአይ v1.0.0.slinger_collection.json', '{}')
+    expect(readFileSync(join(env.exportDir, 'የኢትዮጵያ ኤፒአይ v1.0.0.slinger_collection.json'), 'utf8')).toBe('{}')
+    await env.api.writeExportFile(`${'ሀ'.repeat(200)}.slinger_environment.json`, '{}')
+  })
+
   it('defaultExportPath and writeExportFile stay inside the export directory', async () => {
     const path = await env.api.defaultExportPath('../../../tmp/evil.json')
     expect(path).toBe(join(env.exportDir, 'evil.json'))
