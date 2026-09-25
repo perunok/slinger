@@ -840,7 +840,7 @@ describe('markdown docs', () => {
     // The request's own docs ({content, type} object) render in its Docs tab.
     await item(/^Docs API/).click()
     await item(/List users$/).click()
-    await page.getByRole('tab', { name: 'Docs' }).click()
+    await page.getByRole('tab', { name: 'Docs', exact: true }).click()
     await page.getByTestId('markdown-view').getByRole('heading', { name: /Users endpoint/ }).waitFor()
     await capture(ctx.app, join(SHOTS, 'markdown-docs.png'))
     expect(ctx.problems.filter((p) => /Content Security Policy|img-src/i.test(p))).toEqual([])
