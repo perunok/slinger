@@ -2,7 +2,8 @@
  * Runs a chain of Postman-style scripts in QuickJS (WebAssembly). Every script gets a FRESH QuickJS runtime and
  * context with a memory limit, a stack limit and an interrupt handler (deadline + cancellation). The context
  * has only the ECMAScript built-ins plus what prelude.js defines: no module loader, no std/os modules, no
- * filesystem, network, process, environment or timers. The single host function exchanges JSON text only.
+ * filesystem, network, process, environment or timers. The host functions exchange JSON text only; pm.sendRequest is a
+ * host operation whose result is delivered back asynchronously (see the wait loop in runOne).
  *
  * Pure apart from QuickJS: no Electron, no database. The caller supplies secret reads and cancellation
  * (worker.ts in the app, the test harness in vitest).

@@ -1160,7 +1160,7 @@
     } else {
       throw new Error(
         "require('" + name + "') is not supported in Slinger scripts. Available modules: " + SUPPORTED +
-          '. Node modules (fs, http, crypto, ...), files and the network are not available.',
+          '. Node modules (fs, http, crypto, ...) and files are not available; use pm.sendRequest for HTTP requests.',
       )
     }
     loaded[name] = exported

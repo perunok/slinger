@@ -223,17 +223,18 @@ the keychain; coalesced to the last write per key). The IPC call resolves with a
   on the host side.
 - The context has only ECMAScript built-ins plus `prelude.js`: no module loader (code is evaluated as global code, `import` is a
   syntax error, dynamic `import()` fails), no `std`/`os` modules, no `process`, `fetch`, timers (stubs that throw), file system
-  or network. `pm.sendRequest` throws "not supported". `require` only knows the built-in libraries below; any other name
+  or network. `pm.sendRequest` is a host operation (below): the sandbox itself still has no network. `require` only knows the built-in libraries below; any other name
   (`fs`, `crypto`, `path`, `node:*`, ...) throws an error listing the available modules.
 - The **only bridge** is one host function `__slinger_call(op, argsJson) -> resultJson`: strings in, strings out. The prelude
   captures it in a closure and deletes the global before user code runs. The host (`scripts/host.ts`) parses with its own
   `JSON.parse`, type-checks and size-limits every argument, and keeps scopes in `Map`s, so script-chosen keys like `__proto__`
   never touch a host prototype (results are built with `Object.fromEntries`).
-- **Limits** (per script, `scripts/job.ts` `DEFAULT_LIMITS`): wall-clock deadline (default 5 s, 100 ms-60 s, from Settings) and
-  cancellation enforced by the QuickJS interrupt handler; 64 MB QuickJS heap; 256 KB QuickJS stack (below V8's native stack, so deep
+- **Limits** (per script, `scripts/job.ts` `DEFAULT_LIMITS`): execution deadline (default 5 s, 100 ms-60 s, from Settings; time
+  spent waiting for `pm.sendRequest` is excluded, `wallClockMs` caps the total) and cancellation enforced by the QuickJS
+  interrupt handler; 64 MB QuickJS heap; 256 KB QuickJS stack (below V8's native stack, so deep
   recursion is a catchable `InternalError: stack overflow` instead of aborting the WASM module); console 1000 entries / 512 KB per
   run, 10 000 characters per message (flooding stops calling the host); 1000 tests; 1 MB per variable value; response body 8 MB.
-  A watchdog in the executor terminates a worker that does not answer within the sum of the deadlines + 5 s; a cancelled worker that
+  A watchdog in the executor terminates a worker that does not answer within the sum of the per-script wall-clock caps + 5 s; a cancelled worker that
   does not stop within 2 s is terminated too. A runtime that was interrupted (timeout, cancel) is never freed: freeing one that was
   interrupted inside a promise job trips a QuickJS assertion that aborts the whole WASM module, so the module instance is dropped
   instead (V8 reclaims its memory) and the next script loads a fresh one (about 10 ms). Any other engine failure does the same.
@@ -252,8 +253,29 @@ the keychain; coalesced to the last write per key). The IPC call resolves with a
   Cost (worker bundle +~0.9 MB of text; first `require` in a script, warm engine, median): crypto-js 16 ms, lodash 20, moment
   12, uuid 2, chai 10, tv4 4, ajv 23, xml2js 18, csv-parse 9, cheerio 51, all ten 151 ms; all ten fit in a 4 MB heap, so the
   64 MB limit is unchanged. `postman-collection` is not bundled (1.2 MB, mostly iconv-lite and faker; ~100 ms to load).
+- **`pm.sendRequest` (asynchronous host operation).** The prelude reduces the request (URL string or object, `header` list/map,
+  `body` modes raw/urlencoded/formdata/file/graphql, `auth`, `timeout`) to plain data and calls host op `http.send`, which returns
+  an id; the prelude keeps a Promise plus the optional callback under that id. `RunHost.buildSendCall` validates and size-limits it,
+  resolves `{{variables}}` with the same `replaceIn` as `pm.variables.replaceIn` (Postman resolves variables in sendRequest too;
+  secret reads go through the normal by-name path, so they are remembered for redaction), rejects non-http(s) schemes, counts it
+  against `maxSendRequests` (20 per run) and caps its timeout (`sendRequestTimeoutMs`: the request's own timeout, default 60 s,
+  max 120 s). It then calls `deps.sendHttp(call, signal)`: in the app the worker posts `{type:'http', id, call}` on a second
+  `MessagePort` (`httpPort`, separate from the synchronous secret port so `receiveMessageOnPort` can never take an HTTP reply) and
+  main (`WorkerExecutor`) runs `io.sendHttp`, which is `ScriptService` -> `services/scriptHttp.ts` -> `executeHttp` with the
+  session's `FileGrants` (the same engine as a normal send: body building, auth, redirects, decoding) but **not**
+  `HttpService.execute`, so nothing is written to history. The outcome (`{ok, response}` with the body capped at 8 MB, or
+  `{ok:false, error}`, never a rejection) plus a console line redacted with `ScriptService.redact` and `user:pass@` masking goes
+  back as `{id, outcome}`. `sandbox.ts` `runOne` is async: after the script's code and pending jobs, while the host has sends in
+  flight it awaits the next result (polling cancellation every 50 ms), calls the prelude's settle function (a handle taken after
+  the prelude ran and deleted from the global scope) with the result JSON, which settles the promise and calls the callback, and
+  runs pending jobs again; the script ends when no sends are pending. Time spent awaiting is added back to the CPU deadline;
+  `wallClockMs` (script limit + 20 × send timeout, at most 5 min) bounds the whole script. When a script ends for any reason, its
+  in-flight sends are aborted (per-send `AbortController`s; `http-abort` across threads; `WorkerExecutor` aborts all of a job's
+  sends when the job finishes). A script with top-level `await` is a SyntaxError as global code, so it is re-evaluated as the body
+  of an async function (on the same first line, so line numbers hold) and its promise's rejection is reported as the script error.
 - **Cancellation.** `cancelHttpRequest(runId)` also cancels a script run with that id: main sets a flag in a `SharedArrayBuffer`
-  that the interrupt handler polls; a script waiting for a keychain read is woken up. The renderer uses one run id for a whole send
+  that the interrupt handler polls; a script waiting for a keychain read is woken up; the run's `pm.sendRequest` calls are aborted
+  (their signal includes the run's) and their results are not delivered to callbacks. The renderer uses one run id for a whole send
   (pre-request -> HTTP -> tests), so Cancel and the runner's Stop work at every stage.
 
 **Secrets (policy: Postman parity, read by explicit name only).** The job carries no secret values. When a script calls
@@ -269,11 +291,16 @@ Script console output travels only in the IPC result; main never logs script out
 to apply environment operations for a read-only workspace as a second line of defence; the 0005 triggers refuse
 `setCollectionScripts` / `setFolderScripts`; the renderer disables the script editors.
 
-**Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, network, OS, Electron or
+**Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
 Node APIs, other scripts' state, or the host process (escape, prototype pollution, resource exhaustion: CPU, memory, stack,
-output). Out of scope / accepted: a script can read non-secret environment values and any secret it names, and can put them into
-the request it is attached to (that is what pre-request scripts are for; users should review untrusted collections); it can write
-the active environment of a writable workspace. The bundled libraries are third-party code but get no more trust than a
+output), or to use `pm.sendRequest` beyond its contract (non-http schemes, ungranted local files, more than 20 requests,
+unbounded waiting, history pollution). Out of scope / accepted: a script can read non-secret environment values and any secret it
+names, and can put them into the request it is attached to (that is what pre-request scripts are for; users should review
+untrusted collections); it can write the active environment of a writable workspace. **Since `pm.sendRequest`, a script from an
+imported collection can make the app send HTTP(S) requests to any host, including localhost and the local network, carrying any
+value it can read** (as in Postman): the requests leave from the user's machine with the app's network identity (no cookies are
+shared: `fetch` in main keeps no cookie jar). They are bounded (20 per run, capped timeouts, wall-clock cap, 8 MB body per
+response into a 64 MB heap), visible (one Console line each), cancellable, and cannot read local files the user did not pick. The bundled libraries are third-party code but get no more trust than a
 script: they are evaluated inside the same QuickJS context, after the host functions were hidden. QuickJS itself is the trust anchor for memory safety (WASM confines a QuickJS bug
 to the worker's linear memory; the worker can be terminated).
 
@@ -424,6 +451,6 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: OAuth 2.0 request auth, `pm.sendRequest` and `require` of Node modules or `postman-collection` in scripts,
+Not present in the code: OAuth 2.0 request auth, `require` of Node modules or `postman-collection` in scripts,
 cloud sync of collection/folder scripts and collection/folder documentation, loading remote images in docs, persisted collection
 variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.

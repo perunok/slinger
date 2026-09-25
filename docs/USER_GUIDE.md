@@ -157,12 +157,57 @@ request tests. Because pre-request scripts run before `{{templates}}` are resolv
   anyway (the remaining pre-request scripts then still run).
 - A test script that throws counts as a failed test; the other test scripts still run.
 - Each script has a time limit (default 5 s, Settings), 64 MB of memory and a limited stack; **Cancel** (and **Stop** in the
-  runner) interrupts a running script. Console output is capped at 1000 messages / 512 KB per send, a single message at 10 000
+  runner) interrupts a running script and aborts its `pm.sendRequest` calls. Time spent waiting for `pm.sendRequest` responses does
+  not count against the time limit (see below). Console output is capped at 1000 messages / 512 KB per send, a single message at 10 000
   characters, and 1000 tests; a response body larger than 8 MB is cut to its first 8 MB for `pm.response`.
-- Scripts run in an isolated sandbox (see "Security" below): **no network** (`pm.sendRequest` is not supported and throws a clear
-  error), **no files**, no Node modules and no `import` (only Postman's built-in libraries, see below), no timers
+- Scripts run in an isolated sandbox (see "Security" below): no network of their own (only `pm.sendRequest`, which the app runs
+  for them, see below), **no files**, no Node modules and no `import` (only Postman's built-in libraries, see below), no timers
   (`setTimeout`/`setInterval` throw), no access to the app or the operating system. Promises work (async `pm.test` callbacks are
-  awaited while the script runs).
+  awaited while the script runs), and so does top-level `await`.
+
+**`pm.sendRequest`.** Scripts can send HTTP requests of their own, typically a collection-level pre-request script that fetches
+a token:
+
+```js
+pm.sendRequest({
+  url: pm.environment.get('authUrl'),
+  method: 'POST',
+  header: { 'Content-Type': 'application/json' },
+  body: { mode: 'raw', raw: JSON.stringify({ client_id: pm.environment.get('clientId'), client_secret: pm.environment.get('clientSecret') }) },
+}, (err, res) => {
+  if (err) throw err
+  pm.environment.set('token', res.json().access_token)
+})
+// or: const res = await pm.sendRequest(pm.environment.get('baseUrl') + '/health')
+```
+
+- **Forms.** `pm.sendRequest(url, callback)` or `pm.sendRequest(request, callback)`; it also returns a promise
+  (`await pm.sendRequest(...)`, `.then()`, `Promise.all([...])`). The callback gets `(err, res)`: `err` is an `Error` only for
+  network failures, timeouts and invalid requests (then `res` is `null` and the promise rejects); an HTTP 4xx/5xx is a normal
+  response (`err` is `null`), as in Postman.
+- **Request object.** `url` (string, or Postman's URL object), `method` (default `GET`), `header` (a list of `{ key, value }`, an
+  object `{ name: value }` or `"Name: value"` lines; `disabled` entries are skipped), `body` with `mode` `raw` (`raw`, and
+  `options.raw.language` `json`/`xml`/`html`/`javascript`/`text` sets the Content-Type unless you set one), `urlencoded`
+  (`[{ key, value }]`), `formdata` (`[{ key, value }]`, or `{ key, type: 'file', src: '/path' }`), `file` (`{ src }`) or
+  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic` or `apikey`, in Postman's format), and `timeout` in ms.
+- **Response.** `res.code`, `res.status` (reason text), `res.headers.get/has/toObject/each`, `res.text()`, `res.json()`,
+  `res.responseTime`, `res.responseSize`, `res.cookies.get/has/toObject`, and the same `pm.expect(res).to.have.status(200)`
+  assertions as `pm.response`. Bodies over 8 MB are cut to the first 8 MB.
+- **Variables.** Like Postman, `{{name}}` in the URL, headers, auth and body of a `pm.sendRequest` is resolved from the current
+  variables (local, environment, collection, globals), so `url: '{{baseUrl}}/token'` works; `pm.environment.get(...)` and
+  `pm.variables.replaceIn(...)` work too. An unresolved `{{name}}` fails that request with an error naming it.
+- **When it runs.** Requests from one script run in parallel. The script (and so the main request) waits until every
+  `pm.sendRequest` it started has answered and its callbacks ran, including requests started from callbacks.
+- **Limits.** At most 20 `pm.sendRequest` calls per script run; only `http`/`https` URLs (a URL without a scheme gets `http://`,
+  like the main request). Each call times out after the request's own timeout (its Settings tab), 60 s by default, at most 120 s;
+  a call's `timeout` can only lower that. Waiting for responses does not use the script's time limit, but a script is stopped if it
+  is still waiting after its time limit + 20 × the request timeout (5 minutes at most). Redirects are followed.
+- **Files.** A form-data file field or a `file` body may only use files you chose with the file picker in this session (like the
+  request editor); any other path is refused.
+- **Privacy.** These requests are **not recorded in history** (as in Postman). Each one adds one line to the Console,
+  `→ POST https://auth.example.com/token 200 (123 ms)`, with secret values replaced by `{{name}}` and `user:password@` masked;
+  headers and bodies are never logged.
+- `pm.sendRequest` also works in read-only (viewer) synced workspaces: it changes nothing locally.
 
 **Variables.**
 
@@ -213,7 +258,8 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `btoa`, `atob` | Latin-1 base64 |
 | `require(name)`, `_`, `CryptoJS`, `tv4`, `cheerio`, `xml2Json`, `crypto.getRandomValues/randomUUID` | built-in libraries, see below |
 | Legacy: `postman.setEnvironmentVariable/getEnvironmentVariable/clearEnvironmentVariable`, `postman.setGlobalVariable/...`, `tests["name"] = bool`, `responseBody`, `responseCode`, `responseHeaders`, `responseTime`, `environment`, `globals`, `request`, `iteration` | old Postman sandbox names |
-| `pm.sendRequest`, `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` of other modules | not supported: throw an error |
+| `pm.sendRequest(request[, callback])` | see above; returns a promise |
+| `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` of other modules | not supported: throw an error |
 
 **Built-in libraries.** The libraries Postman's sandbox provides are available through `require()` (and Postman's globals), so
 scripts like `const CryptoJS = require('crypto-js')` run unchanged. They run inside the same sandbox as your script, are loaded
@@ -266,8 +312,8 @@ them yet** (the cloud protocol has no field for them): they stay on the device w
 **Security.** Scripts from an imported collection are code from someone else. Slinger never runs them in the app window: they run
 in the main process, in a separate worker thread, inside QuickJS (a JavaScript engine compiled to WebAssembly) with nothing but
 the `pm` API described here. Details are in [ARCHITECTURE.md](ARCHITECTURE.md#scripts-sandbox). Scripts still act with your data:
-a script can read the environment and send what it reads in the request it is attached to, so review scripts from sources you do
-not trust before sending their requests.
+a script can read the environment and send what it reads in the request it is attached to, **or to any http(s) address with
+`pm.sendRequest`** (exactly as in Postman), so review scripts from sources you do not trust before sending their requests.
 
 ## History
 
