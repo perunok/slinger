@@ -71,6 +71,28 @@ describe('document round trip', () => {
     expect(dataRows(d.params).map((p) => [p.key, p.enabled])).toEqual([['a', true], ['off', false]])
   })
 
+  it('keeps the descriptions of enabled Postman query params on import', () => {
+    const d = parseDocument({
+      ...base,
+      documentJson: JSON.stringify({
+        url: 'http://x/y?a=1&b=2',
+        source: { request: { url: { query: [
+          { key: 'a', value: '1', description: 'first' },
+          { key: 'b', value: '2' },
+          { key: 'off', value: '3', disabled: true, description: 'not sent' },
+        ] } } },
+      }),
+    })
+    expect(dataRows(d.params).map((p) => [p.key, p.enabled, p.description])).toEqual([
+      ['a', true, 'first'],
+      ['b', true, ''],
+      ['off', false, 'not sent'],
+    ])
+    // Once saved, the draft's own list is authoritative.
+    const again = parseDocument({ ...base, documentJson: serializeDraft(d).documentJson })
+    expect(dataRows(again.params).map((p) => p.description)).toEqual(['first', '', 'not sent'])
+  })
+
   it('does not flag trailing blank rows as changes', () => {
     const d = parseDocument({ ...base, documentJson: '{}' })
     const f = draftFingerprint(d)

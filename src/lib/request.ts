@@ -227,15 +227,21 @@ const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'bo
 
 function seedParams(doc: Json, url: string): KvRow[] {
   let prev: KvRow[] = rowsFromList(doc.params)
-  // Only imports (no `params` key at all) fall back to Postman's disabled query entries; once we
+  // Only imports (no `params` key at all) fall back to Postman's query entries; once we
   // have saved our own list — even an empty one — it is authoritative.
-  if (!Array.isArray(doc.params)) {
-    // Postman imports keep disabled query params only inside source.request.url.query.
-    const source = isObj(doc.source) && isObj(doc.source.request) && isObj(doc.source.request.url) ? doc.source.request.url : null
-    const q = source && Array.isArray(source.query) ? source.query : []
-    prev = rowsFromList(q.filter((p) => isObj(p) && p.disabled))
+  if (Array.isArray(doc.params)) return mergeParamsFromUrl(url, prev)
+  // Postman imports keep disabled query params (and every param's description) only inside source.request.url.query.
+  const source = isObj(doc.source) && isObj(doc.source.request) && isObj(doc.source.request.url) ? doc.source.request.url : null
+  const q = source && Array.isArray(source.query) ? source.query.filter(isObj) : []
+  prev = rowsFromList(q.filter((p) => p.disabled))
+  const rows = mergeParamsFromUrl(url, prev)
+  // Enabled params come from the URL; give each the description of the first same-named Postman entry.
+  const descriptions = new Map<string, string>()
+  for (const p of q) {
+    const text = p.disabled ? '' : descriptionText(p.description)
+    if (text && !descriptions.has(str(p.key))) descriptions.set(str(p.key), text)
   }
-  return mergeParamsFromUrl(url, prev)
+  return rows.map((r) => (r.enabled && !r.description && descriptions.has(r.key) ? { ...r, description: descriptions.get(r.key)! } : r))
 }
 
 export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url' | 'documentJson'>): RequestDraft {
