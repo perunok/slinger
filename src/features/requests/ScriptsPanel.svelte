@@ -13,12 +13,23 @@
   const prerequest = $derived(editorCode(events, 'prerequest'))
   const test = $derived(editorCode(events, 'test'))
 
+  /** Whether the stored document has a `scripts` key (imports always do; requests made here only once edited). */
+  function storedHasScriptsKey(): boolean {
+    const stored = app.requestById(tab.requestId)
+    if (!stored) return false
+    try {
+      return 'scripts' in JSON.parse(stored.documentJson)
+    } catch {
+      return false
+    }
+  }
+
   function onchange(listen: ScriptListen, code: string) {
     const next = withScript(tab.draft.extras.scripts, listen, code)
     if (next === tab.draft.extras.scripts) return
     const extras = { ...tab.draft.extras }
-    // No scripts at all: drop the key again unless the stored document had it (keeps the saved fingerprint).
-    if (next.length === 0 && tab.draft.extras.scripts === undefined) delete extras.scripts
+    // No scripts left: drop the key again unless the stored document had it, so clearing an edit is not "dirty".
+    if (next.length === 0 && !storedHasScriptsKey()) delete extras.scripts
     else extras.scripts = next
     tab.draft.extras = extras
   }
