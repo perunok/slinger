@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, IPC_EVENT_CHANNELS, type SlingerIpcApi } from '../shared/ipc-contract'
+import { IPC_CHANNELS, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import { parseMenuCommand, type MenuCommand } from '../shared/menu'
 import type { SyncEvent } from '../shared/types'
 import type { IpcEnvelope } from './ipc/envelope'
 
@@ -19,9 +20,21 @@ for (const channel of IPC_CHANNELS) {
 // Push channel (main -> renderer). Only a listener is exposed, never the raw ipcRenderer event.
 api.onSyncEvent = (listener: (event: SyncEvent) => void): (() => void) => {
   const handler = (_event: unknown, payload: unknown) => listener(payload as SyncEvent)
-  ipcRenderer.on(IPC_EVENT_CHANNELS[0], handler)
+  ipcRenderer.on(SYNC_EVENT_CHANNEL, handler)
   return () => {
-    ipcRenderer.removeListener(IPC_EVENT_CHANNELS[0], handler)
+    ipcRenderer.removeListener(SYNC_EVENT_CHANNEL, handler)
+  }
+}
+
+// Application-menu commands (main -> renderer). Anything that is not a known command name is dropped here.
+api.onMenuCommand = (listener: (command: MenuCommand) => void): (() => void) => {
+  const handler = (_event: unknown, payload: unknown) => {
+    const command = parseMenuCommand(payload)
+    if (command) listener(command)
+  }
+  ipcRenderer.on(MENU_COMMAND_CHANNEL, handler)
+  return () => {
+    ipcRenderer.removeListener(MENU_COMMAND_CHANNEL, handler)
   }
 }
 

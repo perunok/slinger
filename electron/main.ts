@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, nativeTheme, net, powerMonitor, protocol, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeTheme, net, powerMonitor, protocol, screen, session, shell } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
@@ -7,10 +7,12 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { IPC_EVENT_CHANNELS } from '../shared/ipc-contract'
+import { SYNC_EVENT_CHANNEL } from '../shared/ipc-contract'
+import type { MenuCommand } from '../shared/menu'
 import { openDatabase, type Db } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
+import { APP_NAME, buildAppMenuTemplate, deliverMenuCommand, nextZoomLevel, type ZoomDirection } from './lib/appMenu'
 import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
@@ -33,6 +35,9 @@ import { WorkerExecutor } from './scripts/executor'
 const APP_SCHEME = 'app'
 const APP_ORIGIN = `${APP_SCHEME}://slinger`
 const devServerUrl = process.env.SLINGER_DEV_SERVER_URL || null
+
+// Menu labels (About/Hide/Quit Slinger) and the profile directory use this name; package.json productName matches.
+app.setName(APP_NAME)
 
 // Tests and CI can point the app at a throwaway data directory.
 if (process.env.SLINGER_USER_DATA_DIR) app.setPath('userData', process.env.SLINGER_USER_DATA_DIR)
@@ -189,6 +194,10 @@ function createWindow(): BrowserWindow {
     windowState = { ...windowState, bounds: win.getNormalBounds(), maximized: win.isMaximized() }
     writeWindowState(windowStateFile(), windowState)
   })
+  // View > Zoom level from the last session (Chromium does not persist it across restarts).
+  win.webContents.on('did-finish-load', () => {
+    if (windowState.zoomLevel) win.webContents.setZoomLevel(windowState.zoomLevel)
+  })
   if (startupTiming) {
     win.webContents.once('did-finish-load', () => {
       timeMark('didFinishLoad')
@@ -229,6 +238,49 @@ function setWindowBackground(color: string): void {
   windowState = { ...windowState, backgroundColor: color }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(color)
   writeWindowState(windowStateFile(), windowState)
+}
+
+/** Forwards an application-menu command to the renderer: only the main window, only while it shows our own UI. */
+function sendMenuCommand(command: MenuCommand): void {
+  // macOS keeps the app running without a window: the menu brings one back (the command itself is dropped).
+  if (!deliverMenuCommand(mainWindow, command, isTrustedUrl) && BrowserWindow.getAllWindows().length === 0) openMainWindow()
+}
+
+function zoomMainWindow(direction: ZoomDirection): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  const level = nextZoomLevel(win.webContents.getZoomLevel(), direction)
+  win.webContents.setZoomLevel(level)
+  if (automatedWindow() || windowState.zoomLevel === level) return
+  windowState = { ...windowState, zoomLevel: level }
+  writeWindowState(windowStateFile(), windowState)
+}
+
+function installAppMenu(): void {
+  const template = buildAppMenuTemplate({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    devTools: process.env.SLINGER_DEVTOOLS === '1',
+    send: sendMenuCommand,
+    // Same allow-list as the renderer's openExternalUrl (http/https/mailto only).
+    openExternal: (url) => void shell.openExternal(assertExternalUrl(url)),
+    zoom: zoomMainWindow,
+  })
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  // Fallback for the native macOS About panel (the menu opens our own About dialog instead).
+  app.setAboutPanelOptions({ applicationName: APP_NAME, applicationVersion: app.getVersion(), website: 'https://github.com/perunok/slinger' })
+}
+
+function openMainWindow(): BrowserWindow {
+  const win = createWindow()
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
+  // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
+  win.on('focus', () => core?.sync.notifyFocus(true))
+  win.on('blur', () => core?.sync.notifyFocus(false))
+  return win
 }
 
 /** Headless self-check used by `SLINGER_SMOKE_TEST=1`: exercises preload + IPC + error transport. */
@@ -287,6 +339,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const result = await win.webContents.executeJavaScript(script.replaceAll('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
     // A library bundled into the script worker (require('crypto-js')) must give the same HMAC as Node.
     if (result?.scripts) result.scripts.hmacOk = result.scripts.hmac === createHmac('sha256', 'key').update('smoke').digest('base64')
+    // The application menu replaced Electron's default one: top-level labels, and About Slinger under Help
+    // (macOS: under the app menu).
+    const menu = Menu.getApplicationMenu()
+    const plain = (label: string) => label.replace(/&/g, '')
+    const top = menu?.items.map((i) => plain(i.label)) ?? []
+    const aboutHost = menu?.items.find((i) => plain(i.label) === (process.platform === 'darwin' ? APP_NAME : 'Help'))
+    if (result) result.menu = { top, about: !!aboutHost?.submenu?.items.some((i) => i.label === `About ${APP_NAME}`) }
     if (result?.sendRequest) result.sendRequest.ok = result.sendRequest.value === '200 smoke-ok' && result.sendRequest.notInHistory
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
     target.close()
@@ -320,7 +379,7 @@ if (!app.requestSingleInstanceLock()) {
         // Push channel to the trusted main window only; payloads are plain JSON.
         emit: (event) => {
           if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-            mainWindow.webContents.send(IPC_EVENT_CHANNELS[0], event)
+            mainWindow.webContents.send(SYNC_EVENT_CHANNEL, event)
           }
         },
         appVersion: app.getVersion(),
@@ -353,18 +412,15 @@ if (!app.requestSingleInstanceLock()) {
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
     hardenSession()
-    mainWindow = createWindow()
-    mainWindow.on('closed', () => (mainWindow = null))
-    // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
-    mainWindow.on('focus', () => core?.sync.notifyFocus(true))
-    mainWindow.on('blur', () => core?.sync.notifyFocus(false))
+    installAppMenu()
+    const win = openMainWindow()
     powerMonitor.on('resume', () => core?.sync.notifyResume())
     if (!process.env.SLINGER_SMOKE_TEST) core.sync.start()
     if (process.env.SLINGER_SMOKE_TEST) {
-      mainWindow.webContents.once('did-finish-load', () => void runSmokeTest(mainWindow!))
+      win.webContents.once('did-finish-load', () => void runSmokeTest(win))
     }
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+      if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
     })
   })
 

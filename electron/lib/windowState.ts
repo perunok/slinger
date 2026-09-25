@@ -30,6 +30,8 @@ export interface WindowState {
   maximized?: boolean
   /** Opaque `#rrggbb`. */
   backgroundColor?: string
+  /** Chromium zoom level set from View > Zoom (0 = 100 %). */
+  zoomLevel?: number
 }
 
 const int = z.number().int().min(-100_000).max(100_000)
@@ -105,6 +107,7 @@ export function readWindowState(file: string): WindowState {
   if (typeof o.maximized === 'boolean') out.maximized = o.maximized
   const bg = cssColorSchema.safeParse(o.backgroundColor)
   if (bg.success) out.backgroundColor = bg.data
+  if (typeof o.zoomLevel === 'number' && Number.isFinite(o.zoomLevel) && Math.abs(o.zoomLevel) <= 10) out.zoomLevel = o.zoomLevel
   return out
 }
 

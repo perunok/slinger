@@ -49,6 +49,7 @@ import type {
   UpsertEnvironmentVariableInput,
   Workspace,
 } from './types'
+import type { MenuCommand } from './menu'
 
 export interface SlingerIpcApi {
   // Workspaces
@@ -194,6 +195,8 @@ export interface SlingerIpcApi {
 
   /** Push channel (main -> renderer). Returns an unsubscribe function. Implemented in preload with ipcRenderer.on('sync:event'). */
   onSyncEvent(listener: (event: SyncEvent) => void): () => void
+  /** Push channel (main -> renderer): application-menu commands (shared/menu.ts). Returns an unsubscribe function. */
+  onMenuCommand(listener: (command: MenuCommand) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -286,10 +289,12 @@ export const IPC_CHANNELS = [
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command'] as const
+export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
+export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
 
-/** The invoke-only part of the API (everything except the push subscription), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent'>
+/** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand'>
 
 declare global {
   interface Window {

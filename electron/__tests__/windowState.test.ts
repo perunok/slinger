@@ -67,7 +67,7 @@ describe('window-state.json', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
   it('round-trips bounds, maximised and background colour', () => {
-    const state = { bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: true, backgroundColor: '#16181d' }
+    const state = { bounds: { x: 10, y: 20, width: 1200, height: 800 }, maximized: true, backgroundColor: '#16181d', zoomLevel: 1.5 }
     expect(writeWindowState(file, state)).toBe(true)
     expect(readWindowState(file)).toEqual(state)
   })
@@ -93,6 +93,10 @@ describe('window-state.json', () => {
     expect(readWindowState(file)).toEqual({ bounds: { x: 0, y: 0, width: 800, height: 600 } })
     writeFileSync(file, JSON.stringify({ bounds: { x: 0, y: 0, width: 0, height: 600 }, backgroundColor: 'rgb(1, 2, 3)' }))
     expect(readWindowState(file)).toEqual({ backgroundColor: '#010203' })
+    for (const zoomLevel of ['2', null, 99, -99]) {
+      writeFileSync(file, JSON.stringify({ zoomLevel }))
+      expect(readWindowState(file), String(zoomLevel)).toEqual({})
+    }
   })
 
   it('reports a failed write instead of throwing', () => {
