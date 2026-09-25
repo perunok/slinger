@@ -5,6 +5,7 @@ import { newId } from '../lib/ids'
 import { nowSeconds } from '../lib/text'
 import { descriptionFromPostman, requireWorkspace, toCollection, toFolder, toRequest } from '../repositories/common'
 import type { CollectionRow, FolderRow, RequestRow } from '../repositories/common'
+import { restoreVersionHistory } from './versionHistory'
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_DEPTH = 100
@@ -189,6 +190,8 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
       toFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(id) as FolderRow))
     const requests: ApiRequest[] = requestIds.map((id) =>
       toRequest(db.prepare('SELECT * FROM requests WHERE id = ?').get(id) as RequestRow))
-    return { collection, folders, requests, scriptCount: out.scriptCount }
+    // Slinger exports carry the version history in `info._slinger`; a bad block is reported, never fatal.
+    const versionHistory = restoreVersionHistory(db, collectionId, info._slinger)
+    return { collection, folders, requests, scriptCount: out.scriptCount, ...(versionHistory ? { versionHistory } : {}) }
   })()
 }

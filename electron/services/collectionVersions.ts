@@ -37,7 +37,8 @@ interface VersionRow {
   created_at: number
 }
 
-const snapshotSchema = z.object({
+/** Stored snapshot shape; also validates snapshots arriving in an exported file (services/versionHistory.ts). */
+export const snapshotSchema = z.object({
   collectionName: z.string(),
   // Scripts (migration 0005) are optional: snapshots taken before them have none.
   collectionScriptsJson: z.string().nullish(),
