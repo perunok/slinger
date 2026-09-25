@@ -400,8 +400,10 @@ export interface RunScriptsInput {
   collectionVariables: ScriptVariables
   globals: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
-  /** Per-script time limit in ms (default 5000, max 60000). */
+  /** Per-script time limit in ms (default 5000, max 60000). Time waiting for pm.sendRequest does not count. */
   timeoutMs?: number
+  /** Default pm.sendRequest timeout in ms (the request's own timeout; default 60000, capped at 120000). */
+  sendRequestTimeoutMs?: number
   /** Pre-request only: keep running the remaining scripts after one fails (default false). */
   continueOnError?: boolean
 }

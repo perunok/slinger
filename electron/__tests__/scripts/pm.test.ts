@@ -188,8 +188,8 @@ describe('pm API (Postman-compatible cases)', () => {
     expect(r.request).toBeNull()
   })
 
-  it('pm.sendRequest, require and timers fail with a clear "not supported" error', async () => {
-    for (const code of [`pm.sendRequest('https://example.com', () => {})`, `require('postman-collection')`, `setTimeout(() => {}, 1)`]) {
+  it('require of unknown modules and timers fail with a clear "not supported" error', async () => {
+    for (const code of [`require('postman-collection')`, `setTimeout(() => {}, 1)`]) {
       const { errors } = await check(code)
       expect(errors).toHaveLength(1)
       expect(errors[0].kind).toBe('error')

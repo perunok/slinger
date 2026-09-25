@@ -6,9 +6,13 @@
  * main, [1] secret-reply flag) and a MessagePort for secret reads. A secret read is synchronous for the
  * script: post {id} on the port, block in Atomics.wait until main stored the reply, then take the reply with
  * receiveMessageOnPort. Secrets therefore stay in the main process until a script asks for one by name.
+ *
+ * pm.sendRequest uses a second MessagePort (`httpPort`), asynchronously: the worker posts {type:'http', id, call},
+ * main runs it with the app's HTTP engine and posts {id, outcome} back; {type:'http-abort', id} cancels one. A
+ * separate port keeps these replies from ever being mistaken for a secret reply by receiveMessageOnPort.
  */
 import { parentPort, receiveMessageOnPort, type MessagePort } from 'node:worker_threads'
-import type { ScriptJob } from './job'
+import type { ScriptJob, SendRequestCall, SendRequestOutcome } from './job'
 import { runScriptChain } from './sandbox'
 
 export interface WorkerJobMessage {
@@ -17,6 +21,13 @@ export interface WorkerJobMessage {
   job: ScriptJob
   control: SharedArrayBuffer
   port: MessagePort
+  httpPort: MessagePort
+}
+
+export type WorkerHttpMessage = { type: 'http'; id: number; call: SendRequestCall } | { type: 'http-abort'; id: number }
+export interface MainHttpReply {
+  id: number
+  outcome: SendRequestOutcome
 }
 
 export type WorkerReply =
@@ -39,6 +50,29 @@ function secretReader(control: Int32Array, port: MessagePort) {
   }
 }
 
+function httpSender(port: MessagePort) {
+  let seq = 0
+  const waiting = new Map<number, (outcome: SendRequestOutcome) => void>()
+  port.on('message', (m: MainHttpReply) => {
+    const resolve = waiting.get(m?.id)
+    if (!resolve) return
+    waiting.delete(m.id)
+    resolve(m.outcome)
+  })
+  return (call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome> =>
+    new Promise((resolve) => {
+      const id = ++seq
+      waiting.set(id, resolve)
+      port.postMessage({ type: 'http', id, call } satisfies WorkerHttpMessage)
+      signal.addEventListener('abort', () => {
+        if (waiting.delete(id)) {
+          port.postMessage({ type: 'http-abort', id } satisfies WorkerHttpMessage)
+          resolve({ ok: false, error: 'Request cancelled', logLine: `→ ${call.method} cancelled` })
+        }
+      }, { once: true })
+    })
+}
+
 if (parentPort) {
   const parent = parentPort
   parent.on('message', (msg: WorkerJobMessage) => {
@@ -47,13 +81,16 @@ if (parentPort) {
     void runScriptChain(msg.job, {
       readSecret: secretReader(control, msg.port),
       isCancelled: () => Atomics.load(control, 0) === 1,
+      sendHttp: httpSender(msg.httpPort),
     }).then(
       (result) => {
         msg.port.close()
+        msg.httpPort.close()
         parent.postMessage({ type: 'result', jobId: msg.jobId, result } satisfies WorkerReply)
       },
       (err: unknown) => {
         msg.port.close()
+        msg.httpPort.close()
         parent.postMessage({ type: 'failed', jobId: msg.jobId, message: err instanceof Error ? err.message : String(err) } satisfies WorkerReply)
       },
     )

@@ -184,6 +184,7 @@ const runScriptsInput = z.object({
     iterationCount: z.number().int().min(0),
   }),
   timeoutMs: z.number().int().min(1).max(60_000).optional(),
+  sendRequestTimeoutMs: z.number().int().min(1).max(10 * 60_000).optional(),
   continueOnError: z.boolean().optional(),
 })
 const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()

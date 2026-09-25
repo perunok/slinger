@@ -770,54 +770,198 @@
   // pm.response (test scripts)
   // -------------------------------------------------------------------------
 
-  var response
-  var RES = INIT.response
-  if (RES) {
-    if (RES.truncated) consoleObj.warn('The response body is larger than 8 MB; scripts see only the first 8 MB.')
-    var resHeaders = new PropertyList(RES.headers.map(function (h) { return { key: h.key, value: h.value } }), null, true)
-    var bodyText = RES.body === null ? '' : RES.body
-    response = {
+  // A response object (pm.response, and what pm.sendRequest hands to its callback / promise).
+  function makeResponse(R) {
+    var hdrs = new PropertyList(R.headers.map(function (h) { return { key: h.key, value: h.value } }), null, true)
+    var text = R.body === null || R.body === undefined ? '' : R.body
+    var res = {
       __slingerResponse: true,
-      code: RES.code,
-      status: RES.status,
-      responseTime: RES.responseTime,
-      responseSize: RES.size,
-      headers: resHeaders,
-      text: function () { return bodyText },
+      code: R.code,
+      status: R.status,
+      responseTime: R.responseTime,
+      responseSize: R.size,
+      headers: hdrs,
+      text: function () { return text },
       json: function () {
         try {
-          return parse(bodyText)
+          return parse(text)
         } catch (e) {
           var err = new Error('JSONError: ' + e.message + ' (the response body is not valid JSON)')
           err.name = 'JSONError'
           throw err
         }
       },
-      reason: function () { return RES.status },
-      size: function () { return { body: RES.size, header: 0, total: RES.size } },
-      toJSON: function () { return { code: RES.code, status: RES.status, headers: resHeaders.all(), responseTime: RES.responseTime, responseSize: RES.size } },
+      reason: function () { return R.status },
+      size: function () { return { body: R.size, header: 0, total: R.size } },
+      toJSON: function () { return { code: R.code, status: R.status, headers: hdrs.all(), responseTime: R.responseTime, responseSize: R.size } },
     }
-    defineProperty(response, '__slingerResponse', { enumerable: false })
-    defineProperty(response, 'to', { get: function () { return new Assertion(response) }, enumerable: false })
-    defineProperty(response, 'body', { get: function () { return bodyText }, enumerable: false })
+    defineProperty(res, '__slingerResponse', { enumerable: false })
+    defineProperty(res, 'to', { get: function () { return new Assertion(res) }, enumerable: false })
+    defineProperty(res, 'body', { get: function () { return text }, enumerable: false })
+    return res
   }
 
-  function cookieJar() {
+  var response
+  var RES = INIT.response
+  if (RES) {
+    if (RES.truncated) consoleObj.warn('The response body is larger than 8 MB; scripts see only the first 8 MB.')
+    response = makeResponse(RES)
+  }
+
+  function cookiesFrom(headers) {
     var list = []
-    if (RES) {
-      RES.headers.forEach(function (h) {
-        if (String(h.key).toLowerCase() !== 'set-cookie') return
-        var first = String(h.value).split(';')[0]
-        var i = first.indexOf('=')
-        if (i > 0) list.push({ name: first.slice(0, i).trim(), value: first.slice(i + 1).trim() })
-      })
-    }
+    headers.forEach(function (h) {
+      if (String(h.key).toLowerCase() !== 'set-cookie') return
+      var first = String(h.value).split(';')[0]
+      var i = first.indexOf('=')
+      if (i > 0) list.push({ name: first.slice(0, i).trim(), value: first.slice(i + 1).trim() })
+    })
     return {
       get: function (name) { var c = list.filter(function (x) { return x.name === name }); return c.length ? c[c.length - 1].value : undefined },
       has: function (name) { return list.some(function (x) { return x.name === name }) },
       toObject: function () { var o = {}; list.forEach(function (c) { o[c.name] = c.value }); return o },
       all: function () { return list.slice() },
     }
+  }
+  function cookieJar() {
+    return cookiesFrom(RES ? RES.headers : [])
+  }
+
+  // -------------------------------------------------------------------------
+  // pm.sendRequest: the request runs in the host (the app's HTTP engine); this side only reduces the request to
+  // plain data and delivers the result to the callback / promise when the host settles it.
+  // -------------------------------------------------------------------------
+
+  function plainKvs(v, what) {
+    if (v === undefined || v === null) return []
+    if (v instanceof PropertyList) return v.all()
+    if (typeof v === 'string') return v.split(/\r?\n/).filter(function (l) { return l.trim() !== '' }).map(toKv)
+    if (isArray(v)) return v.map(toKv)
+    if (typeof v === 'object') {
+      return keysOf(v).map(function (k) {
+        var x = v[k]
+        return { key: k, value: x === undefined || x === null ? '' : typeof x === 'string' ? x : typeof x === 'object' ? stringify(x) : String(x) }
+      })
+    }
+    throw new TypeError('pm.sendRequest: ' + what + ' must be a list of { key, value } or an object')
+  }
+
+  function urlText(u) {
+    if (typeof u === 'string') return u
+    if (u === undefined || u === null) return ''
+    if (typeof u === 'object' && !isArray(u)) {
+      if (typeof u.raw === 'string') return u.raw
+      if (u.host !== undefined) {
+        var out = u.protocol ? String(u.protocol).replace(/:?\/*$/, '') + '://' : ''
+        out += isArray(u.host) ? u.host.join('.') : String(u.host)
+        if (u.port) out += ':' + u.port
+        if (u.path !== undefined) {
+          var p = isArray(u.path) ? u.path.join('/') : String(u.path)
+          if (p) out += (p.charAt(0) === '/' ? '' : '/') + p
+        }
+        var q = plainKvs(u.query, 'url.query').filter(function (i) { return !i.disabled })
+        if (q.length) out += '?' + q.map(function (i) { return i.key + (i.value === '' ? '' : '=' + i.value) }).join('&')
+        return out
+      }
+    }
+    return String(u)
+  }
+
+  function authSpec(a) {
+    if (a === undefined || a === null) return null
+    if (typeof a !== 'object') throw new TypeError('pm.sendRequest: auth must be an object like { type: "bearer", bearer: [...] }')
+    var type = String(a.type || 'noauth').toLowerCase()
+    var raw = a[type] !== undefined ? a[type] : a[a.type]
+    var values = {}
+    if (isArray(raw)) raw.forEach(function (i) { if (i && i.key !== undefined) values[String(i.key)] = i.value })
+    else if (raw && typeof raw === 'object') keysOf(raw).forEach(function (k) { values[k] = raw[k] })
+    return { type: type, values: values }
+  }
+
+  function bodySpec(b) {
+    if (b === undefined || b === null) return null
+    if (typeof b === 'string') return { mode: 'raw', raw: b }
+    if (typeof b !== 'object') throw new TypeError('pm.sendRequest: body must be an object like { mode: "raw", raw: "..." }')
+    var mode = b.mode === undefined ? (b.raw !== undefined ? 'raw' : 'none') : String(b.mode)
+    var out = { mode: mode }
+    if (b.disabled) out.disabled = true
+    if (mode === 'raw') {
+      out.raw = typeof b.raw === 'string' ? b.raw : b.raw === undefined || b.raw === null ? '' : stringify(b.raw)
+      var lang = b.options && b.options.raw && b.options.raw.language
+      if (typeof lang === 'string') out.language = lang
+    } else if (mode === 'urlencoded') {
+      out.urlencoded = plainKvs(b.urlencoded, 'body.urlencoded')
+    } else if (mode === 'formdata') {
+      var fd = b.formdata instanceof PropertyList ? b.formdata.all() : b.formdata
+      if (fd && typeof fd === 'object' && !isArray(fd)) fd = plainKvs(fd, 'body.formdata')
+      out.formdata = (fd || []).map(function (f) {
+        if (!f || typeof f !== 'object') throw new TypeError('pm.sendRequest: body.formdata entries must be objects like { key, value }')
+        var src = isArray(f.src) ? f.src[0] : f.src
+        var item = { key: String(f.key === undefined ? '' : f.key), type: f.type === 'file' ? 'file' : 'text' }
+        if (item.type === 'file') item.src = src === undefined || src === null ? '' : String(src)
+        else item.value = f.value === undefined || f.value === null ? '' : typeof f.value === 'string' ? f.value : stringify(f.value)
+        if (f.disabled) item.disabled = true
+        return item
+      })
+    } else if (mode === 'file') {
+      var file = b.file
+      out.file = file && typeof file === 'object' ? String(file.src === undefined ? '' : file.src) : String(file === undefined ? '' : file)
+    } else if (mode === 'graphql') {
+      var g = b.graphql || {}
+      out.graphql = { query: String(g.query === undefined ? '' : g.query), variables: g.variables === undefined ? null : g.variables }
+    }
+    return out
+  }
+
+  function sendSpec(req) {
+    if (typeof req === 'string') return { url: req, method: 'GET' }
+    if (!req || typeof req !== 'object') throw new TypeError('pm.sendRequest expects a URL string or a request object like { url, method, header, body }')
+    var spec = {
+      url: urlText(req.url),
+      method: req.method === undefined || req.method === null ? 'GET' : String(req.method),
+      headers: plainKvs(req.header !== undefined ? req.header : req.headers, 'header'),
+    }
+    var body = bodySpec(req.body)
+    if (body) spec.body = body
+    var auth = authSpec(req.auth)
+    if (auth) spec.auth = auth
+    if (typeof req.timeout === 'number') spec.timeout = req.timeout
+    return spec
+  }
+
+  var sendWaiters = Object.create(null)
+  function sendRequest(req, callback) {
+    if (callback !== undefined && callback !== null && typeof callback !== 'function') throw new TypeError('pm.sendRequest: the callback must be a function')
+    var id = host('http.send', [sendSpec(req)])
+    var resolveSend
+    var rejectSend
+    var promise = new Promise(function (resolve, reject) {
+      resolveSend = resolve
+      rejectSend = reject
+    })
+    if (callback) promise.catch(function () {})
+    sendWaiters[id] = function (out) {
+      var err = null
+      var res = null
+      if (out.ok) {
+        res = makeResponse(out.response)
+        res.cookies = cookiesFrom(out.response.headers)
+        if (out.response.truncated) consoleObj.warn('pm.sendRequest: the response body is larger than 8 MB; the script sees only the first 8 MB.')
+        resolveSend(res)
+      } else {
+        err = new Error(out.error)
+        rejectSend(err)
+      }
+      if (callback) callback(err, res)
+    }
+    return promise
+  }
+  // Taken by the host right after the prelude runs and deleted from the global scope.
+  G.__slinger_settle = function (id, json) {
+    var deliver = sendWaiters[id]
+    if (!deliver) return
+    delete sendWaiters[id]
+    deliver(parse(json))
   }
 
   // -------------------------------------------------------------------------
@@ -945,7 +1089,7 @@
     request: request,
     test: test,
     expect: expect,
-    sendRequest: unsupported('pm.sendRequest', 'scripts cannot make network requests'),
+    sendRequest: sendRequest,
     visualizer: { set: unsupported('pm.visualizer') },
     execution: { setNextRequest: unsupported('pm.execution.setNextRequest'), skipRequest: unsupported('pm.execution.skipRequest') },
   }
@@ -1115,9 +1259,9 @@
     configurable: true,
   })
   if (response) {
-    G.responseBody = bodyText
+    G.responseBody = response.text()
     G.responseCode = { code: RES.code, name: RES.status, detail: RES.status }
-    G.responseHeaders = resHeaders.toObject()
+    G.responseHeaders = response.headers.toObject()
     G.responseTime = RES.responseTime
     G.responseCookies = cookieJar().all()
   }

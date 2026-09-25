@@ -55,7 +55,7 @@ export function createCore(deps: CoreDeps): Core {
   const history = new HistoryRepository(db)
   const fileGrants = new FileGrants()
   const environments = new EnvironmentRepository(db, secrets)
-  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor())
+  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants)
   const core: Core = {
     db,
     secrets,

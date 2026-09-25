@@ -3,6 +3,9 @@
  * Everything here is structured-clone safe plain data.
  */
 import type {
+  ResolvedAuth,
+  ResolvedBody,
+  RequestHeader,
   ScriptConsoleEntry,
   ScriptErrorInfo,
   ScriptEventName,
@@ -27,7 +30,22 @@ export interface ScriptLimits {
   /** Longest single console message (longer ones are cut). */
   messageChars: number
   tests: number
+  /** Most pm.sendRequest calls per script run. */
+  maxSendRequests: number
+  /** Default per-call pm.sendRequest timeout (a call's own `timeout` may lower it, never raise it). */
+  sendRequestTimeoutMs: number
+  /**
+   * Wall-clock cap of one script including time spent waiting for pm.sendRequest responses. `timeoutMs` counts
+   * only the time the script itself runs, so a slow token endpoint does not eat the script's CPU budget.
+   */
+  wallClockMs: number
 }
+
+/** Upper bound of ScriptLimits.wallClockMs. */
+export const MAX_SCRIPT_WALL_CLOCK_MS = 5 * 60_000
+/** Upper bound of ScriptLimits.sendRequestTimeoutMs. */
+export const MAX_SEND_REQUEST_TIMEOUT_MS = 120_000
+export const MAX_SEND_REQUESTS = 20
 
 export const DEFAULT_LIMITS: ScriptLimits = {
   timeoutMs: 5000,
@@ -39,6 +57,9 @@ export const DEFAULT_LIMITS: ScriptLimits = {
   consoleEntries: 1000,
   messageChars: 10_000,
   tests: 1000,
+  maxSendRequests: MAX_SEND_REQUESTS,
+  sendRequestTimeoutMs: 60_000,
+  wallClockMs: MAX_SCRIPT_WALL_CLOCK_MS,
 }
 
 /** Largest value a script may store in any variable scope (matches the environment variable limit). */
@@ -84,11 +105,40 @@ export interface ScriptJobResult {
   durationMs: number
 }
 
+/**
+ * One pm.sendRequest, already validated and with `{{variables}}` resolved by the sandbox host; the main process
+ * runs it with the regular HTTP engine (executeHttp) and the session's file grants.
+ */
+export interface SendRequestCall {
+  method: string
+  url: string
+  headers: RequestHeader[]
+  auth: ResolvedAuth
+  body: ResolvedBody
+  timeoutMs: number
+}
+
+/** What a script sees of a pm.sendRequest response (body already decoded and capped). */
+export interface SendRequestResponse {
+  code: number
+  status: string
+  headers: RequestHeader[]
+  body: string
+  truncated: boolean
+  responseTime: number
+  size: number
+}
+
+/** Never a rejection: network failures come back as `ok: false`. `logLine` is redacted for the script console. */
+export type SendRequestOutcome = { ok: true; response: SendRequestResponse; logLine: string } | { ok: false; error: string; logLine: string }
+
 /** What the runner needs from its host thread. */
 export interface ScriptRunnerDeps {
   /** Reads a secret variable's value (keychain, via the main thread). null when missing. */
   readSecret(variableId: string): string | null
   /** True once the run was cancelled (checked by the interrupt handler). */
   isCancelled(): boolean
+  /** Runs one pm.sendRequest (main process). Absent: pm.sendRequest reports that it is unavailable. */
+  sendHttp?(call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome>
   now?: () => number
 }

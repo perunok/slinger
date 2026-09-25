@@ -4,14 +4,16 @@
  * (inline.ts: same sandbox, same thread).
  */
 import { MessageChannel, Worker } from 'node:worker_threads'
-import type { ScriptJob, ScriptJobResult } from './job'
+import type { ScriptJob, ScriptJobResult, SendRequestCall, SendRequestOutcome } from './job'
 import { sourceLabel } from './host'
-import type { WorkerJobMessage, WorkerReply } from './worker'
+import type { MainHttpReply, WorkerHttpMessage, WorkerJobMessage, WorkerReply } from './worker'
 
 export interface ExecutorIo {
   /** Synchronous keychain read on the main thread; null when unavailable. */
   readSecret(variableId: string): string | null
   signal: AbortSignal
+  /** Runs one pm.sendRequest on the main thread (never rejects). Absent: pm.sendRequest is unavailable. */
+  sendHttp?(call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome>
 }
 
 export interface ScriptExecutor {
@@ -98,6 +100,9 @@ export class WorkerExecutor implements ScriptExecutor {
       const control = new SharedArrayBuffer(8)
       const ctl = new Int32Array(control)
       const { port1, port2 } = new MessageChannel()
+      const http = new MessageChannel()
+      // pm.sendRequest calls of this job in flight on this thread; all aborted when the job ends.
+      const sends = new Map<number, AbortController>()
       let done = false
       let grace: NodeJS.Timeout | null = null
 
@@ -111,6 +116,9 @@ export class WorkerExecutor implements ScriptExecutor {
         worker.off('error', onError)
         worker.off('exit', onExit)
         port1.close()
+        http.port1.close()
+        for (const c of sends.values()) c.abort()
+        sends.clear()
         if (!healthy) void worker.terminate()
         resolve({ result, healthy })
       }
@@ -127,8 +135,8 @@ export class WorkerExecutor implements ScriptExecutor {
         Atomics.notify(ctl, 1)
         grace ??= setTimeout(() => finish(failedResult(job, 'cancelled', 'Cancelled', Date.now() - started), false), this.cancelGraceMs)
       }
-      // Backstop only: each script has its own deadline enforced inside the worker.
-      const budget = job.scripts.length * (job.limits.timeoutMs + 1000) + 5000
+      // Backstop only: each script has its own deadlines (CPU and wall clock) enforced inside the worker.
+      const budget = job.scripts.length * (Math.max(job.limits.timeoutMs, job.limits.wallClockMs) + 1000) + 5000
       const watchdog = setTimeout(
         () => finish(failedResult(job, 'timeout', `Scripts did not finish within ${Math.round(budget / 1000)} s and were stopped`, Date.now() - started), false),
         budget,
@@ -146,13 +154,35 @@ export class WorkerExecutor implements ScriptExecutor {
         Atomics.store(ctl, 1, 1)
         Atomics.notify(ctl, 1)
       })
+      http.port1.on('message', (m: WorkerHttpMessage) => {
+        if (m?.type === 'http-abort') {
+          sends.get(m.id)?.abort()
+          sends.delete(m.id)
+          return
+        }
+        if (m?.type !== 'http' || typeof m.id !== 'number' || done) return
+        const reply = (outcome: SendRequestOutcome) => {
+          if (!sends.delete(m.id) || done) return
+          http.port1.postMessage({ id: m.id, outcome } satisfies MainHttpReply)
+        }
+        const controller = new AbortController()
+        sends.set(m.id, controller)
+        if (!io.sendHttp) {
+          reply({ ok: false, error: 'pm.sendRequest is not available here', logLine: '→ pm.sendRequest is not available here' })
+          return
+        }
+        io.sendHttp(m.call, AbortSignal.any([controller.signal, io.signal])).then(reply, (err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err)
+          reply({ ok: false, error: message, logLine: `→ ${m.call.method} failed: ${message}` })
+        })
+      })
       worker.on('message', onMessage)
       worker.on('error', onError)
       worker.on('exit', onExit)
       io.signal.addEventListener('abort', onAbort)
       if (io.signal.aborted) onAbort()
-      const msg: WorkerJobMessage = { type: 'run', jobId, job, control, port: port2 }
-      worker.postMessage(msg, [port2])
+      const msg: WorkerJobMessage = { type: 'run', jobId, job, control, port: port2, httpPort: http.port2 }
+      worker.postMessage(msg, [port2, http.port2])
     })
   }
 

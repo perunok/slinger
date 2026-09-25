@@ -102,6 +102,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       globals: sessionVars.globals(ctx.workspaceId),
       info: { requestName: draft.name, requestId: ctx.requestId ?? null, iteration: run.iteration, iterationCount: run.iterationCount },
       timeoutMs: settings.scriptTimeoutMs,
+      sendRequestTimeoutMs: draft.timeoutMs ?? undefined,
       continueOnError: settings.scriptContinueOnError,
       ...extra,
     })

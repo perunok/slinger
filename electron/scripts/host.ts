@@ -8,6 +8,8 @@
  */
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import type {
+  ResolvedAuth,
+  ResolvedBody,
   ScriptConsoleEntry,
   ScriptConsoleLevel,
   ScriptErrorInfo,
@@ -17,7 +19,16 @@ import type {
   ScriptTestResult,
   ScriptVariables,
 } from '../../shared/types'
-import { MAX_RESPONSE_BODY_CHARS, MAX_VALUE_CHARS, type EnvOp, type ScriptJob, type ScriptJobResult, type ScriptRunnerDeps } from './job'
+import {
+  MAX_RESPONSE_BODY_CHARS,
+  MAX_VALUE_CHARS,
+  type EnvOp,
+  type ScriptJob,
+  type ScriptJobResult,
+  type ScriptRunnerDeps,
+  type SendRequestCall,
+  type SendRequestOutcome,
+} from './job'
 
 /** Error raised for a bad call from a script; its message is shown to the script author. */
 export class ScriptApiError extends Error {}
@@ -149,6 +160,26 @@ export function checkRequestData(v: unknown): ScriptRequestData {
   return { method, url: str(o.url, 'url', 100_000), headers: kvList(o.headers ?? [], 'headers', 500), body }
 }
 
+/** Content-Type for a raw pm.sendRequest body by `options.raw.language`, when the script set no Content-Type. */
+const RAW_CONTENT_TYPES: Record<string, string> = {
+  json: 'application/json',
+  xml: 'application/xml',
+  html: 'text/html',
+  javascript: 'application/javascript',
+  text: 'text/plain',
+}
+const URL_SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//
+
+function obj(v: unknown, what: string): Record<string, unknown> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new ScriptApiError(`${what} must be an object`)
+  return v as Record<string, unknown>
+}
+
+export interface SettledSend {
+  id: number
+  outcome: SendRequestOutcome
+}
+
 export class RunHost {
   readonly job: ScriptJob
   private readonly deps: ScriptRunnerDeps
@@ -166,6 +197,12 @@ export class RunHost {
   private warnedNoEnv = false
   /** Label of the script currently running. */
   source = ''
+  // pm.sendRequest: calls started in this run, the ones in flight, and results not yet handed to the script.
+  private sendCount = 0
+  private sendSeq = 0
+  private readonly sends = new Map<number, AbortController>()
+  private readonly settled: SettledSend[] = []
+  private wake: (() => void) | null = null
 
   constructor(job: ScriptJob, deps: ScriptRunnerDeps) {
     this.job = job
@@ -306,6 +343,155 @@ export class RunHost {
     this.errors.push({ source: sourceLabel(this.job.event, script), kind, message: message.slice(0, 4000) })
   }
 
+  // ---- pm.sendRequest ------------------------------------------------------------
+
+  /**
+   * Validates a request object from the prelude (already reduced to plain data) and resolves `{{variables}}` in
+   * the URL, headers, auth and body, as Postman does for pm.sendRequest.
+   */
+  buildSendCall(v: unknown): SendRequestCall {
+    const o = obj(v, 'pm.sendRequest request')
+    const r = (text: string) => this.replaceIn(text)
+    const url = r(str(o.url, 'pm.sendRequest url', 100_000)).trim()
+    if (!url) throw new ScriptApiError('pm.sendRequest: the request URL is empty')
+    const scheme = URL_SCHEME_RE.exec(url)?.[1]?.toLowerCase()
+    if (scheme !== undefined && scheme !== 'http' && scheme !== 'https') {
+      throw new ScriptApiError(`pm.sendRequest: only http and https URLs can be requested (got "${scheme}:")`)
+    }
+    const method = r(str(o.method ?? 'GET', 'pm.sendRequest method', 32)).trim().toUpperCase() || 'GET'
+    if (!/^[A-Z][A-Z0-9_-]*$/.test(method)) throw new ScriptApiError(`pm.sendRequest: "${method}" is not a valid HTTP method`)
+    const headers = kvList(o.headers ?? [], 'pm.sendRequest headers', 500)
+      .filter((h) => !h.disabled && h.key.trim() !== '')
+      .map((h) => ({ key: r(h.key), value: r(h.value) }))
+
+    let auth: ResolvedAuth = { kind: 'none' }
+    if (o.auth !== undefined && o.auth !== null) {
+      const a = obj(o.auth, 'pm.sendRequest auth')
+      const type = typeof a.type === 'string' ? a.type.toLowerCase() : 'noauth'
+      const f = a.values && typeof a.values === 'object' ? (a.values as Record<string, unknown>) : {}
+      const val = (k: string) => r(envText(f[k]))
+      if (type === 'bearer') auth = { kind: 'bearer', bearer: { token: val('token') } }
+      else if (type === 'basic') auth = { kind: 'basic', basic: { username: val('username'), password: val('password') } }
+      else if (type === 'apikey') auth = { kind: 'apiKey', apiKey: { key: val('key'), value: val('value'), addTo: val('in') === 'query' ? 'query' : 'header' } }
+      else if (type !== 'noauth' && type !== 'none' && type !== 'inherit') {
+        throw new ScriptApiError(`pm.sendRequest: auth type "${type}" is not supported (use bearer, basic, apikey or set the header yourself)`)
+      }
+    }
+
+    let body: ResolvedBody = { mode: 'none' }
+    if (o.body !== undefined && o.body !== null) {
+      const b = obj(o.body, 'pm.sendRequest body')
+      const mode = typeof b.mode === 'string' ? b.mode : 'none'
+      if (b.disabled === true) body = { mode: 'none' }
+      else if (mode === 'raw') {
+        const language = typeof b.language === 'string' ? b.language.toLowerCase() : ''
+        const hasType = headers.some((h) => h.key.trim().toLowerCase() === 'content-type')
+        body = { mode: 'raw', raw: { content: r(str(envText(b.raw), 'pm.sendRequest body', 10 * 1024 * 1024)), contentType: hasType ? '' : (RAW_CONTENT_TYPES[language] ?? '') } }
+      } else if (mode === 'urlencoded') {
+        body = { mode: 'urlEncoded', urlEncoded: kvList(b.urlencoded ?? [], 'urlencoded fields', 1000).filter((f) => !f.disabled).map((f) => ({ key: r(f.key), value: r(f.value), enabled: true })) }
+      } else if (mode === 'formdata') {
+        if (!Array.isArray(b.formdata)) throw new ScriptApiError('pm.sendRequest: body.formdata must be a list')
+        if (b.formdata.length > 1000) throw new ScriptApiError('pm.sendRequest: too many form fields (1000 max)')
+        body = {
+          mode: 'formData',
+          formData: b.formdata
+            .map((item) => obj(item, 'form field'))
+            .filter((f) => f.disabled !== true)
+            .map((f) => {
+              const key = r(str(envText(f.key), 'form field key', 8192))
+              if (f.type === 'file') return { key, value: '', type: 'file' as const, filePath: str(f.src, `file for form field "${key}"`, 4096), enabled: true }
+              return { key, value: r(str(envText(f.value), 'form field value', 10 * 1024 * 1024)), type: 'text' as const, enabled: true }
+            }),
+        }
+      } else if (mode === 'file') {
+        body = { mode: 'binary', binaryFilePath: str(b.file, 'pm.sendRequest body.file.src', 4096) }
+      } else if (mode === 'graphql') {
+        const g = b.graphql && typeof b.graphql === 'object' ? (b.graphql as Record<string, unknown>) : {}
+        let variables: unknown = undefined
+        if (typeof g.variables === 'string') {
+          const text = r(g.variables).trim()
+          if (text) {
+            try {
+              variables = JSON.parse(text)
+            } catch {
+              throw new ScriptApiError('pm.sendRequest: body.graphql.variables is not valid JSON')
+            }
+          }
+        } else if (g.variables !== undefined && g.variables !== null) variables = g.variables
+        const content = JSON.stringify({ query: r(envText(g.query)), ...(variables === undefined ? {} : { variables }) })
+        body = { mode: 'raw', raw: { content, contentType: 'application/json' } }
+      } else if (mode !== 'none') throw new ScriptApiError(`pm.sendRequest: body mode "${mode}" is not supported`)
+    }
+
+    const max = this.job.limits.sendRequestTimeoutMs
+    const timeoutMs = typeof o.timeout === 'number' && Number.isFinite(o.timeout) && o.timeout > 0 ? Math.min(Math.round(o.timeout), max) : max
+    return { method, url, headers, auth, body, timeoutMs }
+  }
+
+  private startSend(spec: unknown): number {
+    const send = this.deps.sendHttp
+    if (!send) throw new ScriptApiError('pm.sendRequest is not available here')
+    const max = this.job.limits.maxSendRequests
+    if (this.sendCount >= max) throw new ScriptApiError(`pm.sendRequest: at most ${max} requests per script run`)
+    const call = this.buildSendCall(spec)
+    this.sendCount++
+    const id = ++this.sendSeq
+    const controller = new AbortController()
+    this.sends.set(id, controller)
+    const deliver = (outcome: SendRequestOutcome) => {
+      if (!this.sends.delete(id)) return // aborted by the host (script ended): nobody is waiting for it
+      this.settled.push({ id, outcome })
+      this.wake?.()
+    }
+    let started: Promise<SendRequestOutcome>
+    try {
+      started = send(call, controller.signal)
+    } catch (err) {
+      started = Promise.reject(err)
+    }
+    started.then(deliver, (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      deliver({ ok: false, error: message, logLine: `→ ${call.method} failed: ${message}` })
+    })
+    return id
+  }
+
+  /** pm.sendRequest calls whose response the script has not received yet. */
+  pendingSends(): number {
+    return this.sends.size + this.settled.length
+  }
+
+  /** The next finished pm.sendRequest (and logs its console line), or undefined. */
+  takeSettled(): SettledSend | undefined {
+    const next = this.settled.shift()
+    if (next) this.log('info', next.outcome.logLine)
+    return next
+  }
+
+  /** Resolves once a pm.sendRequest finished or after `ms`, whichever is first. */
+  waitForSettled(ms: number): Promise<void> {
+    if (this.settled.length > 0) return Promise.resolve()
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, Math.max(0, ms))
+      function done() {
+        clearTimeout(timer)
+        resolve()
+      }
+      this.wake = () => {
+        this.wake = null
+        done()
+      }
+    })
+  }
+
+  /** Aborts every pm.sendRequest still in flight and drops undelivered results (end of a script). */
+  abortSends(): void {
+    const all = [...this.sends.values()]
+    this.sends.clear()
+    this.settled.length = 0
+    for (const c of all) c.abort()
+  }
+
   // ---- dispatcher ------------------------------------------------------------
 
   /** Entry point for every call from the sandbox. `args` comes from the host's JSON.parse. */
@@ -385,6 +571,8 @@ export class RunHost {
       }
       case 'randomUUID':
         return randomUUID()
+      case 'http.send':
+        return this.startSend(a0)
       case 'request.set':
         this.request = checkRequestData(a0)
         this.requestChanged = true

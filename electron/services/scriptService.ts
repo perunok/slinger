@@ -10,8 +10,11 @@ import type { Db } from '../db/database'
 import { invalidInput, toErrorPayload } from '../lib/errors'
 import { requireEnvironment, requireWorkspace } from '../repositories/common'
 import type { EnvironmentRepository } from '../repositories/environments'
-import { DEFAULT_LIMITS, type EnvOp, type EnvSnapshot, type ScriptJob } from '../scripts/job'
+import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type EnvOp, type EnvSnapshot, type ScriptJob } from '../scripts/job'
 import type { ScriptExecutor } from '../scripts/executor'
+import type { FileAccess } from './fileGrants'
+import { DEFAULT_TIMEOUT_MS } from './httpExecutor'
+import { runScriptSendRequest } from './scriptHttp'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 const SESSION_TTL_MS = 60 * 60 * 1000
@@ -42,6 +45,8 @@ export class ScriptService {
     private readonly environments: EnvironmentRepository,
     private readonly executor: ScriptExecutor,
     private readonly now: () => number = Date.now,
+    /** File grants for pm.sendRequest form-data / file bodies (none: such bodies are refused). */
+    private readonly files?: FileAccess,
   ) {}
 
   private isReadOnly(workspaceId: string): boolean {
@@ -105,6 +110,10 @@ export class ScriptService {
     }
     const readOnly = this.isReadOnly(workspace.id)
     const timeoutMs = Math.min(Math.max(Math.round(input.timeoutMs ?? DEFAULT_LIMITS.timeoutMs), 100), 60_000)
+    // pm.sendRequest: per-call timeout = the request's own timeout (else the HTTP default), capped; the script's
+    // wall clock allows for its requests on top of its CPU budget, bounded.
+    const sendRequestTimeoutMs = Math.min(Math.max(Math.round(input.sendRequestTimeoutMs ?? DEFAULT_TIMEOUT_MS), 1000), MAX_SEND_REQUEST_TIMEOUT_MS)
+    const wallClockMs = Math.min(timeoutMs + DEFAULT_LIMITS.maxSendRequests * sendRequestTimeoutMs, MAX_SCRIPT_WALL_CLOCK_MS)
     const job: ScriptJob = {
       event: input.event,
       scripts: input.scripts,
@@ -117,7 +126,7 @@ export class ScriptService {
       environment,
       readOnly,
       continueOnError: input.continueOnError === true,
-      limits: { ...DEFAULT_LIMITS, timeoutMs },
+      limits: { ...DEFAULT_LIMITS, timeoutMs, sendRequestTimeoutMs, wallClockMs },
     }
 
     const controller = new AbortController()
@@ -126,6 +135,12 @@ export class ScriptService {
     try {
       result = await this.executor.run(job, {
         signal: controller.signal,
+        // pm.sendRequest: the app's HTTP engine, never recorded in history; cancelling the run aborts it.
+        sendHttp: (call, signal) =>
+          runScriptSendRequest(call, AbortSignal.any([signal, controller.signal]), {
+            files: this.files,
+            redact: (text) => this.redact(input.sessionId, text),
+          }),
         readSecret: (variableId) => {
           // Only secrets of the environment this run was given; anything else is refused.
           const key = secretIds.get(variableId)

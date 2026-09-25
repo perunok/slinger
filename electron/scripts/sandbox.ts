@@ -62,12 +62,19 @@ function describeError(ctx: QuickJSContext, handle: QuickJSHandle): string {
   return `Uncaught ${typeof dumped === 'string' ? dumped : JSON.stringify(dumped)}`
 }
 
-function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, deps: ScriptRunnerDeps): ScriptOutcome {
+/** How often a script waiting for pm.sendRequest responses checks for cancellation. */
+const WAIT_POLL_MS = 50
+
+async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, deps: ScriptRunnerDeps): Promise<ScriptOutcome> {
   const limits = host.job.limits
   const now = deps.now ?? Date.now
   const rt = qjs.newRuntime()
   let stop: 'timeout' | 'cancelled' | null = null
-  let deadline = now() + limits.timeoutMs
+  let wallTimeout = false
+  const started = now()
+  // CPU budget: time spent waiting for pm.sendRequest responses is added back (see the wait loop below).
+  let deadline = started + limits.timeoutMs
+  const wallDeadline = started + Math.max(limits.wallClockMs, limits.timeoutMs)
   let honourCancel = true
   let tainted = false
   const done = (ok: boolean, abort: boolean): ScriptOutcome => ({ ok, abort, tainted: tainted || stop !== null })
@@ -87,6 +94,7 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
     })
     const ctx = rt.newContext()
     let freeCtx = true
+    let settleFn: QuickJSHandle | null = null
     try {
       host.begin(script)
       const bridge = ctx.newFunction('__slinger_call', (opH, argsH) => {
@@ -122,6 +130,27 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
         return done(false, stop === 'cancelled')
       }
       prelude.value.dispose()
+      // The prelude's pm.sendRequest settle function: kept as a host handle only, removed from the global scope.
+      const sf = ctx.getProp(ctx.global, '__slinger_settle')
+      if (ctx.typeof(sf) === 'function') settleFn = sf
+      else sf.dispose()
+      const del = ctx.evalCode('delete globalThis.__slinger_settle', 'slinger-prelude.js', { type: 'global' })
+      if (del.error) del.error.dispose()
+      else del.value.dispose()
+
+      // Settle promise jobs (async tests, .then chains); the interrupt handler still applies.
+      const drain = (): string | null => {
+        for (let guard = 0; guard < 10_000 && rt.hasPendingJob(); guard++) {
+          const jobs = rt.executePendingJobs(-1)
+          if (jobs.error) {
+            const msg = describeError(jobs.error.context, jobs.error)
+            jobs.error.dispose()
+            return msg
+          }
+          if (jobs.value === 0) break
+        }
+        return null
+      }
 
       let failed: string | null = null
       const r = ctx.evalCode(script.code, `${script.origin}.js`, { type: 'global', strict: false })
@@ -130,17 +159,44 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
         r.error.dispose()
       } else {
         r.value.dispose()
-        // Settle promise jobs (async tests, .then chains); the interrupt handler still applies.
-        for (let guard = 0; guard < 10_000 && rt.hasPendingJob(); guard++) {
-          const jobs = rt.executePendingJobs(-1)
-          if (jobs.error) {
-            failed = describeError(jobs.error.context, jobs.error)
-            jobs.error.dispose()
+        failed = drain()
+        // pm.sendRequest: the script is finished only when every request it started was handed back to it (callback
+        // or promise) and the resulting jobs ran. Waiting does not count against the CPU budget, only the wall clock.
+        while (failed === null && stop === null && host.pendingSends() > 0) {
+          const next = host.takeSettled()
+          if (!next) {
+            if (deps.isCancelled()) {
+              stop = 'cancelled'
+              break
+            }
+            const remaining = wallDeadline - now()
+            if (remaining <= 0) {
+              stop = 'timeout'
+              wallTimeout = true
+              break
+            }
+            const waitStart = now()
+            await host.waitForSettled(Math.min(remaining, WAIT_POLL_MS))
+            deadline += now() - waitStart
+            continue
+          }
+          if (!settleFn) break
+          const { logLine: _log, ...payload } = next.outcome
+          const idH = ctx.newNumber(next.id)
+          const payloadH = ctx.newString(JSON.stringify(payload))
+          const res = ctx.callFunction(settleFn, ctx.undefined, idH, payloadH)
+          idH.dispose()
+          payloadH.dispose()
+          if (res.error) {
+            failed = describeError(ctx, res.error)
+            res.error.dispose()
             break
           }
-          if (jobs.value === 0) break
+          res.value.dispose()
+          failed = drain()
         }
       }
+      host.abortSends()
 
       // Flush `tests[...]` and unfinished async tests, with a small fresh budget even after a timeout.
       honourCancel = false
@@ -155,7 +211,13 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
         return done(false, true)
       }
       if (reason === 'timeout') {
-        host.error(script, 'timeout', `Script timed out after ${limits.timeoutMs} ms`)
+        host.error(
+          script,
+          'timeout',
+          wallTimeout
+            ? `Script did not finish within ${Math.round(Math.max(limits.wallClockMs, limits.timeoutMs) / 1000)} s (still waiting for pm.sendRequest responses)`
+            : `Script timed out after ${limits.timeoutMs} ms`,
+        )
         return done(false, false)
       }
       if (failed !== null) {
@@ -165,6 +227,14 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
       }
       return done(true, false)
     } finally {
+      host.abortSends()
+      if (settleFn && freeCtx && stop === null) {
+        try {
+          settleFn.dispose()
+        } catch {
+          tainted = true
+        }
+      }
       if (stop !== null) freeCtx = false
       if (freeCtx) {
         try {
@@ -207,7 +277,7 @@ export async function runScriptChain(job: ScriptJob, deps: ScriptRunnerDeps): Pr
     }
     let outcome: ScriptOutcome
     try {
-      outcome = runOne(qjs, host, script, deps)
+      outcome = await runOne(qjs, host, script, deps)
     } catch (err) {
       // A failure of the engine itself (not of the script).
       host.error(script, 'internal', `The script sandbox failed: ${err instanceof Error ? err.message : String(err)}`)
