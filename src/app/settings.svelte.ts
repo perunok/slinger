@@ -1,4 +1,5 @@
 import { loadAppearance, saveAppearance, type Appearance } from '../lib/appearance'
+import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
 
 const K = {
@@ -46,6 +47,8 @@ class Settings {
   /** Themes 'system' switches between. */
   systemLight = $state<string>(this.#appearance.systemLight)
   systemDark = $state<string>(this.#appearance.systemDark)
+  /** The animation shown while a request is in flight ('random' picks a character per send). */
+  loader = $state<LoaderSetting>(this.#appearance.loader)
   /** Whether the OS currently prefers a light colour scheme (only matters while theme is 'system'). */
   prefersLight = $state(false)
   fontSize = $state<number>(clampFont(Number(read(K.font)) || 13))
@@ -79,7 +82,7 @@ class Settings {
     root.style.setProperty('--font-size', `${this.fontSize}px`)
   }
   #save() {
-    const a: Appearance = { theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark }
+    const a: Appearance = { theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark, loader: this.loader }
     saveAppearance(storage, a)
     this.apply()
   }
@@ -100,6 +103,11 @@ class Settings {
     if (findTheme(id)?.scheme !== scheme) return
     if (scheme === 'light') this.systemLight = id
     else this.systemDark = id
+    this.#save()
+  }
+  setLoader(l: string) {
+    if (!isLoaderSetting(l)) return
+    this.loader = l
     this.#save()
   }
   setFontSize(n: number) {

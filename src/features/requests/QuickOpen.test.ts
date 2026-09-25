@@ -22,6 +22,7 @@ beforeEach(() => {
   localStorage.clear()
   settings.setTheme('dark')
   settings.setAccent('theme')
+  settings.setLoader('random')
 })
 
 describe('quick open commands', () => {
@@ -57,5 +58,20 @@ describe('quick open commands', () => {
     const hits = options()
     expect(hits.length).toBe(THEMES.filter((t) => t.scheme === 'light').length)
     expect(hits.every((o) => o?.includes('light theme'))).toBe(true)
+  })
+
+  it('switches the loading animation', async () => {
+    const { input, type, options } = setup()
+    await type('> loading')
+    expect(options()).toEqual([
+      'Loading animation: Random current a different character each send',
+      'Loading animation: Runner pixel runner',
+      'Loading animation: Shuttle space shuttle',
+      'Loading animation: Pebble slingshot pebble',
+      'Loading animation: Classic spinner no character',
+    ])
+    await type('> loading pebble')
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(settings.loader).toBe('pebble')
   })
 })

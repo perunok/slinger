@@ -85,6 +85,10 @@ export class RequestTab {
   scriptsView = $state<'prerequest' | 'test'>('prerequest')
 
   sending = $state(false)
+  /** When the current / last send started (Date.now()); drives the elapsed time and the loading animation. */
+  sendStartedAt = $state<number | null>(null)
+  /** How the last send ended: a response (< 400), an error (no response or 4xx/5xx), or cancelled. */
+  lastOutcome = $state<'success' | 'error' | 'cancelled' | null>(null)
   runId = $state<string | null>(null)
   cancelled = false
   response = $state.raw<ResponseView | null>(null)
@@ -652,6 +656,8 @@ class TabsStore {
     }
     if (tab.sending || !app.workspaceId) return null
     tab.sending = true
+    tab.sendStartedAt = Date.now()
+    tab.lastOutcome = null
     tab.cancelled = false
     tab.error = null
     tab.warnings = []
@@ -664,6 +670,7 @@ class TabsStore {
       onRunId: (id) => (tab.runId = id),
       wasCancelled: () => tab.cancelled,
     })
+    tab.lastOutcome = outcome.ok ? (outcome.response.status < 400 ? 'success' : 'error') : outcome.kind === 'cancelled' ? 'cancelled' : 'error'
     tab.sending = false
     tab.runId = null
     app.historyTick++

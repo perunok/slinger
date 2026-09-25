@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
+  import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
@@ -7,6 +8,8 @@
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
+  import LoadingCharacter from '../../components/ui/LoadingCharacter.svelte'
+  import { pickLoader, prefersReducedMotion, type LoaderKind } from '../../lib/loader'
   import { saveExport } from '../../lib/exportFile'
   import { errorInfo } from '../../lib/ipc'
   import { parseDocument } from '../../lib/request'
@@ -40,6 +43,8 @@
   let expanded = $state<Set<string>>(new Set())
   let confirmClose = $state(false)
   let exportError = $state<string | null>(null)
+  /** The small loading character over the progress bar (per run; none for the classic spinner or reduced motion). */
+  let loader = $state<{ kind: LoaderKind; startedAt: number; seq: number } | null>(null)
 
   const delayMs = $derived.by(() => {
     const n = Number(delayText)
@@ -57,6 +62,8 @@
     if (chosen.length === 0) return
     expanded = new Set()
     exportError = null
+    const kind = pickLoader(settings.loader)
+    loader = kind === 'classic' || prefersReducedMotion() ? null : { kind, startedAt: Date.now(), seq: (loader?.seq ?? 0) + 1 }
     // One script context for the whole run: pm.variables set by one request reach the next ones.
     const scriptRun = newScriptRun()
     const r = new CollectionRun(
@@ -194,8 +201,18 @@
   {:else}
     <div class="flex flex-col gap-3 text-sm">
       <div class="flex items-center gap-3">
-        <div class="h-2 flex-1 overflow-hidden rounded bg-raised" role="progressbar" aria-valuemin="0" aria-valuemax={view.rows.length} aria-valuenow={view.completed} aria-label="Run progress">
-          <div class="h-full bg-accent transition-all" style="width: {view.rows.length ? (view.completed / view.rows.length) * 100 : 0}%"></div>
+        <div class="relative flex-1 {loader ? 'mt-5' : ''}">
+          {#if running && loader && loader.kind !== 'classic'}
+            <!-- the character runs along the top of the progress bar -->
+            <div class="pointer-events-none absolute inset-x-0 bottom-full">
+              {#key loader.seq}
+                <LoadingCharacter kind={loader.kind} size="sm" startedAt={loader.startedAt} line={false} />
+              {/key}
+            </div>
+          {/if}
+          <div class="h-2 overflow-hidden rounded bg-raised" role="progressbar" aria-valuemin="0" aria-valuemax={view.rows.length} aria-valuenow={view.completed} aria-label="Run progress">
+            <div class="h-full bg-accent transition-all" style="width: {view.rows.length ? (view.completed / view.rows.length) * 100 : 0}%"></div>
+          </div>
         </div>
         <span class="shrink-0 text-xs text-muted" data-testid="progress">{view.completed}/{view.rows.length}</span>
       </div>

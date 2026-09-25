@@ -23,7 +23,7 @@ app/                        shell + cross-feature state
   state.svelte.ts           workspaces, collections/folders/requests, environments, active env
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope every template input reads
-  settings.svelte.ts        theme + accent (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error (localStorage)
+  settings.svelte.ts        theme + accent + sending animation (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error (localStorage)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
