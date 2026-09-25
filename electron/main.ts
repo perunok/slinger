@@ -121,8 +121,18 @@ function hardenSession(): void {
   }
 }
 
+// Linux has no bundle icon, so the window/taskbar icon must be set here (macOS/Windows use the packaged one).
+function linuxWindowIcon(): { icon?: string } {
+  if (process.platform !== 'linux') return {}
+  const icon = app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(app.getAppPath(), 'build', 'icons', '512x512.png')
+  return existsSync(icon) ? { icon } : {}
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
+    ...linuxWindowIcon(),
     width: 1400,
     height: 900,
     minWidth: 900,

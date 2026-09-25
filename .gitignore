@@ -3,6 +3,7 @@ node_modules/
 /build/*
 !/build/icon.png
 !/build/entitlements.mac.plist
+!/build/icons/
 *.log
 .env
 .DS_Store
