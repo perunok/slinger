@@ -114,6 +114,12 @@ describe('colours only come from themes.css', () => {
     expect(hits).toEqual([])
   })
 
+  it('native input and textarea placeholders use the faint text token (as CodeMirror placeholders do)', () => {
+    const rule = appCss.match(/input::placeholder,\s*textarea::placeholder\s*\{([^}]*)\}/)
+    expect(rule?.[1]).toMatch(/color:\s*var\(--text-faint\)/)
+    expect(rule?.[1]).toMatch(/opacity:\s*1/)
+  })
+
   it('every var(--token) used by the UI exists', () => {
     const unknown = new Set<string>()
     for (const src of Object.values(sources)) {

@@ -7,6 +7,24 @@ you opt into the (still minimal) cloud panel.
 
 Small, fast, yours: read [the Sling Manifesto](#manifesto).
 
+![Slinger main window: collection tree, request editor and a pretty-printed JSON response (Tokyo Night theme)](docs/screenshots/01-main.png)
+
+## Screenshots
+
+All shots are the real app with a fictional "Acme Store API" collection imported from Postman. Regenerate them with `npm run screenshots`.
+
+| | |
+|---|---|
+| ![Variables](docs/screenshots/02-variables.png)<br>**`{{variables}}`** highlighted everywhere, with a masked secret in the hover card | ![Environments](docs/screenshots/03-environments.png)<br>**Environments** with secrets kept in your OS keychain |
+| ![Form data](docs/screenshots/04-body-form-data.png)<br>**Every body type**, here multipart form-data with a file | ![HTML preview](docs/screenshots/05-html-preview.png)<br>**Response viewer** with a sandboxed HTML preview |
+| ![Scripts](docs/screenshots/06-scripts.png)<br>**Pre-request and test scripts** with `pm.*` autocomplete | ![Tests](docs/screenshots/07-tests.png)<br>**Test results** for every send |
+| ![Console](docs/screenshots/08-console.png)<br>**Console** with `pm.sendRequest` calls, secrets redacted | ![Runner](docs/screenshots/09-runner.png)<br>**Collection runner** with pass/fail counts |
+| ![Loading](docs/screenshots/10-loading.png)<br>**Loading characters**: a runner, shuttle or slingshot pebble while you wait | ![Versions](docs/screenshots/11-versions.png)<br>**Semver collection versions** with a side-by-side diff |
+| ![Import](docs/screenshots/12-import.png)<br>**Import** Slinger or Postman files, or just paste the JSON | ![Docs](docs/screenshots/13-docs.png)<br>**Markdown docs** for collections, folders and requests |
+| ![Themes](docs/screenshots/14-settings-themes.png)<br>**31 themes and 18 accent colours** | ![Command palette](docs/screenshots/15-command-palette.png)<br>**Ctrl+K** to jump anywhere or switch themes |
+| ![About](docs/screenshots/16-about.png)<br>**About Slinger** and the Sling Manifesto | ![Saved example](docs/screenshots/17-example.png)<br>**Saved examples**, kept from Postman |
+| ![Code snippet](docs/screenshots/18-code-snippet.png)<br>**Code snippets**: cURL, fetch, axios, Python, Go and more | ![History](docs/screenshots/19-history.png)<br>**History** of every request you send |
+
 ## Features
 
 - Workspaces, collections, nested folders and requests, with drag-and-drop ordering and a "Go to request" quick open.
@@ -62,6 +80,7 @@ renderer installs an in-memory mock backend (`src/dev/`), flagged "Mock backend"
 | `npm run electron:build` | Build, rebuild native modules for Electron, run `electron-builder` (output in `release/`) |
 | `npm test` | Vitest for main process (`electron/**`) then renderer (`src/**`) |
 | `npm run test:e2e` | Build, then drive the real Electron app with Playwright + Vitest (`e2e/`) |
+| `npm run screenshots` | Build, drive the real app against a local fictional API and write the README gallery to `docs/screenshots/` (fixtures in `docs/screenshots/fixtures/`; dev-only in-memory keychain, `SLINGER_INSECURE_TEST_KEYCHAIN=1`) |
 | `npm run typecheck` | `tsc` for main and e2e, `svelte-check` for the renderer |
 | `npm run rebuild:node` / `rebuild:electron` | Force the native `better-sqlite3` build for Node or Electron |
 

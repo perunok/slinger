@@ -166,7 +166,7 @@
         bind:value={filter}
         aria-label="Filter history"
         placeholder="Filter history"
-        class="h-7 w-full rounded border border-border bg-raised pl-7 pr-2 text-xs outline-none focus:ring-2 focus:ring-focus"
+        class="h-7 w-full rounded border border-border bg-raised !pl-7 pr-2 text-xs outline-none focus:ring-2 focus:ring-focus"
       />
     </div>
     <Button size="sm" variant="ghost" icon="trash" onclick={() => (confirmClear = true)} disabled={entries.length === 0}>Clear history</Button>

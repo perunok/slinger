@@ -1,0 +1,1590 @@
+{
+  "info": {
+    "_postman_id": "4b8f1c52-6a3e-4d7b-9e21-acme00000001",
+    "name": "Acme Store API",
+    "description": "# Acme Store API\n\nThe **Acme Store API** powers the Acme web shop and mobile apps: catalog, orders and customers.\nAll requests go to `{{baseUrl}}` and authenticate with a bearer token in `{{token}}`.\n\n## Endpoints\n\n| Area | Method | Path | Scope |\n|------|--------|------|-------|\n| Auth | `POST` | `/auth/token` | — |\n| Products | `GET` | `/products` | `catalog:read` |\n| Products | `PATCH` | `/products/{id}` | `catalog:write` |\n| Orders | `POST` | `/orders` | `orders:write` |\n| Customers | `GET` | `/customers/{id}` | `customers:read` |\n\n## Authentication\n\nThe collection pre-request script exchanges `{{clientId}}` and `{{clientSecret}}` for an access token with\n`pm.sendRequest` and signs every request with an HMAC header:\n\n```http\nPOST /v1/orders HTTP/1.1\nAuthorization: Bearer <access token>\nX-Acme-Timestamp: 1790000000\nX-Acme-Signature: 5f2b9c…  (HMAC-SHA256 of method, path and timestamp)\n```\n\n## Errors\n\nErrors use [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details:\n\n```json\n{ \"type\": \"https://docs.acme-store.example/errors/out-of-stock\", \"status\": 409, \"title\": \"Out of stock\" }\n```\n\n> Rate limit: **600 requests per minute** per client. Watch the `X-RateLimit-Remaining` header.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment",
+          "// Exchange the client credentials for an access token",
+          "if (!pm.request.url.getPath().includes('/auth/')) {",
+          "  const res = await pm.sendRequest({",
+          "    url: env.get('baseUrl') + '/auth/token',",
+          "    method: 'POST',",
+          "    body: { mode: 'urlencoded', urlencoded: [",
+          "      { key: 'grant_type', value: 'client_credentials' },",
+          "      { key: 'client_id', value: env.get('clientId') },",
+          "      { key: 'client_secret', value: env.get('clientSecret') },",
+          "    ] },",
+          "  })",
+          "  const { access_token, expires_in } = res.json()",
+          "  pm.variables.set('token', access_token)",
+          "  console.info(`token refreshed, expires in ${expires_in} s`)",
+          "}",
+          "",
+          "// Sign: HMAC-SHA256 over method, path and timestamp",
+          "const ts = Math.floor(Date.now() / 1000).toString()",
+          "const path = pm.variables.replaceIn(pm.request.url.getPath())",
+          "const payload = [pm.request.method, path, ts].join('\\n')",
+          "const sig = CryptoJS.HmacSHA256(payload, env.get('clientSecret')).toString()",
+          "pm.request.headers.upsert({ key: 'X-Acme-Timestamp', value: ts })",
+          "pm.request.headers.upsert({ key: 'X-Acme-Signature', value: sig })",
+          "console.log('signed', pm.request.method, path)"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('responds within 1.5 s', () => pm.expect(pm.response.responseTime).to.be.below(1500))"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "OAuth 2.0 client-credentials flow. Tokens are cached per run by the collection pre-request script.",
+      "item": [
+        {
+          "name": "Request access token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "const body = pm.response.json()",
+                  "pm.test('issues a bearer token', () => {",
+                  "  pm.expect(body.token_type).to.eql('Bearer')",
+                  "  pm.expect(body.access_token).to.be.a('string').and.have.length.above(20)",
+                  "})",
+                  "pm.variables.set('token', body.access_token)"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{clientSecret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "catalog:read catalog:write orders:write",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Exchanges the client credentials for a **short-lived access token** (OAuth 2.0 client-credentials grant).\n\n- Tokens expire after `expires_in` seconds (default 900).\n- The collection pre-request script calls this endpoint for you with `pm.sendRequest`; you rarely need to send it by hand."
+          },
+          "response": [
+            {
+              "name": "200 Token issued",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{clientId}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{clientSecret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "scope",
+                      "value": "catalog:read catalog:write orders:write",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/auth/token",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "token"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Exchanges the client credentials for a **short-lived access token** (OAuth 2.0 client-credentials grant).\n\n- Tokens expire after `expires_in` seconds (default 900).\n- The collection pre-request script calls this endpoint for you with `pm.sendRequest`; you rarely need to send it by hand."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"access_token\": \"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjbGlfOGYyYSJ9.x1\",\n  \"token_type\": \"Bearer\",\n  \"expires_in\": 900,\n  \"scope\": \"catalog:read catalog:write orders:write\"\n}"
+            },
+            {
+              "name": "401 Bad client secret",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{clientId}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{clientSecret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "scope",
+                      "value": "catalog:read catalog:write orders:write",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/auth/token",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "token"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                },
+                "description": "Exchanges the client credentials for a **short-lived access token** (OAuth 2.0 client-credentials grant).\n\n- Tokens expire after `expires_in` seconds (default 900).\n- The collection pre-request script calls this endpoint for you with `pm.sendRequest`; you rarely need to send it by hand."
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"type\": \"https://docs.acme-store.example/errors/invalid-client\",\n  \"status\": 401,\n  \"title\": \"Invalid client credentials\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Who am I",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "The client and scopes behind the current token."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "description": "Catalog management: list, create and update products, upload images and export the feed.",
+      "item": [
+        {
+          "name": "List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "const { data, next } = pm.response.json()",
+                  "pm.test('returns audio products only', () => {",
+                  "  pm.expect(data).to.be.an('array').that.is.not.empty",
+                  "  data.forEach((p) => pm.expect(p.category).to.eql('audio'))",
+                  "})",
+                  "pm.test('sorted by rating, best first', () => {",
+                  "  const ratings = data.map((p) => p.rating)",
+                  "  pm.expect(ratings).to.eql([...ratings].sort((a, b) => b - a))",
+                  "})",
+                  "pm.test('every price is in EUR', () => data.forEach((p) => pm.expect(p.price.currency).to.eql('EUR')))",
+                  "pm.test('has a next-page cursor', () => pm.expect(next).to.be.a('string'))",
+                  "pm.environment.set('productId', data[0].id)"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept-Language",
+                "value": "en-GB",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products?category=audio&inStock=true&sort=-rating&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "audio",
+                  "description": "One of `audio`, `wearables`, `home`, `accessories`"
+                },
+                {
+                  "key": "inStock",
+                  "value": "true",
+                  "description": "Only products that can ship today"
+                },
+                {
+                  "key": "sort",
+                  "value": "-rating",
+                  "description": "Field to sort by; prefix with `-` for descending"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Page size, 1–100"
+                },
+                {
+                  "key": "cursor",
+                  "value": "eyJvZmZzZXQiOjIwfQ",
+                  "disabled": true,
+                  "description": "Opaque cursor from `next`"
+                }
+              ]
+            },
+            "description": "Returns a **paginated** list of products. Filter by `category`, sort by any numeric field.\n\n| Parameter | Type | Default | Notes |\n|-----------|------|---------|-------|\n| `category` | string | — | `audio`, `wearables`, `home`, `accessories` |\n| `sort` | string | `name` | prefix `-` for descending |\n| `limit` | integer | `20` | max `100` |\n\nThe response carries a `next` cursor while more pages exist."
+          },
+          "response": [
+            {
+              "name": "200 Audio, best rated",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Accept-Language",
+                    "value": "en-GB",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products?category=audio&inStock=true&sort=-rating&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "audio",
+                      "description": "One of `audio`, `wearables`, `home`, `accessories`"
+                    },
+                    {
+                      "key": "inStock",
+                      "value": "true",
+                      "description": "Only products that can ship today"
+                    },
+                    {
+                      "key": "sort",
+                      "value": "-rating",
+                      "description": "Field to sort by; prefix with `-` for descending"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "description": "Page size, 1–100"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "eyJvZmZzZXQiOjIwfQ",
+                      "disabled": true,
+                      "description": "Opaque cursor from `next`"
+                    }
+                  ]
+                },
+                "description": "Returns a **paginated** list of products. Filter by `category`, sort by any numeric field.\n\n| Parameter | Type | Default | Notes |\n|-----------|------|---------|-------|\n| `category` | string | — | `audio`, `wearables`, `home`, `accessories` |\n| `sort` | string | `name` | prefix `-` for descending |\n| `limit` | integer | `20` | max `100` |\n\nThe response carries a `next` cursor while more pages exist."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                },
+                {
+                  "key": "X-RateLimit-Remaining",
+                  "value": "598"
+                }
+              ],
+              "cookie": [],
+              "responseTime": 84,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": \"prd_7Hc2Qm\",\n      \"sku\": \"AC-HP-200\",\n      \"name\": \"Aurora Wireless Headphones\",\n      \"category\": \"audio\",\n      \"price\": {\n        \"amount\": 149,\n        \"currency\": \"EUR\"\n      },\n      \"rating\": 4.7,\n      \"reviews\": 1284,\n      \"inStock\": true,\n      \"stock\": 342,\n      \"tags\": [\n        \"bluetooth-5.3\",\n        \"anc\",\n        \"usb-c\"\n      ],\n      \"updatedAt\": \"2026-09-18T09:12:44Z\"\n    }\n  ],\n  \"next\": \"eyJvZmZzZXQiOjIwfQ\",\n  \"total\": 38\n}"
+            },
+            {
+              "name": "400 Unknown sort field",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Accept-Language",
+                    "value": "en-GB",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products?category=audio&inStock=true&sort=-rating&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "audio",
+                      "description": "One of `audio`, `wearables`, `home`, `accessories`"
+                    },
+                    {
+                      "key": "inStock",
+                      "value": "true",
+                      "description": "Only products that can ship today"
+                    },
+                    {
+                      "key": "sort",
+                      "value": "-rating",
+                      "description": "Field to sort by; prefix with `-` for descending"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "description": "Page size, 1–100"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "eyJvZmZzZXQiOjIwfQ",
+                      "disabled": true,
+                      "description": "Opaque cursor from `next`"
+                    }
+                  ]
+                },
+                "description": "Returns a **paginated** list of products. Filter by `category`, sort by any numeric field.\n\n| Parameter | Type | Default | Notes |\n|-----------|------|---------|-------|\n| `category` | string | — | `audio`, `wearables`, `home`, `accessories` |\n| `sort` | string | `name` | prefix `-` for descending |\n| `limit` | integer | `20` | max `100` |\n\nThe response carries a `next` cursor while more pages exist."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"type\": \"https://docs.acme-store.example/errors/validation\",\n  \"status\": 400,\n  \"title\": \"Invalid query\",\n  \"errors\": [\n    {\n      \"field\": \"sort\",\n      \"message\": \"unknown field \\\"popularity\\\"\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "pm.test('has a price', () => pm.expect(pm.response.json().price.amount).to.be.above(0))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "Fetches one product by id, including live stock and the price in the store currency."
+          },
+          "response": [
+            {
+              "name": "200 Aurora headphones",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Fetches one product by id, including live stock and the price in the store currency."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"prd_7Hc2Qm\",\n  \"sku\": \"AC-HP-200\",\n  \"name\": \"Aurora Wireless Headphones\",\n  \"category\": \"audio\",\n  \"price\": {\n    \"amount\": 149,\n    \"currency\": \"EUR\"\n  },\n  \"rating\": 4.7,\n  \"reviews\": 1284,\n  \"inStock\": true,\n  \"stock\": 342,\n  \"tags\": [\n    \"bluetooth-5.3\",\n    \"anc\",\n    \"usb-c\"\n  ],\n  \"updatedAt\": \"2026-09-18T09:12:44Z\"\n}"
+            },
+            {
+              "name": "404 Unknown product",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/{{productId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    "{{productId}}"
+                  ]
+                },
+                "description": "Fetches one product by id, including live stock and the price in the store currency."
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"type\": \"https://docs.acme-store.example/errors/not-found\",\n  \"status\": 404,\n  \"title\": \"Product not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201))",
+                  "pm.test('starts unpublished', () => pm.expect(pm.response.json().published).to.eql(false))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"AC-SPK-310\",\n  \"name\": \"Nimbus Smart Speaker\",\n  \"category\": \"audio\",\n  \"price\": {\n    \"amount\": 89,\n    \"currency\": \"{{currency}}\"\n  },\n  \"stock\": 120,\n  \"tags\": [\n    \"wifi\",\n    \"multiroom\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "description": "Creates a product. `sku` must be unique; the new product starts **unpublished**."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sku\": \"AC-SPK-310\",\n  \"name\": \"Nimbus Smart Speaker\",\n  \"category\": \"audio\",\n  \"price\": {\n    \"amount\": 89,\n    \"currency\": \"{{currency}}\"\n  },\n  \"stock\": 120,\n  \"tags\": [\n    \"wifi\",\n    \"multiroom\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/products",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products"
+                  ]
+                },
+                "description": "Creates a product. `sku` must be unique; the new product starts **unpublished**."
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                },
+                {
+                  "key": "Location",
+                  "value": "/v1/products/prd_9Wn4Te"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"prd_9Wn4Te\",\n  \"sku\": \"AC-SPK-310\",\n  \"name\": \"Nimbus Smart Speaker\",\n  \"published\": false,\n  \"createdAt\": \"2026-09-20T14:03:11Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update price",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": {\n    \"amount\": 129,\n    \"currency\": \"{{currency}}\"\n  },\n  \"reason\": \"autumn-sale\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "Partial update (JSON merge patch). Only the fields you send are changed."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload product image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": "headphones-front.png",
+                  "description": "PNG or JPEG, max 5 MB"
+                },
+                {
+                  "key": "alt",
+                  "value": "Aurora headphones, front view",
+                  "type": "text"
+                },
+                {
+                  "key": "position",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "primary",
+                  "value": "true",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}/images",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}",
+                "images"
+              ]
+            },
+            "description": "Uploads a product image as `multipart/form-data`."
+          },
+          "response": []
+        },
+        {
+          "name": "Store logo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('is a PNG', () => pm.response.to.have.header('Content-Type', 'image/png'))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "image/png",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/assets/logo.png",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "assets",
+                "logo.png"
+              ]
+            },
+            "description": "The store logo used in e-mails and invoices."
+          },
+          "response": []
+        },
+        {
+          "name": "Catalog feed (XML)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/xml",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/feed.xml?channel=merchant-center",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "feed.xml"
+              ],
+              "query": [
+                {
+                  "key": "channel",
+                  "value": "merchant-center",
+                  "description": "Target shopping channel"
+                }
+              ]
+            },
+            "description": "Product feed in XML for shopping channels."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "description": "Order lifecycle: place, look up, change the address, cancel, and print invoices.",
+      "item": [
+        {
+          "name": "List orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders?status=shipped&from=2026-09-01&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "shipped",
+                  "description": "`pending`, `paid`, `shipped`, `delivered` or `cancelled`"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-09-01",
+                  "description": "Placed on or after this date (ISO 8601)"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Page size, 1–50"
+                }
+              ]
+            },
+            "description": "Orders of the authenticated store, newest first."
+          },
+          "response": []
+        },
+        {
+          "name": "Get order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "const order = pm.response.json()",
+                  "pm.test('total = items + shipping + tax', () => {",
+                  "  const items = order.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0)",
+                  "  pm.expect(order.total).to.be.closeTo(items + order.shipping + order.tax, 0.001)",
+                  "})",
+                  "pm.test('shipped with tracking', () => pm.expect(order.shipment.trackingNumber).to.match(/^ACM/))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Order details with line items, totals and the shipment.\n\n> All amounts are decimals in the order currency (no minor units)."
+          },
+          "response": [
+            {
+              "name": "200 Shipped order",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/orders/{{orderId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "orders",
+                    "{{orderId}}"
+                  ]
+                },
+                "description": "Order details with line items, totals and the shipment.\n\n> All amounts are decimals in the order currency (no minor units)."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"ord_5Rt8Lm\",\n  \"status\": \"shipped\",\n  \"total\": 346.8\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201))",
+                  "pm.environment.set('orderId', pm.response.json().id)"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{userId}}\",\n  \"currency\": \"{{currency}}\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    },\n    {\n      \"productId\": \"prd_2Kp9Xa\",\n      \"quantity\": 2\n    }\n  ],\n  \"shippingAddress\": {\n    \"name\": \"Mira Okafor\",\n    \"line1\": \"12 Harbour Lane\",\n    \"city\": \"Rotterdam\",\n    \"postcode\": \"3011 AB\",\n    \"country\": \"NL\"\n  },\n  \"notes\": \"Leave with the concierge\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Places an order. Send an `Idempotency-Key` so a retried request never creates a second order."
+          },
+          "response": [
+            {
+              "name": "201 Order placed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customerId\": \"{{userId}}\",\n  \"currency\": \"{{currency}}\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    },\n    {\n      \"productId\": \"prd_2Kp9Xa\",\n      \"quantity\": 2\n    }\n  ],\n  \"shippingAddress\": {\n    \"name\": \"Mira Okafor\",\n    \"line1\": \"12 Harbour Lane\",\n    \"city\": \"Rotterdam\",\n    \"postcode\": \"3011 AB\",\n    \"country\": \"NL\"\n  },\n  \"notes\": \"Leave with the concierge\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "orders"
+                  ]
+                },
+                "description": "Places an order. Send an `Idempotency-Key` so a retried request never creates a second order."
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"ord_5Rt8Lm\",\n  \"status\": \"pending\",\n  \"total\": 346.8,\n  \"currency\": \"EUR\"\n}"
+            },
+            {
+              "name": "409 Out of stock",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"customerId\": \"{{userId}}\",\n  \"currency\": \"{{currency}}\",\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"quantity\": 1\n    },\n    {\n      \"productId\": \"prd_2Kp9Xa\",\n      \"quantity\": 2\n    }\n  ],\n  \"shippingAddress\": {\n    \"name\": \"Mira Okafor\",\n    \"line1\": \"12 Harbour Lane\",\n    \"city\": \"Rotterdam\",\n    \"postcode\": \"3011 AB\",\n    \"country\": \"NL\"\n  },\n  \"notes\": \"Leave with the concierge\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "orders"
+                  ]
+                },
+                "description": "Places an order. Send an `Idempotency-Key` so a retried request never creates a second order."
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"type\": \"https://docs.acme-store.example/errors/out-of-stock\",\n  \"status\": 409,\n  \"title\": \"Out of stock\",\n  \"productId\": \"prd_2Kp9Xa\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Replace shipping address",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mira Okafor\",\n  \"line1\": \"48 Canal Street\",\n  \"line2\": \"Floor 3\",\n  \"city\": \"Rotterdam\",\n  \"postcode\": \"3012 CD\",\n  \"country\": \"NL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/shipping-address",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "shipping-address"
+              ]
+            },
+            "description": "Replaces the shipping address while the order is still `pending` or `paid`."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Cancel-Reason",
+                "value": "customer-request",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Cancels an order that has not shipped yet and refunds the payment."
+          },
+          "response": []
+        },
+        {
+          "name": "Order invoice (HTML)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/html",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/{{orderId}}/invoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}",
+                "invoice"
+              ]
+            },
+            "description": "Printable HTML invoice."
+          },
+          "response": []
+        },
+        {
+          "name": "Quarterly report (slow)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/csv",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/orders?period=2026-Q3&format=csv",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "2026-Q3",
+                  "description": "Quarter, e.g. `2026-Q3`"
+                },
+                {
+                  "key": "format",
+                  "value": "csv",
+                  "description": "`csv` or `json`"
+                }
+              ]
+            },
+            "description": "Builds the quarterly order report. **Slow**: the report is generated on demand (several seconds)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Customers",
+      "description": "Customer profiles, loyalty and marketing preferences.",
+      "item": [
+        {
+          "name": "Get customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "const c = pm.response.json()",
+                  "pm.test('gold tier gets free shipping', () => {",
+                  "  pm.expect(c.loyalty.tier).to.eql('gold')",
+                  "  pm.expect(c.perks).to.include('free-shipping')",
+                  "})"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{userId}}"
+              ]
+            },
+            "description": "Customer profile with addresses and loyalty tier."
+          },
+          "response": [
+            {
+              "name": "200 Gold customer",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/customers/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "customers",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Customer profile with addresses and loyalty tier."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"cus_3Fh6Pz\",\n  \"name\": \"Mira Okafor\",\n  \"loyalty\": {\n    \"tier\": \"gold\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Loyalty balance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))",
+                  "pm.test('balance is a number', () => pm.expect(pm.response.json().points).to.be.a('number'))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{userId}}/loyalty",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{userId}}",
+                "loyalty"
+              ]
+            },
+            "description": "Loyalty points balance. Served by the rewards service, which is flaky on staging."
+          },
+          "response": []
+        },
+        {
+          "name": "Newsletter preferences",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200))"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "email",
+                  "value": "mira.okafor@example.com",
+                  "type": "text"
+                },
+                {
+                  "key": "lists",
+                  "value": "new-arrivals,deals",
+                  "type": "text"
+                },
+                {
+                  "key": "frequency",
+                  "value": "weekly",
+                  "type": "text"
+                },
+                {
+                  "key": "consent",
+                  "value": "true",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/customers/{{userId}}/newsletter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customers",
+                "{{userId}}",
+                "newsletter"
+              ]
+            },
+            "description": "Subscribes the customer to newsletters (form-encoded, as sent by the storefront)."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

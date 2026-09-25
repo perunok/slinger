@@ -47,6 +47,12 @@ textarea {
   border-radius: var(--radius);
   padding: 4px 8px;
 }
+/* Native placeholders use the faint token like CodeMirror's (.cm-placeholder), so an empty field never reads as filled in. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}
 input:focus,
 select:focus,
 textarea:focus {
