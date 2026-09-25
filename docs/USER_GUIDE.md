@@ -378,12 +378,24 @@ collections keep theirs).
   "Plain text"; they stay plain text when edited and exported.
 - **Read-only workspaces:** docs are view-only (Preview) for viewers of a shared cloud workspace.
 
-## Import and export (Postman)
+## Import and export (Slinger and Postman)
 
-- **Import:** use the upload button in the Collections header (or **Import from Postman** on the empty state). Drop or choose a
-  Postman **collection (v2.x)** or **environment** `.json`: Slinger exports (`.slinger_collection.json`,
-  `.slinger_environment.json`), Postman exports (`.postman_collection.json`, `.postman_environment.json`) or any other `.json`.
-  The preview shows what will be imported. Collection-level variables
+- **Import:** open the **Import** dialog with the upload button in the Collections header (*Import collection or
+  environment*), **Import…** on the empty state, or **Ctrl+K** > *Import collection or environment…*. It takes a
+  **collection** or an **environment** from Slinger or Postman (collection v2.0/v2.1): Slinger exports
+  (`.slinger_collection.json`, `.slinger_environment.json`), Postman exports (`.postman_collection.json`,
+  `.postman_environment.json`) or any other `.json`. Either drop or choose a file, or **paste the JSON**: into the
+  *Or paste JSON* box, or press **Ctrl+V** anywhere in the dialog when no text field has focus. Whichever you gave last is
+  imported. Very large pastes (megabytes) are not shown in the box; a size indicator and **Clear** stand in for them. Text you
+  type into the box is checked once you pause. Invalid JSON, or JSON that is neither a collection nor an environment, shows an
+  error in the dialog.
+- **Paste into the URL bar:** pasting a whole collection or environment export into a request's URL field does not put it in
+  the URL: the Import dialog opens with it, marked *Detected pasted collection — review and import*. Only an export is taken
+  over (an object with `info` and `item[]`, or an environment with `values[]`, at least 200 characters); URLs, `{{variables}}`,
+  query strings and other JSON paste as usual, and the URL field's undo history is unchanged.
+- **Preview:** the preview shows the detected format (for example *Slinger collection v1.2.0*, *Postman collection v2.1*,
+  *Postman environment*, *Slinger environment*) and what will be imported. Everything below works the same for a file and for
+  pasted JSON (a replaced collection's safety version then says `re-import from pasted JSON`). Collection-level variables
   can optionally become an environment named after the collection. If an environment with that name already exists
   (ignoring case), the import **merges into it** instead of creating a second one: only variables it does not have yet are
   added, and existing values are kept (they may hold tokens set by scripts or your edits); the preview says how many will be

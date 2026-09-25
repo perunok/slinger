@@ -224,6 +224,8 @@
   const replaceDisabled = $derived(sync.blocked)
   const choice = $derived<'replace' | 'copy' | null>(match ? (mode === 'replace' && !replaceDisabled ? 'replace' : 'copy') : null)
   const copyAs = $derived(parsed ? copyName(parsed.name, app.collections.map((c) => c.name)) : '')
+  /** "file" or "pasted JSON", for wording that applies to both. */
+  const what = $derived(source === 'paste' ? 'pasted JSON' : 'file')
   const requestCountOf = (collectionId: string) => app.requestsOf(collectionId).length
   function describeTarget(c: { id: string; name: string; createdAt: number }): string {
     const n = requestCountOf(c.id)
@@ -420,7 +422,7 @@
             <legend class="mb-1 text-xs font-medium">
               {match.collections.length === 1
                 ? `This collection already exists in the workspace${match.by === 'id' ? '' : ' (same name)'}.`
-                : `${match.collections.length} collections in the workspace match this file${match.by === 'id' ? '' : ' by name'}.`}
+                : `${match.collections.length} collections in the workspace match this ${what}${match.by === 'id' ? '' : ' by name'}.`}
             </legend>
             <label
               class="flex items-start gap-2 rounded border p-2.5 {replaceDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer focus-within:ring-2 focus-within:ring-focus'} {choice === 'replace' ? 'border-accent bg-accent-soft' : 'border-border'} {replaceDisabled ? '' : 'hover:bg-hover'}"
@@ -432,7 +434,7 @@
                   {#if replaceDisabled}
                     Not available: {sync.blockedMessage}
                   {:else}
-                    Its folders, requests, scripts and descriptions are replaced by the file. The collection keeps its versions,
+                    Its folders, requests, scripts and descriptions are replaced by the {what}. The collection keeps its versions,
                     sync and open tabs. A version snapshot of the current content (next patch version) is created first, so you
                     can restore it from Versions.
                   {/if}
@@ -494,7 +496,7 @@
         {#if existingEnv}
           <p class="text-xs text-muted" data-testid="import-env-help">
             An environment named "{existingEnv.name}" already exists: missing variables are added and
-            existing ones take the values from this file. Empty values in the file keep the current value.
+            existing ones take the values from this {what}. Empty values in the {what} keep the current value.
           </p>
         {/if}
         {#if parsed.skippedDisabled > 0}
