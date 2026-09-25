@@ -40,10 +40,18 @@ asarUnpack:
 # better-sqlite3 for Electron's ABI on the host arch; do not let electron-builder do it again.
 npmRebuild: false
 
+# The window icon on Linux comes from BrowserWindow (the AppImage installs no .desktop entry);
+# main.ts loads it from resources/icon.png.
+extraResources:
+  - from: build/icons/512x512.png
+    to: icon.png
+
 linux:
   target: [AppImage, deb]
   category: Development
-  icon: icon.png
+  # A directory of NxN.png files, so the deb installs every hicolor size; desktops that only
+  # look at standard sizes (16-512) did not find the single 1024x1024 icon.
+  icon: icons
   maintainer: Slinger <henokmto444@gmail.com>
   synopsis: Local-first API client
 win:
