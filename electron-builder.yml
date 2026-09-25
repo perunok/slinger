@@ -62,4 +62,4 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   # Notarization is attempted by electron-builder only when APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
-  # APPLE_TEAM_ID are set; without them (and without CSC_LINK) the build is unsigned.
+  # APPLE_TEAM_ID are set; without CSC_LINK the release workflow signs ad-hoc (-c.mac.identity=-).
