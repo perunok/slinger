@@ -26,8 +26,10 @@ export const PDF = Buffer.from(
  * Authorization header value) so tests can assert what really went over the wire, while
  * the JSON it answers with deliberately omits credentials.
  */
-export async function startTarget(): Promise<{ url: string; requests: Recorded[]; close(): Promise<void> }> {
+export async function startTarget(): Promise<{ url: string; requests: Recorded[]; issuedTokens: string[]; close(): Promise<void> }> {
   const requests: Recorded[] = []
+  // Script flows: /login hands out a fresh token, /me accepts only the latest one.
+  const issuedTokens: string[] = []
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
@@ -53,6 +55,17 @@ export async function startTarget(): Promise<{ url: string; requests: Recorded[]
       if (path === '/blob.bin') {
         res.writeHead(200, { 'Content-Type': 'application/octet-stream' })
         return void res.end(Buffer.from([0, 255, 254, 1, 2, 3, 128, 200]))
+      }
+      if (path === '/login') {
+        const token = `tok-${issuedTokens.length + 1}-${Math.random().toString(36).slice(2, 8)}`
+        issuedTokens.push(token)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return void res.end(JSON.stringify({ token }))
+      }
+      if (path === '/me') {
+        const ok = issuedTokens.length > 0 && req.headers.authorization === `Bearer ${issuedTokens.at(-1)}`
+        res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' })
+        return void res.end(JSON.stringify(ok ? { user: 'alice', scriptHeader: req.headers['x-from-script'] ?? null } : { error: 'bad token' }))
       }
       if (path === '/redirect/ok') {
         res.writeHead(302, { Location: '/redirect/landed' })
@@ -85,6 +98,7 @@ export async function startTarget(): Promise<{ url: string; requests: Recorded[]
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
+    issuedTokens,
     close: () => new Promise((r) => server.close(() => r())),
   }
 }

@@ -440,6 +440,112 @@ describe('collection runner: 3xx', () => {
   })
 })
 
+describe('scripts', () => {
+  const LOGIN_TEST = [
+    'const token = pm.response.json().token',
+    "pm.environment.set('authToken', token)",
+    "pm.test('got a token', () => pm.expect(token).to.be.a('string'))",
+    "console.log('saved token', token)",
+  ].join('\n')
+
+  it('sets up a collection with a collection-level test script and a request with pre-request and test scripts', async () => {
+    await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = await s.createCollection(ws.id, 'Script C')
+      await s.setCollectionScripts(col.id, JSON.stringify([
+        { listen: 'test', script: { type: 'text/javascript', exec: ["pm.test('collection: 2xx', () => pm.response.to.be.success)"] } },
+      ]))
+      await s.createRequest({ workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'login', method: 'POST', url: '{{baseUrl}}/login', documentJson: JSON.stringify({ headers: [], body: null }) })
+      await s.createRequest({
+        workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'me', method: 'GET', url: '{{baseUrl}}/me',
+        documentJson: JSON.stringify({
+          headers: [{ key: 'Authorization', value: 'Bearer {{authToken}}', type: 'text' }],
+          body: null,
+          scripts: [
+            { listen: 'prerequest', script: { type: 'text/javascript', exec: ["pm.request.headers.upsert({ key: 'X-From-Script', value: 'pre-' + pm.info.requestName })"] } },
+            { listen: 'test', script: { type: 'text/javascript', exec: [
+              "pm.test('authorized', () => pm.response.to.have.status(200))",
+              "pm.test('deliberately failing', () => pm.expect(pm.response.json().user).to.equal('bob'))",
+            ] } },
+          ],
+        }),
+      })
+    })
+    await page.reload()
+    await item(/^Script C/).waitFor()
+  })
+
+  it('writes a login test script in the Scripts tab that stores the token in the environment', async () => {
+    await reveal(/login$/, /^Script C/)
+    await item(/login$/).click()
+    await page.getByRole('tab', { name: /^Scripts/ }).click()
+    await page.getByRole('tablist', { name: 'Script type' }).getByRole('tab', { name: /^Tests/ }).click()
+    await typeInto(page.getByRole('textbox', { name: 'Test script' }), LOGIN_TEST)
+    await save()
+    const stored = await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = (await s.listCollections(ws.id)).find((c) => c.name === 'Script C')!
+      return JSON.parse((await s.listRequests(col.id)).find((r) => r.name === 'login')!.documentJson).scripts
+    })
+    expect(stored).toEqual([{ listen: 'test', script: { type: 'text/javascript', exec: LOGIN_TEST.split('\n') } }])
+
+    await send()
+    const badge = response().getByTestId('resp-tests-badge')
+    await expect.poll(() => badge.innerText()).toBe('2/2')
+    await response().getByRole('tab', { name: /^Console/ }).click()
+    await expect.poll(() => response().getByRole('list', { name: 'Console output' }).innerText()).toContain(`saved token ${target.issuedTokens.at(-1)}`)
+    const vars = await page.evaluate(async () => {
+      const ws = (await window.slinger.listWorkspaces())[0]!
+      const env = (await window.slinger.listEnvironments(ws.id))[0]!
+      return (await window.slinger.listEnvironmentVariables(env.id)).map((v) => [v.key, v.value])
+    })
+    expect(vars).toContainEqual(['authToken', target.issuedTokens.at(-1)])
+  })
+
+  it('a second request uses {{authToken}}; the server accepts it and a failing assertion shows in the Tests tab', async () => {
+    const before = target.requests.length
+    await item(/me$/).click()
+    await send()
+    const req = target.requests.slice(before).find((r) => r.url === '/me')!
+    expect(req.headers.authorization).toBe(`Bearer ${target.issuedTokens.at(-1)}`)
+    expect(req.headers['x-from-script']).toBe('pre-me') // added by the pre-request script
+    await expect.poll(() => response().getByTestId('status-chip').innerText()).toContain('200')
+    await expect.poll(() => response().getByTestId('resp-tests-badge').innerText()).toBe('2/3')
+    await response().getByRole('tab', { name: /^Tests/ }).click()
+    const results = response().getByRole('list', { name: 'Test results' })
+    await expect.poll(() => response().getByTestId('tests-summary').innerText()).toMatch(/2 passed, 1 failed/)
+    const failed = results.getByRole('listitem').filter({ hasText: 'deliberately failing' })
+    expect(await failed.getAttribute('data-status')).toBe('failed')
+    expect(await failed.innerText()).toContain("AssertionError: expected 'alice' to equal 'bob'")
+    // The pre-request header went out but was never saved into the request.
+    const doc = await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = (await s.listCollections(ws.id)).find((c) => c.name === 'Script C')!
+      return (await s.listRequests(col.id)).find((r) => r.name === 'me')!.documentJson
+    })
+    expect(doc).not.toContain('pre-me')
+  })
+
+  it('the collection runner runs the scripts, passes the new token on and counts the tests', async () => {
+    const tokensBefore = target.issuedTokens.length
+    await contextMenu(item(/^Script C/), 'Run collection…')
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: /^Run 2/ }).click()
+    await expect.poll(() => dialog.getByTestId('summary').innerText()).toMatch(/1 passed, 1 failed/)
+    expect(await dialog.getByTestId('summary-tests').innerText()).toMatch(/Tests: 4 passed, 1 failed/)
+    expect(target.issuedTokens.length).toBe(tokensBefore + 1)
+    const me = target.requests.filter((r) => r.url === '/me').at(-1)!
+    expect(me.headers.authorization).toBe(`Bearer ${target.issuedTokens.at(-1)}`) // the token from THIS run's login
+    const rows = dialog.getByRole('list', { name: 'Run results' }).getByRole('listitem')
+    expect(await rows.evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.status))).toEqual(['passed', 'failed'])
+    expect(await rows.nth(1).innerText()).toContain('1 of 3 tests failed')
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  })
+})
+
 describe('collection versions', () => {
   const versionsDialog = () => page.getByRole('dialog', { name: /^Versions/ })
   async function createVersion(version: string) {
@@ -661,7 +767,9 @@ describe('persistence across restart', () => {
       const env = (await window.slinger.listEnvironments(ws.id))[0]!
       return (await window.slinger.listEnvironmentVariables(env.id)).map((v) => ({ key: v.key, secret: v.isSecret, value: v.value }))
     })
-    expect(vars.map((v) => v.key).sort()).toEqual(['baseUrl', 'pathPart', 'token', 'user'])
+    // authToken was written by the login request's test script (describe 'scripts').
+    expect(vars.map((v) => v.key).sort()).toEqual(['authToken', 'baseUrl', 'pathPart', 'token', 'user'])
+    expect(vars.find((v) => v.key === 'authToken')?.value).toBe(target.issuedTokens.at(-1))
     expect(vars.find((v) => v.key === 'token')).toMatchObject({ secret: true, value: null })
 
     await reveal(/Echo$/)
