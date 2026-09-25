@@ -29,7 +29,9 @@ import type {
   MoveFolderInput,
   MoveRequestInput,
   PickFileOptions,
+  PostmanImportOptions,
   PostmanImportResult,
+  PostmanReplaceResult,
   CloudConfig,
   CloudSession,
   CloudSignInStart,
@@ -113,7 +115,14 @@ export interface SlingerIpcApi {
   cloudFetch(input: CloudFetchInput): Promise<HttpResponseData>
 
   // Postman import/export
-  importPostmanCollection(workspaceId: string, fileContents: string): Promise<PostmanImportResult>
+  /** `options` (re-import addition, optional): `name` overrides the file's name, e.g. "X (2)" for an import as a copy. */
+  importPostmanCollection(workspaceId: string, fileContents: string, options?: PostmanImportOptions): Promise<PostmanImportResult>
+  /**
+   * ADDED (re-import): replaces the folders, requests, scripts and descriptions of an existing collection with a
+   * Postman file in one transaction, after an automatic safety version (next patch). Keeps the collection's id,
+   * name and versions. `sourceName` (the file name) only labels the safety version's notes.
+   */
+  replaceCollectionFromPostman(collectionId: string, fileContents: string, sourceName?: string | null): Promise<PostmanReplaceResult>
   defaultExportPath(fileName: string): Promise<string>
   /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
   writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
@@ -226,6 +235,7 @@ export const IPC_CHANNELS = [
   'runScripts',
   'cloudFetch',
   'importPostmanCollection',
+  'replaceCollectionFromPostman',
   'defaultExportPath',
   'writeExportFile',
   'chooseExportDirectory',

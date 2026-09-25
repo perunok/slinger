@@ -1,6 +1,8 @@
-import type { PostmanImportResult } from '../../../shared/types'
-import { addCollection, addFolder, addRequest, must, type MockState } from './store'
+import type { Collection, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../../shared/types'
+import { suggestBumps } from '../../lib/semver'
+import { addCollection, addFolder, addRequest, must, removeCollectionContents, touch, type MockState } from './store'
 import { fail } from './util'
+import { addVersion } from './versions'
 import { countScripts } from '../../lib/scripts'
 import { columnsFromPostman } from '../../lib/description'
 
@@ -42,9 +44,15 @@ function requestDocument(item: Json, request: Json, name: string, method: string
   }
 }
 
-/** Port of `import_postman_collection` + `collect_postman_entries`; sortOrder follows item order. */
-export function importPostman(s: MockState, workspaceId: string, fileContents: string): PostmanImportResult {
-  const workspace = must(s.workspaces, workspaceId, 'Workspace')
+interface Parsed {
+  name: string
+  postmanId: string | null
+  info: Json
+  event: unknown
+  items: unknown[]
+}
+
+function parseFile(fileContents: string): Parsed {
   let parsed: unknown
   try {
     parsed = JSON.parse(fileContents)
@@ -55,22 +63,53 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
     fail('invalid_input', 'Postman collection must contain an item array')
   }
   const info = isObj(parsed.info) ? parsed.info : {}
-  const items: unknown[] = parsed.item
-  const collectionName = trimmedOr(info.name, 'Imported Collection')
+  const id = typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim().toLowerCase() : null
+  return { name: trimmedOr(info.name, 'Imported Collection'), postmanId: id, info, event: parsed.event, items: parsed.item }
+}
 
-  // Build into a scratch state so a failed import (no requests) leaves nothing behind.
+/** Builds the file's tree under `collection` in a scratch state (nothing is kept when it has no requests). */
+function build(s: MockState, collection: Collection, file: Parsed) {
   const scratch: MockState = { ...s, collections: [], folders: [], requests: [] }
-  const collection = addCollection(scratch, workspace.id, collectionName)
-  collection.scriptsJson = eventJson(parsed.event)
-  Object.assign(collection, columnsFromPostman(info.description))
-  const counter = { scripts: countScripts(parsed.event) }
-  walk(scratch, workspace.id, collection.id, items, null, counter)
+  const counter = { scripts: countScripts(file.event) }
+  walk(scratch, collection.workspaceId, collection.id, file.items, null, counter)
   if (scratch.requests.length === 0) fail('invalid_input', 'No requests found in Postman collection')
+  return { folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts }
+}
 
+/** Port of `import_postman_collection` + `collect_postman_entries`; sortOrder follows item order. */
+export function importPostman(s: MockState, workspaceId: string, fileContents: string, options: PostmanImportOptions = {}): PostmanImportResult {
+  const workspace = must(s.workspaces, workspaceId, 'Workspace')
+  const file = parseFile(fileContents)
+  const name = options.name?.trim()
+  if (options.name !== undefined && !name) fail('invalid_input', 'collection name is required')
+  const collection = addCollection({ ...s, collections: [] }, workspace.id, name || file.name)
+  collection.scriptsJson = eventJson(file.event)
+  Object.assign(collection, columnsFromPostman(file.info.description))
+  collection.sourcePostmanId = name ? null : file.postmanId
+  const tree = build(s, collection, file)
   s.collections.push(collection)
-  s.folders.push(...scratch.folders)
-  s.requests.push(...scratch.requests)
-  return { collection, folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts }
+  s.folders.push(...tree.folders)
+  s.requests.push(...tree.requests)
+  return { collection, ...tree }
+}
+
+/** Mirror of the main-process replace: safety version, then the collection's content is swapped (id kept). */
+export function replaceFromPostman(s: MockState, collectionId: string, fileContents: string, sourceName?: string | null): PostmanReplaceResult {
+  const collection = must(s.collections, collectionId, 'Collection')
+  const file = parseFile(fileContents)
+  const tree = build(s, collection, file) // validates before anything changes
+  const versions = s.versions.filter((v) => v.collectionId === collection.id).map((v) => v.version)
+  const label = sourceName?.trim() || 'a Postman file'
+  const row = addVersion(s, collection.id, suggestBumps(versions).patch, `Automatic snapshot before re-import from ${label}`)
+  removeCollectionContents(s, collection.id)
+  s.folders.push(...tree.folders)
+  s.requests.push(...tree.requests)
+  collection.scriptsJson = eventJson(file.event)
+  Object.assign(collection, columnsFromPostman(file.info.description))
+  if (file.postmanId) collection.sourcePostmanId = file.postmanId
+  touch(collection)
+  const { snapshot: _snapshot, ...safetyVersion } = row
+  return { collection, ...tree, safetyVersion }
 }
 
 function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }): void {

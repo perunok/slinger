@@ -130,6 +130,15 @@ describe('change capture triggers', () => {
     expect(dirtyOf('collection')).toEqual([imported.collection.id])
     expect(dirtyOf('folder')).toHaveLength(1)
     expect(dirtyOf('request')).toHaveLength(2)
+    clear()
+
+    // re-import (replace): old rows are soft-deleted and new ones inserted, all captured; the collection keeps its id
+    const replaced = await env.api.replaceCollectionFromPostman(imported.collection.id, JSON.stringify({
+      info: { name: 'P' }, item: [{ name: 'Three', request: { method: 'GET', url: 'https://c' } }],
+    }))
+    expect(dirtyOf('folder')).toEqual(imported.folders.map((f) => f.id))
+    expect(dirtyOf('request').sort()).toEqual([...imported.requests.map((r) => r.id), replaced.requests[0]!.id].sort())
+    expect(dirtyOf('collection_version')).toEqual([replaced.safetyVersion.id])
   })
 
   it('does not fire while the engine applies remote changes', async () => {
@@ -184,6 +193,8 @@ describe('read-only enforcement', () => {
     await expectReadOnly(env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'p', value: 'changed', isSecret: false }))
     await expectReadOnly(env.api.createCollectionVersion({ collectionId: c.id, version: '1.0.0' }))
     await expectReadOnly(env.api.importPostmanCollection(ws, JSON.stringify({ info: { name: 'P', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' }, item: [{ name: 'One', request: { method: 'GET', url: 'https://a' } }] })))
+    await expectReadOnly(env.api.replaceCollectionFromPostman(c.id, JSON.stringify({ info: { name: 'Col' }, item: [{ name: 'One', request: { method: 'GET', url: 'https://a' } }] })))
+    expect((await env.api.listRequests(c.id)).map((x) => x.id)).toEqual([r.id])
     // Device-local secret values stay editable in a read-only workspace (they never sync).
     await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 's', value: 'new-local-secret', isSecret: true, variableId: s.id })
     expect(await env.api.revealEnvironmentVariable(s.id)).toBe('new-local-secret')
@@ -218,7 +229,8 @@ describe('schema drift guard', () => {
     const ignored: Record<string, string[]> = {
       // scripts_json (0005) and description(_type) (0006): collection/folder scripts and docs are local-only in v1
       // (the cloud protocol has no field for them)
-      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json', 'description', 'description_type'],
+      // source_postman_id (0007): device-local re-import bookkeeping
+      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json', 'description', 'description_type', 'source_postman_id'],
       folders: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json', 'description', 'description_type'],
       requests: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environments: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],

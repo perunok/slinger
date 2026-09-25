@@ -20,6 +20,7 @@ export interface CollectionRow {
   scripts_json?: string | null
   description?: string | null
   description_type?: string | null
+  source_postman_id?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -76,6 +77,7 @@ export const toCollection = (r: CollectionRow): Collection => ({
   scriptsJson: r.scripts_json ?? null,
   description: r.description ?? null,
   descriptionType: descriptionTypeOf(r.description_type),
+  sourcePostmanId: r.source_postman_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,

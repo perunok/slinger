@@ -56,6 +56,7 @@ describe('UUID validation', () => {
       ['clearHistory', [bad]],
       ['deleteHistoryEntry', [bad]],
       ['importPostmanCollection', [bad, '{}']],
+      ['replaceCollectionFromPostman', [bad, '{}']],
       ['listCollectionVersions', [bad]],
       ['getCollectionVersion', [bad]],
       ['restoreCollectionVersion', [bad, 'copy']],

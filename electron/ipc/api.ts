@@ -4,7 +4,7 @@ import type { PickFileOptions } from '../../shared/types'
 import { invalidInput } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
-import { importPostmanCollection } from '../services/postmanImport'
+import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import type { Core } from '../services/core'
@@ -19,6 +19,8 @@ const name = z.string().min(1).max(500)
 const text = z.string().max(1_000_000)
 const nullableUuid = uuid.nullish()
 const index = z.number().int().min(0)
+const postmanFile = z.string().max(50 * 1024 * 1024)
+const postmanImportOptions = z.object({ name: z.string().min(1).max(200).optional() }).strict()
 
 const pickFileOptions = z
   .object({
@@ -312,8 +314,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
 
     // Postman import/export
     importPostmanCollection: async (...a) => {
-      const [id, contents] = parseArgs(z.tuple([uuid, z.string().max(50 * 1024 * 1024)]), a)
-      return importPostmanCollection(core.db, id, contents)
+      const [id, contents, options] = parseArgs(z.tuple([uuid, postmanFile, postmanImportOptions.optional()]), a)
+      return importPostmanCollection(core.db, id, contents, options ?? {})
+    },
+    replaceCollectionFromPostman: async (...a) => {
+      const [id, contents, sourceName] = parseArgs(z.tuple([uuid, postmanFile, z.string().max(1024).nullish()]), a)
+      return replaceCollectionFromPostman(core.db, id, contents, sourceName)
     },
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {

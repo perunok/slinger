@@ -39,6 +39,12 @@ export interface Collection {
    */
   description?: string | null
   descriptionType?: DescriptionType | null
+  /**
+   * ADDED (re-import): the Postman `info._postman_id` of the file this collection was imported (or last replaced)
+   * from, used to recognise the same file on a later import. Local-only (never synced); null for collections
+   * created here, imported as a copy, or downloaded from the cloud. Optional so older fixtures stay valid.
+   */
+  sourcePostmanId?: string | null
   createdAt: number
   updatedAt: number
   version: number
@@ -284,6 +290,21 @@ export interface PostmanImportResult {
   requests: ApiRequest[]
   /** ADDED (scripts): non-empty pre-request/test scripts imported (collection + folders + requests). */
   scriptCount?: number
+}
+
+/** ADDED (re-import): options for importPostmanCollection. */
+export interface PostmanImportOptions {
+  /**
+   * Name for the new collection instead of the file's `info.name` (e.g. "X (2)" when importing as a copy). A copy
+   * is not linked to the file: its `sourcePostmanId` stays null so a later re-import targets the original.
+   */
+  name?: string
+}
+
+/** ADDED (re-import): result of replaceCollectionFromPostman. */
+export interface PostmanReplaceResult extends PostmanImportResult {
+  /** The automatic version snapshot of the content before the replace (restore it to undo). */
+  safetyVersion: CollectionVersion
 }
 
 // ---------------------------------------------------------------------------

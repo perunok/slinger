@@ -777,6 +777,7 @@ export function createSyncApi(
         break
       case 'renameCollection':
       case 'deleteCollection':
+      case 'replaceCollectionFromPostman':
         ws = wsOfCollection(String(a0(args)))
         break
       case 'createFolder':

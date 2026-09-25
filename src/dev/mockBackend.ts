@@ -8,7 +8,7 @@ import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
 import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
-import { importPostman } from './mock/postmanImport'
+import { importPostman, replaceFromPostman } from './mock/postmanImport'
 import { seedState } from './mock/seed'
 import { emptyState, type MockState } from './mock/store'
 import { createTreeApi } from './mock/tree'
@@ -95,8 +95,11 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     async deleteHistoryEntry(historyId) {
       state.history = state.history.filter((h) => h.id !== historyId)
     },
-    async importPostmanCollection(workspaceId, fileContents) {
-      return importPostman(state, workspaceId, fileContents)
+    async importPostmanCollection(workspaceId, fileContents, options) {
+      return importPostman(state, workspaceId, fileContents, options)
+    },
+    async replaceCollectionFromPostman(collectionId, fileContents, sourceName) {
+      return replaceFromPostman(state, collectionId, fileContents, sourceName)
     },
   }
 
