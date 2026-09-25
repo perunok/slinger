@@ -11,17 +11,19 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql, 0002_collection_versions.sql, 0003_integrity.sql
+  migrations/        0001_init.sql ... 0005_scripts.sql
+  scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
+                     sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, history, common
-  services/          core (wiring), httpExecutor, httpService, postmanImport, collectionVersions, semver, secrets,
-                     exportFiles, externalUrl, authCallback
+  services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
+                     secrets, exportFiles, externalUrl, authCallback
   lib/               errors, ids, text, csp, permissions
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts - imported by main AND renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
-scripts/             build-main.mjs, electron-dev.mjs, ensure-native.mjs
+scripts/             build-main.mjs (main, preload and script-worker bundles), electron-dev.mjs, ensure-native.mjs
 test/                renderer test setup
 ```
 
@@ -57,9 +59,9 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 52 methods, grouped as
-workspaces, environments (+ `revealEnvironmentVariable`), collections, folders, requests, history, HTTP
-(`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 73 methods, grouped as
+workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`),
+requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
@@ -100,6 +102,8 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0001_init` | `workspaces`, `collections`, `folders`, `requests` (`document_json`), `environments`, `environment_variables`, `history`, `cloud_links` (created but not used by any code) |
 | `0002_collection_versions` | `collection_versions` (semver columns, `snapshot_json`, counts), unique index on `(collection_id, version)` among live rows |
 | `0003_integrity` | unique live `(environment_id, key)`, sibling-order indexes, trigger `collection_versions_immutable` |
+| `0004_sync` | sync bookkeeping tables, change-capture and read-only triggers (see Cloud sync) |
+| `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; local-only, not synced), read-only triggers for it |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables and collection versions carry
 `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters `deleted = 0` and also
@@ -115,7 +119,8 @@ requests among requests); moving a folder into itself or a descendant is refused
 
 **Request documents.** `requests.document_json` holds a Postman v2.1 item-shaped document (headers, body, auth, plus Slinger
 additions `params` and `settings.timeoutMs`). The main process treats it as an opaque string; the renderer model is
-`src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save.
+`src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save. Request scripts are the Postman `event`
+array under the key `scripts` (the key the importer has always used, so existing and synced documents need no migration).
 
 ## Secrets
 
@@ -132,6 +137,10 @@ additions `params` and `settings.timeoutMs`). The main process treats it as an o
 
 ## HTTP execution pipeline
 
+0. **Pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
+   calls `runScripts` with the chain and the draft; environment writes are persisted in main, request mutations are applied to an
+   outgoing copy of the draft, and `pm.variables` / collection variables / globals are layered into the template scope
+   (local > environment > collection > globals). See [Scripts sandbox](#scripts-sandbox).
 1. **Renderer, template resolution.** `src/lib/prepare.ts` `prepareRequest(draft, ctx)` is the *only* place `{{variable}}`
    substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`). It
    fails early on unresolved names, reveals just the secrets the request references through `revealEnvironmentVariable`
@@ -151,7 +160,10 @@ additions `params` and `settings.timeoutMs`). The main process treats it as an o
 5. **Response.** Non-2xx statuses resolve normally. Body is `bodyText` when the bytes decode (declared charset, else UTF-8),
    otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
-   a history write failure never hides the HTTP outcome.
+   a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
+   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`).
+7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
+   response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
 
 The cloud HTTP client, sign-in, token refresh and the sync engine run in the main process (`docs/SYNC_DESIGN.md`); the renderer
 never sees tokens and does not call `executeHttpRequest` or `cloudFetch` for cloud purposes. Only `executeHttpRequest` (the user's
@@ -185,10 +197,82 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   `SLINGER_SYNC_IT_SERVER_DIR=../slinger-admin/server npm run test:sync-it`). Real-app specs: `e2e/cloud.e2e.test.ts`,
   `e2e/sync.e2e.test.ts` (two profiles = two devices, gated by `SLINGER_E2E_CLOUD_URL`).
 
+## Scripts sandbox
+
+Postman `event` scripts come from imported, i.e. untrusted, collections. They never run in the renderer and never in Node's `vm`
+(not a security boundary). They run in the **main process, in a worker thread, inside QuickJS compiled to WebAssembly**
+(`quickjs-emscripten-core` + the `@jitl/quickjs-singlefile-cjs-release-sync` variant, WASM inlined in the JS, so the bundle needs
+no file loading and works from the asar; same code under vitest in plain Node).
+
+**Flow.** `runScripts(input)` (zod-validated) -> `ScriptService.run` (`services/scriptService.ts`) loads the active environment
+(`value: null` for secrets), reads the workspace's read-only flag (`cloud_links.read_only`), and hands a `ScriptJob` to the
+`WorkerExecutor` (`scripts/executor.ts`, up to 4 workers, 1 kept warm; the worker bundle `dist-electron/script-worker.cjs` is read
+as text and started with `eval: true`, `resourceLimits` 256 MB old space / 4 MB stack). The worker runs `runScriptChain`
+(`scripts/sandbox.ts`), returns scopes, request mutations, console, tests, errors and a list of environment operations, and main
+applies the operations with `EnvironmentRepository.setValueFromScript` / `unsetFromScript` (secrets stay secret, the value goes to
+the keychain; coalesced to the last write per key). The IPC call resolves with a `RunScriptsResult`; script failures are data
+(`errors[]`), never rejections.
+
+**Isolation.**
+
+- Each script of a chain gets a **fresh QuickJS runtime and context**: nothing a collection script defines or pollutes
+  (`Object.prototype`, `pm` itself) is visible to the folder or request script. Shared state (variables, environment, request) lives
+  on the host side.
+- The context has only ECMAScript built-ins plus `prelude.js`: no module loader (code is evaluated as global code, `import` is a
+  syntax error, dynamic `import()` fails), no `std`/`os` modules, no `process`, `require` (a stub that throws), `fetch`, timers
+  (stubs that throw), file system or network. `pm.sendRequest` throws "not supported".
+- The **only bridge** is one host function `__slinger_call(op, argsJson) -> resultJson`: strings in, strings out. The prelude
+  captures it in a closure and deletes the global before user code runs. The host (`scripts/host.ts`) parses with its own
+  `JSON.parse`, type-checks and size-limits every argument, and keeps scopes in `Map`s, so script-chosen keys like `__proto__`
+  never touch a host prototype (results are built with `Object.fromEntries`).
+- **Limits** (per script, `scripts/job.ts` `DEFAULT_LIMITS`): wall-clock deadline (default 5 s, 100 ms-60 s, from Settings) and
+  cancellation enforced by the QuickJS interrupt handler; 64 MB QuickJS heap; 256 KB QuickJS stack (below V8's native stack, so deep
+  recursion is a catchable `InternalError: stack overflow` instead of aborting the WASM module); console 1000 entries / 512 KB per
+  run, 10 000 characters per message (flooding stops calling the host); 1000 tests; 1 MB per variable value; response body 8 MB.
+  A watchdog in the executor terminates a worker that does not answer within the sum of the deadlines + 5 s; a cancelled worker that
+  does not stop within 2 s is terminated too. A runtime that was interrupted (timeout, cancel) is never freed: freeing one that was
+  interrupted inside a promise job trips a QuickJS assertion that aborts the whole WASM module, so the module instance is dropped
+  instead (V8 reclaims its memory) and the next script loads a fresh one (about 10 ms). Any other engine failure does the same.
+- **Cancellation.** `cancelHttpRequest(runId)` also cancels a script run with that id: main sets a flag in a `SharedArrayBuffer`
+  that the interrupt handler polls; a script waiting for a keychain read is woken up. The renderer uses one run id for a whole send
+  (pre-request -> HTTP -> tests), so Cancel and the runner's Stop work at every stage.
+
+**Secrets (policy: Postman parity, read by explicit name only).** The job carries no secret values. When a script calls
+`pm.environment.get(name)` (or `pm.variables.get`, or `replaceIn('{{name}}')`) for a secret, the worker makes a **synchronous**
+request to main: it posts the variable id on a `MessagePort` and blocks in `Atomics.wait`; main checks the id belongs to the
+job's environment, reads the keychain (`EnvironmentRepository.reveal`), posts the value and notifies; the worker takes it with
+`receiveMessageOnPort`. So a secret leaves the keychain only when a script asks for it by name, `toObject()` omits secrets, and a
+script that never asks causes no keychain read (tested). `set` on a secret keeps it secret. Main remembers the values a session's
+scripts read or wrote (`ScriptService`, per `sessionId`, 1 h TTL, 500 sessions max) and `HttpService` redacts them from history.
+Script console output travels only in the IPC result; main never logs script output or values; the renderer keeps it in memory.
+
+**Read-only workspaces.** `pm.environment.set/unset` throw inside the script (a clear error that fails it); ScriptService refuses
+to apply environment operations for a read-only workspace as a second line of defence; the 0005 triggers refuse
+`setCollectionScripts` / `setFolderScripts`; the renderer disables the script editors.
+
+**Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, network, OS, Electron or
+Node APIs, other scripts' state, or the host process (escape, prototype pollution, resource exhaustion: CPU, memory, stack,
+output). Out of scope / accepted: a script can read non-secret environment values and any secret it names, and can put them into
+the request it is attached to (that is what pre-request scripts are for; users should review untrusted collections); it can write
+the active environment of a writable workspace. QuickJS itself is the trust anchor for memory safety (WASM confines a QuickJS bug
+to the worker's linear memory; the worker can be terminated).
+
+**Storage and sync.** Request scripts: `requests.document_json` key `scripts` (synced, versioned, exported). Collection/folder
+scripts: `scripts_json` (0005), included in version snapshots (`collectionScriptsJson`, folder `scriptsJson`, optional so older
+snapshots stay valid and snapshots without scripts keep the old JSON shape) and Postman import/export (`event`), but **not synced**:
+the server's collection/folder schema has no such field (it would drop it), so the column is classified as local-only in the sync
+drift guard (`electron/__tests__/sync/triggers.test.ts`). `pm.collectionVariables` and `pm.globals` are session-only in the
+renderer (`features/scripts/sessionVars.ts`).
+
+**Renderer side.** `src/lib/scripts.ts` (pure: Postman `event` editing that returns the same array when nothing changed, chain
+assembly, request/response snapshots, scope layering, test counts), `features/requests/execute.ts` (the pipeline),
+`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog, session scopes). The browser
+mock's `runScripts` does not execute scripts (it returns the scopes unchanged with a console note).
+
 ## Collection versioning
 
 Versions are immutable snapshots stored inside the database, not git. `createCollectionVersion` serializes the collection's live
-folders and requests (names, methods, URLs, `documentJson`, ordering; no environments) into `snapshot_json` and records the counts.
+folders and requests (names, methods, URLs, `documentJson`, ordering, collection/folder scripts; no environments) into `snapshot_json` and records the counts.
 Semver is strict 2.0.0 (`services/semver.ts`): optional prerelease, no build metadata, no leading `v`, no leading zeros. A
 version label is unique per collection among live rows (`invalid_input`, `reason: 'duplicate_version'`); a SQLite trigger
 aborts any UPDATE other than the `deleted` flag. `listCollectionVersions` sorts newest first by semver precedence (parsed
@@ -257,7 +341,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, secrets, export files, auth callback |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, the esbuild-bundled worker, ScriptService) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
@@ -285,5 +369,6 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: OAuth 2.0 request auth, pre-request/test scripts (kept in imported documents, never executed), realtime
-collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
+Not present in the code: OAuth 2.0 request auth, `pm.sendRequest` and module `require` in scripts, cloud sync of collection/folder
+scripts, persisted collection variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and
+auto-update.

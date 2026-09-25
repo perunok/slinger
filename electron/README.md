@@ -16,8 +16,9 @@ electron/
   db/                database.ts (open + pragmas), migrate.ts (migration runner)
   migrations/        numbered .sql files
   repositories/      SQL access per aggregate (workspaces, collections, tree=folders+requests, environments, history)
-  services/          httpExecutor/httpService, postmanImport, collectionVersions, semver, secrets,
+  services/          httpExecutor/httpService, scriptService, postmanImport, collectionVersions, semver, secrets,
                      exportFiles, externalUrl, authCallback, core (wiring)
+  scripts/           pre-request/test script sandbox: QuickJS (WASM) runner, pm API prelude, worker-thread pool
   cloud/             cloud HTTP client (http.ts), device-flow sign-in + token refresh (auth.ts), typed API (api.ts)
   sync/              collection sync engine: index.ts (SyncService, IPC methods), engine (cycle, status, backoff),
                      outbox (push side), apply (pull side), merge, mapping, conflicts, linking, scheduler, store
@@ -128,7 +129,19 @@ timeouts (default 60 s), cancellation through `requestRunId`, and text-vs-base64
 (`bodyText` when the bytes decode, else `bodyBase64`; `bodyByteLength` always set). `HttpService`
 wraps it, tracks cancellable runs and records **every** attempt in `history`
 (successes, HTTP errors, network failures, cancellations, validation failures). The history URL is
-stored without API-key query parameters added by auth.
+stored without API-key query parameters added by auth, and with secret values that scripts of the
+request's `scriptSessionId` read replaced by `{{name}}`.
+
+## Scripts
+
+`runScripts` runs Postman pre-request/test scripts in QuickJS inside a worker thread
+(`scripts/`, bundled separately to `dist-electron/script-worker.cjs` by `scripts/build-main.mjs`; main
+reads it as text and starts it with `eval: true` so it also works inside the asar). `ScriptService`
+loads the environment, applies the environment writes the scripts made, serves secret reads on demand
+through a synchronous `Atomics.wait` bridge, and keeps per-session secret values for history redaction.
+`cancelHttpRequest(runId)` cancels a script run too. Design, limits and threat model:
+[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md#scripts-sandbox). Tests: `__tests__/scripts/` (the worker test
+bundles the real worker with esbuild).
 
 ## IPC security
 

@@ -31,6 +31,13 @@ interface ScriptOutcome {
   ok: boolean
   /** Stop the whole chain (cancelled). */
   abort: boolean
+  /**
+   * The runtime was interrupted (timeout / cancel) or could not be freed cleanly. QuickJS can leave objects
+   * of an interrupted promise job unreachable-but-referenced, and freeing such a runtime aborts the whole WASM
+   * module, so an interrupted runtime is NOT freed: the module instance is dropped instead (V8 frees its memory)
+   * and the next script loads a fresh one (~10 ms).
+   */
+  tainted: boolean
 }
 
 function describeError(ctx: QuickJSContext, handle: QuickJSHandle): string {
@@ -58,6 +65,8 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
   let stop: 'timeout' | 'cancelled' | null = null
   let deadline = now() + limits.timeoutMs
   let honourCancel = true
+  let tainted = false
+  const done = (ok: boolean, abort: boolean): ScriptOutcome => ({ ok, abort, tainted: tainted || stop !== null })
   try {
     rt.setMemoryLimit(limits.memoryBytes)
     rt.setMaxStackSize(limits.stackBytes)
@@ -73,6 +82,7 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
       return false
     })
     const ctx = rt.newContext()
+    let freeCtx = true
     try {
       host.begin(script)
       const bridge = ctx.newFunction('__slinger_call', (opH, argsH) => {
@@ -96,7 +106,7 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
         const msg = describeError(ctx, prelude.error)
         prelude.error.dispose()
         host.error(script, stop ?? 'internal', stop === 'timeout' ? `Script timed out after ${limits.timeoutMs} ms` : `Could not start the script sandbox: ${msg}`)
-        return { ok: false, abort: stop === 'cancelled' }
+        return done(false, stop === 'cancelled')
       }
       prelude.value.dispose()
 
@@ -129,23 +139,36 @@ function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, dep
 
       if (reason === 'cancelled') {
         host.error(script, 'cancelled', 'Cancelled')
-        return { ok: false, abort: true }
+        return done(false, true)
       }
       if (reason === 'timeout') {
         host.error(script, 'timeout', `Script timed out after ${limits.timeoutMs} ms`)
-        return { ok: false, abort: false }
+        return done(false, false)
       }
       if (failed !== null) {
         const memory = /out of memory/i.test(failed)
         host.error(script, memory ? 'memory' : 'error', memory ? `Script ran out of memory (limit ${Math.round(limits.memoryBytes / 1048576)} MB)` : failed)
-        return { ok: false, abort: false }
+        return done(false, false)
       }
-      return { ok: true, abort: false }
+      return done(true, false)
     } finally {
-      ctx.dispose()
+      if (stop !== null) freeCtx = false
+      if (freeCtx) {
+        try {
+          ctx.dispose()
+        } catch {
+          tainted = true
+        }
+      }
     }
   } finally {
-    rt.dispose()
+    if (stop === null && !tainted) {
+      try {
+        rt.dispose()
+      } catch {
+        tainted = true
+      }
+    }
   }
 }
 
@@ -173,10 +196,19 @@ export async function runScriptChain(job: ScriptJob, deps: ScriptRunnerDeps): Pr
     try {
       outcome = runOne(qjs, host, script, deps)
     } catch (err) {
-      // A failure of the engine itself (not of the script): drop the module so the next run starts clean.
-      modulePromise = null
+      // A failure of the engine itself (not of the script).
       host.error(script, 'internal', `The script sandbox failed: ${err instanceof Error ? err.message : String(err)}`)
-      outcome = { ok: false, abort: job.event === 'prerequest' }
+      outcome = { ok: false, abort: job.event === 'prerequest', tainted: true }
+    }
+    if (outcome.tainted) {
+      // Drop this module instance (see ScriptOutcome.tainted); later scripts get a fresh one.
+      modulePromise = null
+      try {
+        qjs = await loadQuickJs()
+      } catch (err) {
+        host.error(script, 'internal', `The script sandbox could not be reloaded: ${err instanceof Error ? err.message : String(err)}`)
+        break
+      }
     }
     if (outcome.abort) break
     if (!outcome.ok && job.event === 'prerequest' && !job.continueOnError) break

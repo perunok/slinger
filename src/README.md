@@ -23,20 +23,22 @@ app/                        shell + cross-feature state
   state.svelte.ts           workspaces, collections/folders/requests, environments, active env
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope every template input reads
-  settings.svelte.ts        theme / font size / editor wrap (localStorage, applied to <html>)
+  settings.svelte.ts        theme / font size / editor wrap / script time limit + continue-on-error (localStorage)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
                             NameDialog, ContextMenu, Tabs, SplitPane, ToastHost, InlineError, Spinner
   editor/                   CodeEditor (multi-line CM6), TemplateInput (single-line CM6),
-                            cm/{theme,languages,template,sync}.ts
+                            cm/{theme,languages,template,sync,pmCompletion}.ts
   kv/KeyValueTable.svelte   params / headers / form-data / urlencoded tables
 features/
   workspaces/  collections/ (tree, DnD, actions)  requests/ (tabs store, editor panels, send)
   response/    environments/ history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
+  scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog, session-only pm scopes)
 lib/                        pure logic, no DOM: template, urlParams, kv, request (document model),
-                            prepare (draft -> HttpRequestInput), response, snippets, postman, tree,
+                            prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
+                            response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc
 dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
 styles/                     themes.css (tokens) + app.css (tailwind, CM overlays)
@@ -85,7 +87,10 @@ Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes
 
 * `ApiRequest.documentJson` keeps the Postman v2.1 item shape (headers[], body{mode}, auth{type}); unknown keys
   (scripts, responses, source, settings) are preserved on save. Our own additions: `params` (rows incl. disabled ones)
-  and `settings.timeoutMs`. See `lib/request.ts`.
+  and `settings.timeoutMs`. See `lib/request.ts`. Request scripts are the Postman `event` array under `scripts`; edit them
+  with `lib/scripts.ts` `withScript` (returns the same array when nothing changed, so untouched documents stay byte-identical).
+* Scripts run only in the main process (`runScripts`); `features/requests/execute.ts` is the one place that calls it (single send
+  and runner). The browser mock does not execute scripts (it answers with a console note).
 * Cloud tokens, HTTP and the sync engine live in the main process; the renderer only calls the account/sync IPC methods and subscribes to `onSyncEvent` (`features/sync/syncStore.svelte.ts`). Tokens never reach the renderer.
 * Renderer-driven contract additions (`pickFile`, `writeExportFile(..., encoding)`, `historyUrl` on `HttpRequestInput`) are implemented in the main process.
 * Cloud API URL and device name are stored by the main process (`getCloudConfig`/`setCloudConfig`). The old `localStorage` keys `slinger.cloud.config` and

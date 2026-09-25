@@ -65,9 +65,23 @@ describe('sandbox: resource limits', () => {
     expect(r.errors).toEqual([{ source: 'Pre-request · request “R”', kind: 'timeout', message: 'Script timed out after 300 ms' }])
   })
 
-  it('stops a never-settling promise loop too', async () => {
-    const r = await run({ code: 'const spin = () => Promise.resolve().then(spin); spin()', limits: { ...DEFAULT_LIMITS, timeoutMs: 300 } })
-    expect(r.errors[0].kind).toBe('timeout')
+  it('stops a never-settling promise loop too, and the engine is healthy afterwards', async () => {
+    const r = await run({
+      scripts: [
+        script('const spin = () => Promise.resolve().then(spin); spin()', 'folder', 'F'),
+        script('Promise.resolve().then(() => { for (;;) {} })', 'request', 'R'),
+      ],
+      event: 'test',
+      limits: { ...DEFAULT_LIMITS, timeoutMs: 300 },
+    })
+    // Exactly one clean timeout per script (an interrupted runtime is dropped, never freed half-way).
+    expect(r.errors.map((e) => [e.source, e.kind])).toEqual([
+      ['Tests · folder “F”', 'timeout'],
+      ['Tests · request “R”', 'timeout'],
+    ])
+    const after = await run({ code: `pm.test('fine', () => Promise.resolve(1).then((v) => pm.expect(v).to.equal(1)))` })
+    expect(after.errors).toEqual([])
+    expect(after.tests[0].status).toBe('passed')
   })
 
   it('still records tests that ran before a timeout', async () => {

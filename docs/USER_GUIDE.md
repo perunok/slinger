@@ -22,8 +22,8 @@ delete every workspace, "Personal" is recreated the next time you start the app.
 In the **Collections** sidebar:
 
 - **New collection** (plus button), then right-click a collection for **New request**, **New folder**, **Run collection...**,
-  **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
-- Right-click a folder for **New request**, **New subfolder**, **Run folder...**, **Rename**, **Delete**.
+  **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
+- Right-click a folder for **New request**, **New subfolder**, **Run folder...**, **Scripts...**, **Rename**, **Delete**.
 - Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete**.
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
 - In the tree, F2 renames and Delete deletes the selected item. Deleting asks for confirmation and cannot be undone from the UI.
@@ -33,7 +33,7 @@ In the **Collections** sidebar:
 Ctrl+T opens a new tab. The URL bar has the method selector, the URL, **Send** (Ctrl+Enter, becomes cancel while running) and
 **Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as").
 
-The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **Docs**, **Settings** and **Code**.
+The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **Scripts**, **Docs**, **Settings** and **Code**.
 
 - **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent.
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
@@ -44,6 +44,7 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Authorization:** No Auth, Basic Auth, Bearer Token, or API Key (added to a header or as a query parameter). Fields accept
   `{{variables}}`. Imported Postman requests with other auth types (for example OAuth 2.0) are sent without authorization and a
   warning says so; OAuth 2.0 is not implemented.
+- **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** free-text description stored with the request (exported to Postman).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
@@ -81,6 +82,11 @@ After Send the pane shows status, time and size. Views: **Pretty** (formatted, f
 (hex preview for binary content), **Preview** (HTML in a fully sandboxed frame, images, PDF), **Headers** and **Cookies**
 (parsed from `Set-Cookie`). Toolbar: search in response, toggle word wrap, copy body, **Save response to file** (to the export
 folder). Non-2xx responses are shown normally; network errors, timeouts and cancellations appear as inline errors.
+
+When the request (or its folder or collection) has scripts, two more views appear: **Tests** (every `pm.test` with pass/fail/skip,
+the assertion message of failures, script errors, a filter, and a `passed/total` badge on the tab that turns red when something
+failed) and **Console** (`console.log/info/warn/error` output with level, time and which script printed it; **Clear** empties it).
+Both belong to the last send and are kept in memory only: they are not saved, not written to history and gone after a restart.
 
 ## Saved examples
 
@@ -121,6 +127,118 @@ environment; each row shows status, time and, expanded, headers and a body previ
 network errors fail, unless you tick **Treat 3xx as pass**; requests with unresolved variables are skipped with the reason. You can stop a running run.
 Runner requests are recorded in History.
 
+Scripts run for every request exactly as for **Send** (collection, folder and request scripts). A failing test fails its row
+("1 of 3 tests failed"); a failing pre-request script fails the row without sending it. Values set with `pm.variables.set` live for
+the whole run, and `pm.environment.set` writes to the active environment, so the classic *login -> save token -> next request uses
+`{{token}}`* flow works. The summary adds test counts (`Tests: 4 passed, 1 failed`), expanded rows list each test and the console
+output, and **Export results as JSON** includes the tests. **Stop** also interrupts a running script.
+
+## Scripts
+
+Slinger runs Postman-style JavaScript **pre-request scripts** (before a request is sent) and **test scripts** (after its
+response arrives), using a Postman-compatible subset of the `pm` API. Scripts imported from Postman run unchanged as long as they
+stay within that subset.
+
+**Where scripts live.** Every request has them in its **Scripts** section (sub-tabs **Pre-request** and **Tests**). Collections and
+folders have them too: right-click, **Scripts...**. The editors are JavaScript with autocomplete for `pm.` members and snippets
+(type `test`, `status`, `setenv`, `getenv`, `header`, `setvar`, `jsonprop`, `responsetime`). Request scripts are saved with the
+request (Save); collection and folder scripts are saved in their dialog.
+
+**Order.** For each send: collection pre-request -> folder pre-request scripts from the outermost folder to the innermost ->
+request pre-request -> *templates are resolved and the request is sent* -> collection tests -> folder tests (outer to inner) ->
+request tests. Because pre-request scripts run before `{{templates}}` are resolved, variables they set are used in the request.
+
+**Errors and limits.**
+
+- A pre-request script that throws (or times out) stops the send: the response pane says which script failed, with the error and
+  its line, and the console output is shown. Turn on *Send the request even when a pre-request script fails* in Settings to send
+  anyway (the remaining pre-request scripts then still run).
+- A test script that throws counts as a failed test; the other test scripts still run.
+- Each script has a time limit (default 5 s, Settings), 64 MB of memory and a limited stack; **Cancel** (and **Stop** in the
+  runner) interrupts a running script. Console output is capped at 1000 messages / 512 KB per send, a single message at 10 000
+  characters, and 1000 tests; a response body larger than 8 MB is cut to its first 8 MB for `pm.response`.
+- Scripts run in an isolated sandbox (see "Security" below): **no network** (`pm.sendRequest` is not supported and throws a clear
+  error), **no files**, **no `require`/`import`** of modules (lodash, moment, crypto-js, ... are not available), no timers
+  (`setTimeout`/`setInterval` throw), no access to the app or the operating system. Promises work (async `pm.test` callbacks are
+  awaited while the script runs).
+
+**Variables.**
+
+| Scope | API | Lifetime in Slinger |
+| --- | --- | --- |
+| Local | `pm.variables.set/get` | one send; in the collection runner, the whole run |
+| Environment | `pm.environment.*` | the active environment; `set`/`unset` are saved immediately |
+| Collection | `pm.collectionVariables.*` | kept in memory until the app restarts (not saved in v1) |
+| Global | `pm.globals.*` | kept in memory per workspace until the app restarts (not saved in v1) |
+
+`pm.variables.get(name)` and `{{name}}` in requests resolve with Postman's precedence: local, then environment, then collection
+variables, then globals. Environment values are stored as text (numbers and objects are saved as JSON text); local, collection and
+global values keep their JSON type within the session. Without an active environment, `pm.environment.set` lasts for the one send
+and a console warning says so. In a **read-only (viewer) synced workspace** `pm.environment.set/unset` throw ("this workspace is
+read-only"), which fails the script; reading still works, and the script editors are read-only. Variables that only scripts define
+are shown as unresolved in the editors until a script has run, but they resolve at send time.
+
+**Secret variables and scripts.** A script can read a secret environment variable, but only by asking for it by name:
+`pm.environment.get('token')`, `pm.variables.get('token')` or `replaceIn('{{token}}')`. Secrets are left out of
+`pm.environment.toObject()`, and the value is fetched from the keychain only when a script asks. `pm.environment.set` on a secret
+keeps it secret (the new value goes to the keychain). Test scripts see `pm.request` with secret variables still written as
+`{{name}}`. Anything a script prints with `console.log` appears in the Console tab (in memory only; never in history, logs or files),
+so avoid printing secrets. History never stores a secret a script read or wrote: it is replaced by `{{name}}` in the recorded URL,
+even if the script put it into the URL. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
+stores it as plain text, like typing it there would.
+
+**Request changes.** In pre-request scripts `pm.request` is editable: `pm.request.url` (assign a string, or `update()`,
+`query.add/upsert/remove`), `pm.request.method`, `pm.request.headers.add/upsert/remove`, `pm.request.body.update()` (sets a raw
+body; objects become JSON). Changes apply to **this send only**: the saved request and the editor are not changed.
+
+**API reference** (Postman-compatible names; anything not listed is not available):
+
+| API | Notes |
+| --- | --- |
+| `pm.environment.get/set/unset/has/toObject/clear/replaceIn`, `.name` | active environment; secrets as described above |
+| `pm.variables.get/set/has/unset/toObject/replaceIn` | `get`/`has`/`toObject` look through all scopes |
+| `pm.collectionVariables.*`, `pm.globals.*` | same methods; session-only (see above) |
+| `pm.iterationData.get/has/toObject` | always empty (no data files) |
+| `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
+| `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |
+| `pm.response.to.have.status(code or reason)`, `.header(name[, value])`, `.body([text or regexp or object])`, `.jsonBody([path[, value]])` | response assertions |
+| `pm.response.to.be.ok / success / error / clientError / serverError / notFound / json / withBody` (and `.not`) | response assertions |
+| `pm.cookies.get/has/toObject` | from the response's `Set-Cookie` headers |
+| `pm.test(name, fn)`, `pm.test.skip(name)` | `fn` may return a promise or take a `done` callback |
+| `pm.expect(value[, message])` | chai-style: `to.equal/eql/deep.equal`, `a/an`, `include/contain`, `have.property` (also `nested`, `own`), `oneOf`, `above/below/least/most/within`, `length/lengthOf` (also `.lengthOf.above(n)`), `match`, `keys/members`, `exist`, `true/false/null/undefined/NaN/empty`, `throw`, `satisfy`, `closeTo`, `instanceOf`, `not` |
+| `pm.info.eventName/requestName/requestId/iteration/iterationCount` | |
+| `console.log/info/warn/error/debug` | Console tab |
+| `btoa`, `atob` | Latin-1 base64 |
+| Legacy: `postman.setEnvironmentVariable/getEnvironmentVariable/clearEnvironmentVariable`, `postman.setGlobalVariable/...`, `tests["name"] = bool`, `responseBody`, `responseCode`, `responseHeaders`, `responseTime`, `environment`, `globals`, `request`, `iteration` | old Postman sandbox names |
+| `pm.sendRequest`, `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` | not supported: throw an error |
+
+**Examples.**
+
+```js
+// Tests of a "Login" request: keep the token for the next requests.
+const body = pm.response.json()
+pm.test('Status code is 200', () => pm.response.to.have.status(200))
+pm.test('Returns a token', () => pm.expect(body).to.have.property('token').that.is.a('string'))
+pm.environment.set('authToken', body.token)
+```
+
+```js
+// Pre-request script on a folder: sign every request inside it.
+const ts = pm.variables.replaceIn('{{$timestamp}}')
+pm.request.headers.upsert({ key: 'X-Timestamp', value: ts })
+pm.request.headers.upsert({ key: 'X-Request-Id', value: pm.variables.replaceIn('{{$guid}}') })
+```
+
+**Sync and versions.** Request scripts are part of the request, so cloud sync, collection versions and Postman export carry
+them. Collection- and folder-level scripts are included in collection versions and Postman export, but **cloud sync does not carry
+them yet** (the cloud protocol has no field for them): they stay on the device where you wrote or imported them.
+
+**Security.** Scripts from an imported collection are code from someone else. Slinger never runs them in the app window: they run
+in the main process, in a separate worker thread, inside QuickJS (a JavaScript engine compiled to WebAssembly) with nothing but
+the `pm` API described here. Details are in [ARCHITECTURE.md](ARCHITECTURE.md#scripts-sandbox). Scripts still act with your data:
+a script can read the environment and send what it reads in the request it is attached to, so review scripts from sources you do
+not trust before sending their requests.
+
 ## History
 
 The **History** sidebar tab lists recent requests of the current workspace grouped by day (last 200 shown; the app keeps up to 1000
@@ -146,12 +264,15 @@ Right-click a collection and choose **Versions...**. A version is an immutable s
 
 - **Import:** use the upload button in the Collections header (or **Import from Postman** on the empty state). Drop or choose a
   Postman **collection (v2.x)** or **environment** `.json`. The preview shows what will be imported. Collection-level variables
-  can optionally become a new environment; collection-level scripts and tests are not imported (request scripts are kept in the
-  stored document but never run). Postman "globals" files are rejected; export an environment instead. Disabled environment
-  variables are skipped. Saved examples (`response[]`) are imported with their requests; the preview shows how many.
+  can optionally become a new environment. Pre-request and test scripts are imported at every level (collection, folders,
+  requests) and run like scripts written in Slinger; the preview and the success message show how many. Postman "globals" files
+  are rejected; export an environment instead. Disabled environment variables are skipped. Saved examples (`response[]`) are
+  imported with their requests; the preview shows how many.
 - **Export:** right-click a collection, **Export as Postman JSON...**, then **Save to file** (optionally **Choose folder...**
   first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
-  exported in each item's `response` list; examples you did not edit are written back exactly as they were imported.
+  exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
+  exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
+  imported.
 
 ## Cloud account and sync
 
@@ -200,7 +321,9 @@ Server setup is documented in the separate `slinger-admin` repository.
 ## Themes and settings
 
 Settings (Ctrl+, or the sun icon): **Theme** (System, Light, Dark, Midnight, Solarized Dark, High Contrast; System follows your OS
-light/dark setting), **Font size** (11-20 px) and **Wrap long lines in editors**. The dialog also shows the app version.
+light/dark setting), **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script**
+(default 5000 ms, 100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows
+the app version.
 
 ## Keyboard shortcuts
 
