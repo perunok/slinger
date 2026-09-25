@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { app } from '../../app/state.svelte'
@@ -38,6 +40,10 @@ describe('parsePostmanFile', () => {
   it('counts folders and requests and reads variables', () => {
     const r = parsePostmanFile(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: '', value: 'skip' }] }))
     expect(r).toMatchObject({ ok: true, file: { kind: 'collection', name: 'Pets', folders: 1, requests: 2, variables: [{ key: 'baseUrl', value: 'https://x.test' }] } })
+  })
+  it('counts saved examples of the sample collection', () => {
+    const r = parsePostmanFile(readFileSync(join(__dirname, '..', '..', '..', 'example-postman-collection.json'), 'utf8'))
+    expect(r).toMatchObject({ ok: true, file: { kind: 'collection', requests: 8, examples: 16 } })
   })
   it('recognises environments', () => {
     const r = parsePostmanFile(JSON.stringify({ name: 'Prod', _postman_variable_scope: 'environment', values: [{ key: 'a', value: '1', type: 'default', enabled: true }, { key: 's', value: 'x', type: 'secret' }, { key: 'off', value: '', enabled: false }] }))

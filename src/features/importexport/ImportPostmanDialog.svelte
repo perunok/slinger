@@ -145,6 +145,7 @@
           <dt class="text-muted">Collection</dt><dd class="font-medium">{parsed.name}</dd>
           <dt class="text-muted">Folders</dt><dd>{parsed.folders}</dd>
           <dt class="text-muted">Requests</dt><dd>{parsed.requests}</dd>
+          <dt class="text-muted">Saved examples</dt><dd data-testid="import-examples">{parsed.examples}</dd>
           <dt class="text-muted">Collection variables</dt><dd>{parsed.variables.length > 0 ? `${parsed.variables.length} defined` : 'none'}</dd>
         </dl>
         {#if parsed.variables.length > 0}

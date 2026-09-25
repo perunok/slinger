@@ -7,7 +7,7 @@ export interface CollectionVariable {
 }
 
 export type PostmanFile =
-  | { kind: 'collection'; name: string; folders: number; requests: number; variables: CollectionVariable[] }
+  | { kind: 'collection'; name: string; folders: number; requests: number; examples: number; variables: CollectionVariable[] }
   | { kind: 'environment'; name: string; variables: CollectionVariable[]; skippedDisabled: number }
 
 export type ParseResult = { ok: true; file: PostmanFile } | { ok: false; error: string }
@@ -31,9 +31,10 @@ function variablesOf(list: unknown, secretByType: boolean): { vars: CollectionVa
   return { vars, skipped }
 }
 
-function countItems(items: unknown[]): { folders: number; requests: number } {
+function countItems(items: unknown[]): { folders: number; requests: number; examples: number } {
   let folders = 0
   let requests = 0
+  let examples = 0
   for (const it of items) {
     if (!isObj(it)) continue
     if (Array.isArray(it.item)) {
@@ -41,9 +42,14 @@ function countItems(items: unknown[]): { folders: number; requests: number } {
       const inner = countItems(it.item)
       folders += inner.folders
       requests += inner.requests
-    } else if (it.request !== undefined) requests++
+      examples += inner.examples
+    } else if (it.request !== undefined) {
+      requests++
+      // Saved examples (`response[]`) are kept with their request.
+      if (Array.isArray(it.response)) examples += it.response.length
+    }
   }
-  return { folders, requests }
+  return { folders, requests, examples }
 }
 
 export function parsePostmanFile(text: string): ParseResult {
@@ -72,8 +78,8 @@ export function parsePostmanFile(text: string): ParseResult {
   if (!Array.isArray(data.item)) {
     return { ok: false, error: 'This does not look like a Postman collection v2.x: it has no "item" array.' }
   }
-  const { folders, requests } = countItems(data.item)
+  const { folders, requests, examples } = countItems(data.item)
   if (requests === 0) return { ok: false, error: 'This collection contains no requests.' }
   const name = info && typeof info.name === 'string' && info.name.trim() ? info.name.trim() : 'Imported Collection'
-  return { ok: true, file: { kind: 'collection', name, folders, requests, variables: variablesOf(data.variable, false).vars } }
+  return { ok: true, file: { kind: 'collection', name, folders, requests, examples, variables: variablesOf(data.variable, false).vars } }
 }
