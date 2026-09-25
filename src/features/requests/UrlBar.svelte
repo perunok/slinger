@@ -3,6 +3,8 @@
   import { mergeParamsFromUrl } from '../../lib/urlParams'
   import TemplateInput from '../../components/editor/TemplateInput.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import { ui } from '../../app/ui.svelte'
+  import { detectImportText } from '../importexport/parse'
   import { sync } from '../sync/syncStore.svelte'
   import { methodColor } from './method'
   import type { RequestTab } from './tabs.svelte'
@@ -21,6 +23,16 @@
   function setUrl(v: string) {
     tab.draft.url = v
     tab.draft.params = mergeParamsFromUrl(v, tab.draft.params)
+  }
+
+  /**
+   * A collection or environment export pasted into the URL bar opens the Import dialog with it instead of
+   * becoming the URL. Anything else (URLs, `{{vars}}`, query strings, small JSON) pastes as usual.
+   */
+  function onpastetext(text: string): boolean {
+    if (sync.blocked || !detectImportText(text)) return false
+    ui.openImport(text)
+    return true
   }
 </script>
 
@@ -44,6 +56,7 @@
       value={tab.draft.url}
       oninput={setUrl}
       onenter={onsend}
+      {onpastetext}
     />
   </div>
   {#if tab.sending}

@@ -339,7 +339,7 @@
       <input id="tree-filter" type="search" class="w-full" placeholder="Filter…" bind:value={filter} onkeydown={(e) => e.key === 'Escape' && (filter = '')} />
     </div>
     <IconButton icon="plus" label="New collection" disabled={ro} title={ro ? sync.blockedMessage : 'New collection'} onclick={() => (dlg = { t: 'newCollection' })} />
-    <IconButton icon="upload" label="Import Postman collection" disabled={ro} title={ro ? sync.blockedMessage : 'Import Postman collection'} onclick={() => (ui.importOpen = true)} />
+    <IconButton icon="upload" label="Import collection or environment" disabled={ro} title={ro ? sync.blockedMessage : 'Import collection or environment (Slinger or Postman JSON)'} onclick={() => ui.openImport()} />
   </div>
 
   <div
@@ -383,7 +383,7 @@
           <p class="text-xs" data-testid="readonly-empty">{sync.blockedMessage}</p>
         {:else}
           <Button variant="primary" icon="plus" onclick={() => (dlg = { t: 'newCollection' })}>New collection</Button>
-          <Button icon="upload" onclick={() => (ui.importOpen = true)}>Import from Postman</Button>
+          <Button icon="upload" onclick={() => ui.openImport()}>Import…</Button>
         {/if}
       </div>
     {:else if rows.length === 0 && filter}

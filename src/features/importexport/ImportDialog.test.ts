@@ -8,7 +8,7 @@ import { toast } from '../../app/toast.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import { tabsStore } from '../requests/tabs.svelte'
 import { sync } from '../sync/syncStore.svelte'
-import ImportPostmanDialog from './ImportPostmanDialog.svelte'
+import ImportDialog from './ImportDialog.svelte'
 import { parsePostmanFile } from './parse'
 import { copyName, findReimportMatches } from './reimport'
 
@@ -28,11 +28,11 @@ async function setup() {
   await app.init()
   toast.clear()
   const onclose = vi.fn()
-  render(ImportPostmanDialog, { open: true, onclose })
+  render(ImportDialog, { open: true, onclose })
   return { mock, onclose }
 }
 async function pick(text: string, name = 'x.json') {
-  const input = screen.getByLabelText('Postman file') as HTMLInputElement
+  const input = screen.getByLabelText('Import file') as HTMLInputElement
   const file = new File([text], name, { type: 'application/json' })
   Object.defineProperty(input, 'files', { value: [file], configurable: true })
   await fireEvent.change(input)
@@ -79,8 +79,9 @@ describe('parsePostmanFile', () => {
   })
   it.each([
     ['{oops', /not valid JSON/],
-    ['[1]', /not a Postman export/],
-    ['{"a":1}', /no "item" array/],
+    ['[1]', /Not a collection or environment: expected info.schema .* values\[\].*Found an array/],
+    ['{"a":1}', /Not a collection or environment: expected info.schema/],
+    [JSON.stringify({ info: { name: 'X' } }), /no "item" array/],
     [JSON.stringify({ info: { schema: 'https://schema.getpostman.com/json/collection/v1.0.0/collection.json' } }), /Unsupported Postman schema/],
     [JSON.stringify({ info: { name: 'E' }, item: [] }), /no requests/],
   ])('rejects %s', (text, msg) => {
@@ -90,7 +91,7 @@ describe('parsePostmanFile', () => {
   })
 })
 
-describe('ImportPostmanDialog', () => {
+describe('ImportDialog', () => {
   it('shows an error for invalid JSON and keeps Import disabled', async () => {
     await setup()
     await pick('not json')
@@ -98,10 +99,10 @@ describe('ImportPostmanDialog', () => {
     expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled()
   })
 
-  it('rejects JSON that is not a Postman collection', async () => {
+  it('rejects JSON that is not a collection or environment', async () => {
     await setup()
     await pick('{"hello": "world"}')
-    expect(await screen.findByRole('alert')).toHaveTextContent(/does not look like a Postman collection/)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Not a collection or environment/)
   })
 
   it('previews and imports a collection, then reloads and closes', async () => {
@@ -162,7 +163,7 @@ describe('ImportPostmanDialog', () => {
     await app.reloadEnvironments()
     toast.clear()
     const onclose = vi.fn()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }] }))
     expect(await screen.findByLabelText(/Create or update environment "Pets" from collection variables/)).toBeChecked()
     await waitFor(() =>
@@ -185,7 +186,7 @@ describe('ImportPostmanDialog', () => {
     await waitFor(() => expect(onclose).toHaveBeenCalledTimes(1))
     expect(toast.items.some((t) => t.detail === 'Environment "Staging" created with 1 variable')).toBe(true)
     cleanup()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     await pick(file('b'))
     expect(await screen.findByTestId('import-env-help')).toHaveTextContent('already exists')
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
@@ -232,7 +233,7 @@ describe('re-import helpers', () => {
   })
 })
 
-describe('ImportPostmanDialog: re-importing an existing collection', () => {
+describe('ImportDialog: re-importing an existing collection', () => {
   const updated = (extra: object = {}) =>
     JSON.stringify({
       info: { name: 'Pets', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
@@ -253,7 +254,7 @@ describe('ImportPostmanDialog: re-importing an existing collection', () => {
     await app.reloadCollections()
     toast.clear()
     const onclose = vi.fn()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     return { mock, onclose, created }
   }
 

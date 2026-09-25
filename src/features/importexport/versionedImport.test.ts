@@ -7,7 +7,7 @@ import { createMockBackend } from '../../dev/mockBackend'
 import { exportPostmanCollection } from '../../lib/postman'
 import { buildSlingerBlock, latestVersion } from '../../lib/slingerExport'
 import QuickOpen from '../requests/QuickOpen.svelte'
-import ImportPostmanDialog from './ImportPostmanDialog.svelte'
+import ImportDialog from './ImportDialog.svelte'
 import { parsePostmanFile } from './parse'
 
 Element.prototype.scrollIntoView ??= function () {}
@@ -42,7 +42,7 @@ async function versionedExport(mock: Mock, includeSnapshots = true): Promise<str
 }
 
 async function pick(text: string, name: string) {
-  const input = screen.getByLabelText('Postman file') as HTMLInputElement
+  const input = screen.getByLabelText('Import file') as HTMLInputElement
   expect(input.accept).toContain('.slinger_collection.json')
   expect(input.accept).toContain('.postman_collection.json')
   Object.defineProperty(input, 'files', { value: [new File([text], name, { type: 'application/json' })], configurable: true })
@@ -86,9 +86,25 @@ describe('Import dialog with a Slinger export', () => {
     const text = await versionedExport(mock)
     expect(parsePostmanFile(text)).toMatchObject({ ok: true, file: { kind: 'collection', history: { versions: 2, snapshots: true, latest: '1.1.0' } } })
     const onclose = vi.fn()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     await pick(text, 'enat uat v1.1.0.slinger_collection.json')
     expect(await screen.findByTestId('import-history')).toHaveTextContent('2 versions, latest v1.1.0')
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(toast.items.some((t) => t.title === 'Version history restored' && t.detail === '2 versions restored')).toBe(true)
+  })
+
+  it('pasted export JSON restores the version history like the file does', async () => {
+    const mock = await setup()
+    const text = await versionedExport(mock)
+    const onclose = vi.fn()
+    render(ImportDialog, { open: true, onclose })
+    const area = screen.getByLabelText('Or paste JSON') as HTMLTextAreaElement
+    area.value = text
+    await fireEvent.input(area)
+    await fireEvent.blur(area)
+    expect(await screen.findByTestId('import-source')).toHaveTextContent('Slinger collection v1.1.0')
+    expect(screen.getByTestId('import-history')).toHaveTextContent('2 versions, latest v1.1.0')
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await waitFor(() => expect(onclose).toHaveBeenCalled())
     expect(toast.items.some((t) => t.title === 'Version history restored' && t.detail === '2 versions restored')).toBe(true)
@@ -98,7 +114,7 @@ describe('Import dialog with a Slinger export', () => {
     const mock = await setup()
     const text = await versionedExport(mock, false)
     const onclose = vi.fn()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     await pick(text, 'x.json')
     expect(await screen.findByTestId('import-history')).toHaveTextContent('not restorable')
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
@@ -114,7 +130,7 @@ describe('Import dialog: replacing a collection from a Slinger export', () => {
     await app.reloadCollections() // the exported collection is now in the workspace: the dialog offers Replace
     const col = app.collections.find((c) => c.name === 'enat uat')!
     const onclose = vi.fn()
-    render(ImportPostmanDialog, { open: true, onclose })
+    render(ImportDialog, { open: true, onclose })
     await pick(text, 'enat uat v1.1.0.slinger_collection.json')
     expect(await screen.findByTestId('reimport-choice')).toBeInTheDocument()
     expect((screen.getByRole('radio', { name: /Replace existing/ }) as HTMLInputElement).checked).toBe(true)

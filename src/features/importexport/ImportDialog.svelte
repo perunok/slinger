@@ -1,4 +1,10 @@
 <script lang="ts">
+  /**
+   * Import dialog: Slinger or Postman collections and environments, from a file (drop / choose) or pasted JSON
+   * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar).
+   * Whichever was provided last is imported.
+   */
+  import { tick } from 'svelte'
   import { expandedStore } from '../../app/expanded.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
@@ -6,6 +12,7 @@
   import Dialog from '../../components/ui/Dialog.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { api, errorInfo } from '../../lib/ipc'
+  import { formatBytes } from '../../lib/response'
   import { findEnvByName } from '../environments/envLogic'
   import { tabsStore } from '../requests/tabs.svelte'
   import { sync } from '../sync/syncStore.svelte'
@@ -19,11 +26,29 @@
   interface Props {
     open: boolean
     onclose: () => void
+    /** Collection/environment JSON pasted elsewhere (the URL bar): the dialog opens with it in the paste area. */
+    initialText?: string | null
   }
-  let { open, onclose }: Props = $props()
+  let { open, onclose, initialText = null }: Props = $props()
+
+  /** Pastes larger than this are not put into the textarea (rendering megabytes there is slow): a chip stands in. */
+  const LARGE_PASTE = 256 * 1024
+  const PASTE_DEBOUNCE_MS = 300
+  /** Label of the safety version's notes when a pasted collection replaces an existing one. */
+  const PASTE_SOURCE_LABEL = 'pasted JSON'
 
   let fileName = $state<string | null>(null)
-  let text = $state('')
+  /** Where `text` came from: the last file chosen/dropped or the last paste. */
+  let source = $state<'file' | 'paste' | null>(null)
+  let text = $state.raw('')
+  /** Length of the pasted text (chars), for the size indicator. */
+  let pasteSize = $state(0)
+  /** The pasted text is too large for the textarea and is held outside it. */
+  let pasteLarge = $state(false)
+  /** Shown when the dialog was opened by pasting JSON into the URL bar. */
+  let note = $state<string | null>(null)
+  let pasteArea: HTMLTextAreaElement | undefined = $state()
+  let pasteTimer: ReturnType<typeof setTimeout> | undefined
   let parsed = $state.raw<PostmanFile | null>(null)
   let error = $state<string | null>(null)
   let makeEnv = $state(true)
@@ -36,8 +61,13 @@
 
   $effect(() => {
     if (!open) {
+      clearTimeout(pasteTimer)
       fileName = null
+      source = null
       text = ''
+      pasteSize = 0
+      pasteLarge = false
+      note = null
       parsed = null
       error = null
       makeEnv = true
@@ -45,7 +75,101 @@
       dragging = false
       mode = 'replace'
       targetId = null
+      return
     }
+    const t = initialText
+    if (t) {
+      void tick().then(() => {
+        putPaste(t)
+        note = `Detected pasted ${parsed?.kind === 'environment' ? 'environment' : 'collection'} — review and import`
+      })
+    }
+  })
+
+  /** Parses `t` as the import source (a paste); replaces a chosen file. */
+  function usePasted(t: string) {
+    clearTimeout(pasteTimer)
+    if (source === 'file' && input) input.value = ''
+    fileName = null
+    note = null
+    pasteSize = t.length
+    if (t.trim() === '') {
+      if (source === 'paste') {
+        source = null
+        text = ''
+        parsed = null
+        error = null
+      }
+      return
+    }
+    source = 'paste'
+    text = t
+    parsed = null
+    error = null
+    const r = parsePostmanFile(t)
+    if (r.ok) parsed = r.file
+    else error = r.error
+    mode = 'replace'
+    targetId = null
+  }
+
+  /** Puts pasted text into the paste area (or the large-paste chip) and parses it right away. */
+  function putPaste(t: string) {
+    pasteLarge = t.length > LARGE_PASTE
+    if (pasteArea) pasteArea.value = pasteLarge ? '' : t
+    usePasted(t)
+  }
+
+  function onAreaPaste(e: ClipboardEvent) {
+    const t = e.clipboardData?.getData('text/plain') ?? ''
+    if (t.length > LARGE_PASTE) {
+      e.preventDefault()
+      putPaste(t)
+      return
+    }
+    // Small pastes go into the textarea as usual; parse as soon as the value has been updated.
+    clearTimeout(pasteTimer)
+    pasteTimer = setTimeout(() => usePasted(pasteArea?.value ?? ''), 0)
+  }
+
+  /** Typing/editing in the paste area: parse once the user stops for a moment (never per keystroke). */
+  function onAreaInput() {
+    clearTimeout(pasteTimer)
+    pasteTimer = setTimeout(() => usePasted(pasteArea?.value ?? ''), PASTE_DEBOUNCE_MS)
+  }
+
+  function flushArea() {
+    if (pasteLarge || pasteTimer === undefined) return
+    clearTimeout(pasteTimer)
+    pasteTimer = undefined
+    const v = pasteArea?.value ?? ''
+    if (v !== (source === 'paste' ? text : '')) usePasted(v)
+  }
+
+  function clearPaste() {
+    pasteLarge = false
+    if (pasteArea) {
+      pasteArea.value = ''
+      pasteArea.focus()
+    }
+    usePasted('')
+  }
+
+  const isTextField = (el: EventTarget | null) =>
+    el instanceof HTMLElement && (el.isContentEditable || el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type)))
+
+  // Ctrl+V while the dialog is open and focus is not in a text field pastes into the paste area.
+  $effect(() => {
+    if (!open) return
+    const onpaste = (e: ClipboardEvent) => {
+      if (busy || isTextField(e.target) || isTextField(document.activeElement)) return
+      const t = e.clipboardData?.getData('text/plain') ?? ''
+      if (!t.trim()) return
+      e.preventDefault()
+      putPaste(t)
+    }
+    document.addEventListener('paste', onpaste)
+    return () => document.removeEventListener('paste', onpaste)
   })
 
   function readText(file: File): Promise<string> {
@@ -60,7 +184,13 @@
 
   async function load(file: File | null | undefined) {
     if (!file) return
+    clearTimeout(pasteTimer)
+    source = 'file'
     fileName = file.name
+    note = null
+    pasteSize = 0
+    pasteLarge = false
+    if (pasteArea) pasteArea.value = ''
     parsed = null
     error = null
     try {
@@ -138,7 +268,7 @@
    */
   async function replaceExisting(collectionId: string, name: string): Promise<{ summary: [string, string]; history?: VersionHistoryImportResult }> {
     const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }
-    const result = await api().replaceCollectionFromPostman(collectionId, text, fileName)
+    const result = await api().replaceCollectionFromPostman(collectionId, text, source === 'paste' ? PASTE_SOURCE_LABEL : fileName)
     const map = mapRestored(before, { folders: result.folders, requests: result.requests })
     expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
     tabsStore.followReplaced(map.requests)
@@ -208,11 +338,15 @@
 </script>
 
 {#if open}
-  <Dialog title="Import from Postman" {onclose} {busy} size="md">
+  <Dialog title="Import" {onclose} {busy} size="md">
     <div class="flex flex-col gap-3 text-sm">
+      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections and environments (JSON)</p>
+      {#if note}
+        <p class="rounded border border-accent bg-accent-soft px-2 py-1.5 text-xs" role="status" data-testid="import-note">{note}</p>
+      {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex flex-col items-center gap-2 rounded border border-dashed px-4 py-6 text-center {dragging ? 'border-accent bg-accent-soft' : 'border-border bg-raised'}"
+        class="flex flex-col items-center gap-2 rounded border border-dashed px-4 py-4 text-center {dragging ? 'border-accent bg-accent-soft' : 'border-border bg-raised'} {source === 'file' ? 'ring-1 ring-accent' : ''}"
         ondragover={(e) => {
           e.preventDefault()
           dragging = true
@@ -220,24 +354,54 @@
         ondragleave={() => (dragging = false)}
         {ondrop}
       >
-        <p class="text-muted">Drop a Postman collection (v2.x) or environment .json here</p>
+        <p class="text-muted">Drop a collection or environment .json here (Slinger export or Postman v2.x)</p>
         <input
           bind:this={input}
           id="pm-file"
           type="file"
           accept={IMPORT_FILE_ACCEPT}
           class="sr-only"
-          aria-label="Postman file"
+          aria-label="Import file"
           onchange={(e) => load(e.currentTarget.files?.[0])}
         />
         <Button onclick={() => input?.click()} disabled={busy}>Choose file</Button>
-        {#if fileName}<p class="text-xs text-muted">{fileName}</p>{/if}
+        {#if fileName}<p class="text-xs text-muted" data-testid="import-file-name">{fileName}</p>{/if}
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex items-baseline justify-between gap-2">
+          <label for="import-paste" class="text-xs font-medium">Or paste JSON</label>
+          {#if source === 'paste' && pasteSize > 0}
+            <span class="text-xs text-muted" data-testid="import-paste-size">{formatBytes(pasteSize)} pasted</span>
+          {/if}
+        </div>
+        {#if pasteLarge}
+          <div class="flex items-center justify-between gap-2 rounded border border-border bg-raised px-2 py-1.5 text-xs {source === 'paste' ? 'ring-1 ring-accent' : ''}" data-testid="import-paste-large">
+            <span>Pasted JSON ({formatBytes(pasteSize)}), too large to show here.</span>
+            <Button size="sm" onclick={clearPaste} disabled={busy}>Clear</Button>
+          </div>
+        {/if}
+        <textarea
+          bind:this={pasteArea}
+          id="import-paste"
+          rows="4"
+          spellcheck="false"
+          autocomplete="off"
+          hidden={pasteLarge}
+          disabled={busy}
+          class="w-full resize-y rounded border border-border bg-surface px-2 py-1.5 font-mono text-xs {source === 'paste' ? 'ring-1 ring-accent' : ''}"
+          placeholder={'Paste an exported collection or environment, e.g. {"info": {…}, "item": […]}. Ctrl+V anywhere in this dialog works too.'}
+          onpaste={onAreaPaste}
+          oninput={onAreaInput}
+          onblur={flushArea}
+        ></textarea>
       </div>
 
       <InlineError message={error} />
 
       {#if parsed?.kind === 'collection'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
+          <dt class="text-muted">Format</dt><dd data-testid="import-source">{parsed.source}</dd>
           <dt class="text-muted">Collection</dt><dd class="font-medium">{parsed.name}</dd>
           <dt class="text-muted">Folders</dt><dd>{parsed.folders}</dd>
           <dt class="text-muted">Requests</dt><dd>{parsed.requests}</dd>
@@ -323,6 +487,7 @@
         {/if}
       {:else if parsed?.kind === 'environment'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
+          <dt class="text-muted">Format</dt><dd data-testid="import-source">{parsed.source}</dd>
           <dt class="text-muted">Environment</dt><dd class="font-medium">{parsed.name}</dd>
           <dt class="text-muted">Variables</dt><dd>{parsed.variables.length} ({parsed.variables.filter((v) => v.secret).length} secret)</dd>
         </dl>

@@ -13,6 +13,7 @@
   import { ACCENTS, THEMES, THEME_DEFAULT_ACCENT } from '../../lib/themes'
   import type { ApiRequest } from '../../../shared/types'
   import { methodColor } from './method'
+  import { sync } from '../sync/syncStore.svelte'
   import { tabsStore } from './tabs.svelte'
 
   interface Command {
@@ -22,7 +23,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download'
+    icon?: 'download' | 'upload'
     current: () => boolean
     run: () => void
   }
@@ -66,6 +67,16 @@
   // Export commands follow the open workspace's collections and environments.
   const commands = $derived<Command[]>([
     ...staticCommands,
+    // Read-only or revoked workspaces cannot import (the toolbar button is disabled too).
+    ...(sync.blocked ? [] : [{
+      key: 'import',
+      label: 'Import collection or environment…',
+      hint: 'Slinger or Postman JSON, file or paste',
+      swatch: {},
+      icon: 'upload' as const,
+      current: () => false,
+      run: () => ui.openImport(),
+    }]),
     ...app.collections.map((c) => ({
       key: `export-collection:${c.id}`,
       label: `Export collection: ${c.name}`,

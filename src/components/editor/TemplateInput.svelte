@@ -38,6 +38,11 @@
     masked?: boolean
     /** Plain-text suggestions for the whole value (header names, content types). */
     suggest?: (text: string) => string[]
+    /**
+     * Plain text about to be pasted. Return true to take it over: the paste is then cancelled and the field is
+     * left unchanged (its content and undo history). Return false for the normal paste.
+     */
+    onpastetext?: (text: string) => boolean
   }
   let {
     value,
@@ -55,6 +60,7 @@
     onbackspaceempty,
     masked = false,
     suggest,
+    onpastetext,
   }: Props = $props()
 
   let host: HTMLDivElement
@@ -130,6 +136,15 @@
         if (u.focusChanged) (u.view.hasFocus ? onfocus : onblur)?.()
       }),
       editable.of(EditorView.editable.of(!disabled)),
+      EditorView.domEventHandlers({
+        paste: (e) => {
+          if (!onpastetext) return false
+          const text = e.clipboardData?.getData('text/plain') ?? ''
+          if (!text || !onpastetext(text)) return false
+          e.preventDefault()
+          return true
+        },
+      }),
     ]
   }
 

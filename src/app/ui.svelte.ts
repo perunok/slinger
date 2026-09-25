@@ -20,6 +20,17 @@ class UiState {
   exportCollectionId = $state<string | null>(null)
   exportEnvironmentId = $state<string | null>(null)
   importOpen = $state(false)
+  /** Text pasted elsewhere (the URL bar) that the Import dialog opens with; null for a plain open. */
+  importText = $state.raw<string | null>(null)
+  /** Opens the Import dialog, optionally prefilled with pasted collection/environment JSON. */
+  openImport(text: string | null = null) {
+    this.importText = text
+    this.importOpen = true
+  }
+  closeImport() {
+    this.importOpen = false
+    this.importText = null
+  }
   workspacesOpen = $state(false)
   shortcutsOpen = $state(false)
 }

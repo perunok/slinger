@@ -12,7 +12,7 @@
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
-  import ImportPostmanDialog from '../features/importexport/ImportPostmanDialog.svelte'
+  import ImportDialog from '../features/importexport/ImportDialog.svelte'
   import QuickOpen from '../features/requests/QuickOpen.svelte'
   import RequestTabs from '../features/requests/RequestTabs.svelte'
   import RequestView from '../features/requests/RequestView.svelte'
@@ -96,7 +96,7 @@
 <ScriptsDialogHost />
 <ExportCollectionDialog />
 <EnvironmentExportDialog />
-<ImportPostmanDialog open={ui.importOpen} onclose={() => (ui.importOpen = false)} />
+<ImportDialog open={ui.importOpen} initialText={ui.importText} onclose={() => ui.closeImport()} />
 <SaveAsDialog />
 <UnsavedDialog />
 <ToastHost />

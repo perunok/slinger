@@ -1,4 +1,8 @@
-/** Recognises Postman collection (v2.x) and environment exports before anything is sent to the backend. */
+/**
+ * Recognises Slinger and Postman collection (v2.x) and environment exports before anything is sent to the backend.
+ * Slinger's own exports are Postman-compatible files (a collection with `info._slinger`, an environment whose
+ * `_postman_exported_using` is "Slinger/x.y.z"), so one parser handles both.
+ */
 import { countScripts } from '../../lib/scripts'
 
 export interface CollectionVariable {
@@ -11,6 +15,8 @@ export type PostmanFile =
   | {
       kind: 'collection'
       name: string
+      /** Detected format, for the preview: "Slinger collection v1.2.0", "Postman collection v2.1". */
+      source: string
       /** `info._postman_id`, used to recognise a collection imported (or exported) before; null when absent. */
       postmanId: string | null
       folders: number
@@ -22,7 +28,7 @@ export type PostmanFile =
       /** Slinger export with version history (`info._slinger`); null for other files. Validated by the backend on import. */
       history?: { versions: number; snapshots: boolean; latest: string | null } | null
     }
-  | { kind: 'environment'; name: string; variables: CollectionVariable[]; skippedDisabled: number }
+  | { kind: 'environment'; name: string; source: string; variables: CollectionVariable[]; skippedDisabled: number }
 
 export type ParseResult = { ok: true; file: PostmanFile } | { ok: false; error: string }
 
@@ -81,19 +87,54 @@ function slingerHistory(info: Json | null): { versions: number; snapshots: boole
   }
 }
 
+const isSlingerEnv = (data: Json) => typeof data._postman_exported_using === 'string' && /^slinger\b/i.test(data._postman_exported_using)
+
+function collectionSource(info: Json | null): string {
+  if (info && isObj(info._slinger)) return `Slinger collection${typeof info.version === 'string' && info.version ? ` v${info.version}` : ''}`
+  const schema = info && typeof info.schema === 'string' ? info.schema : ''
+  const m = /collection\/v(\d+)\.(\d+)/i.exec(schema)
+  return m ? `Postman collection v${m[1]}.${m[2]}` : 'Postman collection v2.x'
+}
+
+/** Pasted text shorter than this is never taken for an export (URLs, `{{vars}}`, small JSON bodies). */
+export const MIN_PASTED_EXPORT_CHARS = 200
+
+/**
+ * Whether pasted text is a collection or environment export (by shape only, so the Import dialog can still
+ * explain why it cannot be imported, e.g. "no requests"). Cheap for other text: only text that starts with
+ * `{` and is longer than {@link MIN_PASTED_EXPORT_CHARS} is parsed at all.
+ */
+export function detectImportText(text: string): 'collection' | 'environment' | null {
+  const t = text.trimStart()
+  if (t.length < MIN_PASTED_EXPORT_CHARS || t[0] !== '{' || text.trimEnd().at(-1) !== '}') return null
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isObj(data)) return null
+  if (Array.isArray(data.values) && data._postman_variable_scope === 'environment') return 'environment'
+  if (Array.isArray(data.item) && isObj(data.info)) return 'collection'
+  return null
+}
+
+const NOT_AN_EXPORT = 'Not a collection or environment: expected info.schema and item[] (collection) or values[] (environment).'
+
 export function parsePostmanFile(text: string): ParseResult {
   let data: unknown
   try {
     data = JSON.parse(text)
   } catch (e) {
-    return { ok: false, error: `This file is not valid JSON (${e instanceof Error ? e.message : String(e)}).` }
+    return { ok: false, error: `This is not valid JSON (${e instanceof Error ? e.message : String(e)}).` }
   }
-  if (!isObj(data)) return { ok: false, error: 'This is JSON, but not a Postman export: expected an object at the top level.' }
+  if (!isObj(data)) return { ok: false, error: `${NOT_AN_EXPORT} Found ${Array.isArray(data) ? 'an array' : typeof data === 'object' ? 'null' : `a ${typeof data}`} at the top level.` }
 
   if (data._postman_variable_scope === 'environment' && Array.isArray(data.values)) {
     const name = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : 'Imported environment'
     const { vars, skipped } = variablesOf(data.values, true)
-    return { ok: true, file: { kind: 'environment', name, variables: vars, skippedDisabled: skipped } }
+    const source = isSlingerEnv(data) ? 'Slinger environment' : 'Postman environment'
+    return { ok: true, file: { kind: 'environment', name, source, variables: vars, skippedDisabled: skipped } }
   }
   if (data._postman_variable_scope === 'globals') {
     return { ok: false, error: 'Postman globals are not supported. Export the environment instead.' }
@@ -105,7 +146,7 @@ export function parsePostmanFile(text: string): ParseResult {
     return { ok: false, error: `Unsupported Postman schema: ${schema}. Only collection v2.x is supported.` }
   }
   if (!Array.isArray(data.item)) {
-    return { ok: false, error: 'This does not look like a Postman collection v2.x: it has no "item" array.' }
+    return { ok: false, error: info ? 'This looks like a collection, but it has no "item" array (only collection v2.x is supported).' : NOT_AN_EXPORT }
   }
   const { folders, requests, examples, scripts } = countItems(data.item)
   if (requests === 0) return { ok: false, error: 'This collection contains no requests.' }
@@ -114,7 +155,7 @@ export function parsePostmanFile(text: string): ParseResult {
   return {
     ok: true,
     file: {
-      kind: 'collection', name, postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars,
+      kind: 'collection', name, source: collectionSource(info), postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars,
       history: slingerHistory(info),
     },
   }

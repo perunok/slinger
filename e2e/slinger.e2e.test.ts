@@ -663,8 +663,8 @@ describe('collection versions', () => {
 describe('import and export', () => {
   it('imports the example Postman collection', async () => {
     const example = JSON.parse(readFileSync(EXAMPLE, 'utf8'))
-    await page.getByRole('button', { name: 'Import Postman collection' }).click()
-    await page.getByLabel('Postman file').setInputFiles(EXAMPLE)
+    await page.getByRole('button', { name: 'Import collection or environment' }).click()
+    await page.getByLabel('Import file').setInputFiles(EXAMPLE)
     await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
     await item(new RegExp('^' + String(example.info.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).waitFor()
     const count = await page.evaluate(async (name) => {
@@ -775,8 +775,8 @@ describe('import and export', () => {
     // still find exactly one "Col A" in the tree.
     const copy = join(tmp, 'History roundtrip.slinger_collection.json')
     writeFileSync(copy, JSON.stringify({ ...exported, info: { ...exported.info, name: 'History roundtrip', _postman_id: '9b2f7c1e-5d4a-4e3b-8a6f-0c1d2e3f4a5b' } }))
-    await page.getByRole('button', { name: 'Import Postman collection' }).click()
-    await page.getByLabel('Postman file').setInputFiles(copy)
+    await page.getByRole('button', { name: 'Import collection or environment' }).click()
+    await page.getByLabel('Import file').setInputFiles(copy)
     await page.getByTestId('import-history').waitFor()
     await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
     await expect.poll(() => page.getByText('Version history restored').count()).toBeGreaterThan(0)
@@ -811,9 +811,9 @@ describe('import and export', () => {
       return (await window.slinger.listCollections(ws.id)).filter((c) => c.name === 'thub-collection').map((c) => c.id)
     })
     expect(before).toHaveLength(1)
-    await page.getByRole('button', { name: 'Import Postman collection' }).click()
+    await page.getByRole('button', { name: 'Import collection or environment' }).click()
     const dialog = page.getByRole('dialog')
-    await dialog.getByLabel('Postman file').setInputFiles(EXAMPLE)
+    await dialog.getByLabel('Import file').setInputFiles(EXAMPLE)
     const replace = dialog.getByRole('radio', { name: /Replace existing "thub-collection"/ })
     await replace.waitFor()
     expect(await replace.isChecked()).toBe(true)
@@ -831,6 +831,20 @@ describe('import and export', () => {
     expect(after.versions).toEqual([['0.0.1', 'Automatic snapshot before re-import from example-postman-collection.json']])
     // The example edited above is back to the file's content.
     expect(after.firstExample).toBe(JSON.parse(readFileSync(EXAMPLE, 'utf8')).item[0].response[0].name)
+  })
+
+  it('imports a collection pasted into the Import dialog', async () => {
+    const pasted = {
+      info: { _postman_id: '5e0c2b7a-3f41-4c8e-9d2a-7b6f1e0a9c3d', name: 'Pasted API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [{ name: 'Ping', request: { method: 'GET', url: 'https://pasted.example.test/ping' } }],
+    }
+    await page.getByRole('button', { name: 'Import collection or environment' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Import' })
+    await dialog.getByLabel('Or paste JSON').fill(JSON.stringify(pasted, null, 2))
+    await dialog.getByTestId('import-source').getByText('Postman collection v2.1').waitFor()
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    await item(/^Pasted API/).waitFor()
   })
 })
 
@@ -909,8 +923,8 @@ describe('markdown docs', () => {
       g.__opened = []
       shell.openExternal = (async (url: string) => void g.__opened.push(url)) as never
     })
-    await page.getByRole('button', { name: 'Import Postman collection' }).click()
-    await page.getByLabel('Postman file').setInputFiles(file)
+    await page.getByRole('button', { name: 'Import collection or environment' }).click()
+    await page.getByLabel('Import file').setInputFiles(file)
     await page.getByRole('dialog').getByRole('button', { name: 'Import', exact: true }).click()
     await item(/^Docs API/).waitFor()
 

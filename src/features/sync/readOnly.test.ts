@@ -74,7 +74,7 @@ describe('read-only workspace', () => {
     await openLinked('Shared Docs')
     render(CollectionsPanel)
     expect(screen.getByRole('button', { name: 'New collection' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Import Postman collection' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Import collection or environment' })).toBeDisabled()
     const row = await screen.findByRole('treeitem', { name: /Reference/ })
     if (row.getAttribute('aria-expanded') !== 'true') await user.click(row)
     const request = await screen.findByRole('treeitem', { name: /Status/ })
@@ -133,7 +133,7 @@ describe('read-only workspace', () => {
     await openLinked('Payments API', 'editor')
     render(CollectionsPanel)
     expect(screen.getByRole('button', { name: 'New collection' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Import Postman collection' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Import collection or environment' })).toBeEnabled()
   })
 
   it('request editor: Save and Save As are disabled with the reason; drafts can still be edited and sent', async () => {
