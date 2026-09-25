@@ -11,7 +11,7 @@
   import { errorInfo } from '../../lib/ipc'
   import { parseDocument } from '../../lib/request'
   import { formatDuration, statusTone } from '../../lib/response'
-  import { slugify } from '../importexport/slugify'
+  import { sanitizeFileStem } from '../importexport/fileName'
   import { cancelRun, executeDraft, newScriptRun } from '../requests/execute'
   import { testCounts } from '../../lib/scripts'
   import { collectRunItems, CollectionRun, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
@@ -112,7 +112,7 @@
     if (!view) return
     exportError = null
     try {
-      const path = await saveExport(`${slugify(collection?.name ?? 'collection')}.run-results.json`, resultsToJson(collection?.name ?? 'collection', view))
+      const path = await saveExport(`${sanitizeFileStem(collection?.name ?? '', 'collection')}.run-results.json`, resultsToJson(collection?.name ?? 'collection', view))
       toast.success('Results exported', path)
     } catch (e) {
       exportError = errorInfo(e).message

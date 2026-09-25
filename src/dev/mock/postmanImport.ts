@@ -4,6 +4,7 @@ import { fail } from './util'
 import { countScripts } from '../../lib/scripts'
 import { columnsFromPostman } from '../../lib/description'
 import { postmanUrlToString } from '../../../shared/postmanUrl'
+import { restoreVersionHistoryMock } from './versionHistory'
 
 const eventJson = (event: unknown): string | null => (Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null)
 
@@ -60,7 +61,8 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   s.collections.push(collection)
   s.folders.push(...scratch.folders)
   s.requests.push(...scratch.requests)
-  return { collection, folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts }
+  const versionHistory = restoreVersionHistoryMock(s, collection.id, info._slinger)
+  return { collection, folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts, ...(versionHistory ? { versionHistory } : {}) }
 }
 
 function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }): void {

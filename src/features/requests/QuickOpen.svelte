@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Ctrl+K: jump to any saved request by name, URL or method. Also a small command palette: commands (switch theme /
-   * accent) show up when the query matches them, and a leading ">" lists only commands.
+   * accent, export a collection or an environment) show up when the query matches them, and a leading ">" lists
+   * only commands.
    */
   import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
@@ -19,12 +20,14 @@
     hint: string
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
+    /** Icon for commands without a swatch (default: settings). */
+    icon?: 'download'
     current: () => boolean
     run: () => void
   }
   type Hit = { kind: 'request'; key: string; r: ApiRequest; col: string } | ({ kind: 'command' } & Command)
 
-  const commands: Command[] = [
+  const staticCommands: Command[] = [
     {
       key: 'theme:system',
       label: 'Theme: System',
@@ -50,6 +53,29 @@
       run: () => settings.setAccent(a.id),
     })),
   ]
+
+  // Export commands follow the open workspace's collections and environments.
+  const commands = $derived<Command[]>([
+    ...staticCommands,
+    ...app.collections.map((c) => ({
+      key: `export-collection:${c.id}`,
+      label: `Export collection: ${c.name}`,
+      hint: 'with version history',
+      swatch: {},
+      icon: 'download' as const,
+      current: () => false,
+      run: () => (ui.exportCollectionId = c.id),
+    })),
+    ...app.environments.map((e) => ({
+      key: `export-environment:${e.id}`,
+      label: `Export environment: ${e.name}`,
+      hint: 'Postman environment file',
+      swatch: {},
+      icon: 'download' as const,
+      current: () => false,
+      run: () => (ui.exportEnvironmentId = e.id),
+    })),
+  ])
 
   let query = $state('')
   let index = $state(0)
@@ -153,7 +179,7 @@
                 style="background: var(--accent); border-color: var(--border-strong)"
               ></span>
             {:else}
-              <Icon name="settings" size={14} class="text-muted" />
+              <Icon name={hit.icon ?? 'settings'} size={14} class="text-muted" />
             {/if}
           </span>
           <span class="min-w-0 flex-1 truncate">{hit.label}</span>

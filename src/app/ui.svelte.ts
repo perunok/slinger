@@ -18,6 +18,7 @@ class UiState {
   versionsFor = $state<string | null>(null)
   saveAsTabId = $state<string | null>(null)
   exportCollectionId = $state<string | null>(null)
+  exportEnvironmentId = $state<string | null>(null)
   importOpen = $state(false)
   workspacesOpen = $state(false)
   shortcutsOpen = $state(false)

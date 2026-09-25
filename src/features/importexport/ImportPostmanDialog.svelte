@@ -7,6 +7,7 @@
   import { api, errorInfo } from '../../lib/ipc'
   import { findEnvByName } from '../environments/envLogic'
   import { describeEnvImport, importIntoEnvironment, planMerge, type ImportVar, type MergeMode } from './envImport'
+  import { IMPORT_FILE_ACCEPT } from './fileName'
   import { parsePostmanFile, type PostmanFile } from './parse'
 
   interface Props {
@@ -128,6 +129,12 @@
         'Collection imported',
         `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}${scripts ? `, ${scripts} script${scripts === 1 ? '' : 's'}` : ''}`,
       )
+      if (result.versionHistory) {
+        const h = result.versionHistory
+        const restored = `${h.restored} version${h.restored === 1 ? '' : 's'} restored`
+        if (h.notes.length > 0) toast.info(`Version history: ${restored}`, h.notes.join(' '))
+        else toast.success('Version history restored', restored)
+      }
       if (envSummary) toast.success('Environment from collection variables', envSummary)
       if (envError) toast.error('Collection imported, but the environment could not be created or updated', envError)
       onclose()
@@ -157,7 +164,7 @@
           bind:this={input}
           id="pm-file"
           type="file"
-          accept=".json,application/json"
+          accept={IMPORT_FILE_ACCEPT}
           class="sr-only"
           aria-label="Postman file"
           onchange={(e) => load(e.currentTarget.files?.[0])}
@@ -176,6 +183,12 @@
           <dt class="text-muted">Saved examples</dt><dd data-testid="import-examples">{parsed.examples}</dd>
           <dt class="text-muted">Scripts</dt><dd data-testid="import-scripts">{parsed.scripts > 0 ? `${parsed.scripts} (pre-request and test, all levels)` : 'none'}</dd>
           <dt class="text-muted">Collection variables</dt><dd>{parsed.variables.length > 0 ? `${parsed.variables.length} defined` : 'none'}</dd>
+          {#if parsed.history}
+            <dt class="text-muted">Version history</dt>
+            <dd data-testid="import-history">
+              {parsed.history.versions} version{parsed.history.versions === 1 ? '' : 's'}{parsed.history.latest ? `, latest v${parsed.history.latest}` : ''}{parsed.history.versions > 0 && !parsed.history.snapshots ? ' (list only, no snapshots: not restorable)' : ''}
+            </dd>
+          {/if}
         </dl>
         {#if parsed.variables.length > 0}
           <label class="flex items-start gap-2">

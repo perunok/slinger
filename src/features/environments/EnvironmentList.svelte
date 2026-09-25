@@ -16,8 +16,10 @@
     onrename: (env: Environment) => void
     onduplicate: (env: Environment) => void
     ondelete: (env: Environment) => void
+    /** Export as a Postman environment file (allowed in read-only workspaces). */
+    onexport?: (env: Environment) => void
   }
-  let { environments, selectedId, activeId, disabled = false, readOnly = false, onselect, onsetactive, oncreate, onrename, onduplicate, ondelete }: Props = $props()
+  let { environments, selectedId, activeId, disabled = false, readOnly = false, onselect, onsetactive, oncreate, onrename, onduplicate, ondelete, onexport }: Props = $props()
   const selected = $derived(environments.find((e) => e.id === selectedId))
 </script>
 
@@ -49,6 +51,7 @@
       <Button size="sm" disabled={selected.id === activeId} onclick={() => onsetactive(selected.id)}>Set active</Button>
       <IconButton icon="edit" label="Rename environment" disabled={readOnly} onclick={() => onrename(selected)} />
       <IconButton icon="copy" label="Duplicate environment" disabled={readOnly} onclick={() => onduplicate(selected)} />
+      {#if onexport}<IconButton icon="download" label="Export environment…" onclick={() => onexport(selected)} />{/if}
       <IconButton icon="trash" label="Delete environment" disabled={readOnly} onclick={() => ondelete(selected)} />
     </div>
     <p class="text-[11px] text-faint">Duplicating copies plain variables only; secrets are not copied.</p>

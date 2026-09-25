@@ -208,6 +208,15 @@ describe('EnvironmentEditor', () => {
     expect(vars.some((v) => v.isSecret)).toBe(false)
     expect(vars.map((v) => v.key)).toContain('userId')
   })
+  it('"Export environment…" saves pending edits and opens the export dialog for the selected environment', async () => {
+    const user = userEvent.setup()
+    ui.exportEnvironmentId = null
+    await openEditor()
+    const local = app.environments.find((e) => e.name === 'Local')!
+    await user.click(screen.getByRole('button', { name: 'Export environment…' }))
+    await vi.waitFor(() => expect(ui.exportEnvironmentId).toBe(local.id))
+    ui.exportEnvironmentId = null
+  })
   it('validates duplicate names while typing and keeps the dialog open on a backend duplicate_name', async () => {
     const user = userEvent.setup()
     await openEditor()

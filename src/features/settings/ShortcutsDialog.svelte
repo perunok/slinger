@@ -8,7 +8,7 @@
     ['Ctrl+S', 'Save the current request'],
     ['Ctrl+T', 'New request tab'],
     ['Ctrl+W', 'Close the current tab'],
-    ['Ctrl+K', 'Go to request (type > for commands: theme, accent)'],
+    ['Ctrl+K', 'Go to request (type > for commands: theme, accent, export)'],
     ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+/', 'This list'],
