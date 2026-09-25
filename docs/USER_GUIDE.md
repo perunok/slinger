@@ -67,7 +67,10 @@ missing names ("define it in the active environment").
 **Environments.** Click the gear next to the environment switcher (or use the switcher) to open the Environments dialog: create,
 rename, duplicate and delete environments, **Set active**, and edit variables in a table (or **bulk edit** as text). Changes
 save automatically with a status indicator. The active environment is remembered per workspace. Variable names are unique
-within an environment.
+within an environment, and environment names are unique within a workspace (ignoring case and surrounding spaces; renaming
+an environment to its own name in a different case is fine). The create/rename dialog flags a taken name as you type. Only
+sync can bring two same-named environments into one workspace (for example when two devices created one offline); rename or
+delete one of them.
 
 **Secret variables.** Tick **Secret** on a variable to store its value in your operating system keychain instead of the
 database. The table then shows masked bullets; use the reveal control to look at it, and leave the value empty when editing to
@@ -369,7 +372,14 @@ collections keep theirs).
 
 - **Import:** use the upload button in the Collections header (or **Import from Postman** on the empty state). Drop or choose a
   Postman **collection (v2.x)** or **environment** `.json`. The preview shows what will be imported. Collection-level variables
-  can optionally become a new environment. Pre-request and test scripts are imported at every level (collection, folders,
+  can optionally become an environment named after the collection. If an environment with that name already exists
+  (ignoring case), the import **merges into it** instead of creating a second one: only variables it does not have yet are
+  added, and existing values are kept (they may hold tokens set by scripts or your edits); the preview says how many will be
+  added. Importing an **environment** file whose name already exists also updates that environment: missing variables are
+  added and existing ones take the file's value and secret flag, except that an empty value in the file never clears the
+  current one (so a secret exported without its value keeps the stored secret). A secret without a value that is new is added
+  as an empty plain variable. Re-importing the same file never creates duplicates, and the success message says what changed
+  (for example `Environment "UAT" updated: 3 added, 16 kept`). Pre-request and test scripts are imported at every level (collection, folders,
   requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
   collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). Postman "globals" files
   are rejected; export an environment instead. Disabled environment variables are skipped. Saved examples (`response[]`) are
