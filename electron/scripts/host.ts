@@ -370,7 +370,8 @@ export class RunHost {
       case 'console': {
         const level = LEVELS.has(a0 as ScriptConsoleLevel) ? (a0 as ScriptConsoleLevel) : 'log'
         this.log(level, typeof args[1] === 'string' ? args[1] : envText(args[1]))
-        return undefined
+        // true tells the sandbox that output is closed, so it stops formatting and calling (flood protection).
+        return this.consoleDropped
       }
       case 'test': {
         const status = args[1] === 'passed' || args[1] === 'skipped' ? args[1] : 'failed'

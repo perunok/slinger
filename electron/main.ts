@@ -80,7 +80,7 @@ function scriptExecutor(): WorkerExecutor {
   return new WorkerExecutor({
     spawn: () => {
       source ??= readFileSync(join(__dirname, 'script-worker.cjs'), 'utf8')
-      return new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 } })
+      return new Worker(source, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 } })
     },
   })
 }

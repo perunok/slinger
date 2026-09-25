@@ -32,7 +32,9 @@ export interface ScriptLimits {
 export const DEFAULT_LIMITS: ScriptLimits = {
   timeoutMs: 5000,
   memoryBytes: 64 * 1024 * 1024,
-  stackBytes: 1024 * 1024,
+  // QuickJS counts its own stack; keep it well below V8's native stack for the wasm frames (overflowing that
+  // would abort the whole module instead of raising a catchable "stack overflow" InternalError).
+  stackBytes: 256 * 1024,
   consoleBytes: 512 * 1024,
   consoleEntries: 1000,
   messageChars: 10_000,

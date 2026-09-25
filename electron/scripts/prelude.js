@@ -95,9 +95,11 @@
     return out.join(' ')
   }
 
+  var consoleClosed = false
   function logger(level) {
     return function () {
-      host('console', [level, format(arguments)])
+      if (consoleClosed) return
+      if (host('console', [level, format(arguments)]) === true) consoleClosed = true
     }
   }
   var consoleObj = {
