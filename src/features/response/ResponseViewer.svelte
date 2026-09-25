@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type ResponseTabId = 'pretty' | 'raw' | 'preview' | 'headers' | 'cookies'
+  export type ResponseTabId = 'pretty' | 'raw' | 'preview' | 'headers' | 'cookies' | 'tests' | 'console'
 </script>
 
 <script lang="ts">
@@ -18,6 +18,9 @@
   import BodyView from './BodyView.svelte'
   import CookiesTable from './CookiesTable.svelte'
   import HeadersTable from './HeadersTable.svelte'
+  import ConsoleView from '../scripts/ConsoleView.svelte'
+  import TestsView from '../scripts/TestsView.svelte'
+  import { testCounts, type ScriptOutput } from '../../lib/scripts'
 
   interface Props {
     data: HttpResponseData
@@ -29,8 +32,11 @@
     showTiming?: boolean
     /** Extra toolbar content, before the icon buttons. */
     actions?: Snippet
+    /** Script results of this response; adds the Tests and Console tabs (live responses only). */
+    scripts?: ScriptOutput | null
+    onclearconsole?: () => void
   }
-  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions }: Props = $props()
+  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions, scripts = null, onclearconsole }: Props = $props()
 
   const info = $derived(analyzeResponse(data, mimeHint))
   const cookieCount = $derived(parseSetCookies(data.headers).length)
@@ -45,14 +51,28 @@
     showAll = false
   })
 
+  const counts = $derived(testCounts(scripts))
   const tabs = $derived([
     { id: 'pretty', label: 'Pretty' },
     { id: 'raw', label: 'Raw' },
     { id: 'preview', label: 'Preview' },
     { id: 'headers', label: 'Headers', badge: String(data.headers.length) },
     { id: 'cookies', label: 'Cookies', badge: cookieCount ? String(cookieCount) : undefined },
+    ...(scripts
+      ? [
+          {
+            id: 'tests',
+            label: 'Tests',
+            badge: counts.total ? `${counts.passed}/${counts.total}` : undefined,
+            badgeTone: (counts.failed ? 'danger' : 'success') as 'danger' | 'success',
+          },
+          { id: 'console', label: 'Console', badge: scripts.console.length ? String(scripts.console.length) : undefined },
+        ]
+      : []),
   ])
   const bodyMode = $derived(view === 'raw' || view === 'preview' ? view : 'pretty')
+  // A stored view of 'tests'/'console' without script results falls back to the body.
+  const effectiveView = $derived<ResponseTabId>(!scripts && (view === 'tests' || view === 'console') ? 'pretty' : view)
   const toneClass = $derived(
     { success: 'bg-success-soft text-success', info: 'bg-accent-soft text-fg', warning: 'bg-warning-soft text-warning', danger: 'bg-danger-soft text-danger' }[tone],
   )
@@ -81,7 +101,7 @@
     }
   }
 
-  const canEdit = $derived(view !== 'headers' && view !== 'cookies')
+  const canEdit = $derived(effectiveView !== 'headers' && effectiveView !== 'cookies' && effectiveView !== 'tests' && effectiveView !== 'console')
 </script>
 
 <div class="flex h-full min-h-0 flex-col" data-testid="response-viewer">
@@ -98,11 +118,15 @@
       <IconButton icon="download" label="Save response to file" disabled={info.kind === 'empty'} onclick={saveBody} />
     </div>
   </div>
-  <Tabs {tabs} value={view} onchange={(v) => onviewchange?.(v as ResponseTabId)} label="Response views" idPrefix="resp" class="px-2" />
-  <div class="min-h-0 flex-1" role="tabpanel" id="resp-panel-{view}" aria-labelledby="resp-{view}">
-    {#if view === 'headers'}
+  <Tabs {tabs} value={effectiveView} onchange={(v) => onviewchange?.(v as ResponseTabId)} label="Response views" idPrefix="resp" class="px-2" />
+  <div class="min-h-0 flex-1" role="tabpanel" id="resp-panel-{effectiveView}" aria-labelledby="resp-{effectiveView}">
+    {#if effectiveView === 'tests' && scripts}
+      <TestsView output={scripts} />
+    {:else if effectiveView === 'console' && scripts}
+      <ConsoleView entries={scripts.console} onclear={onclearconsole} />
+    {:else if effectiveView === 'headers'}
       <HeadersTable headers={data.headers} />
-    {:else if view === 'cookies'}
+    {:else if effectiveView === 'cookies'}
       <CookiesTable headers={data.headers} />
     {:else}
       <BodyView {info} mode={bodyMode} {wrap} {showAll} onshowall={() => (showAll = true)} bind:editor />

@@ -10,6 +10,7 @@
   import { tabsStore } from '../requests/tabs.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import ResponseViewer from './ResponseViewer.svelte'
+  import ConsoleView from '../scripts/ConsoleView.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
 
@@ -46,6 +47,11 @@
       {/if}
     </div>
   {/if}
+  {#if tab.error && !tab.response && tab.scriptOutput && tab.scriptOutput.console.length > 0}
+    <div class="mx-3 mb-3 min-h-24 flex-1 overflow-hidden rounded border border-border" data-testid="error-console">
+      <ConsoleView entries={tab.scriptOutput.console} />
+    </div>
+  {/if}
   {#if tab.sending}
     <div class="flex items-center gap-3 p-4 text-sm text-muted" role="status">
       <Spinner /> Sending request…
@@ -58,7 +64,13 @@
       </ul>
     {/if}
     <div class="min-h-0 flex-1">
-      <ResponseViewer data={tab.response.data} view={tab.responseView} onviewchange={(v) => (tab.responseView = v)}>
+      <ResponseViewer
+        data={tab.response.data}
+        view={tab.responseView}
+        onviewchange={(v) => (tab.responseView = v)}
+        scripts={tab.scriptOutput}
+        onclearconsole={() => tab.scriptOutput && (tab.scriptOutput = { ...tab.scriptOutput, console: [] })}
+      >
         {#snippet actions()}
           <Button size="sm" icon="save" class="mr-1" disabled={sync.blocked || !tab.requestId} title={saveTitle} onclick={() => (naming = true)}>Save as example</Button>
         {/snippet}

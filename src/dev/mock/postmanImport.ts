@@ -1,6 +1,9 @@
 import type { PostmanImportResult } from '../../../shared/types'
 import { addCollection, addFolder, addRequest, must, type MockState } from './store'
 import { fail } from './util'
+import { countScripts } from '../../lib/scripts'
+
+const eventJson = (event: unknown): string | null => (Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null)
 
 type Json = Record<string, unknown>
 const isObj = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -57,18 +60,21 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   // Build into a scratch state so a failed import (no requests) leaves nothing behind.
   const scratch: MockState = { ...s, collections: [], folders: [], requests: [] }
   const collection = addCollection(scratch, workspace.id, collectionName)
-  walk(scratch, workspace.id, collection.id, items, null)
+  collection.scriptsJson = eventJson(parsed.event)
+  const counter = { scripts: countScripts(parsed.event) }
+  walk(scratch, workspace.id, collection.id, items, null, counter)
   if (scratch.requests.length === 0) fail('invalid_input', 'No requests found in Postman collection')
 
   s.collections.push(collection)
   s.folders.push(...scratch.folders)
   s.requests.push(...scratch.requests)
-  return { collection, folders: scratch.folders, requests: scratch.requests }
+  return { collection, folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts }
 }
 
-function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null): void {
+function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }): void {
   for (const raw of items) {
     if (!isObj(raw)) continue
+    counter.scripts += countScripts(raw.event)
     if (Array.isArray(raw.item)) {
       const folder = addFolder(s, {
         workspaceId,
@@ -76,7 +82,8 @@ function walk(s: MockState, workspaceId: string, collectionId: string, items: un
         parentFolderId: parentId,
         name: trimmedOr(raw.name, 'Untitled Folder'),
       })
-      walk(s, workspaceId, collectionId, raw.item, folder.id)
+      folder.scriptsJson = eventJson(raw.event)
+      walk(s, workspaceId, collectionId, raw.item, folder.id, counter)
       continue
     }
     if (!isObj(raw.request)) continue

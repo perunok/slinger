@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ApiFolder, ApiRequest, HttpResponseData } from '../../../shared/types'
 import type { ExecuteOutcome } from '../requests/execute'
+import { emptyScriptOutput } from '../../lib/scripts'
 import { classifyStatus, CollectionRun, collectRunItems, resultsToJson, summarize, type RunItem, type RunState } from './runner'
 
 const req = (id: string, folderId: string | null, sortOrder = 0): ApiRequest => ({
@@ -15,7 +16,7 @@ const item = (id: string): RunItem => {
 const response = (status: number, body: string | null = 'ok'): HttpResponseData => ({
   status, statusText: status === 200 ? 'OK' : 'Err', durationMs: 5, headers: [{ key: 'A', value: 'b' }], bodyText: body, bodyBase64: null, bodyByteLength: body?.length ?? 0,
 })
-const ok = (status = 200, body: string | null = 'ok'): ExecuteOutcome => ({ ok: true, response: response(status, body), warnings: [], runId: 'r', elapsedMs: 5 })
+const ok = (status = 200, body: string | null = 'ok'): ExecuteOutcome => ({ ok: true, response: response(status, body), warnings: [], runId: 'r', elapsedMs: 5, scripts: emptyScriptOutput() })
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -44,8 +45,8 @@ describe('CollectionRun', () => {
     const outcomes: Record<string, ExecuteOutcome> = {
       a: ok(200),
       b: ok(404),
-      c: { ok: false, kind: 'failed', error: 'connect ECONNREFUSED' },
-      d: { ok: false, kind: 'unresolved', error: 'Unresolved variables', unresolved: ['token'] },
+      c: { ok: false, kind: 'failed', error: 'connect ECONNREFUSED', scripts: emptyScriptOutput() },
+      d: { ok: false, kind: 'unresolved', error: 'Unresolved variables', unresolved: ['token'], scripts: emptyScriptOutput() },
     }
     const onFinished = vi.fn()
     const run = new CollectionRun(['a', 'b', 'c', 'd'].map(item), { delayMs: 0, stopOnFailure: false }, {
@@ -76,7 +77,7 @@ describe('CollectionRun', () => {
     const big = 'x'.repeat(5000)
     const run = new CollectionRun([item('a'), item('b')], { delayMs: 0, stopOnFailure: false }, {
       execute: async (it) =>
-        it.id === 'a' ? ok(200, big) : { ok: true, response: { ...response(200, null), bodyBase64: 'AAEC', bodyByteLength: 3 }, warnings: [], runId: 'r', elapsedMs: 1 },
+        it.id === 'a' ? ok(200, big) : { ok: true, response: { ...response(200, null), bodyBase64: 'AAEC', bodyByteLength: 3 }, warnings: [], runId: 'r', elapsedMs: 1, scripts: emptyScriptOutput() },
       cancel: async () => {},
     })
     const s = await run.start()
@@ -97,7 +98,7 @@ describe('CollectionRun', () => {
   it('stop cancels the in-flight request and skips the rest', async () => {
     const gate = deferred<ExecuteOutcome>()
     const cancel = vi.fn(async () => {
-      gate.resolve({ ok: false, kind: 'cancelled', error: 'Request cancelled' })
+      gate.resolve({ ok: false, kind: 'cancelled', error: 'Request cancelled', scripts: emptyScriptOutput() })
     })
     const execute = vi.fn(async (it: RunItem, hooks: { onRunId: (id: string) => void }) => {
       hooks.onRunId(`run-${it.id}`)
@@ -129,7 +130,7 @@ describe('CollectionRun', () => {
   it('stop before the run id is known cancels as soon as it is assigned', async () => {
     const gate = deferred<ExecuteOutcome>()
     let onRunId!: (id: string) => void
-    const cancel = vi.fn(async () => gate.resolve({ ok: false, kind: 'cancelled', error: 'x' }))
+    const cancel = vi.fn(async () => gate.resolve({ ok: false, kind: 'cancelled', error: 'x', scripts: emptyScriptOutput() }))
     const run = new CollectionRun([item('a')], { delayMs: 0, stopOnFailure: false }, {
       execute: (_it, hooks) => {
         onRunId = hooks.onRunId
@@ -169,7 +170,49 @@ describe('CollectionRun', () => {
     await run.start()
     expect(updates.at(-1)?.completed).toBe(2)
     expect(Math.max(...updates.map((u) => u.completed))).toBe(2)
-    expect(JSON.parse(resultsToJson('C', updates.at(-1)!)).summary).toEqual({ passed: 2, failed: 0, skipped: 0, total: 2 })
+    expect(JSON.parse(resultsToJson('C', updates.at(-1)!)).summary).toEqual({
+      passed: 2,
+      failed: 0,
+      skipped: 0,
+      total: 2,
+      tests: { passed: 0, failed: 0, skipped: 0, total: 0 },
+    })
+  })
+
+  it('a failing test script fails the row; test counts reach the summary and the JSON export', async () => {
+    const withTests = (statuses: Array<'passed' | 'failed'>, errors: string[] = []): ExecuteOutcome => ({
+      ...(ok() as Extract<ExecuteOutcome, { ok: true }>),
+      scripts: {
+        ...emptyScriptOutput(),
+        scriptCount: 1,
+        tests: statuses.map((status, i) => ({ name: `t${i}`, status, error: status === 'failed' ? 'AssertionError: nope' : null, source: 'Tests · request “x”' })),
+        errors: errors.map((message) => ({ source: 'Tests · request “x”', kind: 'error' as const, message })),
+        console: [{ level: 'log' as const, message: 'hi', timestamp: 1, source: 'Tests · request “x”' }],
+      },
+    })
+    const outcomes: Record<string, ExecuteOutcome> = { a: withTests(['passed', 'passed']), b: withTests(['passed', 'failed']), c: withTests([], ['TypeError: boom']) }
+    const run = new CollectionRun(['a', 'b', 'c'].map(item), { delayMs: 0, stopOnFailure: false }, { execute: async (it) => outcomes[it.id], cancel: async () => {} })
+    const s = await run.start()
+    expect(s.rows.map((r) => r.status)).toEqual(['passed', 'failed', 'failed'])
+    expect(s.rows[1].reason).toBe('1 of 2 tests failed')
+    expect(s.rows[2].reason).toBe('1 of 1 test failed')
+    expect(s.rows[0].console.map((c) => c.message)).toEqual(['hi'])
+    expect(summarize(s).tests).toEqual({ passed: 3, failed: 2, skipped: 0, total: 5 })
+    const json = JSON.parse(resultsToJson('C', s))
+    expect(json.summary.tests).toEqual({ passed: 3, failed: 2, skipped: 0, total: 5 })
+    expect(json.results[1].tests).toEqual([
+      { name: 't0', status: 'passed', error: null },
+      { name: 't1', status: 'failed', error: 'AssertionError: nope' },
+    ])
+  })
+
+  it('a pre-request script failure is a failed row with the script error as the reason', async () => {
+    const run = new CollectionRun([item('a')], { delayMs: 0, stopOnFailure: false }, {
+      execute: async () => ({ ok: false, kind: 'script', error: 'Pre-request script failed (x): Error: nope', scripts: emptyScriptOutput() }),
+      cancel: async () => {},
+    })
+    const s = await run.start()
+    expect(s.rows[0]).toMatchObject({ status: 'failed', reason: 'Pre-request script failed (x): Error: nope' })
   })
 })
 

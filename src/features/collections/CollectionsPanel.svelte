@@ -80,9 +80,9 @@
     const items = fullMenu(row)
     return ro ? readOnlyMenu(items) : items
   }
-  /** Read-only workspaces keep the non-mutating entries (open, run, versions, export). */
+  /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Versions…', 'Export as Postman JSON…'])
+    const keep = new Set(['Open', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -92,6 +92,7 @@
         { label: 'New folder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.id, parentId: null }) },
         { separator: true, label: '' },
         { label: 'Run collection…', icon: 'play', action: () => (ui.runner = { collectionId: row.id, folderId: null }) },
+        { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'collection', id: row.id }) },
         { label: 'Versions…', icon: 'tag', action: () => (ui.versionsFor = row.id) },
         { label: 'Export as Postman JSON…', icon: 'download', action: () => (ui.exportCollectionId = row.id) },
         { separator: true, label: '' },
@@ -104,6 +105,7 @@
         { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.collectionId, folderId: row.id }) },
         { label: 'New subfolder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.collectionId, parentId: row.id }) },
         { label: 'Run folder…', icon: 'play', action: () => (ui.runner = { collectionId: row.collectionId, folderId: row.id }) },
+        { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'folder', id: row.id }) },
         { separator: true, label: '' },
         { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
         { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },

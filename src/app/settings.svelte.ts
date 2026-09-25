@@ -1,6 +1,14 @@
 import { resolveTheme } from '../lib/themes'
 
-const K = { theme: 'slinger.theme', font: 'slinger.fontSize', wrap: 'slinger.editorWrap' }
+const K = {
+  theme: 'slinger.theme',
+  font: 'slinger.fontSize',
+  wrap: 'slinger.editorWrap',
+  scriptTimeout: 'slinger.scriptTimeoutMs',
+  scriptContinue: 'slinger.scriptContinueOnError',
+}
+
+export const SCRIPT_TIMEOUT_DEFAULT_MS = 5000
 
 function read(key: string): string | null {
   try {
@@ -21,6 +29,10 @@ class Settings {
   theme = $state<string>(read(K.theme) ?? 'system')
   fontSize = $state<number>(clampFont(Number(read(K.font)) || 13))
   editorWrap = $state<boolean>(read(K.wrap) === 'true')
+  /** Time limit per script (pre-request / test), enforced in the main-process sandbox. */
+  scriptTimeoutMs = $state<number>(clampTimeout(Number(read(K.scriptTimeout)) || SCRIPT_TIMEOUT_DEFAULT_MS))
+  /** Send the request even when a pre-request script fails (off by default). */
+  scriptContinueOnError = $state<boolean>(read(K.scriptContinue) === 'true')
   #mq: MediaQueryList | null = null
 
   /** Applies persisted settings to <html> and follows the OS theme while 'system' is selected. */
@@ -48,6 +60,18 @@ class Settings {
     this.editorWrap = v
     write(K.wrap, String(v))
   }
+  setScriptTimeoutMs(n: number) {
+    this.scriptTimeoutMs = clampTimeout(n)
+    write(K.scriptTimeout, String(this.scriptTimeoutMs))
+  }
+  setScriptContinueOnError(v: boolean) {
+    this.scriptContinueOnError = v
+    write(K.scriptContinue, String(v))
+  }
+}
+
+function clampTimeout(n: number): number {
+  return Number.isFinite(n) ? Math.min(60_000, Math.max(100, Math.round(n))) : SCRIPT_TIMEOUT_DEFAULT_MS
 }
 
 function clampFont(n: number): number {

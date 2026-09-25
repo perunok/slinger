@@ -5,6 +5,8 @@
     label: string
     /** Small indicator after the label (e.g. count or dot). */
     badge?: string
+    /** Badge colour (default: accent). */
+    badgeTone?: 'accent' | 'success' | 'danger'
   }
   interface Props {
     tabs: TabDef[]
@@ -43,7 +45,9 @@
       onclick={() => onchange(t.id)}
     >
       {t.label}
-      {#if t.badge}<span class="rounded-full bg-accent-soft px-1.5 text-[10px] leading-4 text-fg">{t.badge}</span>{/if}
+      {#if t.badge}<span
+          class="rounded-full px-1.5 text-[10px] leading-4 {t.badgeTone === 'success' ? 'bg-success-soft text-success' : t.badgeTone === 'danger' ? 'bg-danger-soft text-danger' : 'bg-accent-soft text-fg'}"
+          data-testid="{idPrefix}-{t.id}-badge">{t.badge}</span>{/if}
     </button>
   {/each}
 </div>

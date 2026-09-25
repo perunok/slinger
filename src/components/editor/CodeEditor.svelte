@@ -40,6 +40,8 @@
     scope?: TemplateScope
     class?: string
     autoFocus?: boolean
+    /** Extra CodeMirror extensions, fixed at mount (e.g. script autocompletion). */
+    extensions?: Extension[]
   }
   let {
     value,
@@ -55,6 +57,7 @@
     scope,
     class: cls = '',
     autoFocus = false,
+    extensions = [],
   }: Props = $props()
 
   let host: HTMLDivElement
@@ -81,6 +84,7 @@
       readOnly ? [] : closeBrackets(),
       templates ? templateExtension({ getScope: currentScope, onCreateVariable: (n) => scopeStore.createVariable?.(n) }) : [],
       placeholder ? placeholderExt(placeholder) : [],
+      extensions,
       EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
       // Mod-Enter (send) and Mod-/ (shortcuts help) are app-level shortcuts, not editor commands.
       keymap.of([...searchKeymap, ...foldKeymap, ...historyKeymap, ...defaultKeymap.filter((k) => k.key !== 'Mod-Enter' && k.key !== 'Mod-/')]),

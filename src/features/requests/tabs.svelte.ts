@@ -25,10 +25,12 @@ import {
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
+import type { ScriptOutput } from '../../lib/scripts'
 import type { TabNotice } from '../sync/tabNotices'
 import { cancelRun, executeDraft, type ExecuteOutcome } from './execute'
 
-export type RequestSection = 'params' | 'auth' | 'headers' | 'body' | 'docs' | 'settings' | 'code'
+export type RequestSection = 'params' | 'auth' | 'headers' | 'body' | 'scripts' | 'docs' | 'settings' | 'code'
+export type ResponseSection = 'pretty' | 'raw' | 'preview' | 'headers' | 'cookies' | 'tests' | 'console'
 
 export interface ResponseView {
   data: HttpResponseData
@@ -66,7 +68,9 @@ export class RequestTab {
   serverKey = $state('')
 
   section = $state<RequestSection>('params')
-  responseView = $state<'pretty' | 'raw' | 'preview' | 'headers' | 'cookies'>('pretty')
+  responseView = $state<ResponseSection>('pretty')
+  /** Which script editor the Scripts section shows. */
+  scriptsView = $state<'prerequest' | 'test'>('prerequest')
 
   sending = $state(false)
   runId = $state<string | null>(null)
@@ -75,6 +79,8 @@ export class RequestTab {
   /** Inline error from the last send (unresolved variables, network failure...). */
   error = $state<{ message: string; unresolved: string[] } | null>(null)
   warnings = $state<string[]>([])
+  /** Test results and console output of the last send (in memory only; never persisted). */
+  scriptOutput = $state.raw<ScriptOutput | null>(null)
   saving = $state(false)
   /** Set when updateRequest reported a version conflict; the UI shows the resolve dialog. */
   conflict = $state<{ serverRequest: ApiRequest | null } | null>(null)
@@ -556,15 +562,19 @@ class TabsStore {
     tab.cancelled = false
     tab.error = null
     tab.warnings = []
-    const outcome = await executeDraft(tab.draft, {
+    tab.scriptOutput = null
+    const outcome = await executeDraft($state.snapshot(tab.draft) as RequestDraft, {
       workspaceId: app.workspaceId,
       requestId: tab.requestId,
+      collectionId: tab.collectionId,
+      folderId: tab.folderId,
       onRunId: (id) => (tab.runId = id),
       wasCancelled: () => tab.cancelled,
     })
     tab.sending = false
     tab.runId = null
     app.historyTick++
+    tab.scriptOutput = outcome.scripts.scriptCount > 0 || outcome.scripts.console.length > 0 ? outcome.scripts : null
     if (outcome.ok) {
       tab.response = { data: outcome.response, elapsedMs: outcome.elapsedMs, receivedAt: Date.now() }
       tab.warnings = outcome.warnings

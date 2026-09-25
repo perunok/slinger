@@ -17,7 +17,7 @@ import {
   touch,
   type MockState,
 } from './store'
-import { bySortOrder, cleanName, fail } from './util'
+import { bySortOrder, cleanName, cleanScriptsJson, fail } from './util'
 
 type Ordered = { id: string; sortOrder: number; updatedAt: number; version: number }
 
@@ -70,6 +70,7 @@ type TreeApi = Pick<
   | 'renameFolder'
   | 'moveFolder'
   | 'deleteFolder'
+  | 'setFolderScripts'
   | 'listRequests'
   | 'createRequest'
   | 'updateRequest'
@@ -116,6 +117,12 @@ export function createTreeApi(s: MockState): TreeApi {
       folder.parentFolderId = target
       place(newSiblings, folder, input.targetIndex)
       return folder
+    },
+
+    async setFolderScripts(folderId, scriptsJson) {
+      const folder = must(s.folders, folderId, 'Folder')
+      folder.scriptsJson = cleanScriptsJson(scriptsJson)
+      return touch(folder)
     },
 
     async deleteFolder(folderId) {

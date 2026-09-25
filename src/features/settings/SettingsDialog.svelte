@@ -49,11 +49,33 @@
     <input id="font-size" type="range" min="11" max="20" step="1" value={settings.fontSize} oninput={(e) => settings.setFontSize(Number(e.currentTarget.value))} class="w-64 accent-[var(--accent)]" />
   </section>
 
-  <section class="mb-2">
+  <section class="mb-5">
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" checked={settings.editorWrap} onchange={(e) => settings.setEditorWrap(e.currentTarget.checked)} />
       Wrap long lines in editors (request body, response, code)
     </label>
+  </section>
+
+  <section class="mb-2 grid gap-2">
+    <h3 class="text-sm font-semibold">Scripts</h3>
+    <div class="flex items-center gap-2 text-sm">
+      <label for="script-timeout">Time limit per script (ms)</label>
+      <input
+        id="script-timeout"
+        type="number"
+        min="100"
+        max="60000"
+        step="500"
+        class="w-28"
+        value={settings.scriptTimeoutMs}
+        onchange={(e) => settings.setScriptTimeoutMs(Number(e.currentTarget.value))}
+      />
+    </div>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={settings.scriptContinueOnError} onchange={(e) => settings.setScriptContinueOnError(e.currentTarget.checked)} />
+      Send the request even when a pre-request script fails
+    </label>
+    <p class="text-xs text-faint">Scripts run in an isolated sandbox without network or file access (64 MB memory per script).</p>
   </section>
 
   {#snippet footer()}

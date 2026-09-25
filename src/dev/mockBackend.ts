@@ -6,6 +6,7 @@ import { createSyncApi, type CloudOptions, type MockCloudControls } from './mock
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
+import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
 import { importPostman } from './mock/postmanImport'
 import { seedState } from './mock/seed'
@@ -81,6 +82,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createTreeApi(state),
     ...createVersionApi(state),
     ...createHttpApi(state),
+    ...createScriptsApi(),
     ...misc,
     ...sync.api,
     async listHistory(workspaceId, limit) {

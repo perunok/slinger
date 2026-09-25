@@ -47,3 +47,16 @@ export function base64ToBytes(b64: string): Uint8Array {
 export function bySortOrder<T extends { sortOrder: number; createdAt: number; id: string }>(a: T, b: T): number {
   return a.sortOrder - b.sortOrder || a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
+
+/** Same rules as the main process (repositories/common.ts cleanScriptsJson): null or a JSON array; [] -> null. */
+export function cleanScriptsJson(value: string | null): string | null {
+  if (value === null || value === undefined) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    fail('invalid_input', 'scriptsJson must be valid JSON')
+  }
+  if (!Array.isArray(parsed)) fail('invalid_input', 'scriptsJson must be a JSON array (Postman "event" list)')
+  return parsed.length === 0 ? null : value
+}
