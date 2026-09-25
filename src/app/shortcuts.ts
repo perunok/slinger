@@ -30,7 +30,7 @@ export function handleShortcut(e: KeyboardEvent): boolean {
       return tab ? act(() => void tabsStore.send(tab)) : false
     case 's':
       if (sync.blocked) return act(() => toast.info('Read-only workspace', `${sync.blockedMessage} Saving is disabled.`))
-      return tab ? act(() => (tab.requestId ? void tabsStore.save(tab) : (ui.saveAsTabId = tab.id))) : act(() => {})
+      return tab ? act(() => (tab.requestId || tab.overview ? void tabsStore.save(tab) : (ui.saveAsTabId = tab.id))) : act(() => {})
     case 't':
       return act(() => void tabsStore.newTab())
     case 'w':

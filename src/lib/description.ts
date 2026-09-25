@@ -12,6 +12,8 @@
 import type { DescriptionType } from '../../shared/types'
 
 export type DescriptionFormat = 'markdown' | 'plain'
+/** How a documentation view shows a description: rendered, source editor, or both side by side. */
+export type DocsMode = 'preview' | 'edit' | 'split'
 
 export interface DescriptionInfo {
   text: string

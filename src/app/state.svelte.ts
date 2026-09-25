@@ -166,6 +166,19 @@ class AppState {
     else this.requests.push(req)
     this.onLocalData?.()
   }
+  /** Replaces one collection / folder after a single-entity write (e.g. its description). */
+  upsertCollection(c: Collection) {
+    const i = this.collections.findIndex((x) => x.id === c.id)
+    if (i >= 0) this.collections[i] = c
+    else this.collections.push(c)
+    this.onLocalData?.()
+  }
+  upsertFolder(f: ApiFolder) {
+    const i = this.folders.findIndex((x) => x.id === f.id)
+    if (i >= 0) this.folders[i] = f
+    else this.folders.push(f)
+    this.onLocalData?.()
+  }
   removeRequestLocal(id: string) {
     this.requests = this.requests.filter((r) => r.id !== id)
   }

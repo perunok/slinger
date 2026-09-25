@@ -6,7 +6,7 @@
  * part, `exampleDraft` its response part, and saving writes the example back into the parent
  * request's document (`responses`), leaving every other example and the request itself as stored.
  */
-import type { ApiRequest, HttpResponseData } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, HttpResponseData } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import {
@@ -22,6 +22,7 @@ import {
   type ExampleResponseDraft,
   type ParsedExample,
 } from '../../lib/examples'
+import type { DocsMode } from '../../lib/description'
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
@@ -55,6 +56,17 @@ export interface ExampleBinding extends ExampleLocator {
 }
 
 export type ExampleSection = 'response' | 'body' | 'headers'
+
+/** A collection or folder shown in an overview tab (its documentation plus a summary). */
+export interface OverviewTarget {
+  kind: 'collection' | 'folder'
+  id: string
+}
+
+export function overviewEntity(target: OverviewTarget | null): Collection | ApiFolder | undefined {
+  if (!target) return undefined
+  return target.kind === 'collection' ? app.collections.find((c) => c.id === target.id) : app.folders.find((f) => f.id === target.id)
+}
 
 export class RequestTab {
   id = nextId('t')
@@ -93,11 +105,28 @@ export class RequestTab {
   exampleSavedFingerprint = $state('')
   exampleSection = $state<ExampleSection>('response')
 
+  /**
+   * Set for collection/folder overview tabs. `overviewDraft` is the edited description (null = unchanged);
+   * saving writes it with setCollectionDescription / setFolderDescription.
+   */
+  overview = $state.raw<OverviewTarget | null>(null)
+  overviewDraft = $state<string | null>(null)
+  /** Docs view (request Docs section / overview): null = default (rendered preview). */
+  docsMode = $state<DocsMode | null>(null)
+
   dirty = $derived(
-    draftFingerprint(this.draft) !== this.savedFingerprint ||
-      (this.exampleDraft !== null && exampleFingerprint(this.exampleDraft) !== this.exampleSavedFingerprint),
+    this.overview
+      ? this.overviewDraft !== null && this.overviewDraft !== (overviewEntity(this.overview)?.description ?? '')
+      : draftFingerprint(this.draft) !== this.savedFingerprint ||
+          (this.exampleDraft !== null && exampleFingerprint(this.exampleDraft) !== this.exampleSavedFingerprint),
   )
-  title = $derived(this.exampleDraft ? this.exampleDraft.name.trim() || 'Untitled example' : this.draft.name || 'Untitled Request')
+  title = $derived(
+    this.overview
+      ? (overviewEntity(this.overview)?.name ?? `Deleted ${this.overview.kind}`)
+      : this.exampleDraft
+        ? this.exampleDraft.name.trim() || 'Untitled example'
+        : this.draft.name || 'Untitled Request',
+  )
 
   constructor(init?: { request?: ApiRequest; draft?: RequestDraft; collectionId?: string | null; folderId?: string | null }) {
     if (init?.request) this.loadFrom(init.request)
@@ -211,6 +240,23 @@ class TabsStore {
     return tab
   }
 
+  /** Opens (or focuses) the overview tab of a collection or folder. */
+  openOverview(target: OverviewTarget): RequestTab {
+    const existing = this.tabs.find((t) => t.overview?.kind === target.kind && t.overview.id === target.id)
+    if (existing) {
+      this.activeId = existing.id
+      return existing
+    }
+    const tab = new RequestTab()
+    tab.overview = { ...target }
+    const entity = overviewEntity(target)
+    tab.collectionId = target.kind === 'collection' ? target.id : ((entity as ApiFolder | undefined)?.collectionId ?? null)
+    tab.folderId = target.kind === 'folder' ? target.id : null
+    this.tabs.push(tab)
+    this.activeId = tab.id
+    return tab
+  }
+
   newTab(init?: { collectionId?: string | null; folderId?: string | null; draft?: RequestDraft }): RequestTab {
     const tab = new RequestTab(init)
     this.tabs.push(tab)
@@ -305,6 +351,11 @@ class TabsStore {
     const gone: string[] = []
     const goneExamples: string[] = []
     for (const t of this.tabs) {
+      if (t.overview) {
+        // Overview of a collection/folder deleted elsewhere: close it unless it holds unsaved docs.
+        if (!overviewEntity(t.overview) && !t.dirty) goneExamples.push(t.id)
+        continue
+      }
       if (!t.requestId) continue
       if (t.example) {
         if (this.syncExampleTab(t) === 'close') goneExamples.push(t.id)
@@ -377,6 +428,7 @@ class TabsStore {
 
   /** Saves a tab. Returns true on success. Unsaved new tabs need Save As (caller opens the dialog). */
   async save(tab: RequestTab, opts: { overwrite?: boolean } = {}): Promise<boolean> {
+    if (tab.overview) return this.saveOverview(tab)
     if (!tab.requestId) return false
     if (tab.example) return this.saveExample(tab, opts)
     tab.saving = true
@@ -406,6 +458,27 @@ class TabsStore {
       } else {
         toast.error('Could not save request', errorInfo(e).message)
       }
+      return false
+    } finally {
+      tab.saving = false
+    }
+  }
+
+  /** Saves an overview tab's edited description (collection/folder documentation is local-only). */
+  private async saveOverview(tab: RequestTab): Promise<boolean> {
+    const target = tab.overview!
+    const text = tab.overviewDraft
+    if (text === null) return true
+    tab.saving = true
+    try {
+      const value = text.trim() === '' ? null : text
+      if (target.kind === 'collection') app.upsertCollection(await api().setCollectionDescription(target.id, value))
+      else app.upsertFolder(await api().setFolderDescription(target.id, value))
+      // Keystrokes typed while saving stay unsaved.
+      if (tab.overviewDraft === text) tab.overviewDraft = null
+      return true
+    } catch (e) {
+      toast.error('Could not save documentation', errorInfo(e).message)
       return false
     } finally {
       tab.saving = false
@@ -553,6 +626,7 @@ class TabsStore {
   // ---- sending ----------------------------------------------------------
 
   async send(tab: RequestTab): Promise<ExecuteOutcome | null> {
+    if (tab.overview) return null
     if (tab.example) {
       this.tryExample(tab)
       return null

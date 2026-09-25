@@ -73,6 +73,14 @@ const highlight = HighlightStyle.define([
   { tag: [t.punctuation, t.bracket, t.angleBracket, t.separator, t.operator], color: 'var(--syn-punct)' },
   { tag: [t.processingInstruction, t.meta, t.documentMeta], color: 'var(--syn-comment)' },
   { tag: t.link, color: 'var(--syn-property)', textDecoration: 'underline' },
+  // Markdown (documentation editor)
+  { tag: t.heading, color: 'var(--syn-keyword)', fontWeight: '600' },
+  { tag: t.strong, fontWeight: '600' },
+  { tag: t.emphasis, fontStyle: 'italic' },
+  { tag: t.strikethrough, textDecoration: 'line-through' },
+  { tag: [t.url, t.monospace], color: 'var(--syn-string)' },
+  { tag: t.quote, color: 'var(--syn-comment)' },
+  { tag: [t.contentSeparator, t.list], color: 'var(--syn-punct)' },
 ])
 
 export const slingerTheme = [editorTheme, syntaxHighlighting(highlight)]

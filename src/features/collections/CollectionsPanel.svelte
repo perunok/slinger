@@ -36,6 +36,7 @@
   /** Row of the active tab: its request, or its example. */
   const activeKey = $derived.by(() => {
     const t = tabsStore.active
+    if (t?.overview) return rowKey(t.overview.kind, t.overview.id)
     if (!t?.requestId) return null
     return t.example ? exampleRowKey(t.requestId, t.example.index) : rowKey('request', t.requestId)
   })
@@ -68,6 +69,9 @@
       examples.openExample(row.id, row.exampleIndex)
     }
   }
+  function openOverview(row: TreeRowModel) {
+    if (row.kind === 'collection' || row.kind === 'folder') tabsStore.openOverview({ kind: row.kind, id: row.id })
+  }
   /** Requests open on Enter/click; only their chevron (or the arrow keys) shows the examples. */
   const togglesOnActivate = (row: TreeRowModel) => row.expandable && row.kind !== 'request'
   function toggle(row: TreeRowModel) {
@@ -82,12 +86,14 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
+    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
     if (row.kind === 'collection') {
       return [
+        { label: 'Overview & docs', icon: 'info', action: () => openOverview(row) },
+        { separator: true, label: '' },
         { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.id, folderId: null }) },
         { label: 'New folder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.id, parentId: null }) },
         { separator: true, label: '' },
@@ -102,6 +108,8 @@
     }
     if (row.kind === 'folder') {
       return [
+        { label: 'Overview & docs', icon: 'info', action: () => openOverview(row) },
+        { separator: true, label: '' },
         { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.collectionId, folderId: row.id }) },
         { label: 'New subfolder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.collectionId, parentId: row.id }) },
         { label: 'Run folder…', icon: 'play', action: () => (ui.runner = { collectionId: row.collectionId, folderId: row.id }) },
@@ -354,6 +362,7 @@
         dragging={row.kind !== 'example' && drag?.id === row.id && drag?.kind === row.kind}
         ontoggle={() => toggle(row)}
         onactivate={() => activate(row)}
+        onoverview={() => openOverview(row)}
         onfocusrow={() => (focusKey = row.key)}
         oncontextmenu={(e) => {
           e.preventDefault()

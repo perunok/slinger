@@ -81,7 +81,15 @@ export function createMiscApi(): MiscApi {
       saveSecure(secure)
     },
     async openExternalUrl(url) {
-      window.open(url, '_blank', 'noopener')
+      // Same policy as the main process (services/externalUrl.ts): http, https and mailto only.
+      let parsed: URL | null = null
+      try {
+        parsed = new URL(String(url).trim())
+      } catch {
+        /* invalid */
+      }
+      if (!parsed || !['http:', 'https:', 'mailto:'].includes(parsed.protocol)) fail('invalid_input', 'only http, https and mailto URLs can be opened')
+      window.open(parsed.toString(), '_blank', 'noopener')
     },
     async prepareBrowserAuthCallback() {
       const callbackId = uuid()

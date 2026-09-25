@@ -16,7 +16,7 @@
     try {
       for (const t of dirty) {
         if (!t) continue
-        if (!t.requestId) {
+        if (!t.requestId && !t.overview) {
           // Needs a name/location first: hand over to Save As and stop closing.
           ui.saveAsTabId = t.id
           tabsStore.pendingClose = null

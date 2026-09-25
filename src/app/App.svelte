@@ -9,6 +9,7 @@
   import SyncHost from '../features/sync/SyncHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
+  import OverviewView from '../features/overview/OverviewView.svelte'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
   import ImportPostmanDialog from '../features/importexport/ImportPostmanDialog.svelte'
   import QuickOpen from '../features/requests/QuickOpen.svelte'
@@ -66,7 +67,9 @@
             <RequestTabs />
             {#if tabsStore.active}
               {#key tabsStore.active.id}
-                {#if tabsStore.active.example}
+                {#if tabsStore.active.overview}
+                  <OverviewView tab={tabsStore.active} />
+                {:else if tabsStore.active.example}
                   <ExampleView tab={tabsStore.active} />
                 {:else}
                   <RequestView tab={tabsStore.active} />

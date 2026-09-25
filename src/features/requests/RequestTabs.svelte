@@ -1,5 +1,6 @@
 <script lang="ts">
   import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import Icon from '../../components/ui/Icon.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
   import { methodColor } from './method'
   import { tabsStore } from './tabs.svelte'
@@ -13,7 +14,7 @@
       { label: 'Close others', disabled: tabsStore.tabs.length < 2, action: () => tabsStore.closeOthers(id) },
       { label: 'Close all', action: () => tabsStore.closeAll() },
       { separator: true, label: '' },
-      { label: 'Save', icon: 'save', disabled: !t?.dirty || !t?.requestId, action: () => t && void tabsStore.save(t) },
+      { label: 'Save', icon: 'save', disabled: !t?.dirty || (!t?.requestId && !t?.overview), action: () => t && void tabsStore.save(t) },
     ]
   }
 
@@ -55,7 +56,11 @@
           onkeydown={(e) => onkeydown(e, t.id)}
           onauxclick={(e) => e.button === 1 && tabsStore.requestClose([t.id])}
         >
-          <span class="shrink-0 text-[10px] font-bold" style="color:{methodColor(t.draft.method)}">{t.draft.method.slice(0, 4)}</span>
+          {#if t.overview}
+            <span class="shrink-0 text-muted" title="{t.overview.kind === 'collection' ? 'Collection' : 'Folder'} overview"><Icon name={t.overview.kind === 'collection' ? 'layers' : 'folder'} size={13} /><span class="sr-only">{t.overview.kind} overview:</span></span>
+          {:else}
+            <span class="shrink-0 text-[10px] font-bold" style="color:{methodColor(t.draft.method)}">{t.draft.method.slice(0, 4)}</span>
+          {/if}
           {#if t.example}<span class="shrink-0 rounded bg-raised px-1 text-[10px] text-muted" title="Saved example">e.g.<span class="sr-only"> example</span></span>{/if}
           <span class="truncate">{t.title}</span>
           {#if t.dirty}<span class="h-2 w-2 shrink-0 rounded-full bg-warning" title="Unsaved changes" role="img" aria-label="Unsaved changes"></span>{/if}

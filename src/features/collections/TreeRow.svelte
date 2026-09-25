@@ -19,6 +19,8 @@
     dragging: boolean
     ontoggle: () => void
     onactivate: () => void
+    /** Collections/folders: open the overview (documentation) tab. */
+    onoverview?: () => void
     onfocusrow: () => void
     oncontextmenu: (e: MouseEvent) => void
     ondragstart: (e: DragEvent) => void
@@ -27,7 +29,7 @@
     ondragend: () => void
     ondragleave: () => void
   }
-  let { row, active, focused, hint, dragging, ontoggle, onactivate, onfocusrow, oncontextmenu, ondragstart, ondragover, ondrop, ondragend, ondragleave }: Props = $props()
+  let { row, active, focused, hint, dragging, ontoggle, onactivate, onoverview, onfocusrow, oncontextmenu, ondragstart, ondragover, ondrop, ondragend, ondragleave }: Props = $props()
 
   const hintStyle = $derived.by(() => {
     if (!hint || hint.noop) return ''
@@ -94,6 +96,22 @@
     <Icon name={row.kind === 'collection' ? 'layers' : 'folder'} size={14} class="shrink-0 text-muted" />
   {/if}
   <span class="min-w-0 flex-1 truncate {row.kind === 'collection' ? 'font-medium' : ''}">{row.label}</span>
+  {#if (row.kind === 'collection' || row.kind === 'folder') && onoverview}
+    <!-- Mouse affordance only; keyboard users use the context menu (Shift+F10) "Overview & docs". -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <span
+      aria-hidden="true"
+      data-testid="overview-open"
+      class="-my-1 hidden h-6 w-6 shrink-0 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg group-hover:flex"
+      title="Overview & docs"
+      onclick={(e) => {
+        e.stopPropagation()
+        onoverview()
+      }}
+    >
+      <Icon name="info" size={13} />
+    </span>
+  {/if}
   {#if row.count !== undefined}
     {#if row.kind === 'request'}
       <!-- Hidden from the accessible name (it would change every request's label); aria-expanded tells it has children. -->
