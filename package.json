@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "productName": "Slinger",
+  "desktopName": "slinger.desktop",
   "engines": {
     "node": ">=20"
   },
