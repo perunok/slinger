@@ -1,0 +1,251 @@
+/*
+ * Design tokens. Every colour in the app comes from here; components never
+ * hard-code colours. `data-theme` on <html> selects a palette.
+ * To add a theme: add a block below and register it in src/lib/themes.ts.
+ */
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-size: 13px;
+  --radius: 6px;
+}
+
+/* ---------- Light ---------- */
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-raised: #eef0f3;
+  --surface-hover: #e4e7ec;
+  --border: #d9dde3;
+  --border-strong: #b4bbc6;
+  --text: #1c2330;
+  --text-muted: #566072;
+  --text-faint: #7b8494;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --accent-soft: #dbe7fd;
+  --danger: #c62828;
+  --danger-soft: #fde4e4;
+  --success: #17803d;
+  --success-soft: #dcf5e4;
+  --warning: #a35c00;
+  --warning-soft: #fdeccb;
+  --preview-bg: #ffffff;
+  --overlay: rgba(15, 23, 42, 0.45);
+  --shadow-pop: 0 8px 28px rgba(15, 23, 42, 0.22);
+  --selection: #bcd3fb;
+  --var-ok: #17803d;
+  --var-ok-bg: #dcf5e4;
+  --var-bad: #c62828;
+  --var-bad-bg: #fde4e4;
+  --var-secret: #6b7280;
+  --var-secret-bg: #e5e7eb;
+  --syn-keyword: #8a3ffc;
+  --syn-string: #0a7a3d;
+  --syn-number: #b45309;
+  --syn-bool: #b4306b;
+  --syn-comment: #7b8494;
+  --syn-property: #1d4ed8;
+  --syn-tag: #b4306b;
+  --syn-attr: #0e7490;
+  --syn-punct: #566072;
+  --m-get: #17803d;
+  --m-post: #b45309;
+  --m-put: #1d4ed8;
+  --m-patch: #7c3aed;
+  --m-delete: #c62828;
+  --m-other: #566072;
+}
+
+/* ---------- Dark ---------- */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #16181d;
+  --surface: #1e2127;
+  --surface-raised: #262a32;
+  --surface-hover: #2f343d;
+  --border: #333944;
+  --border-strong: #4b5361;
+  --text: #e4e7ec;
+  --text-muted: #a0a8b6;
+  --text-faint: #7c8595;
+  --accent: #4c8dff;
+  --accent-fg: #0b1220;
+  --accent-soft: #1f3358;
+  --danger: #ff6b6b;
+  --danger-soft: #45222a;
+  --success: #4cc38a;
+  --success-soft: #1c3a2c;
+  --warning: #f0b45a;
+  --warning-soft: #443417;
+  --preview-bg: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 10px 32px rgba(0, 0, 0, 0.55);
+  --selection: #2c4a7c;
+  --var-ok: #4cc38a;
+  --var-ok-bg: #1c3a2c;
+  --var-bad: #ff7b7b;
+  --var-bad-bg: #4a2229;
+  --var-secret: #b4bcc9;
+  --var-secret-bg: #3a404b;
+  --syn-keyword: #c792ea;
+  --syn-string: #a5d67e;
+  --syn-number: #f6a86b;
+  --syn-bool: #ff8ba7;
+  --syn-comment: #7c8595;
+  --syn-property: #7db4ff;
+  --syn-tag: #ff8ba7;
+  --syn-attr: #6fd3e6;
+  --syn-punct: #a0a8b6;
+  --m-get: #4cc38a;
+  --m-post: #f0b45a;
+  --m-put: #7db4ff;
+  --m-patch: #c792ea;
+  --m-delete: #ff7b7b;
+  --m-other: #a0a8b6;
+}
+
+/* ---------- Midnight (deep blue) ---------- */
+[data-theme='midnight'] {
+  color-scheme: dark;
+  --bg: #070d1f;
+  --surface: #0d1630;
+  --surface-raised: #131e40;
+  --surface-hover: #1a2853;
+  --border: #22335f;
+  --border-strong: #35508f;
+  --text: #dbe5ff;
+  --text-muted: #93a5d4;
+  --text-faint: #6f82b3;
+  --accent: #5b9dff;
+  --accent-fg: #04102b;
+  --accent-soft: #17306b;
+  --danger: #ff7a90;
+  --danger-soft: #3d1a30;
+  --success: #57d9a3;
+  --success-soft: #0f3a3a;
+  --warning: #ffc36b;
+  --warning-soft: #3d3216;
+  --preview-bg: #ffffff;
+  --overlay: rgba(2, 5, 18, 0.7);
+  --shadow-pop: 0 10px 34px rgba(0, 0, 8, 0.65);
+  --selection: #234a92;
+  --var-ok: #57d9a3;
+  --var-ok-bg: #0f3a3a;
+  --var-bad: #ff8aa0;
+  --var-bad-bg: #40203a;
+  --var-secret: #b3c0e3;
+  --var-secret-bg: #26345f;
+  --syn-keyword: #b9a3ff;
+  --syn-string: #8fe3b5;
+  --syn-number: #ffb877;
+  --syn-bool: #ff8fb3;
+  --syn-comment: #6f82b3;
+  --syn-property: #7fb6ff;
+  --syn-tag: #ff8fb3;
+  --syn-attr: #71dcf0;
+  --syn-punct: #93a5d4;
+  --m-get: #57d9a3;
+  --m-post: #ffc36b;
+  --m-put: #7fb6ff;
+  --m-patch: #b9a3ff;
+  --m-delete: #ff8aa0;
+  --m-other: #93a5d4;
+}
+
+/* ---------- Solarized Dark ---------- */
+[data-theme='solarized'] {
+  color-scheme: dark;
+  --bg: #001f27;
+  --surface: #002b36;
+  --surface-raised: #073642;
+  --surface-hover: #0d4351;
+  --border: #16505e;
+  --border-strong: #2c6b7a;
+  --text: #eee8d5;
+  --text-muted: #93a1a1;
+  --text-faint: #7f8f90;
+  --accent: #2aa198;
+  --accent-fg: #00212b;
+  --accent-soft: #0b4a52;
+  --danger: #ff6a5f;
+  --danger-soft: #4a2320;
+  --success: #5fc38a;
+  --success-soft: #0d4a3a;
+  --warning: #e0a31a;
+  --warning-soft: #4a3a0a;
+  --preview-bg: #ffffff;
+  --overlay: rgba(0, 12, 16, 0.65);
+  --shadow-pop: 0 10px 30px rgba(0, 10, 14, 0.6);
+  --selection: #0e5866;
+  --var-ok: #5fc38a;
+  --var-ok-bg: #0d4a3a;
+  --var-bad: #ff7d72;
+  --var-bad-bg: #4a2320;
+  --var-secret: #b5c0c0;
+  --var-secret-bg: #124450;
+  --syn-keyword: #c2b02a;
+  --syn-string: #2fb5aa;
+  --syn-number: #e07b4f;
+  --syn-bool: #e468a0;
+  --syn-comment: #7f8f90;
+  --syn-property: #4ea7e6;
+  --syn-tag: #ff7d72;
+  --syn-attr: #2fb5aa;
+  --syn-punct: #93a1a1;
+  --m-get: #5fc38a;
+  --m-post: #e0a31a;
+  --m-put: #4ea7e6;
+  --m-patch: #a98be0;
+  --m-delete: #ff7d72;
+  --m-other: #93a1a1;
+}
+
+/* ---------- High contrast ---------- */
+[data-theme='contrast'] {
+  color-scheme: dark;
+  --bg: #000000;
+  --surface: #000000;
+  --surface-raised: #0f0f0f;
+  --surface-hover: #262626;
+  --border: #8a8a8a;
+  --border-strong: #ffffff;
+  --text: #ffffff;
+  --text-muted: #e0e0e0;
+  --text-faint: #c2c2c2;
+  --accent: #ffd400;
+  --accent-fg: #000000;
+  --accent-soft: #3a3200;
+  --danger: #ff6b6b;
+  --danger-soft: #3d0000;
+  --success: #3dff8b;
+  --success-soft: #003d1a;
+  --warning: #ffb000;
+  --warning-soft: #3d2900;
+  --preview-bg: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.85);
+  --shadow-pop: 0 0 0 2px #ffffff;
+  --selection: #0b4d9c;
+  --var-ok: #3dff8b;
+  --var-ok-bg: #003d1a;
+  --var-bad: #ff8080;
+  --var-bad-bg: #4d0000;
+  --var-secret: #e0e0e0;
+  --var-secret-bg: #3a3a3a;
+  --syn-keyword: #ff9cf5;
+  --syn-string: #9cff9c;
+  --syn-number: #ffc266;
+  --syn-bool: #ff9cbe;
+  --syn-comment: #b5b5b5;
+  --syn-property: #8fd0ff;
+  --syn-tag: #ff9cbe;
+  --syn-attr: #7ff0ff;
+  --syn-punct: #ffffff;
+  --m-get: #3dff8b;
+  --m-post: #ffb000;
+  --m-put: #8fd0ff;
+  --m-patch: #ff9cf5;
+  --m-delete: #ff8080;
+  --m-other: #e0e0e0;
+}

@@ -1,7 +1,11 @@
 /// <reference types="svelte" />
+/// <reference types="vite/client" />
+import type { MockControls } from './dev/mockBackend'
 
-declare module '*.svelte' {
-  import type { SvelteComponent } from 'svelte'
-
-  export default class Component extends SvelteComponent<Record<string, unknown>> {}
+declare global {
+  interface Window {
+    /** Present only when the in-memory mock backend is installed (browser dev mode). */
+    __slingerMock?: MockControls
+  }
 }
+export {}

@@ -1,0 +1,65 @@
+appId: dev.slinger.app
+productName: Slinger
+copyright: Copyright (c) Slinger
+directories:
+  output: release
+  buildResources: build
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+# Whitelist: only the bundled main/preload, the renderer build, SQL migrations and package.json
+# ship. Tests, e2e, sources, sourcemaps and dev tooling never enter the asar.
+files:
+  - package.json
+  - dist/**
+  - dist-electron/**
+  - electron/migrations/*.sql
+  - "!**/*.map"
+  # main.cjs/preload.cjs inline every pure-JS dependency, and the renderer is bundled by vite, so the
+  # runtime only needs the native addons. Drop the (large) rest of the production dependency tree.
+  - "!node_modules/@codemirror/**"
+  - "!node_modules/@lezer/**"
+  - "!node_modules/zod/**"
+  - "!node_modules/uuid/**"
+  # better-sqlite3 ships the SQLite amalgamation and build intermediates; only the .node file is needed.
+  - "!node_modules/better-sqlite3/{deps,src}/**"
+  - "!node_modules/better-sqlite3/build/{Release/obj,Release/.deps,deps,gyp,*.mk,Makefile,config.gypi}"
+  - "!node_modules/better-sqlite3/build/Release/obj.target/**"
+  - "!node_modules/better-sqlite3/build/Release/test_extension.node"
+
+# Native addons cannot be dlopen()ed from inside the asar. Unpack better-sqlite3 (+ its `bindings`
+# and `file-uri-to-path` helpers) and @napi-rs/keyring together with its per-platform optional
+# packages (@napi-rs/keyring-<platform>-<arch>[-libc]). Migrations are plain files read through
+# Electron's transparent asar fs support (main.ts: app.getAppPath()/electron/migrations).
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/bindings/**"
+  - "**/node_modules/file-uri-to-path/**"
+  - "**/node_modules/@napi-rs/**"
+
+# scripts/ensure-native.mjs (run by `npm run electron:build` / `package`) already rebuilds
+# better-sqlite3 for Electron's ABI on the host arch; do not let electron-builder do it again.
+npmRebuild: false
+
+linux:
+  target: [AppImage, deb]
+  category: Development
+  icon: icon.png
+  maintainer: Slinger <henokmto444@gmail.com>
+  synopsis: Local-first API client
+win:
+  target: [nsis]
+  icon: icon.png
+  # Signing is optional: set WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD (see docs in release.yml).
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target: [dmg]
+  category: public.app-category.developer-tools
+  icon: icon.png
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization is attempted by electron-builder only when APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
+  # APPLE_TEAM_ID are set; without them (and without CSC_LINK) the build is unsigned.

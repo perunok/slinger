@@ -1,44 +1,42 @@
 #!/bin/bash
+# Installs a built Slinger AppImage for the current user (Linux) and creates a desktop launcher.
+#
+#   ./install.sh [path/to/Slinger-x.y.z.AppImage]
+#
+# Build the AppImage first with `npm run electron:build` (output in ./release). Installing the
+# .deb with `sudo dpkg -i release/*.deb` is the system-wide alternative and needs no script.
+# Slinger's data lives in the Electron user-data directory (~/.config/Slinger), not here.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
 APP_NAME="Slinger"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/slinger"
-APP_EXEC="${APP_DIR}/slinger"
+APP_EXEC="${APP_DIR}/Slinger.AppImage"
 APP_ICON="${APP_DIR}/icon.png"
-APP_DB="${APP_DIR}/slinger.db"
-DESKTOP_FILE="$HOME/.local/share/applications/slinger.desktop"
+DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/slinger.desktop"
 
-SOURCE_APP="${SCRIPT_DIR}/slinger"
-SOURCE_ICON="${SCRIPT_DIR}/icon.png"
+SOURCE_APP="${1:-}"
+if [[ -z "$SOURCE_APP" ]]; then
+  SOURCE_APP="$(ls -t "${SCRIPT_DIR}"/release/*.AppImage 2>/dev/null | head -n1 || true)"
+fi
+SOURCE_ICON="${SCRIPT_DIR}/build/icon.png"
 
-if [[ ! -f "$SOURCE_APP" ]]; then
-  echo "Could not find app binary at:"
-  echo "  $SOURCE_APP"
+if [[ -z "$SOURCE_APP" || ! -f "$SOURCE_APP" ]]; then
+  echo "No AppImage found. Build one with 'npm run electron:build' or pass its path as an argument."
   exit 1
 fi
-
 if [[ ! -f "$SOURCE_ICON" ]]; then
-  echo "Could not find icon at:"
-  echo "  $SOURCE_ICON"
+  echo "Could not find icon at: $SOURCE_ICON"
   exit 1
 fi
 
 echo "Installing ${APP_NAME}..."
+mkdir -p "$APP_DIR" "$(dirname "$DESKTOP_FILE")"
+cp -f "$SOURCE_APP" "$APP_EXEC"
+cp -f "$SOURCE_ICON" "$APP_ICON"
+chmod +x "$APP_EXEC"
 
-mkdir -p "$APP_DIR"
-mkdir -p "$HOME/.local/share/applications"
-
-if [[ "$SOURCE_APP" != "$APP_EXEC" ]]; then
-  mv -f "$SOURCE_APP" "$APP_EXEC"
-fi
-
-if [[ "$SOURCE_ICON" != "$APP_ICON" ]]; then
-  mv -f "$SOURCE_ICON" "$APP_ICON"
-fi
-
-cat > "$DESKTOP_FILE" <<EOF
+cat > "$DESKTOP_FILE" <<DESKTOP
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -46,34 +44,13 @@ Name=${APP_NAME}
 Comment=Slinger API Client
 Exec=${APP_EXEC}
 Icon=${APP_ICON}
-Path=${APP_DIR}
 Terminal=false
 Categories=Development;Network;
 StartupNotify=true
-EOF
-
-chmod +x "$APP_EXEC"
+DESKTOP
 chmod +x "$DESKTOP_FILE"
+update-desktop-database "$(dirname "$DESKTOP_FILE")" 2>/dev/null || true
 
-update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-
-echo
-echo "Installation completed."
-echo "Application installed at:"
-echo "  $APP_EXEC"
-echo
-echo "Application data directory:"
-echo "  $APP_DIR"
-echo
-if [[ -f "$APP_DB" ]]; then
-  echo "Existing database preserved at:"
-  echo "  $APP_DB"
-else
-  echo "Database will be created on first launch at:"
-  echo "  $APP_DB"
-fi
-echo
-echo "Application launcher created:"
-echo "  $DESKTOP_FILE"
-echo
-echo "You can now search for 'Slinger' in your application menu."
+echo "Installed: $APP_EXEC"
+echo "Launcher:  $DESKTOP_FILE"
+echo "You can now search for '${APP_NAME}' in your application menu."

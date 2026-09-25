@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.electron.json",
+  "compilerOptions": { "lib": ["ES2023", "DOM"], "types": ["node"] },
+  "include": ["e2e", "shared", "vitest.e2e.config.ts"]
+}

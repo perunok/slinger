@@ -1,1077 +1,132 @@
 # Slinger
 
-> A modern, local-first API development and collaboration platform built with Rust, Tauri, Svelte, and Go.
+A local-first desktop API client (in the spirit of Postman) built with Electron, Svelte 5 and TypeScript.
+Your workspaces, collections, environments and history live in a SQLite file on your machine; secret values
+live in the operating system keychain. There is no account requirement and nothing is synced anywhere unless
+you opt into the (still minimal) cloud panel.
 
----
+## Features
 
-# Vision
+- Workspaces, collections, nested folders and requests, with drag-and-drop ordering and a "Go to request" quick open.
+- Request editor with query params, headers, body (none, form-data incl. files, x-www-form-urlencoded, raw with
+  JSON/text/XML/HTML/JavaScript, binary), authorization (none, Basic, Bearer, API key in header or query), per-request timeout,
+  description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell).
+- Multiple request tabs with dirty tracking, conflict detection (optimistic concurrency) and unsaved-changes prompts.
+- Environments with `{{variables}}`, secret variables kept in the OS keychain, and built-in dynamic variables
+  (`{{$guid}}`, `{{$timestamp}}`, ...). Variables are highlighted, hoverable and autocompleted in every input.
+- Response viewer: Pretty / Raw / Preview (HTML, image, PDF, CSV table), headers, cookies, search, copy, save to file,
+  hex preview for binary bodies.
+- Collection runner (sequential, delay, stop on first failure).
+- Request history per workspace (every attempt is recorded, secrets are not).
+- Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
+  the live collection).
+- Import Postman collections and environments (v2.x), export collections as Postman v2.1 JSON.
+- Five themes plus "follow the OS", adjustable font size, keyboard shortcuts.
+- Cloud panel: device-code sign-in to a Slinger Cloud server and creating/linking a remote workspace. Collection
+  sync is **not** built (see Roadmap).
 
-Slinger is a cross-platform API development platform designed for individual developers, teams, and organizations.
+## Requirements
 
-The platform provides:
+- Node.js 20 or newer and npm (`engines.node >= 20` is declared; Electron 33 embeds Node 20 and the main bundle targets it).
+- A working native toolchain is only needed if a prebuilt `better-sqlite3` / `@napi-rs/keyring` binary is unavailable for your platform.
+- Linux: a Secret Service provider (GNOME Keyring, KWallet, ...) for secret variables and cloud tokens. Without one the app
+  still runs; only secret operations fail with a clear error.
 
-- API testing
-- Request collections
-- Environment management
-- Offline operation
-- Team collaboration
-- Self-hosted synchronization
-- Enterprise deployment capabilities
-- Import from Postman
-
-The system is designed from day one to support both:
-
-- Single-user local workflows
-- Multi-user collaborative workflows
-
-without requiring major architectural changes.
-
----
-
-# Getting Started
+## Getting started
 
 ```bash
 npm install
-npm run dev
+npm run electron:dev      # Vite dev server + Electron (rebuilds the main bundle on start)
 ```
 
-In another shell, if you want to build the Rust Tauri backend:
+`npm run dev` alone starts only the Vite renderer on http://localhost:5173 in a normal browser. Outside Electron the
+renderer installs an in-memory mock backend (`src/dev/`), flagged "Mock backend" in the top bar; nothing is persisted.
 
-```bash
-cd src-tauri
-cargo build
-```
+### Commands
 
-To run the full desktop app:
+| Command | Purpose |
+| --- | --- |
+| `npm run electron:dev` | Development app (Vite on :5173, override with `SLINGER_VITE_PORT`) |
+| `npm run dev` | Renderer only, mock backend |
+| `npm run build` | Build renderer to `dist/` and bundle main/preload to `dist-electron/` |
+| `npm run electron:build` | Build, rebuild native modules for Electron, run `electron-builder` (output in `release/`) |
+| `npm test` | Vitest for main process (`electron/**`) then renderer (`src/**`) |
+| `npm run test:e2e` | Build, then drive the real Electron app with Playwright + Vitest (`e2e/`) |
+| `npm run typecheck` | `tsc` for main and e2e, `svelte-check` for the renderer |
+| `npm run rebuild:node` / `rebuild:electron` | Force the native `better-sqlite3` build for Node or Electron |
 
-```bash
-npm run tauri:dev
-```
+`better-sqlite3` is compiled for one ABI at a time; `scripts/ensure-native.mjs` switches automatically before `npm test`,
+`electron:dev` and `electron:build`.
 
-> Linux only: building the Tauri backend requires native packages such as `pkg-config`, `libgtk-4-dev`, `libglib2.0-dev`, and `libwebkit2gtk-4.1-dev`.
+At the time of writing, `npm run typecheck` reports 0 errors and `npm test` passes 198 main-process tests
+(10 files) and 472 renderer tests (37 files). The e2e suite was not run for this documentation.
 
-The local SQLite database file is created automatically beside the Slinger executable. On Linux installs using `install.sh`, that means `~/.local/share/slinger/slinger.db`.
+## Where your data lives
 
----
+The Electron user-data directory holds one file, `slinger.db` (SQLite, WAL mode):
 
-# Core Principles
+| OS | Packaged app | Unpackaged dev (`electron:dev`) |
+| --- | --- | --- |
+| Linux | `~/.config/Slinger/` | `~/.config/Slinger/` |
+| macOS | `~/Library/Application Support/Slinger/` | `~/Library/Application Support/Slinger/` |
+| Windows | `%APPDATA%\Slinger\` | `%APPDATA%\Slinger\` |
 
-## Local First
+Dev and packaged builds share this directory (`productName` is set in `package.json`); an older lowercase `slinger` dev directory is moved over once on first start. Set `SLINGER_USER_DATA_DIR` to use a different directory (used by tests). Theme, font size, wrap, the active environment per
+workspace, cloud API URL/device name and cloud workspace links are stored in the renderer's `localStorage`
+(inside the same Electron profile), not in the database.
 
-The local database is the primary source of truth.
+Secrets never touch the database or `localStorage`: environment secret values and cloud tokens are stored in the OS keychain
+(macOS Keychain, Windows Credential Manager, Linux Secret Service) under the service name `Slinger`. Deleting a secret
+variable, its environment or its workspace removes the keychain entries. Collection versions and exports never contain
+environments or secret values.
 
-Users should never lose functionality because a remote server is unavailable.
+Exports (Postman JSON, saved response bodies) go to the folder you chose in the export dialog, otherwise `~/Downloads`
+(falling back to your home directory).
 
----
+## Themes
 
-## Offline First
+Light, Dark, Midnight, Solarized Dark, High Contrast, or System (follows the OS light/dark preference). Choose in
+Settings (Ctrl+,). Themes are CSS variable palettes in `src/styles/themes.css`; see [src/README.md](src/README.md) to add one.
 
-All core functionality must work without internet access.
+## Cloud
 
-Synchronization is optional.
+The Cloud button in the top bar opens a panel where you set an API base URL (default `https://api.slinger.app`) and a device
+name, sign in with a device-code flow in your browser, list your cloud workspaces, and either link a local workspace to one or
+"Publish" (creates an empty remote workspace with the local name and links it). Access and refresh tokens are kept in the
+OS keychain. Requests to the cloud go through the same main-process HTTP executor as normal requests.
 
----
+The server lives in a separate repository, `slinger-admin` (Slinger Cloud: Fastify + PostgreSQL API and an admin dashboard).
+See its root `README.md` and `server/README.md` (OpenAPI in `server/openapi.yaml`).
 
-## Workspace First
+## Packaging
 
-Every resource belongs to a workspace.
+`npm run electron:build` uses [electron-builder](https://www.electron.build/) with `electron-builder.yml`:
+NSIS installer (Windows), DMG (macOS), AppImage and deb (Linux). Native modules are unpacked from the asar archive.
+`install.sh` installs a built AppImage for the current user and creates a desktop launcher (Linux). No code signing or
+auto-update is configured.
 
-No exceptions.
+## Documentation
 
-A default workspace is automatically created:
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - how to use the app.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - process model, IPC contract, database, security, testing, how to extend.
+- [electron/README.md](electron/README.md) - main process details. [src/README.md](src/README.md) - renderer details.
+- [NOTES-FOR-FRONTEND.md](NOTES-FOR-FRONTEND.md) - behavior notes for code calling `window.slinger`.
+- [docs/go-api-implementation-guide.md](docs/go-api-implementation-guide.md) - pointer to the cloud API documentation.
 
-```text
-Personal
-```
+## Roadmap / not built
 
----
+These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key), pre-request/test
+scripts (Postman scripts are preserved on import/export but never run), realtime collaboration, plugins/extensions, and a sync
+engine (the `cloud_links` table created by migration 0001 is unused; collection upload/download is not implemented).
+Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
-## Collaboration Ready
+## Contributing
 
-Every entity is designed for future synchronization.
+Work on a branch, keep `npm run typecheck` and `npm test` green, and add tests next to the code you change
+(`electron/__tests__/` for main, `*.test.ts` beside renderer code, `e2e/` for whole-app flows). Never edit a released SQL
+migration; add the next numbered file. Adding an IPC method is a four-file change, described in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-an-ipc-method-end-to-end).
 
-The MVP must not assume a single-user environment.
+## License
 
----
-
-## Self Hosted Friendly
-
-Organizations must be able to deploy:
-
-```text
-Desktop App
-+
-Go Backend
-+
-PostgreSQL
-```
-
-inside their own infrastructure.
-
----
-
-## Extensible
-
-The architecture must support future:
-
-- Plugins
-- New protocols
-- Team collaboration
-- Enterprise features
-
-without major rewrites.
-
----
-
-# Supported Platforms
-
-Primary Target:
-
-- Linux (Wayland First)
-
-Secondary Targets:
-
-- Windows
-- macOS
-
----
-
-# Final Technology Decisions
-
-## Desktop
-
-### Framework
-
-- Tauri v2
-
-### Backend Language
-
-- Rust
-
-### Frontend
-
-- Svelte
-- TypeScript
-- Vite
-
-### Styling
-
-- TailwindCSS
-
-### Component Library
-
-- shadcn/ui
-
-### State Management
-
-- Zustand
-
-### Async State
-
-- TanStack Query
-
-### Database
-
-- SQLite
-
-### Database Access
-
-- sqlx
-
-### HTTP
-
-- reqwest
-- tokio
-
-### Serialization
-
-- serde
-- serde_json
-
-### Logging
-
-- tracing
-- tracing-subscriber
-
-### Error Handling
-
-- anyhow
-- thiserror
-
-### Secret Management
-
-- keyring
-
-### IDs
-
-- UUIDv7
-
----
-
-# Future Backend
-
-## Language
-
-- Go
-
-## Framework
-
-- Fiber
-
-## Database
-
-- PostgreSQL
-
-## Authentication
-
-- JWT
-
-Future:
-
-- OAuth2
-- LDAP
-- SAML
-
----
-
-# UUID Strategy
-
-Every entity uses UUIDv7.
-
-Reason:
-
-- Offline generation
-- Sync friendly
-- Time sortable
-- Better database locality
-
-Rust:
-
-```toml
-uuid = { version = "1", features = ["v7", "serde"] }
-```
-
-Example:
-
-```rust
-let id = Uuid::now_v7();
-```
-
----
-
-# Secret Storage Strategy
-
-Never store secrets directly in SQLite.
-
-Store secrets using OS-native secure storage.
-
-Linux:
-
-- Secret Service
-- GNOME Keyring
-- KWallet
-
-Windows:
-
-- Credential Manager
-
-macOS:
-
-- Keychain
-
-Rust:
-
-```toml
-keyring = "3"
-```
-
-SQLite stores references only.
-
----
-
-# High-Level Architecture
-
-```text
-┌──────────────────────────────────────────────┐
-│                Desktop Client                │
-├──────────────────────────────────────────────┤
-│ Svelte                                       │
-│ TypeScript                                   │
-│ TailwindCSS                                  │
-│ shadcn/ui                                    │
-├──────────────────────────────────────────────┤
-│ Tauri                                        │
-├──────────────────────────────────────────────┤
-│ Application Layer                            │
-├──────────────────────────────────────────────┤
-│ Services                                     │
-├──────────────────────────────────────────────┤
-│ Domain Models                               │
-├──────────────────────────────────────────────┤
-│ Repositories                                │
-├──────────────────────────────────────────────┤
-│ SQLite                                       │
-└───────────────────┬──────────────────────────┘
-                    │
-                    │ Future
-                    ▼
-┌──────────────────────────────────────────────┐
-│                Go Backend                    │
-├──────────────────────────────────────────────┤
-│ Authentication                               │
-│ Users                                        │
-│ Workspaces                                   │
-│ Collections                                  │
-│ Environments                                 │
-│ Permissions                                  │
-│ Sync Engine                                  │
-│ Audit Logs                                   │
-└───────────────────┬──────────────────────────┘
-                    │
-                    ▼
-┌──────────────────────────────────────────────┐
-│ PostgreSQL                                   │
-└──────────────────────────────────────────────┘
-```
-
----
-
-# Architectural Layers
-
-```text
-UI
- ↓
-Tauri Commands
- ↓
-Application Services
- ↓
-Domain Models
- ↓
-Repositories
- ↓
-Database
-```
-
-The UI must never directly manipulate persistence.
-
-Business logic belongs in services.
-
----
-
-# Product Roadmap
-
-## Phase 1 — Local MVP
-
-Features:
-
-- Workspaces
-- Collections
-- Folders
-- Requests
-- Environments
-- History
-- Tabs
-- Persistence
-
-No backend.
-
----
-
-## Phase 2 — Sync Foundation
-
-Features:
-
-- Versioning
-- Sync metadata
-- Change tracking
-- Sync queue
-
-Still offline.
-
----
-
-## Phase 3 — Cloud Backend
-
-Features:
-
-- Registration
-- Login
-- Workspace synchronization
-- Collection synchronization
-- Environment synchronization
-
----
-
-## Phase 4 — Collaboration
-
-Features:
-
-- Team workspaces
-- Invitations
-- Shared collections
-- Shared environments
-- Roles
-
----
-
-## Phase 5 — Enterprise
-
-Features:
-
-- LDAP
-- SAML
-- Audit logs
-- API tokens
-- Backup and restore
-
----
-
-# Workspace Model
-
-Every resource belongs to a workspace.
-
-```text
-Workspace
-│
-├── Collections
-├── Environments
-├── History
-├── Members
-├── Audit Logs
-└── Settings
-```
-
----
-
-# Workspace Types
-
-```text
-Personal
-Team
-```
-
-Database:
-
-```sql
-workspace_type TEXT NOT NULL
-```
-
-Personal workspace is automatically created during first launch.
-
----
-
-# Roles
-
-## Owner
-
-Can:
-
-- Delete workspace
-- Manage members
-- Manage roles
-
----
-
-## Admin
-
-Can:
-
-- Invite users
-- Manage collections
-- Manage environments
-
----
-
-## Editor
-
-Can:
-
-- Create and modify content
-
----
-
-## Viewer
-
-Can:
-
-- View collections
-- Execute requests
-
----
-
-# MVP Features
-
-## Collections
-
-Support:
-
-- Create
-- Update
-- Delete
-- Search
-
----
-
-## Folders
-
-Support:
-
-- Nested folders
-- Drag and drop
-
----
-
-## Request Methods
-
-- GET
-- POST
-- PUT
-- PATCH
-- DELETE
-- HEAD
-- OPTIONS
-
----
-
-## Authentication
-
-Support:
-
-- None
-- Basic Auth
-- Bearer Token
-- API Key
-
-Future:
-
-- OAuth2
-
----
-
-## Body Types
-
-- JSON
-- Text
-- Multipart
-- Form URL Encoded
-
----
-
-## Response Viewer
-
-- Raw
-- JSON
-- XML
-- Headers
-- Status
-- Timing
-
----
-
-## Variables
-
-```text
-{{base_url}}
-{{token}}
-{{username}}
-```
-
-Resolved before execution.
-
----
-
-## History
-
-Store:
-
-- URL
-- Method
-- Duration
-- Timestamp
-- Status
-
----
-
-# Protocol Roadmap
-
-## MVP
-
-- HTTP
-- HTTPS
-
-## Future
-
-- GraphQL
-- gRPC
-- WebSocket
-- SSE
-- Kafka
-- MQTT
-- SOAP
-
-The architecture must remain protocol extensible.
-
----
-
-# Plugin Roadmap
-
-Not part of MVP.
-
-Potential plugins:
-
-```text
-GraphQL
-gRPC
-Kafka
-MQTT
-SOAP
-WebSocket
-```
-
-Plugins must integrate with the domain layer.
-
----
-
-# Request Storage Strategy
-
-Request definitions are stored as structured JSON documents.
-
-Example:
-
-```json
-{
-  "id": "uuid",
-  "name": "Get Users",
-  "method": "GET",
-  "url": "https://api.example.com/users",
-  "headers": [],
-  "params": [],
-  "auth": {},
-  "body": {}
-}
-```
-
-Benefits:
-
-- Easier synchronization
-- Easier import/export
-- Easier versioning
-- Fewer schema migrations
-
----
-
-# Database Design
-
-Every synchronized entity contains:
-
-```sql
-id TEXT PRIMARY KEY,
-version INTEGER DEFAULT 1,
-deleted BOOLEAN DEFAULT FALSE,
-created_at DATETIME,
-updated_at DATETIME
-```
-
-All IDs are UUIDv7.
-
----
-
-## workspaces
-
-```sql
-CREATE TABLE workspaces (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    workspace_type TEXT NOT NULL,
-    version INTEGER DEFAULT 1,
-    deleted BOOLEAN DEFAULT FALSE,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
----
-
-## collections
-
-```sql
-CREATE TABLE collections (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    version INTEGER DEFAULT 1,
-    deleted BOOLEAN DEFAULT FALSE,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
----
-
-## folders
-
-```sql
-CREATE TABLE folders (
-    id TEXT PRIMARY KEY,
-    collection_id TEXT NOT NULL,
-    parent_folder_id TEXT,
-    name TEXT NOT NULL,
-    version INTEGER DEFAULT 1,
-    deleted BOOLEAN DEFAULT FALSE,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
----
-
-## requests
-
-```sql
-CREATE TABLE requests (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    collection_id TEXT,
-    folder_id TEXT,
-    name TEXT NOT NULL,
-    document_json TEXT NOT NULL,
-    version INTEGER DEFAULT 1,
-    deleted BOOLEAN DEFAULT FALSE,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
----
-
-## environments
-
-```sql
-CREATE TABLE environments (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    version INTEGER DEFAULT 1,
-    deleted BOOLEAN DEFAULT FALSE,
-    created_at DATETIME,
-    updated_at DATETIME
-);
-```
-
----
-
-## environment_variables
-
-```sql
-CREATE TABLE environment_variables (
-    id TEXT PRIMARY KEY,
-    environment_id TEXT NOT NULL,
-    key TEXT NOT NULL,
-    value TEXT NOT NULL
-);
-```
-
----
-
-## history
-
-```sql
-CREATE TABLE history (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    request_id TEXT,
-    method TEXT,
-    url TEXT,
-    status_code INTEGER,
-    duration_ms INTEGER,
-    created_at DATETIME
-);
-```
-
----
-
-## sync_queue
-
-```sql
-CREATE TABLE sync_queue (
-    id TEXT PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    created_at DATETIME
-);
-```
-
----
-
-# Sync Architecture
-
-Local database remains source of truth.
-
-Workflow:
-
-```text
-Local Change
-      ↓
-Sync Queue
-      ↓
-Push To Server
-      ↓
-Receive Remote Changes
-      ↓
-Merge
-```
-
----
-
-# Sync Event Format
-
-Future API contract:
-
-```json
-{
-  "entityType": "collection",
-  "entityId": "uuid",
-  "version": 4,
-  "operation": "update",
-  "payload": {}
-}
-```
-
-This contract should remain stable.
-
----
-
-# Import / Export Roadmap
-
-Future support:
-
-- OpenAPI Import
-- OpenAPI Export
-- Collection Import
-- Collection Export
-
----
-
-# Project Export Format
-
-Future support:
-
-```text
-workspace/
-├── collections/
-├── environments/
-└── slinger.json
-```
-
-This allows:
-
-- Git integration
-- Backup
-- Sharing
-- Review workflows
-
----
-
-# Database Migrations
-
-Directory:
-
-```text
-src-tauri/migrations/
-```
-
-Example:
-
-```text
-0001_create_workspaces.sql
-0002_create_collections.sql
-0003_create_requests.sql
-```
-
-Never generate schema in code.
-
-Always use migration files.
-
----
-
-# Frontend Structure
-
-```text
-src/
-
-app/
-components/
-hooks/
-lib/
-services/
-
-features/
-├── workspaces/
-├── collections/
-├── requests/
-├── environments/
-├── history/
-├── settings/
-└── sync/
-```
-
-Feature-first architecture is mandatory.
-
----
-
-# Rust Structure
-
-```text
-src-tauri/src/
-
-commands/
-├── workspaces.rs
-├── collections.rs
-├── requests.rs
-├── environments.rs
-├── history.rs
-└── sync.rs
-
-services/
-├── workspace_service.rs
-├── collection_service.rs
-├── request_service.rs
-├── environment_service.rs
-
-repositories/
-├── workspace_repository.rs
-├── collection_repository.rs
-├── request_repository.rs
-├── environment_repository.rs
-
-models/
-├── workspace.rs
-├── collection.rs
-├── request.rs
-├── environment.rs
-
-http/
-├── client.rs
-└── executor.rs
-
-sync/
-├── queue.rs
-├── versioning.rs
-└── protocol.rs
-
-utils/
-├── ids.rs
-├── secrets.rs
-└── resolver.rs
-```
-
----
-
-# Testing Strategy
-
-## Rust
-
-- cargo test
-- cargo-nextest
-
-## Frontend
-
-- Vitest
-- React Testing Library
-- Playwright
-
-## Future Backend
-
-- Go testing
-- Testify
-
----
-
-# Frontend Layout
-
-```text
-┌────────────────────────────────────────────────────┐
-│ Top Navigation                                     │
-├────────────────────────────────────────────────────┤
-│ Workspace Selector                                │
-├───────────────┬────────────────────────────────────┤
-│ Collections   │ Request Tabs                       │
-│ Tree          ├────────────────────────────────────┤
-│               │ URL + Method + Send                │
-│               ├────────────────────────────────────┤
-│               │ Params                             │
-│               │ Headers                            │
-│               │ Auth                               │
-│               │ Body                               │
-│               ├────────────────────────────────────┤
-│               │ Response                           │
-│               └────────────────────────────────────┘
-└───────────────┴────────────────────────────────────┘
-```
-
----
-
-# Performance Targets
-
-Startup:
-
-```text
-< 2 seconds
-```
-
-Memory:
-
-```text
-< 300 MB
-```
-
-Request Execution:
-
-```text
-Non-blocking
-```
-
----
-
-# Security Requirements
-
-- Never store plaintext secrets in SQLite
-- Use OS credential storage
-- Never log credentials
-- Validate all user input
-- HTTPS required for synchronization
-- Encrypt sensitive local references when appropriate
-
----
-
-# Definition of MVP Done
-
-A user can:
-
-- Create workspaces
-- Create collections
-- Create folders
-- Create requests
-- Execute requests
-- Manage environments
-- Use variables
-- View responses
-- View history
-- Restart the application and retain all data
-
-without requiring:
-
-- Internet
-- Authentication
-- Cloud backend
-
-while remaining fully compatible with future:
-
-- Synchronization
-- Collaboration
-- Team workspaces
-- Self-hosted deployments
-- Enterprise features
-- Plugin support
-- Additional protocols
+Released under the [MIT License](LICENSE).

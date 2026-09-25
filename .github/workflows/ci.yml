@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Ubuntu 24.04 package names (the t64 suffix came with the 64-bit time_t transition).
+      # xvfb: virtual display. gnome-keyring + libsecret: the Secret Service that @napi-rs/keyring
+      # talks to. dbus-daemon provides dbus-run-session (already present on runner images).
+      - name: Install system libraries for Electron, xvfb and the keychain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-daemon gnome-keyring libsecret-1-0 \
+            libnss3 libgbm1 libasound2t64 libgtk-3-0t64 libatk-bridge2.0-0t64 libcups2t64 \
+            libdrm2 libxkbcommon0 libxss1 libxtst6
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # Real Electron under a virtual display. `test:e2e` rebuilds better-sqlite3 for Electron's ABI.
+      # with-keyring.sh starts a private D-Bus session and unlocks a throwaway gnome-keyring so the
+      # secret-variable and cloud-token flows use a real OS keychain, as on a user's desktop.
+      - name: E2E
+        run: xvfb-run --auto-servernum scripts/with-keyring.sh npm run test:e2e
+        env:
+          CI: 'true'
+      - name: Upload screenshots and test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          # screenshots.e2e.test.ts writes screenshots under test-results/; failed-test artifacts land there too.
+          path: |
+            test-results/
+            .e2e-tmp/
+          if-no-files-found: ignore
+          retention-days: 14
