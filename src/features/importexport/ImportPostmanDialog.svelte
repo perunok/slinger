@@ -5,6 +5,8 @@
   import Dialog from '../../components/ui/Dialog.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { api, errorInfo } from '../../lib/ipc'
+  import { findEnvByName } from '../environments/envLogic'
+  import { describeEnvImport, importIntoEnvironment, planMerge, type ImportVar, type MergeMode } from './envImport'
   import { parsePostmanFile, type PostmanFile } from './parse'
 
   interface Props {
@@ -67,14 +69,35 @@
     void load(e.dataTransfer?.files?.[0])
   }
 
-  async function createEnvironment(name: string, vars: { key: string; value: string; secret: boolean }[]): Promise<void> {
+  // An environment with the file's name already exists: the import merges into it.
+  const existingEnv = $derived(parsed ? findEnvByName(app.environments, parsed.name) : null)
+  // How many collection variables would be new in that environment (null while unknown).
+  let newVarCount = $state<number | null>(null)
+  $effect(() => {
+    const env = existingEnv
+    const file = parsed
+    newVarCount = null
+    if (!env || file?.kind !== 'collection') return
+    let stale = false
+    api()
+      .listEnvironmentVariables(env.id)
+      .then((vars) => {
+        if (!stale) newVarCount = planMerge(vars, file.variables, 'keep').add.length
+      })
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+  })
+
+  async function importEnvironment(name: string, vars: ImportVar[], mode: MergeMode): Promise<string> {
     const ws = app.workspaceId
     if (!ws) throw new Error('No workspace is open')
-    const env = await api().createEnvironment(ws, name)
-    for (const v of vars) {
-      await api().upsertEnvironmentVariable({ environmentId: env.id, key: v.key, value: v.value, isSecret: v.secret })
+    try {
+      return describeEnvImport(await importIntoEnvironment(api(), ws, name, vars, mode))
+    } finally {
+      await app.reloadEnvironments()
     }
-    await app.reloadEnvironments()
   }
 
   async function submit() {
@@ -85,17 +108,17 @@
     error = null
     try {
       if (file.kind === 'environment') {
-        await createEnvironment(file.name, file.variables)
-        toast.success('Environment imported', `${file.name}: ${file.variables.length} variable${file.variables.length === 1 ? '' : 's'}`)
+        toast.success('Environment imported', await importEnvironment(file.name, file.variables, 'overwrite'))
         onclose()
         return
       }
       const result = await api().importPostmanCollection(ws, text)
       await app.reloadCollections()
       let envError: string | null = null
+      let envSummary: string | null = null
       if (makeEnv && file.variables.length > 0) {
         try {
-          await createEnvironment(file.name, file.variables)
+          envSummary = await importEnvironment(file.name, file.variables, 'keep')
         } catch (e) {
           envError = errorInfo(e).message
         }
@@ -105,7 +128,8 @@
         'Collection imported',
         `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}${scripts ? `, ${scripts} script${scripts === 1 ? '' : 's'}` : ''}`,
       )
-      if (envError) toast.error('Collection imported, but the environment could not be created', envError)
+      if (envSummary) toast.success('Environment from collection variables', envSummary)
+      if (envError) toast.error('Collection imported, but the environment could not be created or updated', envError)
       onclose()
     } catch (e) {
       error = errorInfo(e).message
@@ -157,10 +181,21 @@
           <label class="flex items-start gap-2">
             <input type="checkbox" bind:checked={makeEnv} class="mt-0.5" />
             <span>
-              Create environment from collection variables
-              <span class="block text-xs text-muted">
-                The importer does not keep collection-level variables. This creates an environment named "{parsed.name}" with
-                {parsed.variables.length} variable{parsed.variables.length === 1 ? '' : 's'} so {'{{'}placeholders{'}}'} keep working.
+              Create or update environment "{parsed.name}" from collection variables
+              <span class="block text-xs text-muted" data-testid="import-env-help">
+                The importer does not keep collection-level variables.
+                {#if existingEnv}
+                  {#if newVarCount === null}
+                    Adds the missing variables to the existing environment "{existingEnv.name}"; existing values are kept.
+                  {:else}
+                    Adds {newVarCount} new variable{newVarCount === 1 ? '' : 's'} to the existing environment "{existingEnv.name}"; existing
+                    values are kept.
+                  {/if}
+                {:else}
+                  This creates an environment named "{parsed.name}" with {parsed.variables.length} variable{parsed.variables.length === 1
+                    ? ''
+                    : 's'} so {'{{'}placeholders{'}}'} keep working.
+                {/if}
               </span>
             </span>
           </label>
@@ -172,6 +207,12 @@
           <dt class="text-muted">Environment</dt><dd class="font-medium">{parsed.name}</dd>
           <dt class="text-muted">Variables</dt><dd>{parsed.variables.length} ({parsed.variables.filter((v) => v.secret).length} secret)</dd>
         </dl>
+        {#if existingEnv}
+          <p class="text-xs text-muted" data-testid="import-env-help">
+            An environment named "{existingEnv.name}" already exists: missing variables are added and
+            existing ones take the values from this file. Empty values in the file keep the current value.
+          </p>
+        {/if}
         {#if parsed.skippedDisabled > 0}
           <p class="text-xs text-muted">{parsed.skippedDisabled} disabled variable{parsed.skippedDisabled === 1 ? ' is' : 's are'} skipped.</p>
         {/if}

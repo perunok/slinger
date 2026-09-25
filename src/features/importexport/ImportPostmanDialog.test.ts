@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
@@ -119,7 +119,7 @@ describe('ImportPostmanDialog', () => {
   it('creates an environment from collection variables by default and can opt out', async () => {
     const { mock, onclose } = await setup()
     await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }] }))
-    expect(await screen.findByLabelText(/Create environment from collection variables/)).toBeChecked()
+    expect(await screen.findByLabelText(/from collection variables/)).toBeChecked()
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await waitFor(() => expect(onclose).toHaveBeenCalled())
     const env = app.environments.find((e) => e.name === 'Pets')
@@ -131,7 +131,7 @@ describe('ImportPostmanDialog', () => {
   it('skips the environment when unchecked', async () => {
     const { mock, onclose } = await setup()
     await pick(collection({ variable: [{ key: 'a', value: '1' }] }))
-    await fireEvent.click(await screen.findByLabelText(/Create environment from collection variables/))
+    await fireEvent.click(await screen.findByLabelText(/from collection variables/))
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await waitFor(() => expect(onclose).toHaveBeenCalled())
     expect(mock.calls.some((c) => c.method === 'createEnvironment')).toBe(false)
@@ -147,6 +147,49 @@ describe('ImportPostmanDialog', () => {
     const vars = await mock.listEnvironmentVariables(env.id)
     expect(vars.find((v) => v.key === 'pw')?.isSecret).toBe(true)
     expect(vars.find((v) => v.key === 'host')?.isSecret).toBe(false)
+  })
+
+  it('merges collection variables into an existing same-named environment instead of creating a duplicate', async () => {
+    const mock = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = mock
+    await app.init()
+    const existing = await mock.createEnvironment(app.workspaceId!, 'pets')
+    await mock.upsertEnvironmentVariable({ environmentId: existing.id, key: 'token', value: 'from-script', isSecret: false })
+    await app.reloadEnvironments()
+    toast.clear()
+    const onclose = vi.fn()
+    render(ImportPostmanDialog, { open: true, onclose })
+    await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }] }))
+    expect(await screen.findByLabelText(/Create or update environment "Pets" from collection variables/)).toBeChecked()
+    await waitFor(() =>
+      expect(screen.getByTestId('import-env-help')).toHaveTextContent('Adds 1 new variable to the existing environment "pets"; existing values are kept.'),
+    )
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(app.environments.filter((e) => e.name.toLowerCase() === 'pets')).toHaveLength(1)
+    const vars = await mock.listEnvironmentVariables(existing.id)
+    expect(vars.map((v) => [v.key, v.value])).toEqual([['baseUrl', 'https://x.test'], ['token', 'from-script']])
+    expect(toast.items.some((t) => t.detail === 'Environment "pets" updated: 1 added, 1 kept')).toBe(true)
+  })
+
+  it('re-importing an environment file updates the existing environment', async () => {
+    const { mock, onclose } = await setup()
+    const file = (host: string) => JSON.stringify({ name: 'Staging', _postman_variable_scope: 'environment', values: [{ key: 'host', value: host, enabled: true }] })
+    await pick(file('a'))
+    await screen.findByLabelText('Import preview')
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalledTimes(1))
+    expect(toast.items.some((t) => t.detail === 'Environment "Staging" created with 1 variable')).toBe(true)
+    cleanup()
+    render(ImportPostmanDialog, { open: true, onclose })
+    await pick(file('b'))
+    expect(await screen.findByTestId('import-env-help')).toHaveTextContent('already exists')
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalledTimes(2))
+    const envs = app.environments.filter((e) => e.name === 'Staging')
+    expect(envs).toHaveLength(1)
+    expect((await mock.listEnvironmentVariables(envs[0].id)).map((v) => v.value)).toEqual(['b'])
+    expect(toast.items.some((t) => t.detail === 'Environment "Staging" updated: 0 added, 1 updated, 0 kept')).toBe(true)
   })
 
   it('stays open and shows the error when the import fails', async () => {
