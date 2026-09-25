@@ -29,6 +29,7 @@
   import EmptyState from './EmptyState.svelte'
   import { scopeStore } from './scope.svelte'
   import { settings } from './settings.svelte'
+  import { subscribeMenuCommands } from './menuCommands'
   import { handleShortcut } from './shortcuts'
   import Sidebar from './Sidebar.svelte'
   import { app } from './state.svelte'
@@ -40,8 +41,10 @@
     settings.init()
     scopeStore.createVariable = (name) => (ui.envEditor = { open: true, newVariable: name })
     void app.init()
+    const offMenu = subscribeMenuCommands()
     return () => {
       scopeStore.createVariable = null
+      offMenu()
     }
   })
 

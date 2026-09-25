@@ -4,6 +4,7 @@
  */
 import { createSyncApi, type CloudOptions, type MockCloudControls } from './mock/sync'
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
+import type { MenuCommand } from '../../shared/menu'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
 import { createScriptsApi } from './mock/scripts'
@@ -31,6 +32,8 @@ export interface MockControls {
   /** Scripts the cloud side: sign-in approval, remote edits, roles, offline, auth expiry, conflicts. */
   cloud: MockCloudControls
   calls: MockCall[]
+  /** Delivers an application-menu command, as the native menu does in Electron. */
+  menuCommand(command: MenuCommand): void
 }
 
 export interface MockOptions {
@@ -77,7 +80,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
   const misc = createMiscApi()
   const sync = createSyncApi(state, options.cloud)
-  const impl: SlingerIpcApi = {
+  const impl: Omit<SlingerIpcApi, 'onMenuCommand'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
     ...createVersionApi(state),
@@ -103,7 +106,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     },
   }
 
-  function wrap(method: keyof SlingerIpcApi): (...args: unknown[]) => Promise<unknown> {
+  function wrap(method: (typeof IPC_CHANNELS)[number]): (...args: unknown[]) => Promise<unknown> {
     const fn = impl[method] as (...args: unknown[]) => Promise<unknown>
     return (...args) => {
       calls.push({ method, args: clone(args) })
@@ -138,6 +141,11 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const api = {} as Record<string, unknown>
   for (const channel of IPC_CHANNELS) api[channel] = wrap(channel)
   api.onSyncEvent = impl.onSyncEvent
+  const menuListeners = new Set<(command: MenuCommand) => void>()
+  api.onMenuCommand = (listener: (command: MenuCommand) => void) => {
+    menuListeners.add(listener)
+    return () => void menuListeners.delete(listener)
+  }
 
   const controls: MockControls = {
     reset() {
@@ -160,6 +168,9 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     },
     cloud: sync.controls,
     calls,
+    menuCommand(command) {
+      for (const listener of [...menuListeners]) listener(command)
+    },
   }
   controls.reset()
   return Object.assign(api, controls) as unknown as SlingerIpcApi & MockControls
