@@ -210,14 +210,25 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
         variables: {}, collectionVariables: {}, globals: {}, info: { requestName: 'smoke', requestId: null, iteration: 0, iterationCount: 1 } })
       out.scripts = { passed: s.tests.filter((t) => t.status === 'passed').length, errors: s.errors.length, console: s.console.map((c) => c.message), hmac: s.variables.hmac }
     } catch (e) { out.scriptsError = e.message }
+    try {
+      // pm.sendRequest: worker -> main -> HTTP engine -> back into the sandbox, outside of history.
+      const historyBefore = (await window.slinger.listHistory(ws.id)).length
+      const s = await window.slinger.runScripts({ runId: 'run_smoke_send', sessionId: 'smoke', workspaceId: ws.id, environmentId: null, event: 'prerequest',
+        scripts: [{ origin: 'collection', name: 'smoke', code: "const res = await pm.sendRequest({ url: 'http://127.0.0.1:__PORT__/token', method: 'POST', header: { 'Content-Type': 'application/json' }, body: { mode: 'raw', raw: JSON.stringify({ a: 1 }) } }); pm.variables.set('sr', res.code + ' ' + res.text())" }],
+        request: { method: 'GET', url: 'http://x', headers: [], body: { mode: 'none' } }, response: null,
+        variables: {}, collectionVariables: {}, globals: {}, info: { requestName: 'smoke', requestId: null, iteration: 0, iterationCount: 1 } })
+      out.sendRequest = { value: s.variables.sr, errors: s.errors.map((e) => e.message), console: s.console.map((c) => c.message),
+        notInHistory: (await window.slinger.listHistory(ws.id)).length === historyBefore }
+    } catch (e) { out.sendRequestError = e.message }
     return out
   })()`
   try {
     // SLINGER_SMOKE_NO_KEYCHAIN skips the secret round trip (a locked desktop keyring would wait for an unlock prompt).
     const keychain = process.env.SLINGER_SMOKE_NO_KEYCHAIN ? 'false' : 'true'
-    const result = await win.webContents.executeJavaScript(script.replace('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
+    const result = await win.webContents.executeJavaScript(script.replaceAll('__PORT__', String(port)).replace('__KEYCHAIN__', keychain))
     // A library bundled into the script worker (require('crypto-js')) must give the same HMAC as Node.
     if (result?.scripts) result.scripts.hmacOk = result.scripts.hmac === createHmac('sha256', 'key').update('smoke').digest('base64')
+    if (result?.sendRequest) result.sendRequest.ok = result.sendRequest.value === '200 smoke-ok' && result.sendRequest.notInHistory
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
     target.close()
     app.exit(0)

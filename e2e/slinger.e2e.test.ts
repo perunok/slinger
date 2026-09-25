@@ -544,6 +544,52 @@ describe('scripts', () => {
     expect(await rows.nth(1).innerText()).toContain('1 of 3 tests failed')
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   })
+
+  it('a collection pre-request script fetches a token with pm.sendRequest; the request uses {{authToken}}', async () => {
+    await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = await s.createCollection(ws.id, 'Token C')
+      await s.setCollectionScripts(col.id, JSON.stringify([
+        { listen: 'prerequest', script: { type: 'text/javascript', exec: [
+          'pm.sendRequest({',
+          "  url: pm.environment.get('baseUrl') + '/login',",
+          "  method: 'POST',",
+          "  header: { 'Content-Type': 'application/json' },",
+          "  body: { mode: 'raw', raw: JSON.stringify({ user: 'alice' }) },",
+          '}, (err, res) => {',
+          '  if (err) throw err',
+          "  pm.environment.set('authToken', res.json().token)",
+          '})',
+        ] } },
+      ]))
+      await s.createRequest({
+        workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'whoami', method: 'GET', url: '{{baseUrl}}/me',
+        documentJson: JSON.stringify({ headers: [{ key: 'Authorization', value: 'Bearer {{authToken}}', type: 'text' }], body: null }),
+      })
+    })
+    await page.reload()
+    await item(/^Token C/).waitFor()
+    await reveal(/whoami$/, /^Token C/)
+    const tokensBefore = target.issuedTokens.length
+    const history = () => page.evaluate(async () => (await window.slinger.listHistory((await window.slinger.listWorkspaces())[0]!.id, 1000)).map((h) => h.url))
+    const before = await history()
+    await item(/whoami$/).click()
+    await send()
+    await expect.poll(() => response().getByTestId('status-chip').innerText()).toContain('200')
+    expect(target.issuedTokens.length).toBe(tokensBefore + 1)
+    const login = target.requests.filter((r) => r.url === '/login').at(-1)!
+    expect(login.method).toBe('POST')
+    expect(target.requests.filter((r) => r.url === '/me').at(-1)!.headers.authorization).toBe(`Bearer ${target.issuedTokens.at(-1)}`)
+    await response().getByRole('tab', { name: /^Console/ }).click()
+    await expect.poll(() => response().getByRole('list', { name: 'Console output' }).innerText()).toMatch(/→ POST .*\/login 200 \(\d+ ms\)/)
+    // Only the main request is in history, not the script's token call.
+    const after = await history()
+    const count = (list: string[], path: string) => list.filter((u) => u === `${target.url}${path}`).length
+    expect(after.length).toBe(before.length + 1)
+    expect(count(after, '/me')).toBe(count(before, '/me') + 1)
+    expect(count(after, '/login')).toBe(count(before, '/login'))
+  })
 })
 
 describe('collection versions', () => {
