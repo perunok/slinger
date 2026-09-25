@@ -5,6 +5,7 @@ import { newId } from '../lib/ids'
 import { nowSeconds } from '../lib/text'
 import { descriptionFromPostman, requireWorkspace, toCollection, toFolder, toRequest } from '../repositories/common'
 import type { CollectionRow, FolderRow, RequestRow } from '../repositories/common'
+import { postmanUrlToString } from '../../shared/postmanUrl'
 import { restoreVersionHistory } from './versionHistory'
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
@@ -32,20 +33,8 @@ interface RequestDraft {
   document: Json
 }
 
-function joinParts(parts: unknown, separator: string): string {
-  return Array.isArray(parts) ? parts.filter((p): p is string => typeof p === 'string').join(separator) : ''
-}
-
-/** Postman v2.0/v2.1 `url` (string or object) to a plain URL string. */
-export function postmanUrlToString(url: unknown): string {
-  if (typeof url === 'string') return url
-  if (!isObject(url)) return ''
-  if (typeof url.raw === 'string') return url.raw
-  const host = joinParts(url.host, '.')
-  const path = joinParts(url.path, '/')
-  if (host && path) return `${host.replace(/\/+$/, '')}/${path}`
-  return host || path
-}
+/** Postman v2.0/v2.1 `url` (string or object) to a plain URL string (also rebuilds URLs that have no `raw`). */
+export { postmanUrlToString }
 
 interface Collected {
   folders: FolderDraft[]

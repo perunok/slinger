@@ -325,16 +325,7 @@ export function postmanRequestFromDocument(doc: Json, fallback: { method: string
 }
 
 /** Postman v2.0/v2.1 `url` (string or object) to a plain URL string (same rules as the importer). */
-export function postmanUrlToString(url: unknown): string {
-  if (typeof url === 'string') return url
-  if (!isObj(url)) return ''
-  if (typeof url.raw === 'string') return url.raw
-  const join = (parts: unknown, sep: string) => (Array.isArray(parts) ? parts.filter((p): p is string => typeof p === 'string').join(sep) : '')
-  const host = join(url.host, '.')
-  const path = join(url.path, '/')
-  if (host && path) return `${host.replace(/\/+$/, '')}/${path}`
-  return host || path
-}
+export { postmanUrlToString } from '../../shared/postmanUrl'
 
 function requestItem(request: ApiRequest): PostmanItem {
   const doc = parseDoc(request.documentJson)

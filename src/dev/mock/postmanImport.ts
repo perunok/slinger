@@ -3,6 +3,7 @@ import { addCollection, addFolder, addRequest, must, type MockState } from './st
 import { fail } from './util'
 import { countScripts } from '../../lib/scripts'
 import { columnsFromPostman } from '../../lib/description'
+import { postmanUrlToString } from '../../../shared/postmanUrl'
 
 const eventJson = (event: unknown): string | null => (Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null)
 
@@ -13,19 +14,8 @@ function trimmedOr(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
-const joinParts = (parts: unknown, sep: string): string =>
-  Array.isArray(parts) ? parts.filter((p): p is string => typeof p === 'string').join(sep) : ''
-
-/** Port of `postman_url_to_string` (src-tauri/src/db.rs). */
-export function postmanUrlToString(url: unknown): string {
-  if (typeof url === 'string') return url
-  if (!isObj(url)) return ''
-  if (typeof url.raw === 'string') return url.raw
-  const host = joinParts(url.host, '.')
-  const path = joinParts(url.path, '/')
-  if (host && path) return `${host.replace(/\/+$/, '')}/${path}`
-  return host || path
-}
+/** Same URL rules as the main-process importer. */
+export { postmanUrlToString }
 
 function requestDocument(item: Json, request: Json, name: string, method: string, url: string): Json {
   return {
