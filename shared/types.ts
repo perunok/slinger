@@ -696,3 +696,16 @@ export class IpcError extends Error {
     this.details = payload.details
   }
 }
+
+/**
+ * getVersionInfo (About dialog, "Copy version info"). Only version strings and the OS family/kernel release/CPU arch:
+ * no host name, user name, paths or environment. `null` where a runtime is not present (e.g. `electron` under plain Node).
+ */
+export interface VersionInfo {
+  app: string
+  electron: string | null
+  chrome: string | null
+  node: string | null
+  v8: string | null
+  os: { platform: string; release: string; arch: string }
+}

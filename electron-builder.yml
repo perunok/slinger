@@ -48,6 +48,9 @@ npmRebuild: false
 extraResources:
   - from: build/icons/512x512.png
     to: icon.png
+  # Licence texts of the bundled open-source packages (emitted by `vite build`, scripts/acknowledgements.mjs).
+  - from: dist/THIRD_PARTY_LICENSES.txt
+    to: THIRD_PARTY_LICENSES.txt
 
 linux:
   target: [AppImage, deb]

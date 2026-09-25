@@ -9,6 +9,7 @@ import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import type { Core } from '../services/core'
 import { cssColorSchema } from '../lib/windowState'
+import { collectVersionInfo } from '../lib/versionInfo'
 import { createSyncIpc } from './syncApi'
 
 // ---------------------------------------------------------------------------
@@ -379,6 +380,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),
+    getVersionInfo: async (...a) => (parseArgs(z.tuple([]), a), collectVersionInfo(platform.appVersion)),
     setWindowBackground: async (...a) => platform.setWindowBackground?.(parseArgs(z.tuple([cssColorSchema]), a)[0]),
   }
 }

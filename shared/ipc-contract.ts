@@ -44,6 +44,7 @@ import type {
   SyncConflict,
   SyncEvent,
   SyncStatus,
+  VersionInfo,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
@@ -152,6 +153,8 @@ export interface SlingerIpcApi {
 
   // App
   getAppVersion(): Promise<string>
+  /** ADDED (About dialog): app, Electron, Chromium, Node and V8 versions plus OS platform/release/arch. Nothing else. */
+  getVersionInfo(): Promise<VersionInfo>
   /**
    * ADDED (launch): the resolved theme background (CSS hex or rgb() colour). Main paints the window with it now and
    * remembers it for the next launch (window-state.json), so the native window never flashes a different colour.
@@ -256,6 +259,7 @@ export const IPC_CHANNELS = [
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
   'getAppVersion',
+  'getVersionInfo',
   'setWindowBackground',
   'pickFile',
   'getCloudConfig',

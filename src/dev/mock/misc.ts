@@ -13,6 +13,7 @@ type MiscApi = Pick<
   | 'prepareBrowserAuthCallback'
   | 'waitForBrowserAuthCallback'
   | 'getAppVersion'
+  | 'getVersionInfo'
   | 'setWindowBackground'
   | 'pickFile'
   | 'grantedFiles'
@@ -102,6 +103,10 @@ export function createMiscApi(): MiscApi {
     },
     async getAppVersion() {
       return '0.0.0-dev'
+    },
+    async getVersionInfo() {
+      // Browser mode: no Electron/Node runtime; fake but plausible values so "Copy version info" can be tried.
+      return { app: '0.0.0-dev', electron: null, chrome: null, node: null, v8: null, os: { platform: 'browser', release: 'mock', arch: 'unknown' } }
     },
     async setWindowBackground() {
       /* no native window in the browser */
