@@ -36,7 +36,8 @@
     "test:sync-it": "node scripts/ensure-native.mjs node && vitest run --config vitest.sync-it.config.ts",
     "test:e2e": "npm run build && node scripts/ensure-native.mjs electron && vitest run --config vitest.e2e.config.ts",
     "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
-    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit"
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6",

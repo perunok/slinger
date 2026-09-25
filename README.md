@@ -62,6 +62,7 @@ renderer installs an in-memory mock backend (`src/dev/`), flagged "Mock backend"
 | `npm run electron:build` | Build, rebuild native modules for Electron, run `electron-builder` (output in `release/`) |
 | `npm test` | Vitest for main process (`electron/**`) then renderer (`src/**`) |
 | `npm run test:e2e` | Build, then drive the real Electron app with Playwright + Vitest (`e2e/`) |
+| `npm run screenshots` | Build, drive the real app against a local fictional API and write the README gallery to `docs/screenshots/` (fixtures in `docs/screenshots/fixtures/`; dev-only in-memory keychain, `SLINGER_INSECURE_TEST_KEYCHAIN=1`) |
 | `npm run typecheck` | `tsc` for main and e2e, `svelte-check` for the renderer |
 | `npm run rebuild:node` / `rebuild:electron` | Force the native `better-sqlite3` build for Node or Electron |
 

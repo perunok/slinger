@@ -229,6 +229,8 @@ function startApi(port) {
       }
       if (path === '/orders' && method === 'POST') return json(201, { ...ORDER, status: 'pending' }, { Location: `/v1/orders/${ORDER.id}` })
       if (path === `/orders/${ORDER.id}/invoice`) return send(200, INVOICE_HTML, { 'Content-Type': 'text/html; charset=utf-8' })
+      if (path === `/orders/${ORDER.id}/cancel`) return json(200, { id: ORDER.id, status: 'cancelled', refund: { amount: ORDER.total, currency: 'EUR', status: 'pending' } })
+      if (path === `/orders/${ORDER.id}/refunds`) return json(201, { id: 'rfd_8Kd2', orderId: ORDER.id, amount: 79.0, currency: 'EUR', status: 'pending' })
       if (path === `/orders/${ORDER.id}/shipping-address`) return json(200, { ...ORDER.shippingAddress, ...JSON.parse(body.toString() || '{}') })
       if (path === `/orders/${ORDER.id}`) {
         if (method === 'DELETE') return json(200, { id: ORDER.id, status: 'cancelled', refund: { amount: ORDER.total, currency: 'EUR', status: 'pending' } })
@@ -537,17 +539,20 @@ const SHOTS = [
       const dialog = page.getByRole('dialog', { name: /^Scripts/ })
       await dialog.getByRole('tablist', { name: 'Script type' }).getByRole('tab', { name: /^Pre-request/ }).click()
       await dialog.getByRole('textbox', { name: 'Pre-request script' }).click()
-      await page.keyboard.press('ControlOrMeta+End')
+      await page.keyboard.press('ControlOrMeta+Home')
+      for (let i = 0; i < 14; i++) await page.keyboard.press('ArrowDown')
+      await page.keyboard.press('End')
       await page.keyboard.press('Enter')
       await page.keyboard.type('pm.environment.', { delay: 40 })
       await page.locator('.cm-tooltip-autocomplete').waitFor()
     },
     keepFocus: true,
     after: async () => {
-      // Drop the typed line again, so closing the dialog asks nothing.
+      // Leave without saving the typed line.
       await page.keyboard.press('Escape')
-      await page.keyboard.press('ControlOrMeta+z')
-      await page.keyboard.press('ControlOrMeta+z')
+      await page.getByRole('dialog', { name: /^Scripts/ }).getByRole('button', { name: 'Cancel', exact: true }).click()
+      const discard = page.getByRole('button', { name: /Discard|Don.t save/ })
+      if (await discard.count()) await discard.first().click()
     },
   },
   {
@@ -555,6 +560,7 @@ const SHOTS = [
     async run() {
       await openRequest('Customers', 'Loyalty balance')
       await reqSection(/^Scripts/).click()
+      await page.getByRole('tablist', { name: 'Script type' }).getByRole('tab', { name: /^Tests/ }).click()
       await send()
       await respView(/^Tests/).click()
     },
@@ -657,7 +663,12 @@ const SHOTS = [
       const dialog = page.getByRole('dialog', { name: /Settings/ })
       await dialog.waitFor()
       await dialog.getByRole('button', { name: 'Dark', exact: true }).or(dialog.getByRole('radio', { name: 'Dark', exact: true })).first().click()
-      await dialog.getByText(/^Accent/).first().evaluate((el) => el.scrollIntoView({ block: 'center' }))
+      // Scroll so a full row of dark theme cards sits at the top, with the accent picker below it.
+      await dialog.locator('[data-theme-option=rose-pine]').evaluate((card) => {
+        let box = card.parentElement
+        while (box && box.scrollHeight <= box.clientHeight) box = box.parentElement
+        if (box) box.scrollTop += card.getBoundingClientRect().top - box.getBoundingClientRect().top - 12
+      })
     },
   },
   {
@@ -667,7 +678,7 @@ const SHOTS = [
       await send()
       await page.keyboard.press('ControlOrMeta+k')
       await page.getByRole('combobox', { name: 'Search requests and commands' }).fill('> ')
-      for (let i = 0; i < 29; i++) await page.keyboard.press('ArrowDown')
+      for (let i = 0; i < 37; i++) await page.keyboard.press('ArrowDown')
       await sleep(300)
     },
     keepFocus: true,
