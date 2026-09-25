@@ -14,8 +14,8 @@ import { Worker } from 'node:worker_threads'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { rawPlugin } from '../../../scripts/esbuild-raw.mjs'
 import { sandboxLibsEsbuildPlugin } from '../../../scripts/sandbox-libs.mjs'
-import { WorkerExecutor } from '../../scripts/executor'
-import { DEFAULT_LIMITS } from '../../scripts/job'
+import { WorkerExecutor, type ExecutorIo } from '../../scripts/executor'
+import { DEFAULT_LIMITS, type SendRequestCall } from '../../scripts/job'
 import { job, script } from './harness'
 
 let dir: string
@@ -52,7 +52,7 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const io = (over: Partial<{ readSecret: (id: string) => string | null; signal: AbortSignal }> = {}) => ({
+const io = (over: Partial<ExecutorIo> = {}): ExecutorIo => ({
   readSecret: () => null,
   signal: new AbortController().signal,
   ...over,
@@ -133,6 +133,61 @@ describe('WorkerExecutor with the bundled worker', () => {
       }),
     )
     expect(r.errors[0]?.kind).toBe('cancelled')
+  })
+
+  it('pm.sendRequest crosses to the main thread asynchronously: concurrent, nested, and secret reads while waiting', async () => {
+    const calls: SendRequestCall[] = []
+    const r = await executor.run(
+      job({
+        environment: { name: 'E', variables: [{ id: 's', key: 'k', value: null, secret: true }] },
+        scripts: [
+          script(`
+            Promise.all([3, 1, 2].map((n) => pm.sendRequest('https://api.test/' + n))).then((all) => {
+              pm.variables.set('order', all.map((r) => r.json().n))
+              pm.sendRequest({ url: 'https://api.test/nested', header: { 'X-K': pm.environment.get('k') } }, (err, res) => pm.variables.set('nested', res.code))
+            })
+          `),
+        ],
+      }),
+      io({
+        readSecret: () => 'secret-value',
+        sendHttp: async (call) => {
+          calls.push(call)
+          const n = Number(call.url.split('/').pop())
+          await new Promise((res) => setTimeout(res, Number.isFinite(n) ? n * 30 : 1))
+          return { ok: true, response: { code: 201, status: 'Created', headers: [], body: JSON.stringify({ n }), truncated: false, responseTime: 1, size: 1 }, logLine: `→ ${call.method} ${call.url}` }
+        },
+      }),
+    )
+    expect(r.errors).toEqual([])
+    expect(r.variables).toEqual({ order: [3, 1, 2], nested: 201 })
+    expect(calls.map((c) => c.url)).toEqual(['https://api.test/3', 'https://api.test/1', 'https://api.test/2', 'https://api.test/nested'])
+    expect(calls[3].headers).toEqual([{ key: 'X-K', value: 'secret-value' }])
+    expect(r.console.filter((c) => c.level === 'info')).toHaveLength(4)
+  })
+
+  it('a cancel from the main thread aborts an in-flight pm.sendRequest and stops the script', async () => {
+    const controller = new AbortController()
+    let aborted = false
+    setTimeout(() => controller.abort(), 200)
+    const started = Date.now()
+    const r = await executor.run(
+      job({ scripts: [script(`pm.sendRequest('https://api.test/slow', () => pm.variables.set('called', true))`)] }),
+      io({
+        signal: controller.signal,
+        sendHttp: (_call, signal) =>
+          new Promise((resolve) =>
+            signal.addEventListener('abort', () => {
+              aborted = true
+              resolve({ ok: false, error: 'Request cancelled', logLine: 'x' })
+            }),
+          ),
+      }),
+    )
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(aborted).toBe(true)
+    expect(r.errors[0]?.kind).toBe('cancelled')
+    expect(r.variables.called).toBeUndefined()
   })
 
   it('still works after a worker was terminated', async () => {

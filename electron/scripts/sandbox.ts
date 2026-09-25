@@ -65,6 +65,15 @@ function describeError(ctx: QuickJSContext, handle: QuickJSHandle): string {
 /** How often a script waiting for pm.sendRequest responses checks for cancellation. */
 const WAIT_POLL_MS = 50
 
+function isSyntaxError(ctx: QuickJSContext, handle: QuickJSHandle): boolean {
+  try {
+    const d = ctx.dump(handle) as { name?: unknown } | null
+    return !!d && typeof d === 'object' && d.name === 'SyntaxError'
+  } catch {
+    return false
+  }
+}
+
 async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSource, deps: ScriptRunnerDeps): Promise<ScriptOutcome> {
   const limits = host.job.limits
   const now = deps.now ?? Date.now
@@ -95,6 +104,7 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
     const ctx = rt.newContext()
     let freeCtx = true
     let settleFn: QuickJSHandle | null = null
+    let asyncMain: QuickJSHandle | null = null
     try {
       host.begin(script)
       const bridge = ctx.newFunction('__slinger_call', (opH, argsH) => {
@@ -153,7 +163,18 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
       }
 
       let failed: string | null = null
-      const r = ctx.evalCode(script.code, `${script.origin}.js`, { type: 'global', strict: false })
+      const file = `${script.origin}.js`
+      let r = ctx.evalCode(script.code, file, { type: 'global', strict: false })
+      if (r.error && /\bawait\b/.test(script.code) && isSyntaxError(ctx, r.error)) {
+        // Top-level await (`const res = await pm.sendRequest(...)`), as Postman allows: run the script as the body
+        // of an async function. The wrapper sits on the first line, so line numbers stay the same.
+        r.error.dispose()
+        r = ctx.evalCode(`(async function () {${script.code}\n})()`, file, { type: 'global', strict: false })
+        if (!r.error) {
+          asyncMain = r.value
+          r = { value: ctx.undefined.dup() } as typeof r
+        }
+      }
       if (r.error) {
         failed = describeError(ctx, r.error)
         r.error.dispose()
@@ -163,12 +184,13 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
         // pm.sendRequest: the script is finished only when every request it started was handed back to it (callback
         // or promise) and the resulting jobs ran. Waiting does not count against the CPU budget, only the wall clock.
         while (failed === null && stop === null && host.pendingSends() > 0) {
+          // A cancelled run aborts its sends, so their (cancelled) results must not reach the callbacks.
+          if (deps.isCancelled()) {
+            stop = 'cancelled'
+            break
+          }
           const next = host.takeSettled()
           if (!next) {
-            if (deps.isCancelled()) {
-              stop = 'cancelled'
-              break
-            }
             const remaining = wallDeadline - now()
             if (remaining <= 0) {
               stop = 'timeout'
@@ -197,6 +219,14 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
         }
       }
       host.abortSends()
+      if (asyncMain && failed === null && stop === null) {
+        // An exception after the first await of a top-level-await script rejects this promise.
+        const state = ctx.getPromiseState(asyncMain)
+        if (state.type === 'rejected') {
+          failed = describeError(ctx, state.error)
+          state.error.dispose()
+        } else if (state.type === 'fulfilled') state.value.dispose()
+      }
 
       // Flush `tests[...]` and unfinished async tests, with a small fresh budget even after a timeout.
       honourCancel = false
@@ -228,9 +258,10 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
       return done(true, false)
     } finally {
       host.abortSends()
-      if (settleFn && freeCtx && stop === null) {
+      for (const h of [settleFn, asyncMain]) {
+        if (!h || !freeCtx || stop !== null) continue
         try {
-          settleFn.dispose()
+          h.dispose()
         } catch {
           tainted = true
         }

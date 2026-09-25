@@ -17,10 +17,14 @@ export interface ScriptHttpOptions {
   redact(text: string): string
 }
 
+const USERINFO_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#\s@]*@/g
+
+/** Masks `user:password@` in every URL of a text (fetch errors quote the URL). */
+export const maskUserinfo = (text: string): string => text.replace(USERINFO_RE, '$1***@')
+
 /** The URL as shown in the script console: credentials in the authority are masked, then secrets redacted. */
 export function consoleUrl(url: string, redact: (text: string) => string): string {
-  const masked = normalizeUrl(url).replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/, '$1***@')
-  const shown = redact(masked)
+  const shown = redact(maskUserinfo(normalizeUrl(url)))
   return shown.length > 2000 ? `${shown.slice(0, 2000)}…` : shown
 }
 
@@ -49,7 +53,7 @@ export async function runScriptSendRequest(call: SendRequestCall, signal: AbortS
       logLine: `→ ${call.method} ${shown} ${res.status} (${res.durationMs} ms)`,
     }
   } catch (err) {
-    const message = options.redact(toErrorPayload(err).message)
+    const message = options.redact(maskUserinfo(toErrorPayload(err).message))
     const ms = Math.max(0, Math.round(performance.now() - started))
     return { ok: false, error: message, logLine: `→ ${call.method} ${shown} failed: ${message} (${ms} ms)` }
   }
