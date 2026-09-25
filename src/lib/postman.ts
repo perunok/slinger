@@ -6,6 +6,7 @@
  * verbatim, as are collection/folder scripts (`scriptsJson` -> `event`); only the URL is decomposed and query params are rebuilt. `{{variables}}` are
  * never encoded or split.
  */
+import type { SlingerExportBlock } from '../../shared/slingerExport'
 import type { ApiFolder, ApiRequest, Collection } from '../../shared/types'
 import { postmanDescription } from './description'
 
@@ -68,7 +69,16 @@ export interface PostmanItem {
 }
 
 export interface PostmanCollectionV21 {
-  info: { _postman_id: string; name: string; description?: unknown; schema: string }
+  info: {
+    _postman_id: string
+    name: string
+    description?: unknown
+    /** Official v2.1 field (string form): the collection's latest Slinger version, e.g. "1.2.0". */
+    version?: string
+    schema: string
+    /** Slinger's version history (shared/slingerExport.ts). Postman ignores it. */
+    _slinger?: SlingerExportBlock
+  }
   item: PostmanItem[]
   /** Collection-level pre-request / test scripts (stored verbatim in `Collection.scriptsJson`). */
   event?: unknown[]
@@ -89,6 +99,10 @@ export interface ExportPostmanInput {
   collection: Collection
   folders: ApiFolder[]
   requests: ApiRequest[]
+  /** Latest semver of the collection, written to `info.version` (omitted when null/absent). */
+  version?: string | null
+  /** Version history block, written to `info._slinger` (omitted when null/absent). */
+  slinger?: SlingerExportBlock | null
 }
 
 // ---------------------------------------------------------------------------
@@ -311,16 +325,7 @@ export function postmanRequestFromDocument(doc: Json, fallback: { method: string
 }
 
 /** Postman v2.0/v2.1 `url` (string or object) to a plain URL string (same rules as the importer). */
-export function postmanUrlToString(url: unknown): string {
-  if (typeof url === 'string') return url
-  if (!isObj(url)) return ''
-  if (typeof url.raw === 'string') return url.raw
-  const join = (parts: unknown, sep: string) => (Array.isArray(parts) ? parts.filter((p): p is string => typeof p === 'string').join(sep) : '')
-  const host = join(url.host, '.')
-  const path = join(url.path, '/')
-  if (host && path) return `${host.replace(/\/+$/, '')}/${path}`
-  return host || path
-}
+export { postmanUrlToString } from '../../shared/postmanUrl'
 
 function requestItem(request: ApiRequest): PostmanItem {
   const doc = parseDoc(request.documentJson)
@@ -348,7 +353,7 @@ function bySibling(a: Sortable, b: Sortable): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-export function buildPostmanCollection({ collection, folders, requests }: ExportPostmanInput): PostmanCollectionV21 {
+export function buildPostmanCollection({ collection, folders, requests, version, slinger }: ExportPostmanInput): PostmanCollectionV21 {
   const folderIds = new Set(folders.map((f) => f.id))
   const key = (id: string | null) => (id !== null && folderIds.has(id) ? id : '')
   const foldersByParent = new Map<string, ApiFolder[]>()
@@ -384,7 +389,12 @@ export function buildPostmanCollection({ collection, folders, requests }: Export
   const info: PostmanCollectionV21['info'] = { _postman_id: collection.id, name: collection.name, schema: POSTMAN_SCHEMA_V21 }
   const description = postmanDescription(collection.description, collection.descriptionType)
   if (description !== undefined) info.description = description
-  const out: PostmanCollectionV21 = { info, item }
+  if (version) info.version = version
+  // Keep `schema` right after the standard fields and the (possibly large) Slinger block last.
+  const { schema, ...rest } = info
+  const ordered: PostmanCollectionV21['info'] = { ...rest, schema }
+  if (slinger) ordered._slinger = slinger
+  const out: PostmanCollectionV21 = { info: ordered, item }
   const events = eventsFromJson(collection.scriptsJson)
   if (events) out.event = events
   return out
@@ -406,32 +416,50 @@ export interface PostmanEnvironmentValue {
 }
 
 export interface PostmanEnvironment {
+  id?: string
   name: string
   values: PostmanEnvironmentValue[]
   _postman_variable_scope: 'environment'
+  _postman_exported_at?: string
   _postman_exported_using: string
 }
 
-export function buildPostmanEnvironment(
-  name: string,
-  vars: { key: string; value: string | null; isSecret: boolean; enabled?: boolean }[],
-): PostmanEnvironment {
-  return {
+export interface PostmanEnvironmentOptions {
+  id?: string
+  /** ISO-8601 time written to `_postman_exported_at`. */
+  exportedAt?: string
+  /** e.g. "Slinger/0.3.2" (Postman writes "Postman/11.x"). */
+  exportedUsing?: string
+  /**
+   * Secret values are written only when this is true (explicit user opt-in); otherwise a secret is exported as
+   * `type: 'secret'` with an empty value.
+   */
+  includeSecretValues?: boolean
+}
+
+type EnvVarInput = { key: string; value: string | null; isSecret: boolean; enabled?: boolean }
+
+export function buildPostmanEnvironment(name: string, vars: EnvVarInput[], opts: PostmanEnvironmentOptions = {}): PostmanEnvironment {
+  const env: PostmanEnvironment = {
+    ...(opts.id ? { id: opts.id } : {}),
     name,
     values: vars.map((v) => ({
       key: v.key,
-      value: v.isSecret ? '' : (v.value ?? ''),
+      value: v.isSecret && !opts.includeSecretValues ? '' : (v.value ?? ''),
       type: v.isSecret ? 'secret' : 'default',
       enabled: v.enabled ?? true,
     })),
     _postman_variable_scope: 'environment',
-    _postman_exported_using: 'Slinger',
+    _postman_exported_using: opts.exportedUsing ?? 'Slinger',
   }
+  if (opts.exportedAt) {
+    // Postman's own key order: ..., _postman_variable_scope, _postman_exported_at, _postman_exported_using.
+    const { _postman_exported_using, ...rest } = env
+    return { ...rest, _postman_exported_at: opts.exportedAt, _postman_exported_using }
+  }
+  return env
 }
 
-export function exportPostmanEnvironment(
-  name: string,
-  vars: { key: string; value: string | null; isSecret: boolean; enabled?: boolean }[],
-): string {
-  return JSON.stringify(buildPostmanEnvironment(name, vars), null, 2)
+export function exportPostmanEnvironment(name: string, vars: EnvVarInput[], opts?: PostmanEnvironmentOptions): string {
+  return JSON.stringify(buildPostmanEnvironment(name, vars, opts), null, 2)
 }

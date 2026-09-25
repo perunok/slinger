@@ -163,6 +163,11 @@ describe('Postman import', () => {
     expect(postmanUrlToString({ raw: 'http://raw' })).toBe('http://raw')
     expect(postmanUrlToString({ host: ['api', 'x', 'com'], path: ['v1', 'u'] })).toBe('api.x.com/v1/u')
     expect(postmanUrlToString({ host: ['h'] })).toBe('h')
+    // No `raw` (Postman SDK / Newman toJSON): rebuilt from its parts, disabled params skipped, variables untouched.
+    expect(postmanUrlToString({ protocol: 'https', host: ['api', 'x', 'com'], port: '8443', path: ['v1', ':id'], query: [{ key: 'a', value: '1' }, { key: 'off', value: '2', disabled: true }, { key: 'flag', value: null }], hash: 'top' }))
+      .toBe('https://api.x.com:8443/v1/:id?a=1&flag#top')
+    expect(postmanUrlToString({ host: ['{{baseUrl}}'], path: ['users'], query: [{ key: 'q', value: '{{term}}' }] })).toBe('{{baseUrl}}/users?q={{term}}')
+    expect(postmanUrlToString({ protocol: 'http:', host: 'localhost', port: '3000' })).toBe('http://localhost:3000')
     expect(postmanUrlToString(null)).toBe('')
   })
 })

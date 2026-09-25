@@ -8,6 +8,7 @@
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
+  import EnvironmentExportDialog from '../features/environments/EnvironmentExportDialog.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
@@ -94,6 +95,7 @@
 <RunnerDialog />
 <ScriptsDialogHost />
 <ExportCollectionDialog />
+<EnvironmentExportDialog />
 <ImportPostmanDialog open={ui.importOpen} onclose={() => (ui.importOpen = false)} />
 <SaveAsDialog />
 <UnsavedDialog />

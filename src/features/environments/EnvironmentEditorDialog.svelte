@@ -77,6 +77,12 @@
     }
   }
 
+  async function exportEnv(env: Environment) {
+    // Export what is stored: save pending edits first.
+    if (!(await model.flush()).ok) return void (closeError = 'Save or fix pending changes before exporting.')
+    ui.exportEnvironmentId = env.id
+  }
+
   async function duplicate(env: Environment) {
     try {
       if (!(await model.flush()).ok) return void (closeError = 'Save or fix pending changes before duplicating.')
@@ -108,6 +114,7 @@
         oncreate={() => (dialog = { kind: 'create' })}
         onrename={(env) => (dialog = { kind: 'rename', env })}
         onduplicate={duplicate}
+        onexport={exportEnv}
         ondelete={(env) => (dialog = { kind: 'delete', env })}
       />
       <section class="flex min-w-0 flex-1 flex-col gap-2" aria-label="Variables">

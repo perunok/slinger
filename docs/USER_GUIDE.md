@@ -74,7 +74,8 @@ delete one of them.
 
 **Secret variables.** Tick **Secret** on a variable to store its value in your operating system keychain instead of the
 database. The table then shows masked bullets; use the reveal control to look at it, and leave the value empty when editing to
-keep the stored one. Secrets are never written to history, exports or version snapshots. If no keychain is available (typical on
+keep the stored one. Secrets are never written to history, collection exports or version snapshots, and an environment export
+contains them only if you tick **Include secret values** (see below). If no keychain is available (typical on
 headless Linux without a Secret Service) saving a secret fails with an error while everything else keeps working.
 
 **Built-in dynamic variables** (generated fresh at each send, same value wherever repeated within one send):
@@ -338,6 +339,9 @@ Right-click a collection and choose **Versions...**. A version is an immutable s
 - **Restore:** *as a new collection* named `<name> (vX.Y.Z)` (the live collection is untouched), or *replace the live collection*
   (asks for confirmation; suggests creating a version first). Replacing gives requests new ids, so open tabs for them are closed.
 - **Delete** removes a version (it cannot be edited).
+- **Versions travel with exports:** exporting a collection writes its version history into the file, and importing that file
+  into Slinger (on this or another machine) restores every version with its number, notes, date and snapshot, so you can
+  compare and restore them there. This works for any collection, including ones originally imported from Postman. See below.
 
 ## Documentation (Markdown)
 
@@ -371,7 +375,9 @@ collections keep theirs).
 ## Import and export (Postman)
 
 - **Import:** use the upload button in the Collections header (or **Import from Postman** on the empty state). Drop or choose a
-  Postman **collection (v2.x)** or **environment** `.json`. The preview shows what will be imported. Collection-level variables
+  Postman **collection (v2.x)** or **environment** `.json`: Slinger exports (`.slinger_collection.json`,
+  `.slinger_environment.json`), Postman exports (`.postman_collection.json`, `.postman_environment.json`) or any other `.json`.
+  The preview shows what will be imported. Collection-level variables
   can optionally become an environment named after the collection. If an environment with that name already exists
   (ignoring case), the import **merges into it** instead of creating a second one: only variables it does not have yet are
   added, and existing values are kept (they may hold tokens set by scripts or your edits); the preview says how many will be
@@ -397,13 +403,40 @@ collections keep theirs).
   - **Import as a copy** named `X (2)`, `X (3)`, ... so the names stay distinguishable. The existing collection is untouched.
   - **Cancel.**
 
-  Environments are handled the same way in both cases (merged into a same-named environment, see above).
-- **Export:** right-click a collection, **Export as Postman JSON...**, then **Save to file** (optionally **Choose folder...**
-  first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
+  Environments are handled the same way in both cases (merged into a same-named environment, see above). If the file carries
+  Slinger version history, **Replace** adds those versions to the collection's existing ones (after the automatic snapshot):
+  a version already present with the same content is skipped, one with the same number but different content is added as
+  `<version>-imported`; the message lists what happened.
+- **Version history on import:** when the file is a Slinger collection export with version history, the preview shows the
+  number of versions and the import restores them on the new collection (same version numbers, notes, dates and snapshots; a
+  message says how many). A file exported *without* snapshots lists its versions but they cannot be restored (the message says
+  so). If the history block is damaged or was made by a newer Slinger, it is ignored with a note and the collection is still
+  imported. A Postman collection (no history) imports exactly as before.
+- **Export:** right-click a collection, **Export as Postman JSON...** (or Ctrl+K, `> export collection`), then **Save to file**
+  (optionally **Choose folder...** first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
   exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
   imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged.
+- **Versions in the export:** the file is a normal Postman Collection v2.1 file. `info.version` holds the collection's latest
+  version (e.g. `1.2.0`) and Slinger's version history is stored alongside it in `info._slinger`, which Postman ignores, so the
+  file imports into Postman unchanged. **Include version history snapshots** (on by default, the dialog shows how much it adds)
+  stores each version's full content so it can be restored after import; untick it to keep only the version list (number,
+  notes, date). Snapshots contain the collection's folders and requests only, never environment values or secrets. If you
+  import the file into Postman and export it again from Postman, the history is gone (Postman drops fields it does not know);
+  the collection itself still imports into Slinger.
+- **File names:** a collection is saved as `<collection name> v<latest version>.slinger_collection.json` (for example
+  `enat uat v1.2.0.slinger_collection.json`), or `<collection name>.slinger_collection.json` when it has no versions; an
+  environment as `<environment name>.slinger_environment.json`. The real name is kept, including spaces, capital letters,
+  Amharic and other scripts and emoji. Only characters that Windows, macOS or Linux do not allow in file names (`/ \ : * ? " < > |`
+  and control characters) become `_`, leading/trailing dots and spaces are dropped, Windows device names such as `CON` or `NUL`
+  get a `_` appended, and very long names are shortened (about 150 characters) without cutting a character in half.
+- **Environment export:** in the Environments dialog select an environment and click **Export environment...** (download
+  icon), or press Ctrl+K and type `> export environment`. The file is a Postman environment file, so Postman and Slinger can
+  both import it. Secret variables are exported **by name only** (type `secret`, empty value) unless you tick **Include secret
+  values**, which shows a warning: the file then contains the secret values in plain text, so do not commit or share it. Importing
+  the file back into Slinger merges into the environment with the same name (a secret exported without its value keeps the one
+  already stored); with secret values included, secrets are recreated as secrets.
 
 ## Cloud account and sync
 
@@ -484,7 +517,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme or accent) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme or accent, export a collection or an environment) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |

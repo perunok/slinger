@@ -11,6 +11,8 @@
   import { sync } from '../sync/syncStore.svelte'
   import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
   import { describeEnvImport, importIntoEnvironment, planMerge, type ImportVar, type MergeMode } from './envImport'
+  import type { VersionHistoryImportResult } from '../../../shared/slingerExport'
+  import { IMPORT_FILE_ACCEPT } from './fileName'
   import { parsePostmanFile, type PostmanFile } from './parse'
   import { copyName, findReimportMatches } from './reimport'
 
@@ -134,7 +136,7 @@
    * the old layout is mapped onto the new one by path (as after a version restore): expanded folders stay open
    * and clean tabs follow their request; dirty tabs are kept detached by the reconcile, never overwritten.
    */
-  async function replaceExisting(collectionId: string, name: string): Promise<[string, string]> {
+  async function replaceExisting(collectionId: string, name: string): Promise<{ summary: [string, string]; history?: VersionHistoryImportResult }> {
     const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }
     const result = await api().replaceCollectionFromPostman(collectionId, text, fileName)
     const map = mapRestored(before, { folders: result.folders, requests: result.requests })
@@ -142,10 +144,13 @@
     tabsStore.followReplaced(map.requests)
     await app.reloadCollections()
     const n = result.requests.length
-    return [
-      'Collection replaced',
-      `"${name}" now has ${n} request${n === 1 ? '' : 's'}. The previous content was saved as version ${result.safetyVersion.version}.`,
-    ]
+    return {
+      summary: [
+        'Collection replaced',
+        `"${name}" now has ${n} request${n === 1 ? '' : 's'}. The previous content was saved as version ${result.safetyVersion.version}.`,
+      ],
+      history: result.versionHistory,
+    }
   }
 
   async function submit() {
@@ -161,11 +166,14 @@
         return
       }
       let summary: [string, string]
+      // The file's `info._slinger` version history, when it had one (restored by both import and replace).
+      let history: VersionHistoryImportResult | undefined
       if (choice === 'replace' && target) {
-        summary = await replaceExisting(target.id, target.name)
+        ;({ summary, history } = await replaceExisting(target.id, target.name))
       } else {
         const result = choice === 'copy' ? await api().importPostmanCollection(ws, text, { name: copyAs }) : await api().importPostmanCollection(ws, text)
         await app.reloadCollections()
+        history = result.versionHistory
         const scripts = result.scriptCount ?? 0
         summary = [
           'Collection imported',
@@ -182,6 +190,12 @@
         }
       }
       toast.success(...summary)
+      if (history) {
+        const h = history
+        const restored = `${h.restored} version${h.restored === 1 ? '' : 's'} restored`
+        if (h.notes.length > 0) toast.info(`Version history: ${restored}`, h.notes.join(' '))
+        else toast.success('Version history restored', restored)
+      }
       if (envSummary) toast.success('Environment from collection variables', envSummary)
       if (envError) toast.error(`${summary[0]}, but the environment could not be created or updated`, envError)
       onclose()
@@ -211,7 +225,7 @@
           bind:this={input}
           id="pm-file"
           type="file"
-          accept=".json,application/json"
+          accept={IMPORT_FILE_ACCEPT}
           class="sr-only"
           aria-label="Postman file"
           onchange={(e) => load(e.currentTarget.files?.[0])}
@@ -230,6 +244,12 @@
           <dt class="text-muted">Saved examples</dt><dd data-testid="import-examples">{parsed.examples}</dd>
           <dt class="text-muted">Scripts</dt><dd data-testid="import-scripts">{parsed.scripts > 0 ? `${parsed.scripts} (pre-request and test, all levels)` : 'none'}</dd>
           <dt class="text-muted">Collection variables</dt><dd>{parsed.variables.length > 0 ? `${parsed.variables.length} defined` : 'none'}</dd>
+          {#if parsed.history}
+            <dt class="text-muted">Version history</dt>
+            <dd data-testid="import-history">
+              {parsed.history.versions} version{parsed.history.versions === 1 ? '' : 's'}{parsed.history.latest ? `, latest v${parsed.history.latest}` : ''}{parsed.history.versions > 0 && !parsed.history.snapshots ? ' (list only, no snapshots: not restorable)' : ''}
+            </dd>
+          {/if}
         </dl>
         {#if match && target}
           <fieldset class="flex flex-col gap-2" disabled={busy} data-testid="reimport-choice">

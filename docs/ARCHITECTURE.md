@@ -17,7 +17,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      libs/ (build-time Node shims for the bundled script libraries)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
-                     secrets, exportFiles, externalUrl, authCallback
+                     versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback
   lib/               errors, ids, text, csp, permissions
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts - imported by main AND renderer, no Node/DOM deps
@@ -339,12 +339,68 @@ collections of the workspace by `_postman_id` first (a collection's own id, as S
 `source_postman_id`), else by trimmed case-insensitive name. After a replace it maps old ids to new ones with
 `versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs at their successor (`tabsStore.followReplaced`); dirty
 tabs are detached by the normal reconcile. "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
-record the source id, so the next re-import targets the original.
+record the source id, so the next re-import targets the original. When the file carries `info._slinger`, the replace also calls
+`restoreVersionHistory` in the same transaction (after the safety version), adding the file's versions next to the existing ones
+with the duplicate/clash rules below; the result's `versionHistory` is shown as a toast.
+
+### Versioned export format (`info._slinger`)
+
+Every collection export (built in the renderer: `lib/postman.ts` + `lib/slingerExport.ts`, types in
+`shared/slingerExport.ts`) is a plain Postman Collection v2.1 file with two additions inside `info`:
+
+- `info.version`: the collection's highest semver (pre-releases count), in the schema's **string** form (`"1.2.0"`,
+  `"2.0.0-beta.1"`); omitted when there are no versions. The v2.1 schema allows a string or `{major, minor, patch, identifier}`;
+  the object's `identifier` is limited to 10 characters and cannot hold every prerelease, while Postman's SDK parses the string
+  form into the same `Version` object, so the string is used.
+- `info._slinger`, Slinger's namespaced block (the schema does not restrict extra `info` properties):
+
+  ```jsonc
+  { "formatVersion": 1, "exportedAt": "2026-09-25T12:00:00.000Z", "app": "Slinger 0.3.2", "collectionId": "<uuid>",
+    "includesSnapshots": true,
+    "versions": [ { "version": "1.0.0", "notes": "First release", "createdAt": "2023-11-14T22:13:20.000Z",
+                    "folderCount": 2, "requestCount": 4, "snapshot": { /* CollectionSnapshot, the snapshot_json shape */ } } ] }
+  ```
+
+  `versions` are oldest semver first; `createdAt` is ISO-8601 with whole seconds (lossless for the stored epoch seconds);
+  `snapshot` is omitted when the user unticks "Include version history snapshots" (`includesSnapshots: false`). Snapshots
+  hold folders/requests/scripts/descriptions only: no environment values, no secrets (tested).
+
+**Import** (`services/versionHistory.ts`, `restoreVersionHistory(db, collectionId, raw)`, called inside the transaction of both
+`importPostmanCollection` and `replaceCollectionFromPostman`): the block is untrusted input, validated with zod
+(strict semver, ISO dates, notes <= 10k chars, counts, at most 500 versions, the `CollectionSnapshot` schema with unknown keys
+stripped) plus structural checks (unique ids, known parents, no folder cycles, requests in existing folders, <= 10k folders /
+50k requests, <= 8 MB per snapshot, the cloud sync limit). Any failure or a newer `formatVersion` ignores the whole block with a
+note and the collection still imports; inserts run in a savepoint, so an unexpected error rolls back only the history. Versions
+are inserted oldest first with the original semver, notes, `created_at` and snapshot (counts recomputed from the snapshot), so
+they list, compare and restore like local ones and sync as ordinary `collection_version` rows. Metadata-only entries are skipped
+(a version must be restorable); a semver listed twice keeps the first; an existing semver with identical snapshot + notes is
+skipped, a different one is kept as `<v>-imported[.N]` (`<v>.imported[.N]` for prereleases). The result is reported in
+`PostmanImportResult.versionHistory = {restored, skipped, notes}` (absent when the file has no block), shown as a toast.
+
+**Compatibility guarantees** (`electron/__tests__/postmanCompat.test.ts`): every export shape (no history, with snapshots,
+metadata only, examples, scripts at all levels, descriptions, nested folders, auth, empty/Unicode collection) validates
+against the vendored official v2.1.0 schema (`__tests__/fixtures/`, draft-04, ajv 6) and loads in Postman's SDK
+(`postman-collection`, dev dependency for tests only) with its name, every folder/request, events and version. **Postman
+caveat:** Postman does not preserve unknown fields: its SDK moves `_`-prefixed `info` keys out of `info` on `toJSON()` and drops
+`url.raw`, and re-exporting from the Postman app loses the history. Such a file still imports into Slinger (content only; URLs
+without `raw` are rebuilt by `shared/postmanUrl.ts`), which the same test checks.
+
+**Environment export** (`src/features/environments/envExport.ts`) writes a Postman environment file
+(`{id, name, values: [{key, value, type: 'default' | 'secret', enabled: true}], _postman_variable_scope, _postman_exported_at,
+_postman_exported_using: 'Slinger/x.y.z'}`). Secrets are `type: 'secret'` with an empty value unless the user opts in, in
+which case each value is fetched with `revealEnvironmentVariable` at save/copy time (never for the preview). Re-import uses the
+existing environment import, merging into the same-named environment.
+
+**File names** (`src/features/importexport/fileName.ts`): `<name> v<latest>.slinger_collection.json` /
+`<name>.slinger_environment.json`, keeping spaces, case and any script; only `/ \ : * ? " < > |`, control and bidi characters are
+replaced, leading/trailing dots and spaces trimmed, Windows device names suffixed with `_`, the name cut to 150 graphemes and the
+whole file name to 240 UTF-8 bytes. Main's `sanitizeFileName` still reduces any name to a safe basename (below).
 
 ## Files, dialogs and the OS
 
-Export writes take a **file name** only (`ExportFiles`): reduced to a basename, control/reserved characters replaced, Windows
-device names rejected, max 200 chars, written inside the chosen (`chooseExportDirectory`) or default (Downloads, else home)
+Export writes take a **file name** only (`ExportFiles`): reduced to a basename, control/reserved and bidi characters replaced,
+lone surrogates dropped, Windows device names rejected, cut to 255 UTF-8 bytes on a code-point boundary keeping a (compound)
+extension such as `.slinger_collection.json` (Unicode names like Amharic keep working on ext4), written inside the chosen (`chooseExportDirectory`) or default (Downloads, else home)
 directory, refusing symlinks and directories, capped at 256 MB, base64 strictly validated. `openExternalUrl` accepts http/https
 only. `pickFile` opens a native open dialog and returns an absolute path (used for form-data files and binary bodies); the main
 process then adds that file's real path to an in-memory allowlist (`FileGrants`). `executeHttpRequest` reads a local file only
@@ -436,7 +492,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |

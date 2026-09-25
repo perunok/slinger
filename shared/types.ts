@@ -290,6 +290,8 @@ export interface PostmanImportResult {
   requests: ApiRequest[]
   /** ADDED (scripts): non-empty pre-request/test scripts imported (collection + folders + requests). */
   scriptCount?: number
+  /** ADDED (versioned export): what happened to the file's `info._slinger` version history; absent when it had none. */
+  versionHistory?: import('./slingerExport').VersionHistoryImportResult
 }
 
 /** ADDED (re-import): options for importPostmanCollection. */

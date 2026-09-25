@@ -19,6 +19,8 @@ export type PostmanFile =
       /** Pre-request + test scripts with code, at collection, folder and request level. */
       scripts: number
       variables: CollectionVariable[]
+      /** Slinger export with version history (`info._slinger`); null for other files. Validated by the backend on import. */
+      history?: { versions: number; snapshots: boolean; latest: string | null } | null
     }
   | { kind: 'environment'; name: string; variables: CollectionVariable[]; skippedDisabled: number }
 
@@ -67,6 +69,18 @@ function countItems(items: unknown[]): { folders: number; requests: number; exam
   return { folders, requests, examples, scripts }
 }
 
+/** Summary of a Slinger export's version history, for the preview only. */
+function slingerHistory(info: Json | null): { versions: number; snapshots: boolean; latest: string | null } | null {
+  const block = info && isObj(info._slinger) ? info._slinger : null
+  if (!block || !Array.isArray(block.versions)) return null
+  const versions = block.versions.filter(isObj)
+  return {
+    versions: versions.length,
+    snapshots: versions.length > 0 && versions.every((v) => isObj(v.snapshot)),
+    latest: typeof info?.version === 'string' ? info.version : null,
+  }
+}
+
 export function parsePostmanFile(text: string): ParseResult {
   let data: unknown
   try {
@@ -99,6 +113,9 @@ export function parsePostmanFile(text: string): ParseResult {
   const postmanId = info && typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim() : null
   return {
     ok: true,
-    file: { kind: 'collection', name, postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars },
+    file: {
+      kind: 'collection', name, postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars,
+      history: slingerHistory(info),
+    },
   }
 }

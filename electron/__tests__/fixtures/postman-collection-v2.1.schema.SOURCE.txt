@@ -1,0 +1,5 @@
+postman-collection-v2.1.schema.json is a vendored copy of the official Postman Collection Format
+v2.1.0 JSON schema (JSON Schema draft-04), used by electron/__tests__/postmanCompat.test.ts.
+
+Source: https://schema.getpostman.com/json/collection/v2.1.0/collection.json
+sha256 of the vendored file: 90000a561d00b1a06ee37a6d3606e911e1357f757d8d91afc690d87dadacb9b2
