@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { expandedStore } from '../../app/expanded.svelte'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
+import { tabsStore } from '../requests/tabs.svelte'
+import { sync } from '../sync/syncStore.svelte'
 import ImportPostmanDialog from './ImportPostmanDialog.svelte'
 import { parsePostmanFile } from './parse'
+import { copyName, findReimportMatches } from './reimport'
 
 const collection = (extra: object = {}) =>
   JSON.stringify({
@@ -201,5 +205,168 @@ describe('ImportPostmanDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('must contain an item array')
     expect(onclose).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled()
+  })
+})
+
+describe('re-import helpers', () => {
+  const col = (id: string, name: string, sourcePostmanId: string | null = null) => ({ id, workspaceId: 'w', name, sourcePostmanId, createdAt: 0, updatedAt: 0, version: 1 })
+
+  it('matches by _postman_id (collection id or recorded source id) before name', () => {
+    const cols = [col('a', 'Pets'), col('b', 'Renamed', 'PM-1'), col('c', 'Other')]
+    expect(findReimportMatches(cols, { name: 'Pets', postmanId: 'pm-1' })).toEqual({ by: 'id', collections: [cols[1]] })
+    expect(findReimportMatches(cols, { name: 'x', postmanId: 'C' })).toEqual({ by: 'id', collections: [cols[2]] })
+    expect(findReimportMatches(cols, { name: '  pets ', postmanId: 'unknown' })).toEqual({ by: 'name', collections: [cols[0]] })
+    expect(findReimportMatches(cols, { name: 'Nope', postmanId: null })).toBeNull()
+  })
+
+  it('names copies X (2), X (3)... skipping taken names', () => {
+    expect(copyName('Pets', ['Other'])).toBe('Pets')
+    expect(copyName('Pets', ['pets'])).toBe('Pets (2)')
+    expect(copyName('Pets', ['Pets', 'Pets (2)'])).toBe('Pets (3)')
+    expect(copyName('Pets', ['Pets', 'Pets (3)'])).toBe('Pets (2)')
+  })
+
+  it('parse reads info._postman_id', () => {
+    expect(parsePostmanFile(collection({ info: { _postman_id: 'abc', name: 'Pets' } }))).toMatchObject({ ok: true, file: { postmanId: 'abc' } })
+    expect(parsePostmanFile(collection())).toMatchObject({ ok: true, file: { postmanId: null } })
+  })
+})
+
+describe('ImportPostmanDialog: re-importing an existing collection', () => {
+  const updated = (extra: object = {}) =>
+    JSON.stringify({
+      info: { name: 'Pets', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [
+        { name: 'Dogs', item: [{ name: 'List', request: { method: 'GET', url: 'https://x.test/v2/dogs' } }] },
+        { name: 'Cats', request: { method: 'GET', url: 'https://x.test/cats' } },
+      ],
+      ...extra,
+    })
+
+  async function setupExisting(...files: Array<{ text: string; name?: string }>) {
+    const mock = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = mock
+    sync.statuses = {}
+    await app.init()
+    const created = []
+    for (const f of files) created.push(await mock.importPostmanCollection(app.workspaceId!, f.text, f.name ? { name: f.name } : undefined))
+    await app.reloadCollections()
+    toast.clear()
+    const onclose = vi.fn()
+    render(ImportPostmanDialog, { open: true, onclose })
+    return { mock, onclose, created }
+  }
+
+  afterEach(() => {
+    cleanup()
+    tabsStore.tabs = []
+    expandedStore.replace(new Set())
+    sync.statuses = {}
+  })
+
+  it('offers Replace (default) or a copy, and replace keeps the collection id with a safety version', async () => {
+    const { mock, onclose, created } = await setupExisting({ text: collection() })
+    const id = created[0]!.collection.id
+    const dogs = created[0]!.folders[0]!
+    expandedStore.replace(new Set([`collection:${id}`, `folder:${dogs.id}`]))
+    await pick(updated(), 'pets.json')
+    const replace = await screen.findByRole('radio', { name: /Replace existing "Pets"/ })
+    expect(replace).toBeChecked()
+    expect(screen.getByRole('radio', { name: /Import as a copy named "Pets \(2\)"/ })).not.toBeChecked()
+    expect(screen.getByText(/version snapshot of the current content/)).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+
+    expect(app.collections.map((c) => c.id)).toEqual([id])
+    expect(app.requestsOf(id).map((r) => r.name).sort()).toEqual(['Cats', 'List'])
+    const call = mock.calls.find((c) => c.method === 'replaceCollectionFromPostman')!
+    expect(call.args).toEqual([id, updated(), 'pets.json'])
+    const versions = await mock.listCollectionVersions(id)
+    expect(versions).toMatchObject([{ version: '0.0.1', notes: 'Automatic snapshot before re-import from pets.json', requestCount: 2 }])
+    expect(toast.items.find((t) => t.kind === 'success')?.detail).toMatch(/saved as version 0\.0\.1/)
+    // The replaced folder stays expanded under its new id.
+    const newDogs = app.foldersOf(id)[0]!
+    expect(newDogs.id).not.toBe(dogs.id)
+    expect(expandedStore.keys.has(`folder:${newDogs.id}`)).toBe(true)
+  })
+
+  it('clean tabs follow the replaced request; dirty tabs keep their unsaved edits', async () => {
+    const { onclose, created } = await setupExisting({ text: collection() })
+    const id = created[0]!.collection.id
+    const [list, health] = [...app.requestsOf(id)].sort((a, b) => a.name.localeCompare(b.name)).reverse()
+    expect([list!.name, health!.name]).toEqual(['List', 'Health'])
+    const clean = tabsStore.openRequest(list!)
+    const dirty = tabsStore.openRequest(health!)
+    dirty.draft.url = 'https://x.test/edited'
+    await pick(updated({ item: [{ name: 'Dogs', item: [{ name: 'List', request: { method: 'GET', url: 'https://x.test/v2/dogs' } }] }, { name: 'Health', request: { method: 'GET', url: 'https://x.test/v2/health' } }] }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Replace' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+
+    const newList = app.requestsOf(id).find((r) => r.name === 'List')!
+    expect(newList.id).not.toBe(list!.id)
+    expect(tabsStore.tabs).toContain(clean)
+    expect(clean.requestId).toBe(newList.id)
+    expect(clean.draft.url).toBe('https://x.test/v2/dogs')
+    expect(clean.dirty).toBe(false)
+    expect(tabsStore.tabs).toContain(dirty)
+    expect(dirty.draft.url).toBe('https://x.test/edited')
+    expect(dirty.requestId).toBeNull()
+  })
+
+  it('imports as a copy named X (2), then X (3)', async () => {
+    const { mock, onclose } = await setupExisting({ text: collection() }, { text: collection(), name: 'Pets (2)' })
+    await pick(collection())
+    await fireEvent.click(await screen.findByRole('radio', { name: /Import as a copy named "Pets \(3\)"/ }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Import as copy' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(app.collections.map((c) => c.name).sort()).toEqual(['Pets', 'Pets (2)', 'Pets (3)'])
+    expect(mock.calls.some((c) => c.method === 'replaceCollectionFromPostman')).toBe(false)
+  })
+
+  it('lets the user pick which of several matches to replace', async () => {
+    const { mock, onclose, created } = await setupExisting({ text: collection() }, { text: collection({ info: { name: 'pets' } }) })
+    await pick(updated())
+    expect(await screen.findByText(/2 collections in the workspace match this file by name/)).toBeInTheDocument()
+    const picker = screen.getByLabelText('Collection to replace') as HTMLSelectElement
+    expect(picker.options).toHaveLength(2)
+    const second = created[1]!.collection
+    await fireEvent.change(picker, { target: { value: second.id } })
+    expect(screen.getByRole('radio', { name: /Replace existing "pets"/ })).toBeChecked()
+    await fireEvent.click(screen.getByRole('button', { name: 'Replace' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(mock.calls.find((c) => c.method === 'replaceCollectionFromPostman')!.args[0]).toBe(second.id)
+    expect(app.requestsOf(second.id).map((r) => r.name).sort()).toEqual(['Cats', 'List'])
+    expect(app.requestsOf(created[0]!.collection.id).map((r) => r.name).sort()).toEqual(['Health', 'List'])
+  })
+
+  it('matches a renamed collection by _postman_id', async () => {
+    const pid = '11111111-2222-4333-8444-555555555555'
+    const { mock, created } = await setupExisting({ text: collection({ info: { _postman_id: pid, name: 'Pets' } }) })
+    await mock.renameCollection(created[0]!.collection.id, 'My pets')
+    await app.reloadCollections()
+    await pick(updated({ info: { _postman_id: pid, name: 'Pets' } }))
+    expect(await screen.findByRole('radio', { name: /Replace existing "My pets"/ })).toBeChecked()
+    expect(screen.getByText('This collection already exists in the workspace.')).toBeInTheDocument()
+  })
+
+  it('does not offer replace in a read-only workspace', async () => {
+    const { mock } = await setupExisting({ text: collection() })
+    sync.statuses = { [app.workspaceId!]: { ...(await mock.getSyncStatus(app.workspaceId!)), linked: true, readOnly: true, remoteName: 'Team' } }
+    await pick(updated())
+    const replace = await screen.findByRole('radio', { name: /Replace existing "Pets"/ })
+    expect(replace).toBeDisabled()
+    expect(replace).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: /Import as a copy/ })).toBeChecked()
+    expect(screen.getByText(/Not available:/)).toHaveTextContent(/viewer|read-only/i)
+    expect(screen.getByRole('button', { name: 'Import as copy' })).toBeEnabled()
+  })
+
+  it('Cancel closes without importing', async () => {
+    const { mock, onclose } = await setupExisting({ text: collection() })
+    await pick(updated())
+    await screen.findByRole('radio', { name: /Replace existing/ })
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onclose).toHaveBeenCalled()
+    expect(mock.calls.filter((c) => c.method === 'replaceCollectionFromPostman' || c.method === 'importPostmanCollection')).toHaveLength(1)
   })
 })

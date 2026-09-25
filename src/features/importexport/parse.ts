@@ -11,6 +11,8 @@ export type PostmanFile =
   | {
       kind: 'collection'
       name: string
+      /** `info._postman_id`, used to recognise a collection imported (or exported) before; null when absent. */
+      postmanId: string | null
       folders: number
       requests: number
       examples: number
@@ -94,8 +96,9 @@ export function parsePostmanFile(text: string): ParseResult {
   const { folders, requests, examples, scripts } = countItems(data.item)
   if (requests === 0) return { ok: false, error: 'This collection contains no requests.' }
   const name = info && typeof info.name === 'string' && info.name.trim() ? info.name.trim() : 'Imported Collection'
+  const postmanId = info && typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim() : null
   return {
     ok: true,
-    file: { kind: 'collection', name, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars },
+    file: { kind: 'collection', name, postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars },
   }
 }

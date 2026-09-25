@@ -77,11 +77,11 @@ function build(s: MockState, collection: Collection, file: Parsed) {
 }
 
 /** Port of `import_postman_collection` + `collect_postman_entries`; sortOrder follows item order. */
-export function importPostman(s: MockState, workspaceId: string, fileContents: string, options: PostmanImportOptions = {}): PostmanImportResult {
+export function importPostman(s: MockState, workspaceId: string, fileContents: string, options?: PostmanImportOptions | null): PostmanImportResult {
   const workspace = must(s.workspaces, workspaceId, 'Workspace')
   const file = parseFile(fileContents)
-  const name = options.name?.trim()
-  if (options.name !== undefined && !name) fail('invalid_input', 'collection name is required')
+  const name = options?.name?.trim()
+  if (options?.name != null && !name) fail('invalid_input', 'collection name is required')
   const collection = addCollection({ ...s, collections: [] }, workspace.id, name || file.name)
   collection.scriptsJson = eventJson(file.event)
   Object.assign(collection, columnsFromPostman(file.info.description))

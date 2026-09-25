@@ -336,6 +336,25 @@ class TabsStore {
     this.syncWithServer()
   }
 
+  /**
+   * Requests replaced by new ones (a re-import replace): clean tabs of an old id are pointed at its successor so
+   * the next reconcile (syncWithServer) loads the new content in place. Dirty tabs are left alone; the reconcile
+   * detaches them (unsaved work is never discarded). Returns how many tabs now follow a new request.
+   */
+  followReplaced(idMap: ReadonlyMap<string, string>): number {
+    let n = 0
+    for (const t of this.tabs) {
+      if (!t.requestId || t.example || t.overview || t.dirty) continue
+      const next = idMap.get(t.requestId)
+      if (!next) continue
+      t.requestId = next
+      t.baseVersion = -1 // forces a reload from the new request
+      t.serverKey = ''
+      n++
+    }
+    return n
+  }
+
   /** Requests deleted elsewhere: drop their tabs without prompting (the data is gone). */
   dropRequests(requestIds: string[]) {
     const ids = this.tabs.filter((t) => t.requestId && requestIds.includes(t.requestId)).map((t) => t.id)
