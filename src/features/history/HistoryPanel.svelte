@@ -166,7 +166,7 @@
         bind:value={filter}
         aria-label="Filter history"
         placeholder="Filter history"
-        class="h-7 w-full rounded border border-border bg-raised pl-7 pr-2 text-xs outline-none focus:ring-2 focus:ring-accent"
+        class="h-7 w-full rounded border border-border bg-raised pl-7 pr-2 text-xs outline-none focus:ring-2 focus:ring-focus"
       />
     </div>
     <Button size="sm" variant="ghost" icon="trash" onclick={() => (confirmClear = true)} disabled={entries.length === 0}>Clear history</Button>
@@ -196,7 +196,7 @@
                   tabindex={rovingId === entry.id ? 0 : -1}
                   data-entry-id={entry.id}
                   title="{entry.method} {entry.url}"
-                  class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 pr-9 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-accent"
+                  class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 pr-9 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
                   onclick={() => open(entry)}
                   onfocus={() => (focusId = entry.id)}
                   onkeydown={(e) => e.target === e.currentTarget && onRowKey(e, entry)}

@@ -147,7 +147,7 @@
                   data-cid={c.id}
                   tabindex={c.id === focusId ? 0 : -1}
                   aria-current={c.id === focusId ? 'true' : undefined}
-                  class="min-w-0 flex-1 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  class="min-w-0 flex-1 rounded px-1 py-0.5 text-left text-sm hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
                   onclick={() => (focusId = c.id)}
                   onfocus={() => (focusId = c.id)}
                 >

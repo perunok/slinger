@@ -70,7 +70,7 @@
         spellcheck="false"
         aria-invalid={form.reason ? true : undefined}
         aria-describedby="cv-version-msg"
-        class="h-8 rounded border bg-raised px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-accent {form.reason ? 'border-danger' : 'border-border'}"
+        class="h-8 rounded border bg-raised px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-focus {form.reason ? 'border-danger' : 'border-border'}"
       />
       <p id="cv-version-msg" class="min-h-4 text-xs text-danger" role={form.reason ? 'alert' : undefined}>{form.reason ?? ''}</p>
       <div class="flex flex-wrap items-center gap-1.5">
@@ -87,7 +87,7 @@
         bind:value={notes}
         rows="4"
         placeholder="What changed in this version?"
-        class="resize-y rounded border border-border bg-raised px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-accent"
+        class="resize-y rounded border border-border bg-raised px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-focus"
       ></textarea>
     </div>
     <InlineError message={error} />

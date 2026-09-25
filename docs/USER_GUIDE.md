@@ -53,7 +53,7 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
 example in another window), Save reports "Request changed elsewhere" and lets you **Reload from stored** or **Overwrite**.
-Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) searches saved requests.
+Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) searches saved requests; type `>` to list commands such as switching the theme or accent.
 
 ## Variables and environments
 
@@ -348,10 +348,28 @@ Server setup is documented in the separate `slinger-admin` repository.
 
 ## Themes and settings
 
-Settings (Ctrl+, or the sun icon): **Theme** (System, Light, Dark, Midnight, Solarized Dark, High Contrast; System follows your OS
-light/dark setting), **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script**
-(default 5000 ms, 100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows
-the app version.
+Settings (Ctrl+, or the sun icon):
+
+- **Theme.** A gallery of 31 themes with a live thumbnail of each (sidebar, URL bar, JSON response in that theme's colours),
+  grouped **Light** and **Dark**. Type in **Filter themes** or use **All / Light / Dark** to narrow the list; arrow keys move
+  between themes and apply them immediately.
+  - Light: Light, Paper, GitHub Light, Solarized Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn, One Light, Nord Light,
+    Ayu Light, High Contrast Light.
+  - Dark: Dark, Midnight, Solarized Dark, GitHub Dark, Dracula, Nord, Gruvbox Dark, Catppuccin Mocha, Catppuccin Frappé,
+    Tokyo Night, One Dark, Monokai, Rosé Pine, Ayu Mirage, Ayu Dark, Everforest, Kanagawa, Synthwave '84, Oceanic, High Contrast.
+  - **System** follows your OS light/dark setting. Next to it, choose which theme it uses **When the OS is light** and
+    **When the OS is dark** (for example Catppuccin Latte by day and Catppuccin Mocha at night).
+- **Accent colour.** Buttons, selected items, focus rings and text selection use the accent. **Theme default** keeps each
+  theme's own accent; or pick Blue, Indigo, Violet, Purple, Fuchsia, Pink, Rose, Red, Orange, Amber, Yellow, Lime, Green,
+  Emerald, Teal, Cyan, Sky or Slate, which then applies on top of whatever theme is active (it adapts to light and dark themes).
+- **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
+  100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
+
+Changes apply instantly and are remembered. Quick switch without opening Settings: press Ctrl+K and type `>` followed by
+`theme` or `accent` (for example `> theme nord` or `> accent teal`), then Enter.
+
+All themes are checked for readable contrast (WCAG AA, 4.5:1 for text) with every accent colour; the two High Contrast themes
+meet AAA (7:1). A theme chosen in version 0.2.0 carries over automatically.
 
 ## Keyboard shortcuts
 
@@ -363,7 +381,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request |
+| Ctrl+K | Go to request; type `>` for commands (switch theme or accent) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |

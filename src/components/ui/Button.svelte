@@ -15,7 +15,7 @@
   const variants = {
     default: 'bg-raised text-fg border-border hover:bg-hover',
     primary: 'bg-accent text-accent-fg border-transparent hover:brightness-110 font-medium',
-    danger: 'bg-danger text-accent-fg border-transparent hover:brightness-110 font-medium',
+    danger: 'bg-danger text-danger-fg border-transparent hover:brightness-110 font-medium',
     ghost: 'bg-transparent text-fg border-transparent hover:bg-hover',
   }
   const sizes = { sm: 'h-6 px-2 text-xs gap-1', md: 'h-8 px-3 gap-1.5' }

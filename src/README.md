@@ -23,7 +23,7 @@ app/                        shell + cross-feature state
   state.svelte.ts           workspaces, collections/folders/requests, environments, active env
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope every template input reads
-  settings.svelte.ts        theme / font size / editor wrap / script time limit + continue-on-error (localStorage)
+  settings.svelte.ts        theme + accent (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error (localStorage)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
@@ -39,7 +39,8 @@ features/
 lib/                        pure logic, no DOM: template, urlParams, kv, request (document model),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
-                            semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc
+                            semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
+                            themes (theme/accent registry), appearance (persisted theme settings), contrast + themeAudit (WCAG checks)
 dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
 styles/                     themes.css (tokens) + app.css (tailwind, CM overlays)
 ```
@@ -58,19 +59,54 @@ place templates are applied before sending (URL, headers, body, form fields, aut
 values via `revealEnvironmentVariable` just-in-time (`features/requests/execute.ts`). Unresolved
 variables abort the send with an inline list.
 
-## Themes
+## Themes and accents
 
-`styles/themes.css` defines the palettes as CSS variables on `[data-theme='<id>']`; `<html data-theme>` selects
-one (persisted in `localStorage['slinger.theme']`, `system` follows `prefers-color-scheme`). Components use
-tokens only (Tailwind classes `bg-surface`, `text-fg`, `border-border`... map to the variables in
-`tailwind.config.js`; CodeMirror themes use `var(--...)` so they follow automatically).
+`styles/themes.css` is the only place colours live. Two attributes on `<html>` pick them:
 
-Token groups: surfaces `--bg --surface --surface-raised --surface-hover`, borders `--border --border-strong`, text
-`--text --text-muted --text-faint`, semantic `--accent(-fg/-soft) --danger(-soft) --success(-soft) --warning(-soft)`,
-template tokens `--var-ok(-bg) --var-bad(-bg) --var-secret(-bg)`, syntax `--syn-keyword|string|number|bool|comment|property|tag|attr|punct`,
-HTTP methods `--m-get|post|put|patch|delete|other`, misc `--overlay --shadow-pop --selection --preview-bg`.
+* `data-theme='<id>'` selects a complete palette (31 themes, light and dark; registry in `lib/themes.ts`). Every theme block
+  declares `color-scheme: light|dark` (native controls and scrollbars follow) and every token in `THEME_TOKENS`.
+* `data-accent='<id>'` (absent = the theme's own accent) layers one of 18 accents over any theme. An accent block only sets
+  raw colours per scheme (`--a-light`, `--a-light-fg`, `--a-light-text`, `--a-dark`, `--a-dark-fg`, `--a-dark-text`); the shared
+  `[data-accent]` rule derives the accent tokens from them with `light-dark()` (so the theme's `color-scheme` picks the variant)
+  and `color-mix()` against the theme's `--surface` / `--bg`. `[data-theme^='contrast'][data-accent]` pushes the accent towards
+  the text colour so the high-contrast themes stay AAA.
 
-Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes.css`, then add `{ id, label }` to `lib/themes.ts`.
+Settings (`app/settings.svelte.ts`) apply both attributes; persisted as JSON in `localStorage['slinger.appearance']`
+(`{ theme, accent, systemLight, systemDark }`, see `lib/appearance.ts`). `theme: 'system'` follows `prefers-color-scheme`
+using the chosen `systemLight` / `systemDark` themes. The 0.2.0 key `slinger.theme` is migrated once and removed.
+`public/theme-init.js` applies the same settings before first paint (keep it in step with `lib/appearance.ts`).
+Components use tokens only: Tailwind classes (`bg-surface`, `text-fg`, `border-border`, `bg-accent text-accent-fg`,
+`text-accent-text`, `ring-focus`, ...) map to the variables in `tailwind.config.js`; CodeMirror (`components/editor/cm/theme.ts`)
+uses `var(--...)` so editors follow automatically.
+
+Tokens (`THEME_TOKENS`):
+
+| Group | Tokens |
+| --- | --- |
+| Surfaces / borders | `--bg --surface --surface-raised --surface-hover --border --border-strong` |
+| Text | `--text --text-muted --text-faint` |
+| Accent (replaced by a chosen accent) | `--accent` (fills, selected borders) `--accent-fg` (text on accent) `--accent-soft` (selected rows, badges; `--text` sits on it) `--accent-text` (accent-coloured text) `--focus-ring` `--selection` |
+| Status | `--danger --danger-fg --danger-soft --success --success-soft --warning --warning-soft` |
+| Templates | `--var-ok(-bg) --var-bad(-bg) --var-secret(-bg)` |
+| Syntax | `--syn-keyword|string|number|bool|comment|property|tag|attr|punct` |
+| HTTP methods | `--m-get|post|put|patch|delete|other` |
+| Misc | `--overlay --shadow-pop --preview-bg` |
+
+Contrast is enforced by `styles/themes.test.ts` (using `lib/themeAudit.ts` + `lib/contrast.ts`, which parse and evaluate
+themes.css): for every theme x (theme default + 18 accents) it checks the pairs in `CHECKS` - text/muted/syntax/method/status
+text 4.5:1 on the backgrounds they appear on, text on `--accent-soft`/`--selection`/status soft backgrounds 4.5:1,
+`--accent-fg` on `--accent` 4.5:1, `--accent`/`--focus-ring` against `--bg`/`--surface` 3:1, `--text-faint` 3:1. High-contrast
+themes use 7:1 (and 4.5:1 for the UI pairs). It also checks that each theme declares every token and `color-scheme`, that the
+registry matches the CSS, that each accent's `-fg` is the better of light/dark ink, and that no component contains a literal colour
+or an unknown `var(--token)`.
+
+**Add a theme:** copy a block of the same scheme in `themes.css`, change the colours (keep all tokens), add
+`{ id, label, scheme }` to `THEMES` in `lib/themes.ts`, run `npm run test:renderer` and fix any contrast failure it lists
+(darken/lighten the failing colour; do not relax `CHECKS`). The gallery, quick-open commands and System pickers pick it up.
+
+**Add an accent:** add a `[data-accent='<id>']` block with the six `--a-*` colours (light variant: dark enough for 3:1 on light
+backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff` or `#10121a`, whichever contrasts more;
+`-text` = same hue, adjusted until it reads at 4.5:1), add `{ id, label }` to `ACCENTS`, run the tests.
 
 ## Adding a feature
 
@@ -98,6 +134,6 @@ Add a theme: add a `[data-theme='name']` block (copy an existing one) in `themes
 * Read-only workspaces: edit affordances read `sync.blocked` (`features/sync/syncStore.svelte.ts`); the main process still rejects writes with `read_only`.
 * Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
-* Other `localStorage` keys: `slinger.theme`, `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`.
+* Other `localStorage` keys: `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`.
 * Open request tabs are in memory only and are not restored on restart.
 * Whole-app docs: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md).

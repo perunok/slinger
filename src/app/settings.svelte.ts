@@ -1,7 +1,7 @@
-import { resolveTheme } from '../lib/themes'
+import { loadAppearance, saveAppearance, type Appearance } from '../lib/appearance'
+import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
 
 const K = {
-  theme: 'slinger.theme',
   font: 'slinger.fontSize',
   wrap: 'slinger.editorWrap',
   scriptTimeout: 'slinger.scriptTimeoutMs',
@@ -25,8 +25,29 @@ function write(key: string, value: string) {
   }
 }
 
+const storage = {
+  get: read,
+  set: write,
+  remove: (key: string) => {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      /* ignore */
+    }
+  },
+}
+
 class Settings {
-  theme = $state<string>(read(K.theme) ?? 'system')
+  #appearance = loadAppearance(storage)
+  /** 'system' or a theme id. */
+  theme = $state<string>(this.#appearance.theme)
+  /** An accent id, or 'theme' for the theme's own accent. */
+  accent = $state<string>(this.#appearance.accent)
+  /** Themes 'system' switches between. */
+  systemLight = $state<string>(this.#appearance.systemLight)
+  systemDark = $state<string>(this.#appearance.systemDark)
+  /** Whether the OS currently prefers a light colour scheme (only matters while theme is 'system'). */
+  prefersLight = $state(false)
   fontSize = $state<number>(clampFont(Number(read(K.font)) || 13))
   editorWrap = $state<boolean>(read(K.wrap) === 'true')
   /** Time limit per script (pre-request / test), enforced in the main-process sandbox. */
@@ -35,21 +56,51 @@ class Settings {
   scriptContinueOnError = $state<boolean>(read(K.scriptContinue) === 'true')
   #mq: MediaQueryList | null = null
 
+  /** The palette actually shown (resolves 'system'). */
+  get resolvedTheme(): string {
+    return resolveTheme(this.theme, this.prefersLight, { light: this.systemLight, dark: this.systemDark })
+  }
+
   /** Applies persisted settings to <html> and follows the OS theme while 'system' is selected. */
   init() {
     this.#mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null
-    this.#mq?.addEventListener?.('change', () => this.apply())
+    this.prefersLight = this.#mq?.matches ?? false
+    this.#mq?.addEventListener?.('change', (e) => {
+      this.prefersLight = e.matches
+      this.apply()
+    })
     this.apply()
   }
   apply() {
     const root = document.documentElement
-    root.setAttribute('data-theme', resolveTheme(this.theme, this.#mq?.matches ?? false))
+    root.setAttribute('data-theme', this.resolvedTheme)
+    if (this.accent === THEME_DEFAULT_ACCENT) root.removeAttribute('data-accent')
+    else root.setAttribute('data-accent', this.accent)
     root.style.setProperty('--font-size', `${this.fontSize}px`)
   }
-  setTheme(t: string) {
-    this.theme = t
-    write(K.theme, t)
+  #save() {
+    const a: Appearance = { theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark }
+    saveAppearance(storage, a)
     this.apply()
+  }
+  /** 'system' or a registered theme id; anything else is ignored. */
+  setTheme(t: string) {
+    if (t !== 'system' && !findTheme(t)) return
+    this.theme = t
+    this.#save()
+  }
+  /** An accent id or 'theme'. */
+  setAccent(a: string) {
+    if (!isAccent(a)) return
+    this.accent = a
+    this.#save()
+  }
+  /** Which theme 'system' uses for the given OS scheme; the theme must be of that scheme. */
+  setSystemTheme(scheme: Scheme, id: string) {
+    if (findTheme(id)?.scheme !== scheme) return
+    if (scheme === 'light') this.systemLight = id
+    else this.systemDark = id
+    this.#save()
   }
   setFontSize(n: number) {
     this.fontSize = clampFont(n)

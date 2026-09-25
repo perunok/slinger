@@ -9,7 +9,7 @@
   const shown = $derived(entries.filter((e) => level === 'all' || e.level === level))
   const TONE: Record<ScriptConsoleLevel, string> = {
     log: 'text-muted',
-    info: 'text-accent',
+    info: 'text-accent-text',
     warn: 'text-warning',
     error: 'text-danger',
   }
