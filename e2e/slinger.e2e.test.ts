@@ -771,9 +771,10 @@ describe('import and export', () => {
       const ws = (await window.slinger.listWorkspaces())[0]!
       return (await window.slinger.listCollections(ws.id)).map((c) => c.id)
     })
-    // Renamed copy, so later tests still find exactly one "Col A" in the tree.
+    // Renamed copy with a fresh _postman_id: no re-import match (so a plain import, not "Replace Col A") and later tests
+    // still find exactly one "Col A" in the tree.
     const copy = join(tmp, 'History roundtrip.slinger_collection.json')
-    writeFileSync(copy, JSON.stringify({ ...exported, info: { ...exported.info, name: 'History roundtrip' } }))
+    writeFileSync(copy, JSON.stringify({ ...exported, info: { ...exported.info, name: 'History roundtrip', _postman_id: '9b2f7c1e-5d4a-4e3b-8a6f-0c1d2e3f4a5b' } }))
     await page.getByRole('button', { name: 'Import Postman collection' }).click()
     await page.getByLabel('Postman file').setInputFiles(copy)
     await page.getByTestId('import-history').waitFor()
