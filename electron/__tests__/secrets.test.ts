@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { IpcError } from '../../shared/types'
-import { KeychainSecretStore, MemorySecretStore } from '../services/secrets'
+import { chooseSecretStore, KeychainSecretStore, MemorySecretStore, type SecretStore } from '../services/secrets'
 import { makeEnv, scaffold, type TestEnv } from './helpers'
 
 let env: TestEnv
@@ -177,5 +177,45 @@ describe('KeychainSecretStore', () => {
 
   it('MemorySecretStore treats deleting a missing key as a no-op', () => {
     expect(() => new MemorySecretStore().delete('nope')).not.toThrow()
+  })
+})
+
+describe('insecure test keychain (SLINGER_INSECURE_TEST_KEYCHAIN)', () => {
+  const keychainStore: SecretStore = { get: () => 'from-keychain', set: () => {}, delete: () => {} }
+  const choose = (env: Record<string, string | undefined>, isPackaged: boolean) => {
+    const warnings: string[] = []
+    let keychainCalls = 0
+    const store = chooseSecretStore({
+      env,
+      isPackaged,
+      keychain: () => {
+        keychainCalls++
+        return keychainStore
+      },
+      warn: (m) => warnings.push(m),
+    })
+    return { store, warnings, keychainCalls }
+  }
+
+  it('uses an in-memory store in an unpackaged build when set to 1, with a loud warning', () => {
+    const { store, warnings, keychainCalls } = choose({ SLINGER_INSECURE_TEST_KEYCHAIN: '1' }, false)
+    expect(store).toBeInstanceOf(MemorySecretStore)
+    expect(keychainCalls).toBe(0)
+    expect(warnings.join('\n')).toMatch(/IN MEMORY/)
+  })
+
+  it('is ignored by a packaged app: the OS keychain is used', () => {
+    const { store, warnings, keychainCalls } = choose({ SLINGER_INSECURE_TEST_KEYCHAIN: '1' }, true)
+    expect(store).toBe(keychainStore)
+    expect(keychainCalls).toBe(1)
+    expect(warnings.join('\n')).toMatch(/ignored in a packaged app/)
+  })
+
+  it('uses the OS keychain when unset or set to anything but 1', () => {
+    for (const value of [undefined, '', '0', 'true']) {
+      const { store, warnings } = choose({ SLINGER_INSECURE_TEST_KEYCHAIN: value }, false)
+      expect(store).toBe(keychainStore)
+      expect(warnings).toEqual([])
+    }
   })
 })

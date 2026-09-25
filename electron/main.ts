@@ -29,7 +29,7 @@ import {
 } from './lib/windowState'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
-import { KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
+import { chooseSecretStore, KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
 import { WorkerExecutor } from './scripts/executor'
 
 const APP_SCHEME = 'app'
@@ -372,7 +372,7 @@ if (!app.requestSingleInstanceLock()) {
     db = openDatabase(join(app.getPath('userData'), 'slinger.db'))
     core = createCore({
       db,
-      secrets: loadKeychain(),
+      secrets: chooseSecretStore({ env: process.env, isPackaged: app.isPackaged, keychain: loadKeychain, warn: (m) => console.warn(m) }),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
       scriptExecutor: scriptExecutor(),
       sync: {
