@@ -2,7 +2,7 @@
  * Postman's built-in script libraries (require('crypto-js'), `_`, `CryptoJS`, xml2Json, ...), with Postman-style
  * snippets. Results that can be computed on the host (hashes, HMACs, ciphertexts) are compared with Node's crypto.
  */
-import { createCipheriv, createHash, createHmac } from 'node:crypto'
+import { createCipheriv, createHash, createHmac, pbkdf2Sync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_LIMITS } from '../../scripts/job'
 import { RESPONSE, job, run, script } from './harness'
@@ -46,7 +46,7 @@ describe('crypto-js', () => {
     expect(r.request?.headers).toContainEqual({ key: 'X-Signature', value: expected })
   })
 
-  it('hashes and encodings match Node (MD5, SHA1, SHA256, SHA512, HmacSHA1/512, Hex, Base64, Utf8)', async () => {
+  it('hashes, PBKDF2 and encodings match Node (MD5, SHA1, SHA256, SHA512, HmacSHA1/512, Hex, Base64, Utf8)', async () => {
     const v = await values(`
       const C = CryptoJS // the global, without require
       pm.variables.set('md5', C.MD5('héllo').toString())
@@ -59,6 +59,10 @@ describe('crypto-js', () => {
       pm.variables.set('utf8', C.enc.Base64.parse('aMOpbGxvIHfDtnJsZA==').toString(C.enc.Utf8))
       pm.variables.set('hex', C.enc.Hex.stringify(C.enc.Utf8.parse('ab')))
       pm.variables.set('same', require('crypto-js') === CryptoJS)
+      pm.variables.set('pbkdf2Default', C.PBKDF2('pw', 'salt').toString())
+      pm.variables.set('pbkdf2', C.PBKDF2('pw', 'salt', { keySize: 8, iterations: 100, hasher: C.algo.SHA256 }).toString())
+      pm.variables.set('sha3', C.SHA3('a').toString().length)
+      pm.variables.set('des', C.TripleDES.decrypt(C.TripleDES.encrypt('msg', 'k').toString(), 'k').toString(C.enc.Utf8))
     `)
     const h = (alg: string) => createHash(alg).update('héllo').digest('hex')
     expect(v).toMatchObject({
@@ -72,6 +76,11 @@ describe('crypto-js', () => {
       utf8: 'héllo wörld',
       hex: '6162',
       same: true,
+      // Postman's crypto-js 3.x defaults (SHA1, 1 iteration, 128-bit key), not 4.2's 250000 x SHA256.
+      pbkdf2Default: pbkdf2Sync('pw', 'salt', 1, 16, 'sha1').toString('hex'),
+      pbkdf2: pbkdf2Sync('pw', 'salt', 100, 32, 'sha256').toString('hex'),
+      sha3: 128,
+      des: 'msg',
     })
   })
 

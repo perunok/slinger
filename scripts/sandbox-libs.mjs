@@ -17,7 +17,12 @@ const shim = (name) => join(root, 'electron/scripts/libs', name)
 
 /** require() name -> entry source (CommonJS) and build options. Versions are pinned in package.json. */
 export const SANDBOX_LIBRARIES = {
-  'crypto-js': { entry: "module.exports = require('crypto-js')" },
+  // crypto-js 4.2 changed PBKDF2's defaults to SHA256 with 250000 iterations (about a minute in QuickJS); Postman ships
+  // crypto-js 3.x, whose defaults are SHA1 and 1 iteration, so PBKDF2 without options gives Postman's result.
+  'crypto-js': {
+    entry:
+      "var C = require('crypto-js'); C.algo.PBKDF2.cfg = C.algo.PBKDF2.cfg.extend({ hasher: C.algo.SHA1, iterations: 1 }); module.exports = C",
+  },
   lodash: { entry: "module.exports = require('lodash')" },
   moment: { entry: "module.exports = require('moment')" },
   // Postman's uuid module is callable (v4) and has the named generators (uuid.v4(), uuid.v1(), ...).
