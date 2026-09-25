@@ -34,7 +34,7 @@
     test: 'Runs after the response arrives. Use pm.test() and pm.expect(); results appear in the response Tests tab.',
   } as const
   const PLACEHOLDER = {
-    prerequest: "// e.g.\npm.request.headers.upsert({ key: 'X-Request-Id', value: pm.variables.replaceIn('{{$guid}}') })",
+    prerequest: "// e.g.\npm.variables.set('requestId', pm.variables.replaceIn('{{$guid}}'))",
     test: "// e.g.\npm.test('Status code is 200', () => {\n  pm.response.to.have.status(200)\n})",
   } as const
 </script>

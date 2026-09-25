@@ -64,8 +64,8 @@ renderer installs an in-memory mock backend (`src/dev/`), flagged "Mock backend"
 `better-sqlite3` is compiled for one ABI at a time; `scripts/ensure-native.mjs` switches automatically before `npm test`,
 `electron:dev` and `electron:build`.
 
-At the time of writing, `npm run typecheck` reports 0 errors and `npm test` passes 198 main-process tests
-(10 files) and 472 renderer tests (37 files). The e2e suite was not run for this documentation.
+At the time of writing, `npm run typecheck` reports 0 errors and `npm test` passes 469 main-process tests
+(26 files) and 710 renderer tests (55 files); the main e2e spec (`e2e/slinger.e2e.test.ts`) passes 38 steps.
 
 ## Where your data lives
 
