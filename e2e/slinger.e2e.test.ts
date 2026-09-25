@@ -843,7 +843,8 @@ describe('markdown docs', () => {
     await page.getByRole('tab', { name: 'Docs', exact: true }).click()
     await page.getByTestId('markdown-view').getByRole('heading', { name: /Users endpoint/ }).waitFor()
     await capture(ctx.app, join(SHOTS, 'markdown-docs.png'))
-    expect(ctx.problems.filter((p) => /Content Security Policy|img-src/i.test(p))).toEqual([])
+    // The HTML-preview step earlier in the suite deliberately embeds a remote beacon image; ignore only that.
+    expect(ctx.problems.filter((p) => /Content Security Policy|img-src/i.test(p) && !/beacon\.png/.test(p))).toEqual([])
   })
 })
 
@@ -856,14 +857,14 @@ describe('themes', () => {
     await page.getByRole('button', { name: 'Settings' }).click()
     const dialog = page.getByRole('dialog', { name: /Settings/ })
     for (const id of themes) {
-      await dialog.locator(`input[name=theme][value=${id}]`).check({ force: true })
+      await dialog.locator(`[data-theme-option=${id}]`).click()
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(id)
       await dialog.getByRole('button', { name: 'Done' }).click()
       await dialog.waitFor({ state: 'hidden' })
       await capture(ctx.app, join(SHOTS, `theme-${id}.png`))
       await page.getByRole('button', { name: 'Settings' }).click()
     }
-    await dialog.locator('input[name=theme][value=midnight]').check({ force: true })
+    await dialog.locator('[data-theme-option=midnight]').click()
     await dialog.getByRole('button', { name: 'Done' }).click()
   })
 })

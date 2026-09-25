@@ -28,7 +28,7 @@
   const darks = THEMES.filter((t) => t.scheme === 'dark')
 
   const card = (selected: boolean) =>
-    `flex cursor-pointer flex-col gap-1.5 rounded-md border p-1.5 text-sm transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus ${
+    `relative flex cursor-pointer flex-col gap-1.5 rounded-md border p-1.5 text-sm transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus ${
       selected ? 'border-accent bg-accent-soft' : 'border-border hover:bg-hover'
     }`
 </script>
