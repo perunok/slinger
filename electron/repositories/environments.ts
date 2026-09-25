@@ -71,9 +71,26 @@ export class EnvironmentRepository {
     return toEnvironment(requireEnvironment(this.db, id))
   }
 
+  /**
+   * Environment names are unique per workspace among live environments (trimmed, case-insensitive).
+   * Enforced here rather than by a SQL index: sync may legitimately apply a same-named environment
+   * from another device and must never fail.
+   */
+  private assertNameFree(workspaceId: string, name: string, exceptId?: string): void {
+    const rows = this.db
+      .prepare('SELECT id, name FROM environments WHERE workspace_id = ? AND deleted = 0')
+      .all(workspaceId) as Array<{ id: string; name: string }>
+    const wanted = name.trim().toLowerCase()
+    const clash = rows.find((r) => r.id !== exceptId && r.name.trim().toLowerCase() === wanted)
+    if (clash) {
+      throw invalidInput(`An environment named "${clash.name.trim()}" already exists.`, { reason: 'duplicate_name', name: clash.name })
+    }
+  }
+
   create(workspaceId: string, name: string): Environment {
     const ws = requireWorkspace(this.db, workspaceId)
     const clean = cleanName(name, 'environment name')
+    this.assertNameFree(ws.id, clean)
     const id = newId()
     const now = nowSeconds()
     this.db
@@ -91,10 +108,12 @@ export class EnvironmentRepository {
   }
 
   rename(id: string, name: string): Environment {
-    requireEnvironment(this.db, id)
+    const env = requireEnvironment(this.db, id)
+    const clean = cleanName(name, 'environment name')
+    this.assertNameFree(env.workspace_id, clean, env.id)
     this.db
       .prepare('UPDATE environments SET name = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0')
-      .run(cleanName(name, 'environment name'), nowSeconds(), id.toLowerCase())
+      .run(clean, nowSeconds(), env.id)
     return this.get(id)
   }
 
