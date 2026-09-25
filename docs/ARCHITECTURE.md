@@ -233,6 +233,17 @@ texts. "Publish a copy" is done in the renderer (`sync/duplicateWorkspace.ts`) w
 (`src/dev/mock/sync.ts`) simulates the cloud server and the engine (pull/merge/push, every conflict kind, roles, offline, expired
 sign-in, old server) and is scriptable through `window.__slingerMock.cloud`.
 
+**Saved examples** (`src/lib/examples.ts`, `src/features/examples`). Examples are stored inside the request document as
+`responses`, which is Postman v2.1's item `response[]` verbatim, so the database, IPC, sync, collection versions and Postman
+import/export need nothing new. Postman examples usually have no `id`, and adding one would change untouched data, so the
+renderer addresses an example by index plus a JSON snapshot (`ExampleLocator`, re-found after other examples moved); examples
+Slinger creates get a UUID `id`. Editing is byte-faithful: `serializeExample` starts from the stored object and replaces only the
+fields whose parsed value changed. An example tab is a `RequestTab` with `example`/`exampleDraft` set; its Save rewrites that one
+element of `responses` on top of the latest stored request (`updateRequest` with its `expectedVersion`, one retry on a stale
+cache) and is a conflict only when that example changed or vanished. Tree/menu mutations (`examples/actions.ts`) go through the
+same single `updateRequest`, and open request tabs of the parent are rebased so their next Save neither conflicts nor restores the
+old list. Binary bodies saved from a live response are base64 with `_slinger_body_encoding: "base64"`.
+
 **Theming tokens.** `src/styles/themes.css` defines each palette as CSS variables on `[data-theme='<id>']`; `<html data-theme>`
 selects one (`light`, `dark`, `midnight`, `solarized`, `contrast`; `system` resolves to light or dark from
 `prefers-color-scheme`). `public/theme-init.js` applies the stored theme before first paint. Components use tokens only (Tailwind

@@ -82,6 +82,37 @@ After Send the pane shows status, time and size. Views: **Pretty** (formatted, f
 (parsed from `Set-Cookie`). Toolbar: search in response, toggle word wrap, copy body, **Save response to file** (to the export
 folder). Non-2xx responses are shown normally; network errors, timeouts and cancellations appear as inline errors.
 
+## Saved examples
+
+A saved example is a request/response pair kept with a request, like Postman's "examples": documentation of what an endpoint
+returns, a fixture to compare against, or a response you want to keep.
+
+- **In the tree:** a request with examples shows a count badge and a chevron. Click the chevron (or press **→** / **←** on the
+  row) to show or hide its examples; clicking the request itself still opens the request. Each example row shows the saved status
+  code. Right-click an example for **Open**, **Duplicate**, **Rename** (**F2**) and **Delete** (**Del**, asks first). Right-click a
+  request for **Add example** (an empty 200 example based on the stored request). Deleting a request deletes its examples and the
+  confirmation says how many.
+- **Example tab:** opening an example shows its saved request on top (method, URL, params, authorization, headers, body) and its
+  saved response below: status code and text, body language, and the normal response viewer (Pretty/Raw/Preview/Headers/Cookies),
+  plus **Edit body** and **Edit headers**. Everything is editable; the tab shows the unsaved dot and **Save** (**Ctrl+S**) writes
+  the example back into its request. Examples imported without a saved request of their own show the request they belong to
+  (marked "request from parent"); editing that part stores a copy in the example.
+- **Saving** only changes that one example. Edits made meanwhile to the request or to its other examples (in another tab, or
+  pulled by sync) are kept. If this example itself was changed or deleted elsewhere, Save asks: **Reload** (discard your edits),
+  **Overwrite** (write yours, re-adding a deleted example) or **Cancel**. Closing a tab with unsaved edits asks first, as for
+  requests.
+- **Try** (**Ctrl+Enter**) sends the example's request from a new, unsaved request tab. The example is not changed.
+- **Save as example:** after a Send, the response toolbar has **Save as example** (default name: status and reason, e.g.
+  `201 Created`). It stores the response (status, headers, body, time) with the request as it is in the tab, variables left as
+  `{{name}}`. Unsaved edits to the request itself are not saved by this; save the request first if you need to (a new, never
+  saved tab cannot keep examples). Binary bodies (images, PDFs, ...) are stored as base64 with a Slinger marker
+  (`_slinger_body_encoding`) and shown as the original bytes again; Postman shows the base64 text. A binary body above about
+  3.5 MB (5 million base64 characters) keeps a short note instead of the bytes; a text body above 5 million characters is
+  refused.
+- **Where they live:** examples are part of the request, so collection versions, cloud sync and Postman export carry them. A
+  request with its examples can hold at most 10 MB locally; cloud sync accepts about 900 KB per request, so keep large bodies out
+  of synced examples. Read-only (viewer) workspaces can open examples but not change them.
+
 ## Collection runner
 
 Right-click a collection or folder and choose **Run collection...** / **Run folder...**. Pick which requests to run, set the delay
@@ -117,9 +148,10 @@ Right-click a collection and choose **Versions...**. A version is an immutable s
   Postman **collection (v2.x)** or **environment** `.json`. The preview shows what will be imported. Collection-level variables
   can optionally become a new environment; collection-level scripts and tests are not imported (request scripts are kept in the
   stored document but never run). Postman "globals" files are rejected; export an environment instead. Disabled environment
-  variables are skipped.
+  variables are skipped. Saved examples (`response[]`) are imported with their requests; the preview shows how many.
 - **Export:** right-click a collection, **Export as Postman JSON...**, then **Save to file** (optionally **Choose folder...**
-  first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory).
+  first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
+  exported in each item's `response` list; examples you did not edit are written back exactly as they were imported.
 
 ## Cloud account and sync
 
