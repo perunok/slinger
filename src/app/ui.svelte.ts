@@ -33,5 +33,6 @@ class UiState {
   }
   workspacesOpen = $state(false)
   shortcutsOpen = $state(false)
+  aboutOpen = $state(false)
 }
 export const ui = new UiState()

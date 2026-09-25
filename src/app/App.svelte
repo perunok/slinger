@@ -4,6 +4,7 @@
   import ToastHost from '../components/ui/ToastHost.svelte'
   import Spinner from '../components/ui/Spinner.svelte'
   import Button from '../components/ui/Button.svelte'
+  import AboutDialog from '../features/about/AboutDialog.svelte'
   import CloudDialog from '../features/cloud/CloudDialog.svelte'
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
@@ -94,6 +95,7 @@
 {#if ui.workspacesOpen}<WorkspacesDialog />{/if}
 {#if ui.shortcutsOpen}<ShortcutsDialog />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
+{#if ui.aboutOpen}<AboutDialog />{/if}
 <CloudDialog />
 <SyncHost />
 <EnvironmentEditor />

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Ctrl+K: jump to any saved request by name, URL or method. Also a small command palette: commands (switch theme /
-   * accent / loading animation, export a collection or an environment) show up when the query matches them, and a
+   * accent / loading animation, export a collection or an environment, About Slinger) show up when the query matches them, and a
    * leading ">" lists only commands.
    */
   import { settings } from '../../app/settings.svelte'
@@ -23,7 +23,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload'
+    icon?: 'download' | 'upload' | 'help'
     current: () => boolean
     run: () => void
   }
@@ -54,6 +54,15 @@
       current: () => settings.accent === a.id,
       run: () => settings.setAccent(a.id),
     })),
+    {
+      key: 'about',
+      label: 'About Slinger',
+      hint: 'version, credits, manifesto',
+      swatch: {},
+      icon: 'help',
+      current: () => false,
+      run: () => (ui.aboutOpen = true),
+    },
     ...LOADER_OPTIONS.map((o) => ({
       key: `loader:${o.id}`,
       label: `Loading animation: ${o.label}`,
