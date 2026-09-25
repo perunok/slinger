@@ -22,6 +22,7 @@ beforeEach(() => {
   localStorage.clear()
   settings.setTheme('system')
   settings.setAccent('theme')
+  settings.setLoader('random')
   settings.setSystemTheme('light', 'light')
   settings.setSystemTheme('dark', 'dark')
   settings.prefersLight = false
@@ -105,5 +106,25 @@ describe('accent picker', () => {
     await fireEvent.click(within(accents).getByRole('radio', { name: 'Theme default' }))
     expect(html.hasAttribute('data-accent')).toBe(false)
     expect(stored().accent).toBe('theme')
+  })
+})
+
+describe('loading animation', () => {
+  it('offers Random (default), the three characters and the classic spinner, and persists the choice', async () => {
+    setup()
+    const group = screen.getByRole('radiogroup', { name: 'Loading animation' })
+    expect(within(group).getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['random', 'runner', 'shuttle', 'pebble', 'classic'])
+    expect(within(group).getByRole('radio', { name: 'Random' })).toBeChecked()
+    // previews: Random shows all three standing still; the selected character runs
+    expect(group.querySelectorAll('[data-loader-option="random"] [data-testid="loading-character"]')).toHaveLength(3)
+    expect(group.querySelector('[data-loader-option="runner"] [data-testid="loading-character"]')).toHaveAttribute('data-motion', 'still')
+
+    await fireEvent.click(within(group).getByRole('radio', { name: 'Runner' }))
+    expect(settings.loader).toBe('runner')
+    expect(stored().loader).toBe('runner')
+    expect(group.querySelector('[data-loader-option="runner"] [data-testid="loading-character"]')).toHaveAttribute('data-motion', 'full')
+
+    await fireEvent.click(within(group).getByRole('radio', { name: 'Classic spinner' }))
+    expect(stored()).toMatchObject({ theme: 'system', loader: 'classic' })
   })
 })

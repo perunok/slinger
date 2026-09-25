@@ -4,12 +4,12 @@
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
   import NameDialog from '../../components/ui/NameDialog.svelte'
-  import Spinner from '../../components/ui/Spinner.svelte'
   import { defaultExampleName, openExample, saveResponseAsExample } from '../examples/actions'
   import type { RequestTab } from '../requests/tabs.svelte'
   import { tabsStore } from '../requests/tabs.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import ResponseViewer from './ResponseViewer.svelte'
+  import SendingStatus from './SendingStatus.svelte'
   import ConsoleView from '../scripts/ConsoleView.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
@@ -31,7 +31,10 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col bg-surface" aria-label="Response" role="region">
+<div class="relative flex h-full min-h-0 flex-col bg-surface" aria-label="Response" role="region">
+  {#key tab}
+    <SendingStatus sending={tab.sending} outcome={tab.lastOutcome} startedAt={tab.sendStartedAt} oncancel={() => tabsStore.cancel(tab)} />
+  {/key}
   {#if tab.error}
     <div role="alert" class="m-3 rounded border border-danger bg-danger-soft p-3 text-sm" data-testid="send-error">
       <p class="font-medium text-danger">The request was not sent</p>
@@ -53,10 +56,7 @@
     </div>
   {/if}
   {#if tab.sending}
-    <div class="flex items-center gap-3 p-4 text-sm text-muted" role="status">
-      <Spinner /> Sending request…
-      <Button size="sm" variant="danger" onclick={() => tabsStore.cancel(tab)}>Cancel</Button>
-    </div>
+    <!-- SendingStatus above -->
   {:else if tab.response}
     {#if tab.warnings.length}
       <ul class="border-b border-border bg-warning-soft px-3 py-1 text-xs text-warning">

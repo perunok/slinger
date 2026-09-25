@@ -6,6 +6,7 @@
   import Dialog from '../../components/ui/Dialog.svelte'
   import { api } from '../../lib/ipc'
   import AccentPicker from './AccentPicker.svelte'
+  import LoaderPicker from './LoaderPicker.svelte'
   import ThemeGallery from './ThemeGallery.svelte'
 
   let version = $state<string | null>(null)
@@ -23,6 +24,11 @@
   <section class="mb-5">
     <h3 class="mb-2 text-sm font-semibold" id="accent-heading">Accent colour</h3>
     <AccentPicker />
+  </section>
+
+  <section class="mb-5">
+    <h3 class="mb-2 text-sm font-semibold" id="loader-heading">Loading animation</h3>
+    <LoaderPicker />
   </section>
 
   <section class="mb-5 grid gap-1">

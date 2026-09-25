@@ -1,10 +1,11 @@
 /**
- * Persisted appearance settings (theme, accent, and which themes 'System' uses).
+ * Persisted appearance settings (theme, accent, which themes 'System' uses, and the sending animation).
  *
  * Stored as JSON under `slinger.appearance`. Versions up to 0.2.0 stored only the theme choice as a plain string under
  * `slinger.theme`; that value is migrated once (and the old key removed) so nobody loses their theme.
  * public/theme-init.js reads the same key before first paint, so keep the two in step.
  */
+import { DEFAULT_LOADER, isLoaderSetting, type LoaderSetting } from './loader'
 import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, THEME_DEFAULT_ACCENT, findTheme, isAccent } from './themes'
 
 export const APPEARANCE_KEY = 'slinger.appearance'
@@ -17,6 +18,8 @@ export interface Appearance {
   accent: string
   systemLight: string
   systemDark: string
+  /** The "sending request" animation; missing in settings saved before it existed (= random). */
+  loader: LoaderSetting
 }
 
 export interface KeyValueStore {
@@ -30,6 +33,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   accent: THEME_DEFAULT_ACCENT,
   systemLight: DEFAULT_LIGHT_THEME,
   systemDark: DEFAULT_DARK_THEME,
+  loader: DEFAULT_LOADER,
 }
 
 /** Drops anything unknown (e.g. a theme from a newer version) back to its default. */
@@ -44,6 +48,7 @@ export function sanitizeAppearance(raw: Partial<Record<keyof Appearance, unknown
     accent: isAccent(accent) ? accent : DEFAULT_APPEARANCE.accent,
     systemLight: findTheme(light)?.scheme === 'light' ? light : DEFAULT_LIGHT_THEME,
     systemDark: findTheme(dark)?.scheme === 'dark' ? dark : DEFAULT_DARK_THEME,
+    loader: isLoaderSetting(raw.loader) ? raw.loader : DEFAULT_LOADER,
   }
 }
 

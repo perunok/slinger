@@ -1,14 +1,15 @@
 <script lang="ts">
   /**
    * Ctrl+K: jump to any saved request by name, URL or method. Also a small command palette: commands (switch theme /
-   * accent, export a collection or an environment) show up when the query matches them, and a leading ">" lists
-   * only commands.
+   * accent / loading animation, export a collection or an environment) show up when the query matches them, and a
+   * leading ">" lists only commands.
    */
   import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
   import { ui } from '../../app/ui.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
+  import { LOADER_OPTIONS } from '../../lib/loader'
   import { ACCENTS, THEMES, THEME_DEFAULT_ACCENT } from '../../lib/themes'
   import type { ApiRequest } from '../../../shared/types'
   import { methodColor } from './method'
@@ -51,6 +52,14 @@
       swatch: { accent: a.id },
       current: () => settings.accent === a.id,
       run: () => settings.setAccent(a.id),
+    })),
+    ...LOADER_OPTIONS.map((o) => ({
+      key: `loader:${o.id}`,
+      label: `Loading animation: ${o.label}`,
+      hint: o.hint,
+      swatch: {},
+      current: () => settings.loader === o.id,
+      run: () => settings.setLoader(o.id),
     })),
   ]
 

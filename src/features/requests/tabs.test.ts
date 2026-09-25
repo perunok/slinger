@@ -142,6 +142,17 @@ describe('request tabs', () => {
     expect(body.headers.Authorization).toBe('Bearer sk_live_demo_123')
     expect(tab.error).toBeNull()
     expect(tab.sending).toBe(false)
+    expect(tab.lastOutcome).toBe('success') // the loading animation's finish
+    expect(tab.sendStartedAt).toBeGreaterThan(0)
+  })
+
+  it('a 4xx / 5xx response ends the loading animation as an error', async () => {
+    const tab = new RequestTab()
+    tab.draft.url = 'https://mock.slinger.local/500'
+    tabsStore.tabs.push(tab)
+    const out = await tabsStore.send(tab)
+    expect(out?.ok).toBe(true)
+    expect(tab.lastOutcome).toBe('error')
   })
 
   it('refuses to send with unresolved variables and lists them', async () => {
@@ -151,6 +162,7 @@ describe('request tabs', () => {
     const out = await tabsStore.send(tab)
     expect(out).toMatchObject({ ok: false, kind: 'unresolved', unresolved: ['missingA', 'missingB'] })
     expect(tab.error?.unresolved).toEqual(['missingA', 'missingB'])
+    expect(tab.lastOutcome).toBe('error')
     expect(backend.calls.some((c) => c.method === 'executeHttpRequest')).toBe(false)
   })
 
@@ -165,5 +177,6 @@ describe('request tabs', () => {
     expect(out).toMatchObject({ ok: false, kind: 'cancelled' })
     expect(backend.calls.some((c) => c.method === 'cancelHttpRequest')).toBe(true)
     expect(tab.error?.message).toMatch(/cancel/i)
+    expect(tab.lastOutcome).toBe('cancelled')
   })
 })

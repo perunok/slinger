@@ -14,7 +14,7 @@ function memory(init: Record<string, string> = {}): KeyValueStore & { data: Reco
 describe('appearance persistence', () => {
   it('defaults to System with the theme accent', () => {
     const s = memory()
-    expect(loadAppearance(s)).toEqual({ theme: 'system', accent: 'theme', systemLight: 'light', systemDark: 'dark' })
+    expect(loadAppearance(s)).toEqual({ theme: 'system', accent: 'theme', systemLight: 'light', systemDark: 'dark', loader: 'random' })
     expect(s.data).toEqual({}) // nothing to migrate, nothing written
   })
 
@@ -33,13 +33,26 @@ describe('appearance persistence', () => {
 
   it('round-trips every field', () => {
     const s = memory()
-    saveAppearance(s, { theme: 'dracula', accent: 'teal', systemLight: 'paper', systemDark: 'nord' })
-    expect(loadAppearance(s)).toEqual({ theme: 'dracula', accent: 'teal', systemLight: 'paper', systemDark: 'nord' })
+    saveAppearance(s, { theme: 'dracula', accent: 'teal', systemLight: 'paper', systemDark: 'nord', loader: 'shuttle' })
+    expect(loadAppearance(s)).toEqual({ theme: 'dracula', accent: 'teal', systemLight: 'paper', systemDark: 'nord', loader: 'shuttle' })
   })
 
   it('sanitizes unknown ids and wrong-scheme system themes', () => {
     const s = memory({ [APPEARANCE_KEY]: JSON.stringify({ theme: 'future-theme', accent: 'chartreuse', systemLight: 'dracula', systemDark: 42 }) })
-    expect(loadAppearance(s)).toEqual({ theme: 'system', accent: 'theme', systemLight: 'light', systemDark: 'dark' })
+    expect(loadAppearance(s)).toEqual({ theme: 'system', accent: 'theme', systemLight: 'light', systemDark: 'dark', loader: 'random' })
+  })
+
+  it('settings saved before the loading animation existed get Random; unknown values too', () => {
+    const old = memory({ [APPEARANCE_KEY]: JSON.stringify({ v: 1, theme: 'nord', accent: 'teal', systemLight: 'paper', systemDark: 'dracula' }) })
+    expect(loadAppearance(old)).toEqual({ theme: 'nord', accent: 'teal', systemLight: 'paper', systemDark: 'dracula', loader: 'random' })
+    for (const bad of ['mario', 42, null]) {
+      expect(loadAppearance(memory({ [APPEARANCE_KEY]: JSON.stringify({ theme: 'nord', loader: bad }) })).loader).toBe('random')
+    }
+    for (const ok of ['runner', 'shuttle', 'pebble', 'classic', 'random'] as const) {
+      const s = memory()
+      saveAppearance(s, { theme: 'nord', accent: 'theme', systemLight: 'light', systemDark: 'dark', loader: ok })
+      expect(loadAppearance(s).loader).toBe(ok)
+    }
   })
 
   it('prefers the new key over a stale legacy key, and survives corrupt JSON', () => {
