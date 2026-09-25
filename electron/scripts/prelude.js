@@ -1087,6 +1087,7 @@
   lazyGlobal('_', 'lodash')
   lazyGlobal('CryptoJS', 'crypto-js')
   lazyGlobal('tv4', 'tv4')
+  lazyGlobal('cheerio', 'cheerio')
   G.xml2Json = xml2Json
 
   // Legacy (pre-pm) Postman sandbox API.

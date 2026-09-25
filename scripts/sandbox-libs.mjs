@@ -27,7 +27,9 @@ export const SANDBOX_LIBRARIES = {
   ajv: { entry: "module.exports = require('ajv')" },
   xml2js: { entry: "module.exports = require('xml2js')" },
   'csv-parse/lib/sync': { entry: "module.exports = require('csv-parse/lib/sync')", buffer: true },
+  cheerio: { entry: "module.exports = require('cheerio')", buffer: true },
 }
+// Not bundled: postman-collection (about 1.2 MB minified, mostly iconv-lite and faker; ~100 ms to load in QuickJS).
 
 async function buildOne(name, spec) {
   const out = await build({
