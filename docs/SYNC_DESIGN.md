@@ -1,6 +1,7 @@
 # Collection sync: Slinger desktop <-> Slinger cloud
 
-Status: design, not implemented. Written against desktop `ts-rewrite` (migrations 0001-0003) and `slinger-admin/server` `ts-rewrite`
+Status: implemented (desktop `ts-rewrite`, server `slinger-admin` 4a3b2c9, protocol v2). Where the code differs from this text,
+section 20 "Implementation notes" is authoritative. Originally written against desktop `ts-rewrite` (migrations 0001-0003) and `slinger-admin/server` `ts-rewrite`
 (sync routes in `server/src/routes/sync.ts`, `services/syncApply.ts`, `services/syncLog.ts`, `services/content.ts`).
 Everything below is a decision, not a menu; open decisions where a default was chosen are collected in section 19.
 
@@ -807,3 +808,66 @@ Works entirely against the mock until WP-B integration lands.
 12. **One account per API base URL** at a time (tokens keyed by base URL, as today).
 13. **Delete-vs-edit UX volume:** local cascade deletes can create many `local_deleted` conflicts if another device edited many children. UI groups by ancestor path; a bulk "keep all local" can be added without contract changes (`resolveSyncConflict` in a loop).
 14. **Viewer role local guard is enforced at the SQLite layer.** Anything writing synced tables for a read-only workspace without `applying = 1` will throw; new code paths must expect `read_only`.
+
+---------------------------------------------------------------------------------------------------------------------------
+
+## 20. Implementation notes (where the code differs from the text above)
+
+Layout and names
+- Main-process code lives in `electron/sync/` (engine, outbox, apply, merge, mapping, conflicts, conflictStore, linking, detach,
+  rows, scheduler, store, types; `index.ts` = `SyncService`) and `electron/cloud/` (`http.ts`, `auth.ts`, `api.ts`, `errors.ts`),
+  not `electron/services/sync/` + `cloudHttp.ts`/`cloudAuth.ts` (section 12).
+- Integration/convergence specs are `electron/__tests__/sync-it/*.it.ts` (not `*.it.test.ts`); `SLINGER_SYNC_IT_SERVER_DIR` enables
+  them. `SYNC_IT_SEEDS`/`SYNC_IT_SEED_FROM` pick fuzzer seeds; the real server allows 30 device sign-ins per 5 min per IP (2 per seed),
+  so explore in batches of at most 12 seeds per run. The fake-server fuzzer takes `SEEDS`/`SEED_FROM`/`SEED`.
+- `SLINGER_KEYCHAIN_NAMESPACE` (main process) suffixes the keychain service name (`Slinger.<ns>`); the e2e harness sets one per
+  profile so two app instances on one machine behave like two devices (no shared tokens or secret values).
+
+Push rejections (protocol v2, replaces the per-`code` list in 7.1). The engine branches on `reason`; a missing or unknown reason is
+derived from the legacy `code` (`sync_conflict` -> version_mismatch, `not_found` -> not_found, `invalid_request` -> invalid,
+`conflict` -> duplicate_key for variables/versions else id_in_use, anything else -> internal_error). `outbox.rejectionReason()`.
+- `version_mismatch` with `current_payload`: merged like a pulled upsert at `current_version` (`apply.applyRemoteState`), and the
+  cycle pushes again WITHOUT pulling first (7.4 `pullFirst = false` for that round). Falls back to pull + retry when the entity has no
+  agreed base (a create: the server copy may be our own unacknowledged create, which only the log entry's operation id identifies),
+  when another op of ours for it is still unacknowledged, when `current_version` is not newer than what we hold (deleted and
+  re-created remotely), or when the payload references a parent not pulled yet. The log entry pulled later is a version-compared
+  duplicate. A rejected delete meets the remote edit here and becomes `local_deleted` at once.
+- `not_found`: a delete counts as done. An upsert (the row was deleted on the server: legacy code `sync_conflict`; or a parent /
+  target collection is missing) is retried after a pull, whose tombstone opens `remote_deleted` as usual. The tombstone is NOT
+  applied from the rejection: delete log entries carry no version that orders them across a re-create, so the real entry, pulled
+  later, would hit the entity again after the user chose `keep_local`.
+- `invalid` / `too_large`: quarantined (`rejected`) with the server message; re-armed by the next local edit. Exception: the server
+  reports a folder that does not exist (deleted meanwhile) as `invalid` ("folder_id / parent_folder_id does not exist in this
+  collection"), so an upsert of a request/folder that references a folder is retried after a pull first (it becomes
+  `remote_deleted` there) and only quarantined if the same rejection comes back after a pull that brought nothing new.
+- `id_in_use`: quarantined ("already used by another cloud workspace").
+- `duplicate_key`: when `conflicting_resource_id` is a local entity of ours that gives the key up (deleted / re-keyed / re-labelled)
+  either later in the same push (already accepted in that response; upserts precede deletes) or in a pending unfrozen change, the op
+  is simply pushed again (no pull). Otherwise variables are renamed `<key>_conflict` (auto-resolved note) and versions are hidden as
+  `immutable_clash`.
+- `immutable` (same version id, different content): `immutable_clash` carrying the cloud copy (`remote_json`, `current_version`);
+  `keep_remote` replaces the local copy with it (versions are immutable locally, so the row is replaced, not updated), `duplicate`
+  also re-creates the local snapshot under a new label. A pulled log entry of a version whose local copy differs likewise opens
+  `immutable_clash` instead of silently un-hiding the local copy.
+- `read_only` (per operation, reserved by the server) and the whole-push `403 workspace_access_denied` with
+  `details.reason = read_only` switch the link to read-only at once (role from `details.role`), keeping every pending change.
+  `forbidden` (reserved) keeps the change, re-checks the role (access lost -> `accessRevoked`) and reports an error with backoff.
+- `internal_error`: transient for the whole push (backoff, same operation ids).
+- The defensive quarantine after repeated rejections (7.4) uses the last server message when there is one.
+
+Other differences
+- Local caps follow server S9: request names <= 500 characters (other names 200), `url` <= 8192, `snapshot_json` <= 8,000,000 bytes.
+- Pull payloads written before v2 lack `sort_order`: the last agreed value (`base_payload`) is used, else the local row's, else 0.
+- The role is re-read at most every 30 s (and on every manual sync), not on every cycle.
+- `previewRemoteWorkspace` also returns `counts` (collections/folders/requests/environments from the snapshot endpoint, at most
+  10 pages of 500, `truncated` beyond); the link dialog shows them. Conflict groups carry `baseDetail/localDetail/remoteDetail` (JSON
+  of the request content fields) so the conflict center can diff headers/body.
+- The scheduler also announces local edits (a `status` event when the pending/conflict counts change, at most once per second,
+  also with auto sync off), so the renderer never polls.
+
+Server issues found while integrating (reported, not fixed here)
+- A request/folder upsert naming a folder that does not exist is rejected `invalid`, not `not_found` as the server README describes
+  for a missing parent (handled on the desktop as above).
+- `syncPutVariable` looks up the `(environment_id, key)` clash without scoping the environment to the workspace, so a push naming
+  another workspace's environment id gets `duplicate_key` with that workspace's variable id as `conflicting_resource_id` instead of
+  `not_found` (needs the environment id, which is an unguessable UUID; still an information leak across workspaces).

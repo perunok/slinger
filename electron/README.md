@@ -18,8 +18,12 @@ electron/
   repositories/      SQL access per aggregate (workspaces, collections, tree=folders+requests, environments, history)
   services/          httpExecutor/httpService, postmanImport, collectionVersions, semver, secrets,
                      exportFiles, externalUrl, authCallback, core (wiring)
+  cloud/             cloud HTTP client (http.ts), device-flow sign-in + token refresh (auth.ts), typed API (api.ts)
+  sync/              collection sync engine: index.ts (SyncService, IPC methods), engine (cycle, status, backoff),
+                     outbox (push side), apply (pull side), merge, mapping, conflicts, linking, scheduler, store
   lib/               errors, ids (UUID), text helpers, csp
-  __tests__/         vitest suites (run under plain Node, in-memory SQLite)
+  __tests__/         vitest suites (run under plain Node, in-memory SQLite); sync/ uses an in-process fake
+                     cloud server, sync-it/ the real slinger-admin server (opt-in)
 shared/              types.ts + ipc-contract.ts (the fixed contract), ipc-errors.ts (renderer helpers)
 ```
 
@@ -36,7 +40,8 @@ service (UUID validation again, then SQL) -> envelope back -> preload resolves o
 | --- | --- |
 | `npm test` | vitest for `electron/**` then the renderer suite (switches `better-sqlite3` to the Node build first via `pretest`); `npm run test:main` runs only this directory |
 | `npm run typecheck` | `tsc` over `electron/` + `shared/`, `tsc` over `e2e/`, `svelte-check` over the renderer |
-| `npm run test:e2e` | builds, then drives the real Electron app with Playwright (`e2e/`) |
+| `npm run test:e2e` | builds, then drives the real Electron app with Playwright (`e2e/`); the cloud/sync specs need `SLINGER_E2E_CLOUD_URL` (+ `_EMAIL`, `_PASSWORD`) |
+| `SLINGER_SYNC_IT_SERVER_DIR=../slinger-admin/server npm run test:sync-it` | sync engine against the real server + a throwaway `postgres:16-alpine` container (removed afterwards); `node scripts/sync-it-server.mjs` starts the same server by hand and prints its URL and admin login |
 | `npm run electron:dev` | rebuilds the main bundle, starts Vite on :5173, launches Electron pointed at it |
 | `npm run electron:build` | Vite build of the renderer, bundle main/preload, rebuild native module for Electron, `electron-builder` (win/mac/linux per `electron-builder.yml`) |
 | `npm run rebuild:node` / `rebuild:electron` | force the native `better-sqlite3` binary for Node or Electron |
@@ -58,8 +63,9 @@ inside Electron 33's Node 20, so the project pins `^12`.)
   database contains a migration the app does not ship (database newer than app).
   **Never edit a released migration; add the next number.**
 * `0001_init.sql` base schema, `0002_collection_versions.sql` semver snapshots,
-  `0003_integrity.sql` unique env-var keys, ordering indexes, immutability trigger. `0001` also creates a
-  `cloud_links` table that no code uses (the cloud link is kept in the renderer's localStorage).
+  `0003_integrity.sql` unique env-var keys, ordering indexes, immutability trigger,
+  `0004_sync.sql` cloud sync: `cloud_links` bookkeeping, `sync_entities` (merge base), `sync_dirty` (outbox),
+  `sync_sent_ops`, `sync_conflicts`, `app_settings`, `secret_missing`, and the capture / read-only triggers.
 * Timestamps are Unix **seconds**.
 
 ### Soft delete and versions
@@ -91,11 +97,26 @@ false conflicts.
   `value: null, maskedValue: '••••••••'`. The only way to read one is
   `revealEnvironmentVariable(id)`. Deleting a variable, its environment or its workspace removes the
   keychain entries.
-* `secureStoreGet/Set/Delete` are a generic passthrough for other keys (cloud tokens). The
-  `slinger:env-var:` namespace is refused there, so it cannot be used to bypass the mask.
+* `secureStoreGet/Set/Delete` are a generic passthrough for other keys. The `slinger:env-var:` and
+  `slinger.cloud.tokens:` namespaces are refused there, so they cannot be used to bypass the mask or read
+  the cloud tokens (which only the main process uses).
 * Collection version snapshots contain folders and requests only, never environments.
 * If the keychain is unavailable (e.g. headless Linux without a Secret Service) secret operations
   fail with `io_error`; the rest of the app keeps working.
+
+## Cloud sync
+
+Design and protocol: [../docs/SYNC_DESIGN.md](../docs/SYNC_DESIGN.md) (section 20 = implementation notes),
+overview in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md#cloud-sync-main-process).
+
+* Tokens live only in the keychain (`slinger.cloud.tokens:<baseUrl>`, reserved: `secureStore*` refuses the prefix) and never
+  reach the renderer. Cloud calls never write request history.
+* Everything that changes a linked workspace's collections, folders, requests, environments, variables or versions is captured
+  by triggers into `sync_dirty`; nothing in the repositories has to remember to call the engine. Writes to a read-only (viewer)
+  link fail with `read_only`.
+* The engine talks protocol v2 only (`protocol_version >= 2` at client registration, else `serverUnsupported`) and branches
+  on the push rejection `reason` (legacy `code` as fallback).
+* `SLINGER_KEYCHAIN_NAMESPACE=<ns>` uses keychain service `Slinger.<ns>` (e2e: one per profile).
 
 ## HTTP executor
 
