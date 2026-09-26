@@ -164,11 +164,12 @@
         </p>
       </div>
     {:else}
-      <div class="grid min-h-0 flex-1 grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded border border-border">
+      <!-- minmax(0,1fr) row + min-h-0 cell: keep the detail pane at the grid's height so its tab panel scrolls instead of being clipped -->
+      <div class="grid min-h-0 flex-1 grid-cols-[minmax(220px,300px)_1fr] grid-rows-[minmax(0,1fr)] overflow-hidden rounded border border-border">
         <div class="overflow-auto border-r border-border">
           <VersionList {versions} {selectedId} onselect={(id) => (selectedId = id)} />
         </div>
-        <div class="min-w-0">
+        <div class="min-h-0 min-w-0">
           {#if selected}
             <VersionDetail
               summary={selected}
