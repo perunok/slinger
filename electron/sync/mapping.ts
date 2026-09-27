@@ -2,6 +2,7 @@
  * Local row <-> wire payload mapping, field groups, canonical JSON and pre-send limits
  * (docs/SYNC_DESIGN.md sections 3 and 6). Pure apart from `loadRow`.
  */
+import { SYNC_DOCUMENT_JSON_BYTE_LIMIT } from '../../shared/syncLimits'
 import type { SyncConflictGroup, SyncEntityType } from '../../shared/types'
 import type { Db } from '../db/database'
 import type { Payload } from './types'
@@ -43,7 +44,8 @@ export const GROUP_LABELS: Record<GroupName, string> = {
 
 /** Server-side caps the engine enforces BEFORE sending (design section 3). */
 export const LIMITS = {
-  documentJsonBytes: 900_000,
+  /** Shared with the renderer (shared/syncLimits.ts) so its "too big to sync" warning matches this cap. */
+  documentJsonBytes: SYNC_DOCUMENT_JSON_BYTE_LIMIT,
   /** Server cap for collection/folder/environment names (request names: `requestNameChars`); longer ones are quarantined, never truncated. */
   nameChars: 200,
   requestNameChars: 500,

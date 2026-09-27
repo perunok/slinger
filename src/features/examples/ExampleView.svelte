@@ -18,6 +18,7 @@
   import { tabsStore, type RequestSection, type RequestTab } from '../requests/tabs.svelte'
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
+  import SyncSizeWarning from '../sync/SyncSizeWarning.svelte'
   import TabNoticeBanner from '../sync/TabNoticeBanner.svelte'
   import ExampleResponseEditor from './ExampleResponseEditor.svelte'
   import MarkdownView from '../../components/markdown/MarkdownView.svelte'
@@ -71,7 +72,7 @@
     <input
       id="ex-name-{tab.id}"
       type="text"
-      class="min-w-0 max-w-md flex-1 !border-transparent !bg-transparent !px-1 text-sm font-medium text-fg hover:!border-border focus:!border-accent"
+      class="min-w-0 max-w-md flex-1 border-transparent bg-transparent px-1 text-sm font-medium text-fg hover:border-border focus:border-accent"
       value={draft.name}
       oninput={(e) => (draft.name = e.currentTarget.value)}
       placeholder="Example name"
@@ -88,6 +89,7 @@
     </div>
   {/if}
   {#if sync.blocked && tab.dirty}<ReadOnlyNote class="mx-3 mt-2" />{/if}
+  <SyncSizeWarning {tab} />
   <UrlBar
     {tab}
     onsend={() => tabsStore.tryExample(tab)}
