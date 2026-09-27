@@ -9,6 +9,7 @@
   import IconButton from '../../components/ui/IconButton.svelte'
   import NameDialog from '../../components/ui/NameDialog.svelte'
   import { api } from '../../lib/ipc'
+  import { tabsStore } from '../requests/tabs.svelte'
 
   type Sub = { t: 'create' } | { t: 'rename'; ws: Workspace } | { t: 'delete'; ws: Workspace }
   let sub = $state<Sub | null>(null)
@@ -25,6 +26,7 @@
   }
   async function remove(ws: Workspace) {
     await api().deleteWorkspace(ws.id)
+    tabsStore.forgetWorkspace(ws.id)
     const rest = app.workspaces.filter((w) => w.id !== ws.id)
     if (rest.length === 0) {
       await app.loadWorkspaces()

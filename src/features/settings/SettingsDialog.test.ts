@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import { APPEARANCE_KEY } from '../../lib/appearance'
@@ -126,5 +126,22 @@ describe('loading animation', () => {
 
     await fireEvent.click(within(group).getByRole('radio', { name: 'Classic spinner' }))
     expect(stored()).toMatchObject({ theme: 'system', loader: 'classic' })
+  })
+})
+
+describe('restore tabs on startup', () => {
+  afterEach(() => settings.setRestoreTabsOnStartup(true)) // restore the default for other test files sharing this module
+
+  it('is on by default, and turning it off persists the choice and erases stored tabs', async () => {
+    localStorage.setItem('slinger.tabs.some-workspace', '{"v":1,"activeIndex":null,"tabs":[]}')
+    setup()
+    const checkbox = screen.getByRole('checkbox', { name: /Restore open tabs on startup/ })
+    expect(checkbox).toBeChecked()
+
+    await fireEvent.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+    expect(settings.restoreTabsOnStartup).toBe(false)
+    expect(localStorage.getItem('slinger.restoreTabsOnStartup')).toBe('false')
+    expect(localStorage.getItem('slinger.tabs.some-workspace')).toBeNull()
   })
 })

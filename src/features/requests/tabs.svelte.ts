@@ -27,8 +27,10 @@ import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
 import type { ScriptOutput } from '../../lib/scripts'
+import { settings } from '../../app/settings.svelte'
 import type { TabNotice } from '../sync/tabNotices'
 import { cancelRun, executeDraft, type ExecuteOutcome } from './execute'
+import { readPersisted, restoreTabs as restoreTabsFromState, type RestoredTabInit } from './tabsPersistence'
 
 export type RequestSection = 'params' | 'auth' | 'headers' | 'body' | 'scripts' | 'docs' | 'settings' | 'code'
 export type ResponseSection = 'pretty' | 'raw' | 'preview' | 'headers' | 'cookies' | 'tests' | 'console'
@@ -210,8 +212,118 @@ class TabsStore {
 
   active = $derived(this.tabs.find((t) => t.id === this.activeId) ?? null)
 
+  /**
+   * Tabs of a workspace that isn't the active one, kept in memory so switching back within the same
+   * session is instant. `tabs`/`activeId` always hold only the CURRENT workspace's tabs - never a mix
+   * (switchWorkspace is the only place that mutates this map; see `app.onWorkspaceWillChange`).
+   */
+  private stash = new Map<string, { tabs: RequestTab[]; activeId: string | null }>()
+  private currentWorkspaceId: string | null = null
+  /** Set by switchWorkspace on a stash miss; consumed by the next syncWithServer (once requests/collections/
+   * folders reflect the new workspace) to restore that workspace's tabs from disk. */
+  private needsDiskRestore: string | null = null
+
   find(id: string | null) {
     return id ? (this.tabs.find((t) => t.id === id) ?? null) : null
+  }
+
+  /**
+   * Called just before `app` makes `workspaceId` the active workspace (including the very first one at
+   * boot). Puts away the outgoing workspace's tabs - dirty or not, nothing is ever discarded here - and
+   * brings back `workspaceId`'s own tabs: from this session's stash if we visited it before; otherwise
+   * empty for now, with a disk restore (`restoreFromDisk`) queued for the next `syncWithServer` once
+   * `app.requests` actually reflects the new workspace.
+   */
+  switchWorkspace(workspaceId: string) {
+    if (workspaceId === this.currentWorkspaceId) return // already active: never wipe its own tabs
+    if (this.currentWorkspaceId) {
+      this.stash.set(this.currentWorkspaceId, { tabs: this.tabs, activeId: this.activeId })
+    }
+    this.currentWorkspaceId = workspaceId
+    this.pendingClose = null
+    const cached = this.stash.get(workspaceId)
+    if (cached) {
+      this.stash.delete(workspaceId)
+      this.tabs = cached.tabs
+      this.activeId = cached.activeId
+      this.needsDiskRestore = null
+      return
+    }
+    this.tabs = []
+    this.activeId = null
+    this.needsDiskRestore = settings.restoreTabsOnStartup ? workspaceId : null
+  }
+
+  /** The workspace was deleted: forget any of its tabs kept in memory. */
+  forgetWorkspace(workspaceId: string) {
+    this.stash.delete(workspaceId)
+  }
+
+  /**
+   * Restores `workspaceId`'s tabs from `localStorage` (see `tabsPersistence.ts`): saved requests /
+   * examples / overviews that no longer exist are dropped silently, and a dirty draft whose request
+   * changed remotely in the meantime keeps its old (now stale) base version, so the ordinary Save flow
+   * hits the version-conflict path instead of overwriting or merging silently.
+   */
+  private restoreFromDisk(workspaceId: string) {
+    const persisted = readPersisted(workspaceId)
+    const result = restoreTabsFromState(persisted, { requests: app.requests, collections: app.collections, folders: app.folders })
+    const tabs = result.inits.map((init) => this.buildRestoredTab(init))
+    this.tabs = tabs
+    this.activeId = (result.activeIndex != null ? tabs[result.activeIndex] : undefined)?.id ?? tabs[0]?.id ?? null
+    if (result.lostDraftTitles.length > 0) {
+      const list = result.lostDraftTitles.join(', ')
+      toast.info('Some unsaved changes were too large to restore', `Kept the tab, but not the edit: ${list}`)
+    }
+  }
+
+  private buildRestoredTab(init: RestoredTabInit): RequestTab {
+    if (init.kind === 'scratch') {
+      const tab = new RequestTab({ draft: init.draft, collectionId: init.collectionId, folderId: init.folderId })
+      tab.section = init.section
+      return tab
+    }
+    if (init.kind === 'overview') {
+      const tab = new RequestTab()
+      tab.overview = init.target
+      const entity = overviewEntity(init.target)
+      tab.collectionId = init.target.kind === 'collection' ? init.target.id : ((entity as ApiFolder | undefined)?.collectionId ?? null)
+      tab.folderId = init.target.kind === 'folder' ? init.target.id : null
+      tab.overviewDraft = init.overviewDraft
+      return tab
+    }
+    // 'request' and 'example' both need the live request (restoreTabsFromState only kept inits whose
+    // request still existed in the data it was given, taken from app.requests just before this runs).
+    const server = app.requestById(init.requestId)!
+    if (init.kind === 'request') {
+      const tab = new RequestTab({ request: server })
+      tab.section = init.section
+      if (init.dirty) {
+        tab.draft = init.dirty.draft
+        tab.savedFingerprint = init.dirty.savedFingerprint
+        tab.baseVersion = init.dirty.baseVersion
+        tab.serverKey = init.dirty.serverKey
+      }
+      return tab
+    }
+    const tab = new RequestTab()
+    tab.section = init.section
+    tab.exampleSection = init.exampleSection
+    if (!init.dirty) {
+      tab.loadExample(server, init.exampleIndex)
+      return tab
+    }
+    tab.requestId = server.id
+    tab.collectionId = server.collectionId
+    tab.folderId = server.folderId
+    tab.baseVersion = server.version
+    tab.serverKey = serverKeyOf(server)
+    tab.example = init.dirty.example
+    tab.draft = init.dirty.draft
+    tab.exampleDraft = init.dirty.exampleDraft
+    tab.savedFingerprint = init.dirty.savedFingerprint
+    tab.exampleSavedFingerprint = init.dirty.exampleSavedFingerprint
+    return tab
   }
 
   openRequest(request: ApiRequest): RequestTab {
@@ -371,6 +483,11 @@ class TabsStore {
    * for the conflict dialog on dirty ones. Tabs whose request disappeared are closed.
    */
   syncWithServer() {
+    if (this.needsDiskRestore && this.needsDiskRestore === app.workspaceId) {
+      this.needsDiskRestore = null
+      this.restoreFromDisk(app.workspaceId)
+      return // the tabs just built are already fresh from the requests that triggered this reconcile
+    }
     const gone: string[] = []
     const goneExamples: string[] = []
     for (const t of this.tabs) {
@@ -695,3 +812,4 @@ class TabsStore {
 
 export const tabsStore = new TabsStore()
 app.onRequestsReloaded = () => tabsStore.syncWithServer()
+app.onWorkspaceWillChange = (id) => tabsStore.switchWorkspace(id)

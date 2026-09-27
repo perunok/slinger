@@ -56,7 +56,11 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
 example in another window), Save reports "Request changed elsewhere" and lets you **Reload from stored** or **Overwrite**.
-Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) searches saved requests; type `>` to list commands such as switching the theme, accent or loading animation.
+Open tabs (including new, never-saved ones, and any unsaved edits) are restored per workspace the next time you start Slinger
+or switch back to that workspace, unless you turn this off in Settings (see [Themes and settings](#themes-and-settings)); a
+tab whose request, example, collection or folder was deleted meanwhile is simply not brought back, and if the request changed
+underneath a restored unsaved edit, Save reports "Request changed elsewhere" exactly as above. Response panes are never
+restored. **Go to request** (Ctrl+K) searches saved requests; type `>` to list commands such as switching the theme, accent or loading animation.
 
 ## Variables and environments
 
@@ -528,6 +532,9 @@ Settings (Ctrl+, or the sun icon):
   system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
+- **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
+  changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
+  and erases what is already stored; response panes are never part of what is saved or restored either way.
 
 Changes apply instantly and are remembered. Quick switch without opening Settings: press Ctrl+K and type `>` followed by
 `theme`, `accent` or `loading` (for example `> theme nord`, `> accent teal` or `> loading shuttle`), then Enter.
