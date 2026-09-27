@@ -21,6 +21,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.test.ts'],
-    css: false,
+    // CSS is not processed in tests, except themes.css so `themes.css?raw` (lib/customThemeAudit.ts) has its text.
+    css: { include: [/themes\.css/] },
   },
 })

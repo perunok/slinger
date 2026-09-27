@@ -76,3 +76,26 @@ describe('resolveTheme', () => {
     for (const t of THEMES) expect(resolveTheme(t.id, true)).toBe(t.id)
   })
 })
+
+describe('custom theme choices', () => {
+  const custom = [
+    { id: 'custom:a', scheme: 'dark' as const },
+    { id: 'custom:b', scheme: 'light' as const },
+  ]
+
+  it('keeps existing custom themes as theme and System choices, and drops deleted ones', () => {
+    const s = memory({ [APPEARANCE_KEY]: JSON.stringify({ v: 1, theme: 'custom:a', accent: 'theme', systemLight: 'custom:b', systemDark: 'custom:a' }) })
+    expect(loadAppearance(s, custom)).toMatchObject({ theme: 'custom:a', systemLight: 'custom:b', systemDark: 'custom:a' })
+    expect(loadAppearance(s, [])).toMatchObject({ theme: 'system', systemLight: 'light', systemDark: 'dark' })
+    // a System slot only takes a custom theme of the matching scheme
+    const swapped = memory({ [APPEARANCE_KEY]: JSON.stringify({ v: 1, theme: 'system', systemLight: 'custom:a', systemDark: 'custom:b' }) })
+    expect(loadAppearance(swapped, custom)).toMatchObject({ systemLight: 'light', systemDark: 'dark' })
+  })
+
+  it('resolves custom themes directly and through System', () => {
+    expect(resolveTheme('custom:a', false, undefined, custom)).toBe('custom:a')
+    expect(resolveTheme('custom:gone', false, undefined, custom)).toBe('dark')
+    expect(resolveTheme('system', true, { light: 'custom:b', dark: 'custom:a' }, custom)).toBe('custom:b')
+    expect(resolveTheme('system', false, { light: 'custom:b', dark: 'custom:a' }, custom)).toBe('custom:a')
+  })
+})
