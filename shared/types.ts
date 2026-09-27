@@ -107,6 +107,45 @@ export interface EnvironmentVariable {
   version: number
 }
 
+/**
+ * ADDED (persisted variables): a collection variable (Postman collection `variable`). Part of the collection:
+ * exported and versioned, never secret. Local-only (not synced).
+ */
+export interface CollectionVariable {
+  id: string
+  collectionId: string
+  key: string
+  value: string
+  /** Disabled variables are kept (and exported with `disabled: true`) but do not resolve. */
+  enabled: boolean
+  description: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
+/**
+ * ADDED (persisted variables): a workspace global (`pm.globals`). Secrets work like environment variables: the
+ * value lives in the OS keychain only, lists carry `value: null` + `maskedValue`, `revealGlobalVariable` reads one.
+ * Local-only (not synced, not exported with collections).
+ */
+export interface GlobalVariable {
+  id: string
+  workspaceId: string
+  key: string
+  /** Present only when isSecret === false. */
+  value: string | null
+  isSecret: boolean
+  maskedValue: string | null
+  enabled: boolean
+  description: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
 export interface HistoryEntry {
   id: string
   workspaceId: string
@@ -172,6 +211,51 @@ export interface UpsertEnvironmentVariableInput {
   isSecret: boolean
   /** Set when updating an existing variable; omit to create a new one. */
   variableId?: string
+}
+
+/**
+ * ADDED (persisted variables): create or update a collection variable (by `variableId`, else by key).
+ * `enabled` / `description` left undefined keep the stored value (new rows: enabled, no description).
+ * `expectedVersion`, when given, must match the stored version (version_conflict otherwise).
+ * Collection variables are never secret: `isSecret: true` is rejected.
+ */
+export interface UpsertCollectionVariableInput {
+  collectionId: string
+  key: string
+  value: string
+  enabled?: boolean
+  description?: string | null
+  variableId?: string
+  expectedVersion?: number
+  isSecret?: boolean
+}
+
+/**
+ * ADDED (persisted variables): create or update a global. Same rules as UpsertCollectionVariableInput, plus
+ * secrets as for environment variables: an empty `value` on an existing secret keeps the stored secret.
+ */
+export interface UpsertGlobalVariableInput {
+  workspaceId: string
+  key: string
+  value: string
+  isSecret: boolean
+  enabled?: boolean
+  description?: string | null
+  variableId?: string
+  expectedVersion?: number
+}
+
+/**
+ * ADDED (persisted variables): one entry of a bulk replace (replaceCollectionVariables / replaceGlobalVariables):
+ * the list becomes exactly these keys in this order; existing keys are updated in place, missing ones deleted.
+ * For globals, a secret entry with an empty value keeps the stored secret of the same key.
+ */
+export interface VariableEntryInput {
+  key: string
+  value: string
+  enabled?: boolean
+  description?: string | null
+  isSecret?: boolean
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import {
   type CollectionRow,
   type Db,
 } from './common'
+import { cascadeCollectionVariables } from './variables'
 
 export class CollectionRepository {
   constructor(private readonly db: Db) {}
@@ -75,7 +76,7 @@ export class CollectionRepository {
     return this.get(row.id)
   }
 
-  /** Soft-deletes the collection with its folders, requests and versions in one transaction. */
+  /** Soft-deletes the collection with its folders, requests, variables and versions in one transaction. */
   softDelete(id: string): void {
     requireCollection(this.db, id)
     const cid = id.toLowerCase()
@@ -90,6 +91,7 @@ export class CollectionRepository {
           .run(now, cid)
       }
       this.db.prepare('UPDATE collection_versions SET deleted = 1 WHERE collection_id = ? AND deleted = 0').run(cid)
+      cascadeCollectionVariables(this.db, cid, now)
     })()
   }
 }
