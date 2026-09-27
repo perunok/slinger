@@ -9,7 +9,8 @@
   import { generateSnippet, SNIPPET_LANGS, type SnippetLang } from '../../lib/snippets'
   import type { RequestTab } from './tabs.svelte'
 
-  let { tab }: { tab: RequestTab } = $props()
+  /** `idPrefix` keeps element ids unique when the right panel's Code view shows next to the Code section. */
+  let { tab, idPrefix = 'snippet' }: { tab: RequestTab; idPrefix?: string } = $props()
   let lang = $state<SnippetLang>('curl')
 
   // Regenerated on every draft/environment change; built-ins get a fresh sample value each time.
@@ -31,8 +32,8 @@
 
 <div class="flex h-full min-h-0 flex-col p-3">
   <div class="mb-2 flex items-center gap-2">
-    <label for="snippet-lang" class="text-xs text-muted">Language</label>
-    <select id="snippet-lang" bind:value={lang} class="w-44">
+    <label for="{idPrefix}-lang" class="text-xs text-muted">Language</label>
+    <select id="{idPrefix}-lang" bind:value={lang} class="min-w-0 max-w-44 flex-1">
       {#each SNIPPET_LANGS as l (l.id)}<option value={l.id}>{l.label}</option>{/each}
     </select>
     <Button size="sm" icon="copy" onclick={copy} disabled={!prepared.ok} class="ml-auto">Copy</Button>

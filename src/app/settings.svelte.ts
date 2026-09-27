@@ -10,7 +10,12 @@ const K = {
   scriptTimeout: 'slinger.scriptTimeoutMs',
   scriptContinue: 'slinger.scriptContinueOnError',
   restoreTabs: 'slinger.restoreTabsOnStartup',
+  responsePosition: 'slinger.responsePosition',
+  statusBar: 'slinger.statusBar',
 }
+
+/** Where the response pane sits relative to the request editor (request and example tabs). */
+export type ResponsePosition = 'below' | 'beside'
 
 export const SCRIPT_TIMEOUT_DEFAULT_MS = 5000
 
@@ -62,6 +67,10 @@ class Settings {
   scriptContinueOnError = $state<boolean>(read(K.scriptContinue) === 'true')
   /** Reopen tabs (with their unsaved drafts) as they were left, per workspace, on the next startup. */
   restoreTabsOnStartup = $state<boolean>(read(K.restoreTabs) !== 'false')
+  /** Response below the request (stacked, the default) or beside it (side by side). */
+  responsePosition = $state<ResponsePosition>(read(K.responsePosition) === 'beside' ? 'beside' : 'below')
+  /** The thin status bar at the bottom of the window (default on). */
+  showStatusBar = $state<boolean>(read(K.statusBar) !== 'false')
   #mq: MediaQueryList | null = null
 
   /** The palette actually shown (resolves 'system'). */
@@ -132,6 +141,18 @@ class Settings {
   setScriptContinueOnError(v: boolean) {
     this.scriptContinueOnError = v
     write(K.scriptContinue, String(v))
+  }
+  setResponsePosition(p: ResponsePosition) {
+    if (p !== 'below' && p !== 'beside') return
+    this.responsePosition = p
+    write(K.responsePosition, p)
+  }
+  toggleResponsePosition() {
+    this.setResponsePosition(this.responsePosition === 'below' ? 'beside' : 'below')
+  }
+  setShowStatusBar(v: boolean) {
+    this.showStatusBar = v
+    write(K.statusBar, String(v))
   }
   /** Turning this off also erases every workspace's stored tabs (nothing is kept "just in case"). */
   setRestoreTabsOnStartup(v: boolean) {

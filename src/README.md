@@ -20,11 +20,14 @@ in-memory mock backend from `src/dev/`.
 main.ts                     boot: install mock if no window.slinger, mount <App/>
 app/                        shell + cross-feature state
   App.svelte TopBar Sidebar EmptyState shortcuts.ts
+                            (App: top bar / [sidebar | main tabs | right panel] / status bar; see features/layout)
   bootSkeleton.ts           removes index.html's static launch skeleton once the first workspace loaded (or on error)
   state.svelte.ts           workspaces, collections/folders/requests, collection variables, environments, active env, globals
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope: globals < collection variables < environment (scope = active tab's collection, scopeFor(id))
-  settings.svelte.ts        theme + accent + sending animation (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error (localStorage)
+  settings.svelte.ts        theme + accent + sending animation (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error /
+                            response position / status bar (localStorage)
+  activity.svelte.ts        background activity for the status bar that is not tab state (the collection runner's progress)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
@@ -40,12 +43,16 @@ features/
   response/    environments/ (variable table + autosave model shared by environments, globals and collection variables:
                varBackends.ts, VariablesPanel)  history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
+  layout/ (response below/beside toggle, StatusBar, RightPanel + rightPanel.svelte.ts store; panels.ts = registry of right-panel
+          views in panels/ (Variables, Docs, Code, Info); layoutActions.ts: the layout commands shared by shortcuts, menu,
+          palette, buttons, Settings)
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog)
   overview/ (collection/folder overview tab: counts + documentation; a collection's Variables section)
   oauth2/ (OAuth 2.0 settings + token actions in the Authorization tab; oauth2Actions resolves the settings like a send)
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
-lib/                        pure logic, no DOM: template, urlParams, kv, request (document model), description (Postman description shapes),
+lib/                        pure logic, no DOM: template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
+                            request (document model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
@@ -158,7 +165,10 @@ backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff`
 * Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
 * Other `localStorage` keys: `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
-  `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below).
+  `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below), `slinger.responsePosition` (`below` | `beside`),
+  `slinger.statusBar` (`false` hides the status bar), `slinger.rightPanel` (JSON `{ open, panel, width }`, closed by default), and the
+  `SplitPane` ratios `slinger.split.sidebar`, `slinger.split.request` / `slinger.split.request.beside`, `slinger.split.example` /
+  `slinger.split.example.beside` (one per orientation, `features/layout/layoutActions.ts splitKey`).
 * Open request tabs (saved requests, examples, collection/folder overviews, unsaved "scratch" tabs, their order, the active one,
   and unsaved drafts/dirty markers) are persisted per workspace to `localStorage['slinger.tabs.<workspaceId>']` and restored on
   startup and on switching to that workspace; see `features/requests/tabsPersistence.ts` (pure serialize/restore, versioned,

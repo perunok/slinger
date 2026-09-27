@@ -36,6 +36,26 @@
     <input id="font-size" type="range" min="11" max="20" step="1" value={settings.fontSize} oninput={(e) => settings.setFontSize(Number(e.currentTarget.value))} class="w-64" />
   </section>
 
+  <section class="mb-5 grid gap-1.5" aria-labelledby="layout-heading">
+    <h3 class="text-sm font-semibold" id="layout-heading">Layout</h3>
+    <div role="radiogroup" aria-label="Response position" class="flex flex-wrap items-center gap-4 text-sm">
+      <span class="text-muted" aria-hidden="true">Response:</span>
+      <label class="flex items-center gap-2">
+        <input type="radio" name="response-position" value="below" checked={settings.responsePosition === 'below'} onchange={() => settings.setResponsePosition('below')} />
+        Below the request
+      </label>
+      <label class="flex items-center gap-2">
+        <input type="radio" name="response-position" value="beside" checked={settings.responsePosition === 'beside'} onchange={() => settings.setResponsePosition('beside')} />
+        Beside the request
+      </label>
+    </div>
+    <p class="text-xs text-faint">Applies to request and example tabs; each layout remembers its own divider position. Also the button on the divider, or Ctrl+Alt+V.</p>
+    <label class="mt-1 flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={settings.showStatusBar} onchange={(e) => settings.setShowStatusBar(e.currentTarget.checked)} />
+      Show status bar
+    </label>
+  </section>
+
   <section class="mb-5">
     <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" checked={settings.editorWrap} onchange={(e) => settings.setEditorWrap(e.currentTarget.checked)} />

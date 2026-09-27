@@ -62,6 +62,7 @@ describe('application menu template', () => {
     expect(packaged.some((i) => i.role === 'reload' || i.role === 'forceReload' || i.role === 'toggleDevTools')).toBe(false)
     const view = subOf(top(build(platform).template, 'View'))
     expect(view.filter((i) => i.label).map((i) => [i.label, i.accelerator])).toEqual([
+      ['Toggle Response Position', 'CmdOrCtrl+Alt+V'], ['Toggle Right Panel', 'CmdOrCtrl+Alt+B'], ['Toggle Status Bar', undefined],
       ['Actual Size', 'CmdOrCtrl+0'], ['Zoom In', 'CmdOrCtrl+='], ['Zoom Out', 'CmdOrCtrl+-'],
     ])
     expect(view.some((i) => i.role === 'togglefullscreen')).toBe(true)
@@ -96,15 +97,16 @@ describe('application menu template', () => {
 
   it.each(PLATFORMS)('%s: accelerators shared with renderer shortcuts are label-only', (platform) => {
     const items = all(build(platform).template)
-    // src/app/shortcuts.ts: t (new tab), w (close tab), ',' (settings), '/' (shortcuts), plus Enter/S/K/Tab (not in the menu).
-    const rendererKeys = new Set(['T', 'W', ',', '/', 'Enter', 'S', 'K', 'Tab'])
+    // src/app/shortcuts.ts: t (new tab), w (close tab), ',' (settings), '/' (shortcuts), Alt+V / Alt+B (layout toggles),
+    // plus Enter/S/K/Tab (not in the menu).
+    const rendererKeys = new Set(['T', 'W', ',', '/', 'Enter', 'S', 'K', 'Tab', 'Alt+V', 'Alt+B'])
     for (const i of items) {
       if (typeof i.accelerator !== 'string') continue
       const m = /^CmdOrCtrl\+(.+)$/.exec(i.accelerator)
       if (m && rendererKeys.has(m[1]!)) expect(i.registerAccelerator, i.label).toBe(false)
     }
     const shared = items.filter((i) => i.registerAccelerator === false).map((i) => i.accelerator)
-    expect(new Set(shared)).toEqual(new Set(['CmdOrCtrl+T', 'CmdOrCtrl+W', 'CmdOrCtrl+,', 'CmdOrCtrl+/']))
+    expect(new Set(shared)).toEqual(new Set(['CmdOrCtrl+T', 'CmdOrCtrl+W', 'CmdOrCtrl+,', 'CmdOrCtrl+/', 'CmdOrCtrl+Alt+V', 'CmdOrCtrl+Alt+B']))
   })
 
   it.each(PLATFORMS)('%s: every command item sends its command', (platform) => {
@@ -118,6 +120,9 @@ describe('application menu template', () => {
       ['Settings…', 'settings'],
       ['About Slinger', 'about'],
       ['Keyboard Shortcuts', 'shortcuts'],
+      ['Toggle Response Position', 'toggleResponsePosition'],
+      ['Toggle Status Bar', 'toggleStatusBar'],
+      ['Toggle Right Panel', 'toggleRightPanel'],
     ]
     for (const [label, command] of expected) {
       send.mockClear()

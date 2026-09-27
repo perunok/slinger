@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
+  import { activity } from '../../app/activity.svelte'
   import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
@@ -106,8 +107,16 @@
     onclose()
   }
 
+  // Progress for the status bar while a run is going.
+  $effect(() => {
+    activity.runner = view?.phase === 'running' ? { label: folder?.name ?? collection?.name ?? 'collection', done: view.completed, total: view.rows.length } : null
+  })
+
   // No orphan runs after unmount.
-  onDestroy(() => run?.stop())
+  onDestroy(() => {
+    run?.stop()
+    activity.runner = null
+  })
 
   function toggle(set: Set<string>, id: string): Set<string> {
     const next = new Set(set)
