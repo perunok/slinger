@@ -14,6 +14,7 @@ import { seedState } from './mock/seed'
 import { emptyState, type MockState } from './mock/store'
 import { createTreeApi } from './mock/tree'
 import { createVersionApi } from './mock/versions'
+import { createVariablesApi } from './mock/variables'
 import { createWorkspaceApi } from './mock/workspaces'
 import { clone, sleep } from './mock/util'
 
@@ -85,6 +86,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createTreeApi(state),
     ...createVersionApi(state),
     ...createHttpApi(state),
+    ...createVariablesApi(state),
     ...createScriptsApi(),
     ...misc,
     ...sync.api,

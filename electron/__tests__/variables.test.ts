@@ -202,3 +202,51 @@ describe('local-only and read-only', () => {
     expect(env.core.globals.reveal(g.id)).toBe('1')
   })
 })
+
+describe('IPC', () => {
+  it('round-trips collection variables and globals through the validated API', async () => {
+    const { workspace, collection } = await scaffold(env)
+    const a = await env.api.upsertCollectionVariable({ collectionId: collection.id, key: 'a', value: '1' })
+    const b = await env.api.upsertCollectionVariable({ collectionId: collection.id, key: 'b', value: '2', enabled: false, description: 'B' })
+    expect((await env.api.reorderCollectionVariables(collection.id, [b.id, a.id])).map((v) => v.key)).toEqual(['b', 'a'])
+    expect((await env.api.replaceCollectionVariables(collection.id, [{ key: 'a', value: 'x' }])).map((v) => [v.key, v.value])).toEqual([['a', 'x']])
+    await env.api.deleteCollectionVariable(a.id)
+    expect(await env.api.listCollectionVariables(collection.id)).toEqual([])
+
+    const g = await env.api.upsertGlobalVariable({ workspaceId: workspace.id, key: 'token', value: 's3cret', isSecret: true })
+    expect((await env.api.listGlobalVariables(workspace.id))[0]).toMatchObject({ key: 'token', value: null, maskedValue: '••••••••' })
+    expect(await env.api.revealGlobalVariable(g.id)).toBe('s3cret')
+    await env.api.replaceGlobalVariables(workspace.id, [{ key: 'token', value: '', isSecret: true }, { key: 'p', value: 'v' }])
+    expect(await env.api.revealGlobalVariable(g.id)).toBe('s3cret')
+    const [, p] = await env.api.listGlobalVariables(workspace.id)
+    expect((await env.api.reorderGlobalVariables(workspace.id, [p!.id, g.id])).map((v) => v.key)).toEqual(['p', 'token'])
+    await env.api.deleteGlobalVariable(g.id)
+    expect(env.secrets.get(`slinger:global-var:${g.id}`)).toBeNull()
+  })
+
+  it('rejects malformed arguments before touching the database', async () => {
+    const { workspace, collection } = await scaffold(env)
+    const bad = [
+      () => env.api.listCollectionVariables('nope'),
+      () => env.api.upsertCollectionVariable({ collectionId: collection.id, key: '', value: '' }),
+      () => env.api.upsertCollectionVariable({ collectionId: collection.id, key: 'k', value: 'v', isSecret: true }),
+      () => env.api.upsertCollectionVariable({ collectionId: collection.id, key: 'k', value: 'v', extra: 1 } as never),
+      () => env.api.upsertCollectionVariable({ collectionId: collection.id, key: 'k', value: 'x'.repeat(1_000_001) }),
+      () => env.api.upsertGlobalVariable({ workspaceId: workspace.id, key: 'k', value: 'v' } as never),
+      () => env.api.replaceCollectionVariables(collection.id, [{ key: 'k' }] as never),
+      () => env.api.reorderGlobalVariables(workspace.id, ['x']),
+      () => env.api.revealGlobalVariable('x'),
+    ]
+    for (const call of bad) await expect(call()).rejects.toMatchObject({ code: 'invalid_input' })
+  })
+
+  it('the generic secure store cannot reach the globals secret namespace', async () => {
+    const { workspace } = await scaffold(env)
+    const g = await env.api.upsertGlobalVariable({ workspaceId: workspace.id, key: 't', value: 'v', isSecret: true })
+    const key = `slinger:global-var:${g.id}`
+    await expect(env.api.secureStoreGet(key)).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(env.api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(env.api.secureStoreDelete('SLINGER:GLOBAL-VAR:x')).rejects.toMatchObject({ code: 'invalid_input' })
+    expect(env.secrets.get(key)).toBe('v')
+  })
+})

@@ -134,6 +134,41 @@ const upsertVariableInput = z.object({
   isSecret: z.boolean(),
   variableId: uuid.optional(),
 })
+// ---- persisted variables (collection variables + globals) --------------------------
+
+const varKey = z.string().min(1).max(256)
+const varValue = z.string().max(1_000_000)
+const varDescription = z.string().max(100_000).nullable().optional()
+const upsertCollectionVariableInput = z
+  .object({
+    collectionId: uuid,
+    key: varKey,
+    value: varValue,
+    enabled: z.boolean().optional(),
+    description: varDescription,
+    variableId: uuid.optional(),
+    expectedVersion: z.number().int().min(1).optional(),
+    // Collection variables are never secret; accepted only as `false` so the repository can give a clear error.
+    isSecret: z.boolean().optional(),
+  })
+  .strict()
+const upsertGlobalVariableInput = z
+  .object({
+    workspaceId: uuid,
+    key: varKey,
+    value: varValue,
+    isSecret: z.boolean(),
+    enabled: z.boolean().optional(),
+    description: varDescription,
+    variableId: uuid.optional(),
+    expectedVersion: z.number().int().min(1).optional(),
+  })
+  .strict()
+const variableEntries = z
+  .array(z.object({ key: varKey, value: varValue, enabled: z.boolean().optional(), description: varDescription, isSecret: z.boolean().optional() }).strict())
+  .max(5000)
+const variableIds = z.array(uuid).max(5000)
+
 const createVersionInput = z.object({
   collectionId: uuid,
   version: z.string().min(1).max(128),
@@ -374,6 +409,31 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, timeout] = parseArgs(z.tuple([z.string(), z.number()]), a)
       return core.authCallbacks.wait(id, timeout)
     },
+
+    // Persisted variables (local-only)
+    listCollectionVariables: async (...a) => core.collectionVariables.list(parseArgs(z.tuple([uuid]), a)[0]),
+    upsertCollectionVariable: async (...a) => core.collectionVariables.upsert(parseArgs(z.tuple([upsertCollectionVariableInput]), a)[0]),
+    deleteCollectionVariable: async (...a) => core.collectionVariables.delete(parseArgs(z.tuple([uuid]), a)[0]),
+    reorderCollectionVariables: async (...a) => {
+      const [id, ids] = parseArgs(z.tuple([uuid, variableIds]), a)
+      return core.collectionVariables.reorder(id, ids)
+    },
+    replaceCollectionVariables: async (...a) => {
+      const [id, entries] = parseArgs(z.tuple([uuid, variableEntries]), a)
+      return core.collectionVariables.replace(id, entries)
+    },
+    listGlobalVariables: async (...a) => core.globals.list(parseArgs(z.tuple([uuid]), a)[0]),
+    upsertGlobalVariable: async (...a) => core.globals.upsert(parseArgs(z.tuple([upsertGlobalVariableInput]), a)[0]),
+    deleteGlobalVariable: async (...a) => core.globals.delete(parseArgs(z.tuple([uuid]), a)[0]),
+    reorderGlobalVariables: async (...a) => {
+      const [id, ids] = parseArgs(z.tuple([uuid, variableIds]), a)
+      return core.globals.reorder(id, ids)
+    },
+    replaceGlobalVariables: async (...a) => {
+      const [id, entries] = parseArgs(z.tuple([uuid, variableEntries]), a)
+      return core.globals.replace(id, entries)
+    },
+    revealGlobalVariable: async (...a) => core.globals.reveal(parseArgs(z.tuple([uuid]), a)[0]),
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),

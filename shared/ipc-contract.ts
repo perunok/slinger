@@ -48,6 +48,11 @@ import type {
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
+  CollectionVariable,
+  GlobalVariable,
+  UpsertCollectionVariableInput,
+  UpsertGlobalVariableInput,
+  VariableEntryInput,
 } from './types'
 import type { MenuCommand } from './menu'
 
@@ -202,6 +207,23 @@ export interface SlingerIpcApi {
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
    */
   grantedFiles(paths: string[]): Promise<string[]>
+
+  // --- ADDED (persisted variables): collection variables and globals. Local-only (never synced). ---
+  /** Live variables of the collection in their order (disabled ones included). */
+  listCollectionVariables(collectionId: string): Promise<CollectionVariable[]>
+  upsertCollectionVariable(input: UpsertCollectionVariableInput): Promise<CollectionVariable>
+  deleteCollectionVariable(variableId: string): Promise<void>
+  /** `variableIds` must be every live variable of the collection exactly once. Does not bump versions. */
+  reorderCollectionVariables(collectionId: string, variableIds: string[]): Promise<CollectionVariable[]>
+  /** Bulk editor: the collection ends up with exactly these variables, in this order. */
+  replaceCollectionVariables(collectionId: string, variables: VariableEntryInput[]): Promise<CollectionVariable[]>
+  listGlobalVariables(workspaceId: string): Promise<GlobalVariable[]>
+  upsertGlobalVariable(input: UpsertGlobalVariableInput): Promise<GlobalVariable>
+  deleteGlobalVariable(variableId: string): Promise<void>
+  reorderGlobalVariables(workspaceId: string, variableIds: string[]): Promise<GlobalVariable[]>
+  replaceGlobalVariables(workspaceId: string, variables: VariableEntryInput[]): Promise<GlobalVariable[]>
+  /** The only way a secret global's value reaches the renderer (like revealEnvironmentVariable). */
+  revealGlobalVariable(variableId: string): Promise<string>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -284,6 +306,17 @@ export const IPC_CHANNELS = [
   'resolveSyncConflict',
   'discardPendingChanges',
   'grantedFiles',
+  'listCollectionVariables',
+  'upsertCollectionVariable',
+  'deleteCollectionVariable',
+  'reorderCollectionVariables',
+  'replaceCollectionVariables',
+  'listGlobalVariables',
+  'upsertGlobalVariable',
+  'deleteGlobalVariable',
+  'reorderGlobalVariables',
+  'replaceGlobalVariables',
+  'revealGlobalVariable',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
