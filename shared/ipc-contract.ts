@@ -52,6 +52,11 @@ import type {
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
+  CollectionVariable,
+  GlobalVariable,
+  UpsertCollectionVariableInput,
+  UpsertGlobalVariableInput,
+  VariableEntryInput,
 } from './types'
 import type { MenuCommand } from './menu'
 
@@ -124,7 +129,7 @@ export interface SlingerIpcApi {
   /** `options` (re-import addition, optional): `name` overrides the file's name, e.g. "X (2)" for an import as a copy. */
   importPostmanCollection(workspaceId: string, fileContents: string, options?: PostmanImportOptions): Promise<PostmanImportResult>
   /**
-   * ADDED (re-import): replaces the folders, requests, scripts and descriptions of an existing collection with a
+   * ADDED (re-import): replaces the folders, requests, scripts, descriptions and collection variables of an existing collection with a
    * Postman file in one transaction, after an automatic safety version (next patch). Keeps the collection's id,
    * name and versions. `sourceName` (the file name) only labels the safety version's notes.
    */
@@ -207,6 +212,22 @@ export interface SlingerIpcApi {
    */
   grantedFiles(paths: string[]): Promise<string[]>
 
+  // --- ADDED (persisted variables): collection variables and globals. Local-only (never synced). ---
+  /** Live variables of the collection in their order (disabled ones included). */
+  listCollectionVariables(collectionId: string): Promise<CollectionVariable[]>
+  upsertCollectionVariable(input: UpsertCollectionVariableInput): Promise<CollectionVariable>
+  deleteCollectionVariable(variableId: string): Promise<void>
+  /** `variableIds` must be every live variable of the collection exactly once. Does not bump versions. */
+  reorderCollectionVariables(collectionId: string, variableIds: string[]): Promise<CollectionVariable[]>
+  /** Bulk editor: the collection ends up with exactly these variables, in this order. */
+  replaceCollectionVariables(collectionId: string, variables: VariableEntryInput[]): Promise<CollectionVariable[]>
+  listGlobalVariables(workspaceId: string): Promise<GlobalVariable[]>
+  upsertGlobalVariable(input: UpsertGlobalVariableInput): Promise<GlobalVariable>
+  deleteGlobalVariable(variableId: string): Promise<void>
+  reorderGlobalVariables(workspaceId: string, variableIds: string[]): Promise<GlobalVariable[]>
+  replaceGlobalVariables(workspaceId: string, variables: VariableEntryInput[]): Promise<GlobalVariable[]>
+  /** The only way a secret global's value reaches the renderer (like revealEnvironmentVariable). */
+  revealGlobalVariable(variableId: string): Promise<string>
   // OAuth 2.0 request authorization (tokens live in the OS keychain; the renderer gets status only)
   /**
    * ADDED (OAuth 2.0): runs the configured grant in main and stores the token. The authorization code grants open the
@@ -305,6 +326,17 @@ export const IPC_CHANNELS = [
   'resolveSyncConflict',
   'discardPendingChanges',
   'grantedFiles',
+  'listCollectionVariables',
+  'upsertCollectionVariable',
+  'deleteCollectionVariable',
+  'reorderCollectionVariables',
+  'replaceCollectionVariables',
+  'listGlobalVariables',
+  'upsertGlobalVariable',
+  'deleteGlobalVariable',
+  'reorderGlobalVariables',
+  'replaceGlobalVariables',
+  'revealGlobalVariable',
   'getOAuth2Token',
   'cancelOAuth2Flow',
   'refreshOAuth2Token',

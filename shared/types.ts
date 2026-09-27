@@ -107,6 +107,45 @@ export interface EnvironmentVariable {
   version: number
 }
 
+/**
+ * ADDED (persisted variables): a collection variable (Postman collection `variable`). Part of the collection:
+ * exported and versioned, never secret. Local-only (not synced).
+ */
+export interface CollectionVariable {
+  id: string
+  collectionId: string
+  key: string
+  value: string
+  /** Disabled variables are kept (and exported with `disabled: true`) but do not resolve. */
+  enabled: boolean
+  description: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
+/**
+ * ADDED (persisted variables): a workspace global (`pm.globals`). Secrets work like environment variables: the
+ * value lives in the OS keychain only, lists carry `value: null` + `maskedValue`, `revealGlobalVariable` reads one.
+ * Local-only (not synced, not exported with collections).
+ */
+export interface GlobalVariable {
+  id: string
+  workspaceId: string
+  key: string
+  /** Present only when isSecret === false. */
+  value: string | null
+  isSecret: boolean
+  maskedValue: string | null
+  enabled: boolean
+  description: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
 export interface HistoryEntry {
   id: string
   workspaceId: string
@@ -172,6 +211,51 @@ export interface UpsertEnvironmentVariableInput {
   isSecret: boolean
   /** Set when updating an existing variable; omit to create a new one. */
   variableId?: string
+}
+
+/**
+ * ADDED (persisted variables): create or update a collection variable (by `variableId`, else by key).
+ * `enabled` / `description` left undefined keep the stored value (new rows: enabled, no description).
+ * `expectedVersion`, when given, must match the stored version (version_conflict otherwise).
+ * Collection variables are never secret: `isSecret: true` is rejected.
+ */
+export interface UpsertCollectionVariableInput {
+  collectionId: string
+  key: string
+  value: string
+  enabled?: boolean
+  description?: string | null
+  variableId?: string
+  expectedVersion?: number
+  isSecret?: boolean
+}
+
+/**
+ * ADDED (persisted variables): create or update a global. Same rules as UpsertCollectionVariableInput, plus
+ * secrets as for environment variables: an empty `value` on an existing secret keeps the stored secret.
+ */
+export interface UpsertGlobalVariableInput {
+  workspaceId: string
+  key: string
+  value: string
+  isSecret: boolean
+  enabled?: boolean
+  description?: string | null
+  variableId?: string
+  expectedVersion?: number
+}
+
+/**
+ * ADDED (persisted variables): one entry of a bulk replace (replaceCollectionVariables / replaceGlobalVariables):
+ * the list becomes exactly these keys in this order; existing keys are updated in place, missing ones deleted.
+ * For globals, a secret entry with an empty value keeps the stored secret of the same key.
+ */
+export interface VariableEntryInput {
+  key: string
+  value: string
+  enabled?: boolean
+  description?: string | null
+  isSecret?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +447,8 @@ export interface PostmanImportResult {
   requests: ApiRequest[]
   /** ADDED (scripts): non-empty pre-request/test scripts imported (collection + folders + requests). */
   scriptCount?: number
+  /** ADDED (persisted variables): collection variables stored from the file's `variable` array. */
+  variableCount?: number
   /** ADDED (versioned export): what happened to the file's `info._slinger` version history; absent when it had none. */
   versionHistory?: import('./slingerExport').VersionHistoryImportResult
 }
@@ -394,6 +480,11 @@ export interface CollectionSnapshot {
   /** ADDED (docs): collection description at snapshot time; absent in older snapshots or when empty. */
   collectionDescription?: string | null
   collectionDescriptionType?: DescriptionType | null
+  /**
+   * ADDED (persisted variables): the collection variables at snapshot time, in order; absent in older snapshots
+   * (restoring one of those leaves the collection without variables) and when there were none.
+   */
+  collectionVariables?: import('./postmanVariables').CollectionVariableData[]
   folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
@@ -502,9 +593,16 @@ export interface RunScriptsInput {
   response?: ScriptResponseData | null
   /** Local scope (pm.variables.set) of this send / collection run. */
   variables: ScriptVariables
-  /** Session-only scopes (not persisted in v1). */
-  collectionVariables: ScriptVariables
-  globals: ScriptVariables
+  /**
+   * ADDED (persisted variables): the collection the request belongs to. Main loads its stored collection variables
+   * (and always the workspace's globals) and persists pm.collectionVariables / pm.globals writes. null: the request
+   * is not saved in a collection, so pm.collectionVariables is an in-memory scope seeded from `collectionVariables`.
+   */
+  collectionId?: string | null
+  /** In-memory collection scope, used only when `collectionId` is null or absent (see above). */
+  collectionVariables?: ScriptVariables
+  /** Ignored since globals are persisted (kept optional for older callers). */
+  globals?: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
   /** Per-script time limit in ms (default 5000, max 60000). Time waiting for pm.sendRequest does not count. */
   timeoutMs?: number
@@ -549,6 +647,9 @@ export interface RunScriptsResult {
   globals: ScriptVariables
   /** True when the active environment was written (the renderer reloads its variables). */
   environmentChanged: boolean
+  /** ADDED (persisted variables): the collection's stored variables / the workspace's globals were written. */
+  collectionVariablesChanged?: boolean
+  globalsChanged?: boolean
   console: ScriptConsoleEntry[]
   tests: ScriptTestResult[]
   durationMs: number

@@ -34,6 +34,7 @@ import {
   removeEnvironment,
   type MockState,
 } from './store'
+import { variableMethodWorkspace } from './variables'
 import {
   GROUP_FIELDS,
   GROUP_LABEL,
@@ -832,8 +833,12 @@ export function createSyncApi(
       }
       case 'deleteWorkspace':
         return null
-      default:
+      default: {
+        // Persisted variables (local-only, never synced) are still refused for viewers, like the 0008 triggers.
+        const target = variableMethodWorkspace(s, method, args)
+        if (target && links.get(target)?.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')
         return null
+      }
     }
     const l = ws ? links.get(ws) : undefined
     if (l && l.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')

@@ -23,8 +23,8 @@ export const PM_MEMBERS: Record<string, Completion[]> = {
   pm: [
     prop('environment', 'active environment', 'Persisted: writes are saved to the active environment'),
     prop('variables', 'local scope', 'pm.variables: this send / collection run; get() resolves local > environment > collection > globals'),
-    prop('collectionVariables', 'session scope', 'Kept in memory until the app restarts'),
-    prop('globals', 'session scope', 'Kept in memory until the app restarts'),
+    prop('collectionVariables', 'collection scope', "Persisted: writes are saved to the request's collection variables"),
+    prop('globals', 'workspace scope', "Persisted: writes are saved to the workspace's globals"),
     prop('request', 'the request', 'Mutable in pre-request scripts (sent copy only)'),
     prop('response', 'the response', 'Available in test scripts'),
     prop('info', 'run info', 'eventName, requestName, requestId, iteration'),

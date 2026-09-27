@@ -6,6 +6,7 @@
   import { isBlank, type Row } from './envLogic'
   import { sync } from '../sync/syncStore.svelte'
   import type { EnvModel } from './envModel.svelte'
+  import { gridClass } from './varGrid'
 
   interface Props {
     row: Row
@@ -29,6 +30,7 @@
   const ro = $derived(sync.blocked)
   const secretEditable = $derived(row.isSecret && row.serverSecret)
   const missing = $derived(row.secretMissing && !row.secretTouched)
+  const grid = $derived(gridClass(model.backend))
 
   $effect(() => {
     const f = model.focusRequest
@@ -46,9 +48,21 @@
   role="row"
   data-testid="env-row"
   data-duplicate={duplicate || undefined}
+  data-enabled={row.enabled}
   class="border-b border-border px-2 py-1 {duplicate ? 'bg-warning-soft' : ''} {row.deleted ? 'opacity-50' : ''}"
 >
-  <div class="grid grid-cols-[minmax(7rem,1fr)_minmax(9rem,2fr)_4rem_5.5rem] items-center gap-2">
+  <div class="grid {grid} items-center gap-2 {row.enabled ? '' : 'text-muted'}">
+    {#if model.backend.enabledColumn}
+      <label class="flex items-center justify-center" title={row.enabled ? 'Enabled' : 'Disabled: kept, but not used'}>
+        <input
+          type="checkbox"
+          aria-label="Enabled: {name}"
+          checked={row.enabled}
+          disabled={row.deleted || blank || ro}
+          onchange={() => model.toggleEnabled(row.rid)}
+        />
+      </label>
+    {/if}
     <input
       bind:this={keyEl}
       type="text"
@@ -97,16 +111,18 @@
         />
       {/if}
     </div>
-    <label class="flex items-center justify-center gap-1 text-xs text-muted" title="Store this value as a secret">
-      <input
-        type="checkbox"
-        aria-label="Secret: {name}"
-        checked={row.isSecret}
-        disabled={row.deleted || blank || ro}
-        onchange={() => model.toggleSecret(row.rid)}
-      />
-      <Icon name="lock" size={12} />
-    </label>
+    {#if model.backend.secrets}
+      <label class="flex items-center justify-center gap-1 text-xs text-muted" title="Store this value as a secret">
+        <input
+          type="checkbox"
+          aria-label="Secret: {name}"
+          checked={row.isSecret}
+          disabled={row.deleted || blank || ro}
+          onchange={() => model.toggleSecret(row.rid)}
+        />
+        <Icon name="lock" size={12} />
+      </label>
+    {/if}
     <div class="flex items-center justify-end gap-1 text-xs">
       {#if qstate === 'saving'}
         <span class="h-3 w-3 animate-spin rounded-full border-2 border-muted border-t-transparent" role="status" aria-label="Saving"></span>

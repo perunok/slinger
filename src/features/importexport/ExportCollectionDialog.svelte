@@ -58,7 +58,7 @@
     if (!collection) return ''
     // While the history loads the preview shows the content without it (saving is disabled until it is loaded).
     const slinger = buildSlingerBlock({ collectionId: collection.id, versions: versions ?? [], includeSnapshots: withSnapshots, appVersion })
-    return exportPostmanCollection({ collection, folders, requests, version: latest, slinger })
+    return exportPostmanCollection({ collection, folders, requests, version: latest, slinger, variables: app.collectionVariables[collection.id] ?? [] })
   }
   const metadataJson = $derived(build(false))
   const fullJson = $derived(build(true))

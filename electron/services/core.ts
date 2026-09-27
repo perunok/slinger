@@ -5,6 +5,7 @@ import { EnvironmentRepository } from '../repositories/environments'
 import { HistoryRepository } from '../repositories/history'
 import { WorkspaceRepository } from '../repositories/workspaces'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
+import { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
 import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
@@ -42,6 +43,9 @@ export interface Core {
   folders: FolderRepository
   requests: RequestRepository
   history: HistoryRepository
+  /** ADDED (persisted variables): local-only collection variables and workspace globals. */
+  collectionVariables: CollectionVariableRepository
+  globals: GlobalVariableRepository
   http: HttpService
   oauth2: OAuth2Service
   scripts: ScriptService
@@ -57,8 +61,13 @@ export function createCore(deps: CoreDeps): Core {
   const history = new HistoryRepository(db)
   const fileGrants = new FileGrants()
   const environments = new EnvironmentRepository(db, secrets)
+  const collectionVariables = new CollectionVariableRepository(db)
+  const globals = new GlobalVariableRepository(db, secrets)
   const oauth2 = new OAuth2Service(secrets)
-  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants)
+  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants, {
+    collectionVariables,
+    globals,
+  })
   const core: Core = {
     db,
     secrets,
@@ -68,6 +77,8 @@ export function createCore(deps: CoreDeps): Core {
     folders: new FolderRepository(db),
     requests: new RequestRepository(db),
     history,
+    collectionVariables,
+    globals,
     http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key) => oauth2.accessTokenFor(key)),
     oauth2,
     scripts,

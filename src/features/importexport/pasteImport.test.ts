@@ -125,7 +125,7 @@ describe('Import dialog: pasted JSON', () => {
   it('is titled Import and not Postman-only', async () => {
     await setup()
     expect(screen.getByRole('dialog', { name: 'Import' })).toBeInTheDocument()
-    expect(screen.getByTestId('import-subtitle')).toHaveTextContent('Slinger or Postman collections and environments (JSON)')
+    expect(screen.getByTestId('import-subtitle')).toHaveTextContent('Slinger or Postman collections, environments and globals (JSON)')
     expect(screen.getByLabelText('Import file')).toBeInTheDocument()
   })
 
@@ -140,8 +140,9 @@ describe('Import dialog: pasted JSON', () => {
     await waitFor(() => expect(onclose).toHaveBeenCalled())
     const col = app.collections.find((c) => c.name === 'Pets')!
     expect(app.requestsOf(col.id)).toHaveLength(2)
-    const env = app.environments.find((e) => e.name === 'Pets')!
-    expect((await mock.listEnvironmentVariables(env.id)).map((v) => v.key)).toEqual(['baseUrl'])
+    // The variable array is stored with the collection (no environment by default).
+    expect(app.environments.find((e) => e.name === 'Pets')).toBeUndefined()
+    expect((await mock.listCollectionVariables(col.id)).map((v) => v.key)).toEqual(['baseUrl'])
   })
 
   it('imports a pasted Slinger environment and merges into an existing one', async () => {
@@ -216,7 +217,8 @@ describe('Import dialog: pasted JSON', () => {
     expect(area().value).toBe('')
     expect(screen.getByLabelText('Import preview')).toHaveTextContent('Huge')
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
-    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    // Importing and reloading 4000+ requests through the mock takes over a second when the whole suite runs in parallel.
+    await waitFor(() => expect(onclose).toHaveBeenCalled(), { timeout: 5000 })
     expect(app.requestsOf(app.collections.find((c) => c.name === 'Huge')!.id).length).toBeGreaterThan(4000)
   })
 

@@ -2,8 +2,9 @@ import type { Workspace } from '../../shared/types'
 import { detachSync } from '../sync/detach'
 import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
-import type { SecretStore } from '../services/secrets'
+import { purgeSecretRefs, type SecretStore } from '../services/secrets'
 import { toWorkspace, requireWorkspace, type Db, type WorkspaceRow } from './common'
+import { cascadeWorkspaceVariables } from './variables'
 
 export class WorkspaceRepository {
   constructor(
@@ -47,7 +48,7 @@ export class WorkspaceRepository {
 
   /**
    * Soft-deletes the workspace and everything under it in one transaction.
-   * Keychain secrets of the deleted environments are purged after the transaction commits.
+   * Keychain secrets of the deleted environments and globals are purged after the transaction commits.
    */
   softDelete(id: string): void {
     requireWorkspace(this.db, id)
@@ -87,15 +88,9 @@ export class WorkspaceRepository {
            WHERE deleted = 0 AND environment_id IN (SELECT id FROM environments WHERE workspace_id = ?)`,
         )
         .run(now, wid)
-      return secretRefs
+      return [...secretRefs, ...cascadeWorkspaceVariables(this.db, wid, now)]
     })()
-    for (const ref of secretRefs) {
-      try {
-        this.secrets?.delete(ref)
-      } catch (err) {
-        console.warn(`[slinger] could not delete keychain entry ${ref}:`, err instanceof Error ? err.message : err)
-      }
-    }
+    purgeSecretRefs(this.secrets, secretRefs)
   }
 
   /** First-launch bootstrap: guarantee at least one live workspace. */

@@ -28,6 +28,12 @@ that are not obvious from the types:
   `setCollectionScripts(id, json|null)` / `setFolderScripts(id, json|null)` store the Postman `event` array (`[]` is stored as
   null); `Collection.scriptsJson` / `ApiFolder.scriptsJson` carry it (local-only, not synced). `HttpRequestInput.scriptSessionId`
   names the script session whose secret reads are redacted from history.
+* Persisted variables (local-only, not synced): `list/upsert/delete/reorder/replaceCollectionVariables` (per collection, never
+  secret: `isSecret: true` is rejected) and `list/upsert/delete/reorder/replaceGlobalVariables` + `revealGlobalVariable` (per
+  workspace, secrets like environment variables). Pass `RunScriptsInput.collectionId` (null for a request outside a collection):
+  main loads the collection's variables and the globals itself and saves script writes; `RunScriptsResult.collectionVariablesChanged`
+  / `globalsChanged` say what to reload. `RunScriptsInput.globals` is ignored and `collectionVariables` is only the in-memory scope
+  of a request without a collection.
 
 * OAuth 2.0 (request auth): `getOAuth2Token(config, {flowId?, timeoutMs?})`, `cancelOAuth2Flow(flowId)`,
   `refreshOAuth2Token(config, {ifExpiring?})`, `getOAuth2TokenStatus(config)`, `deleteOAuth2Token(tokenKey)`,
@@ -49,11 +55,17 @@ that are not obvious from the types:
 
 ## Behavior
 * Timestamps are Unix **seconds**.
+* Collection variables / globals upsert: addressed by `variableId`, else by key; `enabled` / `description` left undefined keep
+  the stored value; unlike environment variables a plain value is stored **exactly** (`''` empties it), only an existing
+  *secret* global keeps its value on `''`. `expectedVersion` (optional) gives `version_conflict`. `replace*` is the bulk editor:
+  the list becomes exactly the given entries in that order (ids of existing keys kept, missing keys deleted, a secret entry with
+  `''` keeps the stored secret of that key). `reorder*` takes every live id once and does not bump versions. Lists are ordered by
+  `sortOrder` and include disabled variables (`enabled: false`), which do not resolve.
 * Secret variables: lists return `value: null, maskedValue: '••••••••'`. When you upsert an
   existing variable, an **empty `value` means "keep the current value"** (also when toggling
   `isSecret`); a new secret needs a non-empty value. Upserting without `variableId` updates the
   variable with the same key if there is one. Resolve `{{secrets}}` in the renderer via
-  `revealEnvironmentVariable` right before sending; `executeHttpRequest` rejects any request that
+  `revealEnvironmentVariable` (or `revealGlobalVariable` for a secret global) right before sending; `executeHttpRequest` rejects any request that
   still contains `{{ }}` (URL, header names/values, auth, body, enabled form rows).
 * `executeHttpRequest`: only `enabled` form rows are sent; disabled rows are ignored. Send a
   `workspaceId` (history). Non-2xx responses resolve normally; failures reject and are still
@@ -73,13 +85,15 @@ that are not obvious from the types:
 * Postman import: the request `documentJson` keeps Postman-shaped `headers`, `body`, `auth`
   (falls back to the nearest folder/collection auth), `scripts` (item `event`), `responses`,
   `description` and the raw `source` item. An import with no requests fails without creating a
-  collection.
+  collection. The collection's `variable` array becomes its collection variables
+  (`PostmanImportResult.variableCount`); `replaceCollectionFromPostman` replaces them too.
 * Collection versions: `createCollectionVersion` needs strict semver ("1.2.3", "2.0.0-beta.1";
   no `v`, no `+build`). `listCollectionVersions` is newest-first by semver precedence.
   `restoreCollectionVersion(id, 'replace')` recreates folders/requests with **new ids** (refetch
-  folders/requests and close tabs of the old ones); `'copy'` returns the new collection.
+  folders/requests and close tabs of the old ones); `'copy'` returns the new collection. Both also set the collection variables
+  from the snapshot (`snapshot.collectionVariables`, absent in older snapshots = none): reload them.
 * `openExternalUrl` only accepts http/https. `secureStore*` cannot touch the reserved
-  `slinger:env-var:`, `slinger.cloud.tokens:` and `slinger:oauth2:` key prefixes.
+  `slinger:env-var:`, `slinger:global-var:`, `slinger.cloud.tokens:` and `slinger:oauth2:` key prefixes.
 * Content-Security-Policy: `script-src 'self'` (no inline/eval scripts), no network access from the
   renderer (`connect-src 'self'`): all HTTP goes through `executeHttpRequest`. Inline styles and
   data:/blob: images/workers are allowed.

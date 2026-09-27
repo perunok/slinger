@@ -1,14 +1,18 @@
 /**
- * Recognises Slinger and Postman collection (v2.x) and environment exports before anything is sent to the backend.
+ * Recognises Slinger and Postman collection (v2.x), environment and globals exports before anything is sent to the
+ * backend.
  * Slinger's own exports are Postman-compatible files (a collection with `info._slinger`, an environment whose
  * `_postman_exported_using` is "Slinger/x.y.z"), so one parser handles both.
  */
+import { variablesFromPostman } from '../../../shared/postmanVariables'
 import { countScripts } from '../../lib/scripts'
 
 export interface CollectionVariable {
   key: string
   value: string
   secret: boolean
+  /** Globals files keep disabled variables (as disabled); environment files and collections skip them here. */
+  enabled?: boolean
 }
 
 export type PostmanFile =
@@ -24,29 +28,35 @@ export type PostmanFile =
       examples: number
       /** Pre-request + test scripts with code, at collection, folder and request level. */
       scripts: number
+      /** Enabled collection variables (for the optional "also create an environment"). */
       variables: CollectionVariable[]
+      /** Every collection variable the import stores (`variable` array), and how many of them are disabled. */
+      collectionVariables?: { total: number; disabled: number }
       /** Slinger export with version history (`info._slinger`); null for other files. Validated by the backend on import. */
       history?: { versions: number; snapshots: boolean; latest: string | null } | null
     }
   | { kind: 'environment'; name: string; source: string; variables: CollectionVariable[]; skippedDisabled: number }
+  /** ADDED (persisted variables): a Postman globals export (`_postman_variable_scope: "globals"`). */
+  | { kind: 'globals'; name: string; source: string; variables: CollectionVariable[] }
 
 export type ParseResult = { ok: true; file: PostmanFile } | { ok: false; error: string }
 
 type Json = Record<string, unknown>
 const isObj = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v)
 
-function variablesOf(list: unknown, secretByType: boolean): { vars: CollectionVariable[]; skipped: number } {
+function variablesOf(list: unknown, secretByType: boolean, keepDisabled = false): { vars: CollectionVariable[]; skipped: number } {
   const vars: CollectionVariable[] = []
   let skipped = 0
   if (!Array.isArray(list)) return { vars, skipped }
   for (const v of list) {
     if (!isObj(v) || typeof v.key !== 'string' || v.key.trim() === '') continue
-    if (v.enabled === false || v.disabled === true) {
+    const disabled = v.enabled === false || v.disabled === true
+    if (disabled && !keepDisabled) {
       skipped++
       continue
     }
     const value = v.value === undefined || v.value === null ? '' : typeof v.value === 'string' ? v.value : JSON.stringify(v.value)
-    vars.push({ key: v.key.trim(), value, secret: secretByType && v.type === 'secret' })
+    vars.push({ key: v.key.trim(), value, secret: secretByType && v.type === 'secret', ...(keepDisabled ? { enabled: !disabled } : {}) })
   }
   return { vars, skipped }
 }
@@ -100,11 +110,11 @@ function collectionSource(info: Json | null): string {
 export const MIN_PASTED_EXPORT_CHARS = 200
 
 /**
- * Whether pasted text is a collection or environment export (by shape only, so the Import dialog can still
+ * Whether pasted text is a collection, environment or globals export (by shape only, so the Import dialog can still
  * explain why it cannot be imported, e.g. "no requests"). Cheap for other text: only text that starts with
  * `{` and is longer than {@link MIN_PASTED_EXPORT_CHARS} is parsed at all.
  */
-export function detectImportText(text: string): 'collection' | 'environment' | null {
+export function detectImportText(text: string): 'collection' | 'environment' | 'globals' | null {
   const t = text.trimStart()
   if (t.length < MIN_PASTED_EXPORT_CHARS || t[0] !== '{' || text.trimEnd().at(-1) !== '}') return null
   let data: unknown
@@ -115,6 +125,7 @@ export function detectImportText(text: string): 'collection' | 'environment' | n
   }
   if (!isObj(data)) return null
   if (Array.isArray(data.values) && data._postman_variable_scope === 'environment') return 'environment'
+  if (Array.isArray(data.values) && data._postman_variable_scope === 'globals') return 'globals'
   if (Array.isArray(data.item) && isObj(data.info)) return 'collection'
   return null
 }
@@ -137,7 +148,9 @@ export function parsePostmanFile(text: string): ParseResult {
     return { ok: true, file: { kind: 'environment', name, source, variables: vars, skippedDisabled: skipped } }
   }
   if (data._postman_variable_scope === 'globals') {
-    return { ok: false, error: 'Postman globals are not supported. Export the environment instead.' }
+    if (!Array.isArray(data.values)) return { ok: false, error: 'This globals file has no "values" array.' }
+    const name = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : 'Globals'
+    return { ok: true, file: { kind: 'globals', name, source: 'Postman globals', variables: variablesOf(data.values, true, true).vars } }
   }
 
   const info = isObj(data.info) ? data.info : null
@@ -152,10 +165,12 @@ export function parsePostmanFile(text: string): ParseResult {
   if (requests === 0) return { ok: false, error: 'This collection contains no requests.' }
   const name = info && typeof info.name === 'string' && info.name.trim() ? info.name.trim() : 'Imported Collection'
   const postmanId = info && typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim() : null
+  const stored = variablesFromPostman(data.variable)
   return {
     ok: true,
     file: {
       kind: 'collection', name, source: collectionSource(info), postmanId, folders, requests, examples, scripts: scripts + countScripts(data.event), variables: variablesOf(data.variable, false).vars,
+      collectionVariables: { total: stored.length, disabled: stored.filter((v) => v.enabled === false).length },
       history: slingerHistory(info),
     },
   }

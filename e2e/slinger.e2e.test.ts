@@ -631,6 +631,52 @@ describe('scripts', () => {
     expect(count(after, '/me')).toBe(count(before, '/me') + 1)
     expect(count(after, '/login')).toBe(count(before, '/login'))
   })
+
+  it('pm.collectionVariables / pm.globals written by a test script persist across a reload and resolve {{}}', async () => {
+    await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = await s.createCollection(ws.id, 'Vars C')
+      await s.createRequest({
+        workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'cv-setter', method: 'GET', url: '{{baseUrl}}/setter',
+        documentJson: JSON.stringify({
+          headers: [],
+          body: null,
+          scripts: [{ listen: 'test', script: { type: 'text/javascript', exec: ["pm.collectionVariables.set('cvPath', 'from-collection')", "pm.globals.set('gTrace', 'from-globals')"] } }],
+        }),
+      })
+      await s.createRequest({
+        workspaceId: ws.id, collectionId: col.id, folderId: null, name: 'cv-user', method: 'GET', url: '{{baseUrl}}/{{cvPath}}',
+        documentJson: JSON.stringify({ headers: [{ key: 'X-Trace', value: '{{gTrace}}', type: 'text' }], body: null }),
+      })
+    })
+    await reloadApp(page)
+    await reveal(/cv-setter$/, /^Vars C/)
+    await item(/cv-setter$/).click()
+    await send()
+    await expect.poll(() => response().getByTestId('status-chip').innerText()).toContain('200')
+
+    // Stored in the main process (not session-only): still there after a reload of the renderer.
+    await reloadApp(page)
+    const stored = await page.evaluate(async () => {
+      const s = window.slinger
+      const ws = (await s.listWorkspaces())[0]!
+      const col = (await s.listCollections(ws.id)).find((c) => c.name === 'Vars C')!
+      return {
+        collection: (await s.listCollectionVariables(col.id)).map((v) => [v.key, v.value]),
+        globals: (await s.listGlobalVariables(ws.id)).map((v) => [v.key, v.value]),
+      }
+    })
+    expect(stored).toEqual({ collection: [['cvPath', 'from-collection']], globals: [['gTrace', 'from-globals']] })
+
+    await reveal(/cv-user$/, /^Vars C/)
+    await item(/cv-user$/).click()
+    const before = target.requests.length
+    await send()
+    const sent = target.requests.slice(before).at(-1)!
+    expect(sent.url).toBe('/from-collection')
+    expect(sent.headers['x-trace']).toBe('from-globals')
+  })
 })
 
 describe('collection versions', () => {
@@ -844,6 +890,8 @@ describe('import and export', () => {
     for (let i = 1; i < original.item.length; i++) expect(JSON.stringify(exported.item[i].response)).toBe(JSON.stringify(original.item[i].response))
     expect(exported.item[0].response[0]).toEqual({ ...original.item[0].response[0], name: 'success edited', status: 'Accepted', code: 202 })
     expect(JSON.stringify(exported.item[0].response[1])).toBe(JSON.stringify(original.item[0].response[1]))
+    // The file's collection variables were stored on import and are written back.
+    expect(exported.variable).toEqual(original.variable.map((v: { key: string; value: string }) => ({ ...v, type: 'string' })))
   })
 
   it('re-importing the same file replaces the collection in place after a safety version', async () => {

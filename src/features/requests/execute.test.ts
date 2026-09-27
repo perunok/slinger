@@ -9,7 +9,6 @@ import { app } from '../../app/state.svelte'
 import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import { draftFingerprint, parseDocument } from '../../lib/request'
-import { sessionVars } from '../scripts/sessionVars'
 import { executeDraft, newScriptRun } from './execute'
 import { tabsStore } from './tabs.svelte'
 
@@ -23,8 +22,8 @@ const result = (input: RunScriptsInput, over: Partial<RunScriptsResult> = {}): R
   errors: [],
   request: null,
   variables: input.variables,
-  collectionVariables: input.collectionVariables,
-  globals: input.globals,
+  collectionVariables: input.collectionVariables ?? {},
+  globals: {},
   environmentChanged: false,
   console: [],
   tests: [],
@@ -36,7 +35,6 @@ const testEv = (code: string) => [{ listen: 'test', script: { type: 'text/javasc
 
 beforeEach(async () => {
   localStorage.clear()
-  sessionVars.reset()
   settings.setScriptContinueOnError(false)
   backend = createMockBackend({ latencyMs: 0 })
   window.slinger = backend
@@ -142,20 +140,57 @@ describe('executeDraft with scripts', () => {
     expect(refresh).toHaveBeenCalled()
   })
 
-  it('collection variables and globals persist for the session; pm.variables only for one run', async () => {
-    respond = (input) => (input.event === 'prerequest' ? { variables: { n: 1 }, collectionVariables: { cv: 'x' }, globals: { g: true } } : {})
+  it('passes the collection to the scripts, reloads the scopes they wrote to; pm.variables only for one run', async () => {
+    const reloadCv = vi.spyOn(app, 'reloadCollectionVariables')
+    const reloadGlobals = vi.spyOn(app, 'reloadGlobals')
+    respond = (input) => (input.event === 'prerequest' ? { variables: { n: 1 }, collectionVariablesChanged: true, globalsChanged: true } : {})
     const { r, draft } = withScripts(pre('x()'))
     await executeDraft(draft, ctx(r))
     await executeDraft(draft, ctx(r))
+    expect(calls[0].collectionId).toBe(r.collectionId)
+    expect(calls[0].globals).toBeUndefined()
     expect(calls[1].variables).toEqual({})
-    expect(calls[1].collectionVariables).toEqual({ cv: 'x' })
-    expect(calls[1].globals).toEqual({ g: true })
+    expect(reloadCv).toHaveBeenCalledWith(r.collectionId)
+    expect(reloadGlobals).toHaveBeenCalled()
 
     const run = newScriptRun()
     await executeDraft(draft, { ...ctx(r), run })
     await executeDraft(draft, { ...ctx(r), run })
     expect(calls[3].variables).toEqual({ n: 1 })
     expect(calls[3].sessionId).toBe(calls[2].sessionId)
+  })
+
+  it('a request outside a collection keeps pm.collectionVariables in memory for the run', async () => {
+    respond = (input) => (input.event === 'prerequest' ? { collectionVariables: { ...input.collectionVariables, cv: 'mem' } } : {})
+    const { draft } = withScripts(pre('x()'))
+    draft.url = 'https://mock.slinger.local/json?cv={{cv}}'
+    const run = newScriptRun()
+    const out = await executeDraft(draft, { workspaceId: app.workspaceId!, requestId: null, collectionId: null, folderId: null, run })
+    expect(out.ok).toBe(true)
+    expect(calls[0].collectionId).toBeNull()
+    expect(sent[0].url).toContain('cv=mem')
+    expect(run.collectionVariables).toEqual({ cv: 'mem' })
+  })
+
+  it('resolves persisted collection variables and globals (secret globals revealed just in time)', async () => {
+    const r = getUser()
+    await backend.upsertCollectionVariable({ collectionId: r.collectionId, key: 'cvHost', value: 'mock.slinger.local' })
+    await backend.upsertCollectionVariable({ collectionId: r.collectionId, key: 'off', value: 'x', enabled: false })
+    const g = await backend.upsertGlobalVariable({ workspaceId: app.workspaceId!, key: 'gToken', value: 'sek', isSecret: true })
+    await Promise.all([app.reloadCollectionVariables(r.collectionId), app.reloadGlobals()])
+    const reveal = vi.spyOn(backend, 'revealGlobalVariable')
+    const draft = parseDocument(r)
+    draft.url = 'https://{{cvHost}}/json?t={{gToken}}'
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(reveal).toHaveBeenCalledWith(g.id)
+    expect(sent[0].url).toBe('https://mock.slinger.local/json?t=sek')
+    expect(sent[0].historyUrl).toBe('https://mock.slinger.local/json?t={{gToken}}')
+
+    draft.url = 'https://{{off}}/json'
+    const bad = await executeDraft(draft, ctx(r))
+    expect(bad).toMatchObject({ ok: false, kind: 'unresolved', unresolved: ['off'] })
+    expect(bad.ok ? '' : bad.error).toMatch(/the collection ".*" or the globals/)
   })
 
   it('keeps test results and console output on the tab', async () => {

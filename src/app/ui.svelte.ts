@@ -10,8 +10,11 @@ class UiState {
   /** Link-a-cloud-workspace flow; `remoteId` pre-selects one from the list. */
   linkOpen = $state<{ remoteId: string | null } | null>(null)
   quickOpen = $state(false)
-  /** Environment editor; `newVariable` pre-fills a row (from the "create variable" popover). */
-  envEditor = $state<{ open: boolean; environmentId?: string; newVariable?: string }>({ open: false })
+  /**
+   * Environment editor; `newVariable` pre-fills a row (from the "create variable" popover). `globals` selects the
+   * workspace's Globals entry instead of an environment.
+   */
+  envEditor = $state<{ open: boolean; environmentId?: string; newVariable?: string; globals?: boolean }>({ open: false })
   runner = $state<{ collectionId: string; folderId: string | null } | null>(null)
   /** Collection- or folder-level scripts editor. */
   scriptsFor = $state<{ kind: 'collection' | 'folder'; id: string } | null>(null)

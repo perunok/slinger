@@ -1,16 +1,18 @@
 /**
- * Main-process side of `runScripts`: loads the active environment, decides read-only, hands the chain to the
- * sandbox executor, persists environment writes through EnvironmentRepository and remembers which secret
- * values a session's scripts read so HttpService can keep them out of history.
+ * Main-process side of `runScripts`: loads the active environment, the request's collection variables and the
+ * workspace's globals, decides read-only, hands the chain to the sandbox executor, persists writes to those three
+ * scopes through their repositories and remembers which secret values a session's scripts read so HttpService can
+ * keep them out of history.
  *
  * Nothing a script prints or computes is logged here: console output travels only in the IPC result.
  */
 import type { RunScriptsInput, RunScriptsResult, ScriptErrorInfo } from '../../shared/types'
 import type { Db } from '../db/database'
 import { invalidInput, toErrorPayload } from '../lib/errors'
-import { requireEnvironment, requireWorkspace } from '../repositories/common'
+import { requireCollection, requireEnvironment, requireWorkspace } from '../repositories/common'
 import type { EnvironmentRepository } from '../repositories/environments'
-import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type EnvOp, type EnvSnapshot, type ScriptJob } from '../scripts/job'
+import type { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
+import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type EnvOp, type EnvSnapshot, type PersistedScopeSnapshot, type ScriptJob } from '../scripts/job'
 import type { ScriptExecutor } from '../scripts/executor'
 import type { FileAccess } from './fileGrants'
 import { DEFAULT_TIMEOUT_MS } from './httpExecutor'
@@ -26,14 +28,34 @@ interface Session {
   touched: number
 }
 
-/** Keeps only the last write per key, in the order of those last writes. */
+/** Keeps only the last write per key, in the order of those last writes; a `clear` drops everything before it. */
 export function coalesceEnvOps(ops: EnvOp[]): EnvOp[] {
   const last = new Map<string, EnvOp>()
+  let cleared = false
   for (const op of ops) {
+    if (op.op === 'clear') {
+      last.clear()
+      cleared = true
+      continue
+    }
     last.delete(op.key)
     last.set(op.key, op)
   }
-  return [...last.values()]
+  return [...(cleared ? [{ op: 'clear' } as const] : []), ...last.values()]
+}
+
+/** Where a persisted scope's script writes go. */
+interface OpTarget {
+  source: string
+  set(key: string, value: string): { secret: boolean }
+  unset(key: string): void
+  clear(): void
+}
+
+/** Collection variables + globals, when the core provides them (older tests construct the service without). */
+export interface ScriptVariableStores {
+  collectionVariables: CollectionVariableRepository
+  globals: GlobalVariableRepository
 }
 
 export class ScriptService {
@@ -47,6 +69,8 @@ export class ScriptService {
     private readonly now: () => number = Date.now,
     /** File grants for pm.sendRequest form-data / file bodies (none: such bodies are refused). */
     private readonly files?: FileAccess,
+    /** Persisted collection variables and globals (absent: both are in-memory scopes, as before 0008). */
+    private readonly stores?: ScriptVariableStores,
   ) {}
 
   private isReadOnly(workspaceId: string): boolean {
@@ -97,7 +121,8 @@ export class ScriptService {
     if (this.runs.has(input.runId)) throw invalidInput('scripts with this runId are already running')
 
     let environment: EnvSnapshot | null = null
-    const secretIds = new Map<string, string>() // variable id -> key, for this environment only
+    // variable id -> where to reveal it, for this environment's and this workspace's secrets only
+    const secretIds = new Map<string, { key: string; reveal: (id: string) => string }>()
     if (input.environmentId) {
       const env = requireEnvironment(this.db, input.environmentId)
       if (env.workspace_id !== workspace.id) throw invalidInput('environment belongs to a different workspace')
@@ -106,7 +131,20 @@ export class ScriptService {
         name: env.name,
         variables: vars.map((v) => ({ id: v.id, key: v.key, value: v.isSecret ? null : v.value, secret: v.isSecret })),
       }
-      for (const v of vars) if (v.isSecret) secretIds.set(v.id, v.key)
+      for (const v of vars) if (v.isSecret) secretIds.set(v.id, { key: v.key, reveal: (id) => this.environments.reveal(id) })
+    }
+    // Persisted collection variables (of the request's collection) and globals (of the workspace).
+    let persistedCollection: PersistedScopeSnapshot | null | undefined
+    let persistedGlobals: PersistedScopeSnapshot | undefined
+    const stores = this.stores
+    if (stores) {
+      if (input.collectionId) {
+        const collection = requireCollection(this.db, input.collectionId)
+        if (collection.workspace_id !== workspace.id) throw invalidInput('collection belongs to a different workspace')
+        persistedCollection = { variables: stores.collectionVariables.forScripts(collection.id) }
+      } else if (input.collectionId === null) persistedCollection = null
+      persistedGlobals = { variables: stores.globals.forScripts(workspace.id) }
+      for (const v of persistedGlobals.variables) if (v.secret) secretIds.set(v.id, { key: v.key, reveal: (id) => stores.globals.reveal(id) })
     }
     const readOnly = this.isReadOnly(workspace.id)
     const timeoutMs = Math.min(Math.max(Math.round(input.timeoutMs ?? DEFAULT_LIMITS.timeoutMs), 100), 60_000)
@@ -120,10 +158,12 @@ export class ScriptService {
       request: input.request,
       response: input.response ?? null,
       variables: input.variables,
-      collectionVariables: input.collectionVariables,
-      globals: input.globals,
+      collectionVariables: input.collectionVariables ?? {},
+      globals: input.globals ?? {},
       info: input.info,
       environment,
+      persistedCollection,
+      persistedGlobals,
       readOnly,
       continueOnError: input.continueOnError === true,
       limits: { ...DEFAULT_LIMITS, timeoutMs, sendRequestTimeoutMs, wallClockMs },
@@ -142,12 +182,12 @@ export class ScriptService {
             redact: (text) => this.redact(input.sessionId, text),
           }),
         readSecret: (variableId) => {
-          // Only secrets of the environment this run was given; anything else is refused.
-          const key = secretIds.get(variableId)
-          if (!key || !input.environmentId) return null
+          // Only secrets of the environment / globals this run was given; anything else is refused.
+          const target = secretIds.get(variableId)
+          if (!target) return null
           try {
-            const value = this.environments.reveal(variableId)
-            this.remember(input.sessionId, key, value)
+            const value = target.reveal(variableId)
+            this.remember(input.sessionId, target.key, value)
             return value
           } catch {
             return null
@@ -159,25 +199,57 @@ export class ScriptService {
     }
 
     const errors: ScriptErrorInfo[] = [...result.errors]
-    let environmentChanged = false
-    const ops = coalesceEnvOps(result.envOps)
-    if (ops.length > 0 && input.environmentId) {
-      if (readOnly || this.isReadOnly(workspace.id)) {
-        errors.push({ source: 'Environment', kind: 'error', message: 'This workspace is read-only; environment changes from scripts were not saved.' })
-      } else {
-        for (const op of ops) {
-          try {
-            if (op.op === 'set') {
-              const { secret } = this.environments.setValueFromScript(input.environmentId, op.key, op.value)
-              if (secret) this.remember(input.sessionId, op.key, op.value)
-            } else this.environments.unsetFromScript(input.environmentId, op.key)
-            environmentChanged = true
-          } catch (err) {
-            errors.push({ source: 'Environment', kind: 'error', message: `Could not save "${op.key}": ${toErrorPayload(err).message}` })
-          }
+    const nowReadOnly = readOnly || this.isReadOnly(workspace.id)
+    const apply = (ops: EnvOp[], target: OpTarget): boolean => {
+      const list = coalesceEnvOps(ops)
+      if (list.length === 0) return false
+      if (nowReadOnly) {
+        errors.push({ source: target.source, kind: 'error', message: `This workspace is read-only; ${target.source.toLowerCase()} changes from scripts were not saved.` })
+        return false
+      }
+      let changed = false
+      for (const op of list) {
+        try {
+          if (op.op === 'set') {
+            const { secret } = target.set(op.key, op.value)
+            if (secret) this.remember(input.sessionId, op.key, op.value)
+          } else if (op.op === 'unset') target.unset(op.key)
+          else target.clear()
+          changed = true
+        } catch (err) {
+          const what = op.op === 'clear' ? 'the cleared variables' : `"${op.key}"`
+          errors.push({ source: target.source, kind: 'error', message: `Could not save ${what}: ${toErrorPayload(err).message}` })
         }
       }
+      return changed
     }
+    const envId = input.environmentId
+    const environmentChanged = envId
+      ? apply(result.envOps, {
+          source: 'Environment',
+          set: (k, v) => this.environments.setValueFromScript(envId, k, v),
+          unset: (k) => this.environments.unsetFromScript(envId, k),
+          clear: () => {},
+        })
+      : false
+    const collectionId = persistedCollection ? input.collectionId! : null
+    const collectionVariablesChanged =
+      stores && collectionId
+        ? apply(result.collectionOps ?? [], {
+            source: 'Collection variables',
+            set: (k, v) => stores.collectionVariables.setValueFromScript(collectionId, k, v),
+            unset: (k) => stores.collectionVariables.unsetFromScript(collectionId, k),
+            clear: () => stores.collectionVariables.clearFromScript(collectionId),
+          })
+        : false
+    const globalsChanged = stores
+      ? apply(result.globalOps ?? [], {
+          source: 'Globals',
+          set: (k, v) => stores.globals.setValueFromScript(workspace.id, k, v),
+          unset: (k) => stores.globals.unsetFromScript(workspace.id, k),
+          clear: () => stores.globals.clearFromScript(workspace.id),
+        })
+      : false
 
     return {
       event: input.event,
@@ -187,6 +259,8 @@ export class ScriptService {
       collectionVariables: result.collectionVariables,
       globals: result.globals,
       environmentChanged,
+      collectionVariablesChanged,
+      globalsChanged,
       console: result.console,
       tests: result.tests,
       durationMs: result.durationMs,

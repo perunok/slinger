@@ -9,6 +9,7 @@
 <div class="flex flex-col gap-2">
   <p class="text-xs text-muted">
     One <code>key=value</code> per line. Lines starting with <code>#</code> are ignored (and not kept). Keys missing from the text are deleted.
+    {#if model.backend.replace}The order of the lines is the order of the variables; disabled variables are edited in the table.{/if}
   </p>
   {#if model.secretCount > 0}
     <p class="rounded border border-border bg-raised px-2 py-1 text-xs text-muted" data-testid="bulk-secret-note">
@@ -25,6 +26,9 @@
     bind:value={model.bulkText}
     class="w-full resize-y rounded border border-border bg-surface p-2 font-mono text-xs text-fg outline-none focus:border-accent"
   ></textarea>
+  {#if model.bulkError}
+    <p role="alert" class="rounded border border-danger bg-danger-soft px-2 py-1 text-xs text-danger">{model.bulkError}</p>
+  {/if}
   {#if errors.length > 0}
     <ul role="alert" class="rounded border border-danger bg-danger-soft px-2 py-1 text-xs text-danger">
       {#each errors as err}<li>Line {err.line}: {err.message}</li>{/each}
@@ -32,6 +36,6 @@
   {/if}
   <div class="flex gap-2">
     <Button variant="primary" size="sm" disabled={errors.length > 0 || !model.bulkDirty} onclick={() => model.applyBulk()}>Apply</Button>
-    <Button size="sm" disabled={errors.length > 0} onclick={() => (model.applyBulk(), model.exitBulk())}>Back to table</Button>
+    <Button size="sm" disabled={errors.length > 0} onclick={() => model.applyBulk() && model.exitBulk()}>Back to table</Button>
   </div>
 </div>

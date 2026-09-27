@@ -24,6 +24,23 @@ export interface VariableRow {
   version: number
 }
 
+/** Collection variable / global as stored in the mock (secret globals keep their plaintext here only). */
+export interface ScopedVarRow {
+  id: string
+  /** Collection id (collection variables) or workspace id (globals). */
+  ownerId: string
+  workspaceId: string
+  key: string
+  value: string
+  isSecret: boolean
+  enabled: boolean
+  description: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
 export interface VersionRow extends CollectionVersion {
   snapshot: CollectionSnapshot
 }
@@ -47,6 +64,9 @@ export interface MockState {
   requests: ApiRequest[]
   history: HistoryEntry[]
   versions: VersionRow[]
+  /** ADDED (persisted variables). */
+  collectionVariables: ScopedVarRow[]
+  globalVariables: ScopedVarRow[]
   /** OAuth 2.0 tokens by token key (the keychain stand-in). */
   oauth2Tokens: Record<string, MockOAuth2Token>
 }
@@ -61,6 +81,8 @@ export function emptyState(): MockState {
     requests: [],
     history: [],
     versions: [],
+    collectionVariables: [],
+    globalVariables: [],
     oauth2Tokens: {},
   }
 }
@@ -182,6 +204,7 @@ export function removeCollectionContents(s: MockState, collectionId: string): vo
 export function removeCollection(s: MockState, collectionId: string): void {
   removeCollectionContents(s, collectionId)
   s.versions = s.versions.filter((v) => v.collectionId !== collectionId)
+  s.collectionVariables = s.collectionVariables.filter((v) => v.ownerId !== collectionId)
   s.collections = s.collections.filter((c) => c.id !== collectionId)
 }
 
@@ -194,5 +217,6 @@ export function removeWorkspace(s: MockState, workspaceId: string): void {
   for (const c of s.collections.filter((c) => c.workspaceId === workspaceId)) removeCollection(s, c.id)
   for (const e of s.environments.filter((e) => e.workspaceId === workspaceId)) removeEnvironment(s, e.id)
   s.history = s.history.filter((h) => h.workspaceId !== workspaceId)
+  s.globalVariables = s.globalVariables.filter((v) => v.ownerId !== workspaceId)
   s.workspaces = s.workspaces.filter((w) => w.id !== workspaceId)
 }

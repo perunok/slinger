@@ -97,7 +97,7 @@ describe('export file names', () => {
   })
 
   it('import pickers accept Slinger, Postman and plain JSON files', () => {
-    for (const ext of ['.slinger_collection.json', '.slinger_environment.json', '.postman_collection.json', '.postman_environment.json', '.json']) {
+    for (const ext of ['.slinger_collection.json', '.slinger_environment.json', '.postman_collection.json', '.postman_environment.json', '.postman_globals.json', '.json']) {
       expect(IMPORT_FILE_ACCEPT.split(',')).toContain(ext)
     }
   })

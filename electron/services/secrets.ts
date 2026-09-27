@@ -14,6 +14,14 @@ export const OAUTH2_TOKEN_PREFIX = 'slinger:oauth2:'
 
 export const envVarSecretKey = (variableId: string): string => `${ENV_VAR_SECRET_PREFIX}${variableId}`
 
+/** Keys under this prefix hold secret globals (pm.globals); reserved like the environment prefix. */
+export const GLOBAL_VAR_SECRET_PREFIX = 'slinger:global-var:'
+
+export const globalVarSecretKey = (variableId: string): string => `${GLOBAL_VAR_SECRET_PREFIX}${variableId}`
+
+/** Namespaces the generic secureStore* passthrough refuses (variable secrets, cloud tokens, OAuth 2.0 tokens). */
+export const RESERVED_SECRET_PREFIXES = [ENV_VAR_SECRET_PREFIX, GLOBAL_VAR_SECRET_PREFIX, CLOUD_TOKEN_PREFIX, OAUTH2_TOKEN_PREFIX] as const
+
 export interface SecretStore {
   get(key: string): string | null
   set(key: string, value: string): void
@@ -107,8 +115,22 @@ export function assertGenericSecureKey(key: unknown): string {
     throw invalidInput('secure store key must be 1-256 characters')
   }
   const lower = key.toLowerCase()
-  if (lower.startsWith(ENV_VAR_SECRET_PREFIX) || lower.startsWith(CLOUD_TOKEN_PREFIX) || lower.startsWith(OAUTH2_TOKEN_PREFIX)) {
+  if (RESERVED_SECRET_PREFIXES.some((p) => lower.startsWith(p))) {
     throw invalidInput('this key namespace is reserved')
   }
   return key
+}
+
+/**
+ * Deletes keychain entries whose rows are already gone from the database (after the transaction committed).
+ * A failure only leaves an orphaned entry that is unreachable through the app, so it is logged, not thrown.
+ */
+export function purgeSecretRefs(secrets: SecretStore | undefined, refs: Iterable<string>): void {
+  for (const ref of refs) {
+    try {
+      secrets?.delete(ref)
+    } catch (err) {
+      console.warn(`[slinger] could not delete keychain entry ${ref}:`, err instanceof Error ? err.message : err)
+    }
+  }
 }

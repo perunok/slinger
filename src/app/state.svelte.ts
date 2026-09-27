@@ -1,12 +1,12 @@
 /**
- * Workspace-level application state: workspaces, collections/folders/requests,
- * environments and the active environment (which defines the template scope).
+ * Workspace-level application state: workspaces, collections/folders/requests, collection variables,
+ * environments, the active environment and globals (which together define the template scope).
  * Every IPC failure is reported through a toast; nothing throws to callers.
  */
-import type { ApiFolder, ApiRequest, Collection, Environment, EnvironmentVariable, Workspace } from '../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionVariable, Environment, EnvironmentVariable, GlobalVariable, Workspace } from '../../shared/types'
 import { api, errorInfo, isReadOnly } from '../lib/ipc'
-import { makeScope } from '../lib/template'
-import { scopeStore } from './scope.svelte'
+import type { VariableInfo } from '../lib/template'
+import { scopeStore, type CollectionScopeLayer } from './scope.svelte'
 import { toast } from './toast.svelte'
 
 const LS_WORKSPACE = 'slinger.workspace'
@@ -46,6 +46,9 @@ class AppState {
   environments = $state<Environment[]>([])
   activeEnvironmentId = $state<string | null>(null)
   envVariables = $state<EnvironmentVariable[]>([])
+  /** ADDED (persisted variables): the workspace's globals and every collection's variables (by collection id). */
+  globals = $state<GlobalVariable[]>([])
+  collectionVariables = $state<Record<string, CollectionVariable[]>>({})
 
   workspace = $derived(this.workspaces.find((w) => w.id === this.workspaceId) ?? null)
   activeEnvironment = $derived(this.environments.find((e) => e.id === this.activeEnvironmentId) ?? null)
@@ -100,7 +103,9 @@ class AppState {
     this.collections = []
     this.folders = []
     this.requests = []
-    await Promise.all([this.reloadCollections(), this.reloadEnvironments()])
+    this.collectionVariables = {}
+    this.globals = []
+    await Promise.all([this.reloadCollections(), this.reloadEnvironments(), this.reloadGlobals()])
   }
 
   async refreshWorkspaces() {
@@ -120,14 +125,16 @@ class AppState {
       const cols = await api().listCollections(ws)
       const perCollection = await Promise.all(
         cols.map(async (c) => {
-          const [f, r] = await Promise.all([api().listFolders(c.id), api().listRequests(c.id)])
-          return { f, r }
+          const [f, r, v] = await Promise.all([api().listFolders(c.id), api().listRequests(c.id), api().listCollectionVariables(c.id)])
+          return { id: c.id, f, r, v }
         }),
       )
       if (this.workspaceId !== ws) return // switched meanwhile
       this.collections = cols
       this.folders = perCollection.flatMap((x) => x.f)
       this.requests = perCollection.flatMap((x) => x.r)
+      this.collectionVariables = Object.fromEntries(perCollection.map((x) => [x.id, x.v]))
+      this.publishScope()
       this.onRequestsReloaded?.()
       this.onLocalData?.()
     } catch (e) {
@@ -145,13 +152,15 @@ class AppState {
     try {
       const loaded = await Promise.all(
         ids.map(async (id) => {
-          const [f, r] = await Promise.all([api().listFolders(id), api().listRequests(id)])
-          return { id, f, r }
+          const [f, r, v] = await Promise.all([api().listFolders(id), api().listRequests(id), api().listCollectionVariables(id)])
+          return { id, f, r, v }
         }),
       )
       const set = new Set(ids)
       this.folders = [...this.folders.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.f)]
       this.requests = [...this.requests.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.r)]
+      this.collectionVariables = { ...this.collectionVariables, ...Object.fromEntries(loaded.map((x) => [x.id, x.v])) }
+      this.publishScope()
       this.onRequestsReloaded?.()
       this.onLocalData?.()
     } catch (e) {
@@ -174,6 +183,7 @@ class AppState {
     const i = this.collections.findIndex((x) => x.id === c.id)
     if (i >= 0) this.collections[i] = c
     else this.collections.push(c)
+    this.publishScope()
     this.onLocalData?.()
   }
   upsertFolder(f: ApiFolder) {
@@ -238,12 +248,49 @@ class AppState {
     this.onLocalData?.()
   }
 
+  // ---- collection variables and globals (persisted, local-only) ------------------
+
+  /** Reloads one collection's variables (after an edit, a script write, an import) and republishes the scope. */
+  async reloadCollectionVariables(collectionId: string): Promise<void> {
+    try {
+      const vars = await api().listCollectionVariables(collectionId)
+      if (!this.collections.some((c) => c.id === collectionId)) return
+      this.collectionVariables = { ...this.collectionVariables, [collectionId]: vars }
+    } catch (e) {
+      toast.error('Could not load collection variables', errorInfo(e).message)
+    }
+    this.publishScope()
+  }
+
+  /** Reloads the workspace's globals and republishes the scope. */
+  async reloadGlobals(): Promise<void> {
+    const ws = this.workspaceId
+    if (!ws) return
+    try {
+      const vars = await api().listGlobalVariables(ws)
+      if (this.workspaceId !== ws) return
+      this.globals = vars
+    } catch (e) {
+      this.globals = []
+      toast.error('Could not load globals', errorInfo(e).message)
+    }
+    this.publishScope()
+  }
+
+  /** Publishes every layer of the template scope (see scope.svelte.ts). Disabled variables do not resolve. */
   publishScope() {
     const env = this.activeEnvironment
-    scopeStore.scope = makeScope(
-      env?.name ?? null,
-      this.envVariables.map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id })),
-    )
+    scopeStore.environmentName = env?.name ?? null
+    scopeStore.environment = this.envVariables.map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id }))
+    scopeStore.globals = this.globals
+      .filter((v) => v.enabled)
+      .map((v): VariableInfo => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id }))
+    const collections = new Map<string, CollectionScopeLayer>()
+    for (const c of this.collections) {
+      const vars = (this.collectionVariables[c.id] ?? []).filter((v) => v.enabled)
+      collections.set(c.id, { name: c.name, vars: vars.map((v) => ({ key: v.key, value: v.value, secret: false, id: v.id })) })
+    }
+    scopeStore.collections = collections
   }
 }
 

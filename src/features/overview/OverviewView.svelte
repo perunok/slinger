@@ -3,6 +3,7 @@
    * Collection / folder overview tab: name, location, what it contains, and its documentation (Postman
    * `description`, Markdown) rendered by default with Edit / Split. Saving (button or Ctrl+S) stores the text
    * on the collection/folder; it is kept on this device and exported to Postman, but not synced in v1.
+   * A collection overview also has a Variables section (the collection variables editor).
    */
   import type { ApiFolder } from '../../../shared/types'
   import { app } from '../../app/state.svelte'
@@ -17,6 +18,7 @@
   import { overviewEntity, tabsStore, type RequestTab } from '../requests/tabs.svelte'
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
+  import CollectionVariablesEditor from './CollectionVariablesEditor.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
 
@@ -52,6 +54,8 @@
     if (!sync.blocked) void tabsStore.save(tab)
   }
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const section = $derived(target.kind === 'collection' ? tab.overviewSection : 'docs')
+  const varCount = $derived(collectionId ? (app.collectionVariables[collectionId]?.length ?? 0) : 0)
 </script>
 
 <div id="request-panel" role="tabpanel" aria-labelledby="rtab-{tab.id}" class="flex min-h-0 flex-1 flex-col" data-testid="overview-view">
@@ -104,6 +108,24 @@
         >Save</Button>
       </div>
     </header>
+    {#if target.kind === 'collection'}
+      <div role="tablist" aria-label="Overview sections" class="flex gap-1 border-b border-border px-3 text-sm">
+        {#each [['docs', 'Documentation'], ['variables', `Variables${varCount ? ` (${varCount})` : ''}`]] as [id, text] (id)}
+          <button
+            type="button"
+            role="tab"
+            id="ov-{tab.id}-{id}"
+            aria-selected={section === id}
+            data-testid="overview-section-{id}"
+            class="-mb-px border-b-2 px-2 py-1.5 {section === id ? 'border-accent text-fg' : 'border-transparent text-muted hover:text-fg'}"
+            onclick={() => (tab.overviewSection = id as 'docs' | 'variables')}
+          >{text}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if section === 'variables' && collectionId && collection}
+      <CollectionVariablesEditor {tab} {collectionId} collectionName={collection.name} />
+    {:else}
     {#if sync.blocked}<ReadOnlyNote class="mx-3 mt-2" />{/if}
     <DocsEditor
       {value}
@@ -118,5 +140,6 @@
       hint="Kept on this device and exported to Postman · not synced to the cloud yet"
       class="min-h-0 flex-1"
     />
+    {/if}
   {/if}
 </div>

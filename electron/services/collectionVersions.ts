@@ -20,6 +20,7 @@ import {
   type FolderRow,
   type RequestRow,
 } from '../repositories/common'
+import { CollectionVariableRepository } from '../repositories/variables'
 import { compare, parse } from './semver'
 
 interface VersionRow {
@@ -46,6 +47,18 @@ export const snapshotSchema = z.object({
   // Descriptions (migration 0006) likewise.
   collectionDescription: z.string().nullish(),
   collectionDescriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
+  // Collection variables (migration 0008) likewise; older snapshots restore with none.
+  collectionVariables: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(256),
+        value: z.string().max(1_000_000),
+        enabled: z.boolean().optional(),
+        description: z.string().max(100_000).nullish(),
+      }),
+    )
+    .max(5000)
+    .optional(),
   folders: z.array(
     z.object({
       id: z.string(),
@@ -117,9 +130,27 @@ export function getCollectionVersion(db: Db, versionId: string): CollectionVersi
   return { ...toVersion(row), snapshot: parseSnapshot(row) }
 }
 
+/** The collection's live variables in snapshot form (never secret; `enabled` only when false). */
+function snapshotVariables(db: Db, collectionId: string): NonNullable<CollectionSnapshot['collectionVariables']> {
+  return new CollectionVariableRepository(db).list(collectionId).map((v) => ({
+    key: v.key,
+    value: v.value,
+    ...(v.enabled ? {} : { enabled: false }),
+    ...(v.description ? { description: v.description } : {}),
+  }))
+}
+
+/** Replaces the collection's variables with a snapshot's (none when the snapshot predates them). */
+function restoreVariables(db: Db, collectionId: string, snapshot: CollectionSnapshot): void {
+  new CollectionVariableRepository(db).replace(
+    collectionId,
+    (snapshot.collectionVariables ?? []).map((v) => ({ key: v.key, value: v.value, enabled: v.enabled !== false, description: v.description ?? null })),
+  )
+}
+
 /**
- * Freezes the collection's current live folders and requests into a new immutable version.
- * Only folders and requests are captured: never environments or secret values.
+ * Freezes the collection's current live folders, requests, scripts, descriptions and collection variables into a
+ * new immutable version. Never environments, globals or secret values.
  */
 export function createCollectionVersion(db: Db, input: CreateCollectionVersionInput): CollectionVersion {
   const collection = requireCollection(db, input.collectionId)
@@ -168,6 +199,7 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       documentJson: stripOAuth2TokensFromDocumentJson(r.document_json),
       sortOrder: r.sort_order,
     }))
+    const variables = snapshotVariables(db, collection.id)
     const snapshot: CollectionSnapshot = {
       collectionName: collection.name,
       ...(collection.scripts_json ? { collectionScriptsJson: collection.scripts_json } : {}),
@@ -175,6 +207,8 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       ...(collection.description && descriptionTypeOf(collection.description_type)
         ? { collectionDescriptionType: descriptionTypeOf(collection.description_type) }
         : {}),
+      // Only when there are variables, so snapshots without them keep the older JSON shape.
+      ...(variables.length > 0 ? { collectionVariables: variables } : {}),
       folders,
       requests,
     }
@@ -262,6 +296,7 @@ export function restoreCollectionVersion(
         ...snapshotDescription(snapshot), now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
       materialize(db, created, snapshot)
+      restoreVariables(db, created.id, snapshot)
       return toCollection(created)
     }
     for (const table of ['folders', 'requests']) {
@@ -270,6 +305,7 @@ export function restoreCollectionVersion(
       ).run(now, source.id)
     }
     materialize(db, source, snapshot)
+    restoreVariables(db, source.id, snapshot)
     db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, updated_at = ?, version = version + 1 WHERE id = ?')
       .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), now, source.id)
     return toCollection(db.prepare('SELECT * FROM collections WHERE id = ?').get(source.id) as CollectionRow)

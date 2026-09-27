@@ -8,7 +8,8 @@
  */
 import type { SlingerExportBlock } from '../../shared/slingerExport'
 import { stripOAuth2Tokens } from '../../shared/oauth2'
-import type { ApiFolder, ApiRequest, Collection } from '../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionVariable } from '../../shared/types'
+import { variablesToPostman } from '../../shared/postmanVariables'
 import { postmanDescription } from './description'
 
 export const POSTMAN_SCHEMA_V21 = 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
@@ -83,6 +84,8 @@ export interface PostmanCollectionV21 {
   item: PostmanItem[]
   /** Collection-level pre-request / test scripts (stored verbatim in `Collection.scriptsJson`). */
   event?: unknown[]
+  /** Collection variables (`{key, value, type: 'string', disabled?, description?}`). */
+  variable?: Array<Record<string, unknown>>
 }
 
 /** A stored `scriptsJson` (Postman `event` array as JSON text) back to the array; null when empty or invalid. */
@@ -104,6 +107,8 @@ export interface ExportPostmanInput {
   version?: string | null
   /** Version history block, written to `info._slinger` (omitted when null/absent). */
   slinger?: SlingerExportBlock | null
+  /** Collection variables in their order, written to `variable` (omitted when none). */
+  variables?: ReadonlyArray<Pick<CollectionVariable, 'key' | 'value' | 'enabled' | 'description'>> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +360,7 @@ function bySibling(a: Sortable, b: Sortable): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-export function buildPostmanCollection({ collection, folders, requests, version, slinger }: ExportPostmanInput): PostmanCollectionV21 {
+export function buildPostmanCollection({ collection, folders, requests, version, slinger, variables }: ExportPostmanInput): PostmanCollectionV21 {
   const folderIds = new Set(folders.map((f) => f.id))
   const key = (id: string | null) => (id !== null && folderIds.has(id) ? id : '')
   const foldersByParent = new Map<string, ApiFolder[]>()
@@ -399,6 +404,9 @@ export function buildPostmanCollection({ collection, folders, requests, version,
   const out: PostmanCollectionV21 = { info: ordered, item }
   const events = eventsFromJson(collection.scriptsJson)
   if (events) out.event = events
+  if (variables && variables.length > 0) {
+    out.variable = variablesToPostman(variables.map((v) => ({ key: v.key, value: v.value, enabled: v.enabled, description: v.description })))
+  }
   return out
 }
 

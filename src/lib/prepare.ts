@@ -7,7 +7,7 @@ import type { HttpRequestInput, OAuth2Config, ResolvedAuth, ResolvedBody } from 
 import { isSupportedGrant, resolveOAuth2Config, unsupportedGrantMessage } from './oauth2'
 import { dataRows } from './kv'
 import { rawContentType, templateTexts, type RequestDraft } from './request'
-import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
+import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesChecked, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
 
 export type PrepareResult =
@@ -50,8 +50,10 @@ function appendQuery(url: string, key: string, value: string): string {
   return `${base}?${query ? `${query}&` : ''}${pair}${hash !== null ? `#${hash}` : ''}`
 }
 
-export const unresolvedMessage = (unresolved: string[]): string =>
-  `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. Define ${unresolved.length > 1 ? 'them' : 'it'} in the active environment.`
+/** With the scope, names the scopes that were checked (globals, collection variables, environment). */
+export const unresolvedMessage = (unresolved: string[], scope?: TemplateScope): string =>
+  `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. ` +
+  (scope ? `Not defined in ${scopesChecked(scope)}.` : `Define ${unresolved.length > 1 ? 'them' : 'it'} in the active environment.`)
 
 export const leftoverMessage = (names: string[]): string =>
   `Could not fully resolve ${names.map((n) => `{{${n}}}`).join(', ')} (undefined, or defined in terms of itself).`
@@ -79,7 +81,7 @@ export function templateResolver(ctx: Pick<PrepareContext, 'scope' | 'secrets' |
 export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): PrepareResult {
   const unresolved = findUnresolved(templateTexts(draft), ctx.scope)
   if (unresolved.length > 0 && !ctx.allowUnresolved) {
-    return { ok: false, unresolved, error: unresolvedMessage(unresolved) }
+    return { ok: false, unresolved, error: unresolvedMessage(unresolved, ctx.scope) }
   }
   const cache = new Map<string, string>()
   const { resolve: r, leftover } = templateResolver(ctx, cache)

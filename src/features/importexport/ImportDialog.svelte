@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Import dialog: Slinger or Postman collections and environments, from a file (drop / choose) or pasted JSON
+   * Import dialog: Slinger or Postman collections, environments and globals, from a file (drop / choose) or pasted JSON
    * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar).
    * Whichever was provided last is imported.
    */
@@ -17,7 +17,7 @@
   import { tabsStore } from '../requests/tabs.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
-  import { describeEnvImport, importIntoEnvironment, planMerge, type ImportVar, type MergeMode } from './envImport'
+  import { describeEnvImport, describeGlobalsImport, importIntoEnvironment, importIntoGlobals, planMerge, type ImportVar, type MergeMode } from './envImport'
   import type { VersionHistoryImportResult } from '../../../shared/slingerExport'
   import { IMPORT_FILE_ACCEPT } from './fileName'
   import { parsePostmanFile, type PostmanFile } from './parse'
@@ -51,7 +51,8 @@
   let pasteTimer: ReturnType<typeof setTimeout> | undefined
   let parsed = $state.raw<PostmanFile | null>(null)
   let error = $state<string | null>(null)
-  let makeEnv = $state(true)
+  /** Also copy the collection's variables into an environment (off: they are stored as collection variables). */
+  let makeEnv = $state(false)
   let busy = $state(false)
   let dragging = $state(false)
   let input: HTMLInputElement | undefined = $state()
@@ -70,7 +71,7 @@
       note = null
       parsed = null
       error = null
-      makeEnv = true
+      makeEnv = false
       busy = false
       dragging = false
       mode = 'replace'
@@ -81,7 +82,7 @@
     if (t) {
       void tick().then(() => {
         putPaste(t)
-        note = `Detected pasted ${parsed?.kind === 'environment' ? 'environment' : 'collection'} — review and import`
+        note = `Detected pasted ${parsed?.kind === 'environment' ? 'environment' : parsed?.kind === 'globals' ? 'globals' : 'collection'} — review and import`
       })
     }
   })
@@ -297,6 +298,15 @@
         onclose()
         return
       }
+      if (file.kind === 'globals') {
+        try {
+          toast.success('Globals imported', describeGlobalsImport(await importIntoGlobals(api(), ws, file.variables)))
+        } finally {
+          await app.reloadGlobals()
+        }
+        onclose()
+        return
+      }
       let summary: [string, string]
       // The file's `info._slinger` version history, when it had one (restored by both import and replace).
       let history: VersionHistoryImportResult | undefined
@@ -307,9 +317,10 @@
         await app.reloadCollections()
         history = result.versionHistory
         const scripts = result.scriptCount ?? 0
+        const vars = result.variableCount ?? 0
         summary = [
           'Collection imported',
-          `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}${scripts ? `, ${scripts} script${scripts === 1 ? '' : 's'}` : ''}`,
+          `${result.collection.name}: ${result.requests.length} request${result.requests.length === 1 ? '' : 's'}${scripts ? `, ${scripts} script${scripts === 1 ? '' : 's'}` : ''}${vars ? `, ${vars} collection variable${vars === 1 ? '' : 's'}` : ''}`,
         ]
       }
       let envError: string | null = null
@@ -342,7 +353,7 @@
 {#if open}
   <Dialog title="Import" {onclose} {busy} size="md">
     <div class="flex flex-col gap-3 text-sm">
-      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections and environments (JSON)</p>
+      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections, environments and globals (JSON)</p>
       {#if note}
         <p class="rounded border border-accent bg-accent-soft px-2 py-1.5 text-xs" role="status" data-testid="import-note">{note}</p>
       {/if}
@@ -409,7 +420,12 @@
           <dt class="text-muted">Requests</dt><dd>{parsed.requests}</dd>
           <dt class="text-muted">Saved examples</dt><dd data-testid="import-examples">{parsed.examples}</dd>
           <dt class="text-muted">Scripts</dt><dd data-testid="import-scripts">{parsed.scripts > 0 ? `${parsed.scripts} (pre-request and test, all levels)` : 'none'}</dd>
-          <dt class="text-muted">Collection variables</dt><dd>{parsed.variables.length > 0 ? `${parsed.variables.length} defined` : 'none'}</dd>
+          <dt class="text-muted">Collection variables</dt>
+          <dd data-testid="import-variables">
+            {#if (parsed.collectionVariables?.total ?? 0) > 0}
+              {parsed.collectionVariables!.total} stored with the collection{parsed.collectionVariables!.disabled ? ` (${parsed.collectionVariables!.disabled} disabled)` : ''}
+            {:else}none{/if}
+          </dd>
           {#if parsed.history}
             <dt class="text-muted">Version history</dt>
             <dd data-testid="import-history">
@@ -434,7 +450,7 @@
                   {#if replaceDisabled}
                     Not available: {sync.blockedMessage}
                   {:else}
-                    Its folders, requests, scripts and descriptions are replaced by the {what}. The collection keeps its versions,
+                    Its folders, requests, scripts, descriptions and collection variables are replaced by the {what}. The collection keeps its versions,
                     sync and open tabs. A version snapshot of the current content (next patch version) is created first, so you
                     can restore it from Versions.
                   {/if}
@@ -466,9 +482,10 @@
           <label class="flex items-start gap-2">
             <input type="checkbox" bind:checked={makeEnv} class="mt-0.5" />
             <span>
-              Create or update environment "{parsed.name}" from collection variables
+              Also copy the collection variables into environment "{parsed.name}"
               <span class="block text-xs text-muted" data-testid="import-env-help">
-                The importer does not keep collection-level variables.
+                Not needed for {'{{'}placeholders{'}}'} to work: the variables are stored with the collection. Use this to share them with
+                other collections or to override them per environment.
                 {#if existingEnv}
                   {#if newVarCount === null}
                     Adds the missing variables to the existing environment "{existingEnv.name}"; existing values are kept.
@@ -477,9 +494,7 @@
                     values are kept.
                   {/if}
                 {:else}
-                  This creates an environment named "{parsed.name}" with {parsed.variables.length} variable{parsed.variables.length === 1
-                    ? ''
-                    : 's'} so {'{{'}placeholders{'}}'} keep working.
+                  Creates an environment named "{parsed.name}" with {parsed.variables.length} variable{parsed.variables.length === 1 ? '' : 's'}.
                 {/if}
               </span>
             </span>
@@ -487,6 +502,20 @@
         {:else}
           <p class="text-xs text-muted">The collection has no collection-level variables.</p>
         {/if}
+      {:else if parsed?.kind === 'globals'}
+        <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
+          <dt class="text-muted">Format</dt><dd data-testid="import-source">{parsed.source}</dd>
+          <dt class="text-muted">Variables</dt>
+          <dd>
+            {parsed.variables.length} ({parsed.variables.filter((v) => v.secret).length} secret{parsed.variables.some((v) => v.enabled === false)
+              ? `, ${parsed.variables.filter((v) => v.enabled === false).length} disabled`
+              : ''})
+          </dd>
+        </dl>
+        <p class="text-xs text-muted" data-testid="import-globals-help">
+          Imported into this workspace's Globals: missing variables are added and existing ones take the values from this {what}.
+          Empty values in the {what} keep the current value.
+        </p>
       {:else if parsed?.kind === 'environment'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
           <dt class="text-muted">Format</dt><dd data-testid="import-source">{parsed.source}</dd>

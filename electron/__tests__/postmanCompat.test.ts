@@ -28,6 +28,7 @@ interface SdkCollection {
   forEachItem(fn: (item: SdkItem) => void): void
   forEachItemGroup(fn: (group: { name: string }) => void): void
   events: { count(): number }
+  variables: { count(): number; toObject(): Record<string, unknown> }
   toJSON(): Record<string, unknown>
 }
 const sdk = createRequire(import.meta.url)('postman-collection') as {
@@ -116,6 +117,7 @@ describe("exports load in Postman's SDK (postman-collection)", () => {
       expect(requests.sort(), label).toEqual(expected.requests.sort())
       expect(folders.sort(), label).toEqual(expected.folders.sort())
       expect(c.events.count(), label).toBe(file.event?.length ?? 0)
+      expect(c.variables.count(), label).toBe(file.variable?.length ?? 0)
       if (file.info.version) expect(c.version?.toString(), label).toBe(file.info.version)
       else expect(c.version, label).toBeUndefined()
     }
@@ -131,6 +133,13 @@ describe("exports load in Postman's SDK (postman-collection)", () => {
     expect(byName.get('Get user')!.request.url.toString()).toBe('{{baseUrl}}/users/42?expand=roles&debug=1')
     expect(byName.get('Create user')!.request.url.toString()).toBe('https://api.example.com:8443/admin/users')
     expect(c.version!.toString()).toBe('2.0.0-beta.1')
+    // Collection variables: values as exported; the SDK leaves the disabled one out of the resolved object.
+    expect(file.variable).toEqual([
+      { key: 'baseUrl', value: 'https://api.example.com', type: 'string' },
+      { key: 'token', value: '', type: 'string', disabled: true, description: 'Set by the login script' },
+      { key: 'retries', value: '3', type: 'string' },
+    ])
+    expect(c.variables.toObject()).toMatchObject({ baseUrl: 'https://api.example.com', retries: '3' })
   })
 
   it("the SDK's re-export (toJSON) still imports into Slinger, without the history", async () => {
@@ -154,6 +163,9 @@ describe("exports load in Postman's SDK (postman-collection)", () => {
       walk(original.item)
       for (const r of imported.requests) expect(r.url, `${label}: ${r.name}`).toBe(originalUrls.get(r.name))
       expect(await env.api.listCollectionVersions(imported.collection.id)).toEqual([])
+      // Collection variables survive the SDK round trip (disabled ones stay disabled).
+      const vars = await env.api.listCollectionVariables(imported.collection.id)
+      expect(vars.map((v) => [v.key, v.value, v.enabled]), label).toEqual((original.variable ?? []).map((v) => [v.key, v.value, v.disabled !== true]))
     }
   })
 })

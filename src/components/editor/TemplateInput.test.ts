@@ -3,7 +3,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { cleanup, render, screen } from '@testing-library/svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeScope } from '../../lib/template'
+import { layeredScope, makeScope } from '../../lib/template'
 import { popoverFor, templateCompletionSource } from './cm/template'
 import TemplateInput from './TemplateInput.svelte'
 
@@ -92,8 +92,30 @@ describe('template hover popover', () => {
     const onCreateVariable = vi.fn()
     const dom = popoverFor('missing', { getScope: () => scope, onCreateVariable })
     dom.querySelector<HTMLButtonElement>('button')!.click()
-    expect(onCreateVariable).toHaveBeenCalledWith('missing')
-    expect(dom.textContent).toContain('Not defined in "Local"')
+    expect(onCreateVariable).toHaveBeenCalledWith('missing', 'environment')
+    expect(dom.textContent).toContain('Not defined in the environment "Local" or the globals')
+    dom.querySelector<HTMLButtonElement>('button[data-target="globals"]')!.click()
+    expect(onCreateVariable).toHaveBeenLastCalledWith('missing', 'globals')
+  })
+  it('names the scope a value comes from and offers the collection as a target', () => {
+    const layered = layeredScope({
+      environmentName: 'Local',
+      environment: [{ key: 'e', value: 'env', secret: false }],
+      collectionId: 'c1',
+      collectionName: 'Payments',
+      collection: [{ key: 'c', value: 'col', secret: false }, { key: 'e', value: 'shadowed', secret: false }],
+      globals: [{ key: 'g', value: 'glob', secret: false }, { key: 's', value: null, secret: true, id: 'g1' }],
+    })
+    expect(popoverFor('e', { getScope: () => layered }).textContent).toContain('Environment: Local')
+    expect(popoverFor('e', { getScope: () => layered }).textContent).toContain('env')
+    expect(popoverFor('c', { getScope: () => layered }).textContent).toContain('Collection: Payments')
+    expect(popoverFor('g', { getScope: () => layered }).textContent).toContain('Globals')
+    expect(popoverFor('s', { getScope: () => layered }).textContent).toContain('Secret · Globals')
+    const onCreateVariable = vi.fn()
+    const dom = popoverFor('nope', { getScope: () => layered, onCreateVariable })
+    expect([...dom.querySelectorAll<HTMLButtonElement>('button')].map((b) => b.dataset.target)).toEqual(['environment', 'collection', 'globals'])
+    dom.querySelector<HTMLButtonElement>('button[data-target="collection"]')!.click()
+    expect(onCreateVariable).toHaveBeenCalledWith('nope', 'collection')
   })
 })
 

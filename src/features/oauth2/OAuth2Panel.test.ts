@@ -96,6 +96,23 @@ describe('OAuth 2.0 panel', () => {
     await waitFor(() => expect(screen.getByTestId('oauth2-status')).toHaveTextContent('No access token yet.'))
   })
 
+  it('resolves settings from collection variables and secret globals (revealed through revealGlobalVariable)', async () => {
+    const r = app.requests.find((x) => x.name === 'Get user')!
+    await backend.upsertCollectionVariable({ collectionId: r.collectionId, key: 'tokenBase', value: 'https://mock.slinger.local' })
+    await backend.upsertGlobalVariable({ workspaceId: app.workspaceId!, key: 'oauthSecret', value: 'sk_live_demo_123', isSecret: true })
+    await Promise.all([app.reloadCollectionVariables(r.collectionId), app.reloadGlobals()])
+    const tab = openOAuthTab({ accessTokenUrl: '{{tokenBase}}/token', clientSecret: '{{oauthSecret}}' })
+    const revealGlobal = vi.spyOn(backend, 'revealGlobalVariable')
+    const revealEnv = vi.spyOn(backend, 'revealEnvironmentVariable')
+    const get = vi.spyOn(backend, 'getOAuth2Token')
+    render(AuthPanel, { tab })
+    await fireEvent.click(screen.getByRole('button', { name: 'Get New Access Token' }))
+    await waitFor(() => expect(screen.getByTestId('oauth2-status')).toHaveTextContent(/Valid until/))
+    expect(get.mock.calls[0]![0]).toMatchObject({ accessTokenUrl: 'https://mock.slinger.local/token', clientSecret: 'sk_live_demo_123' })
+    expect(revealGlobal).toHaveBeenCalledTimes(1)
+    expect(revealEnv).not.toHaveBeenCalled()
+  })
+
   it('shows token errors inline and unresolved variables before asking main', async () => {
     const tab = openOAuthTab({ clientSecret: 'wrong' })
     render(AuthPanel, { tab })

@@ -1,23 +1,29 @@
 /**
- * State + autosave orchestration for the variables of one environment at a time.
+ * State + autosave orchestration for the variables of one owner at a time: an environment (the default backend),
+ * a collection's variables or the workspace's globals (see varBackends.ts). `environmentId` is the owner id.
  * Secrets: a row only ever holds plaintext the user typed or explicitly revealed.
  */
-import type { EnvironmentVariable } from '../../../shared/types'
-import { app } from '../../app/state.svelte'
-import { api, errorInfo } from '../../lib/ipc'
+import { errorInfo } from '../../lib/ipc'
 import {
   bulkEligible, diffBulk, duplicateKeys, findDuplicates, isBlank, newRow, parseBulk, rowIssue, serializeBulk, summarizeStatus,
   valueToSend, type BulkParse, type Row,
 } from './envLogic'
 import { SaveQueue, type FlushResult } from './saveQueue'
+import { environmentBackend, type VarBackend, type VarRecord } from './varBackends'
+
+/** Queue key of a pending bulk replace (backends with `replace`). */
+const BULK_KEY = '__bulk__'
 
 export interface FocusRequest {
   rid: string
   field: 'key' | 'value'
 }
 
-function fromVariable(v: EnvironmentVariable): Row {
-  return newRow(v.environmentId, { id: v.id, key: v.key, value: v.isSecret ? '' : (v.value ?? ''), isSecret: v.isSecret, serverSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing })
+function fromRecord(ownerId: string, v: VarRecord): Row {
+  return newRow(ownerId, {
+    id: v.id, key: v.key, value: v.isSecret ? '' : (v.value ?? ''), isSecret: v.isSecret, serverSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing,
+    enabled: v.enabled,
+  })
 }
 
 export class EnvModel {
@@ -30,7 +36,10 @@ export class EnvModel {
   revealError = $state<Record<string, string>>({})
   bulkMode = $state(false)
   bulkText = $state('')
+  /** Why the bulk text could not be applied (beyond line errors), e.g. a name that is a secret in the table. */
+  bulkError = $state<string | null>(null)
   #bulkBase = ''
+  readonly backend: VarBackend
   #tick = $state(0)
   #token = 0
   readonly queue: SaveQueue
@@ -47,7 +56,8 @@ export class EnvModel {
     return summarizeStatus(c)
   })
 
-  constructor(debounceMs = 600) {
+  constructor(debounceMs = 600, backend: VarBackend = environmentBackend) {
+    this.backend = backend
     this.queue = new SaveQueue({
       debounceMs,
       save: (rid) => this.#save(rid),
@@ -57,6 +67,7 @@ export class EnvModel {
   }
 
   issueOf(rid: string): string | null {
+    if (rid === BULK_KEY) return this.rows.some((r) => rowIssue(r, this.duplicates)) ? 'Fix the rows with problems first' : null
     const r = this.rows.find((x) => x.rid === rid)
     return r ? rowIssue(r, this.duplicates) : null
   }
@@ -80,9 +91,9 @@ export class EnvModel {
     this.bulkMode = false
     this.rows = []
     try {
-      const vars = await api().listEnvironmentVariables(envId)
+      const vars = await this.backend.list(envId)
       if (token !== this.#token) return
-      this.rows = [...vars.map(fromVariable), newRow(envId)]
+      this.rows = [...vars.map((v) => fromRecord(envId, v)), newRow(envId)]
     } catch (e) {
       if (token === this.#token) this.loadError = errorInfo(e).message
     } finally {
@@ -143,9 +154,17 @@ export class EnvModel {
 
   toggleSecret(rid: string): void {
     const row = this.#row(rid)
-    if (!row || row.deleted) return
+    if (!row || row.deleted || !this.backend.secrets) return
     row.isSecret = !row.isSecret
     row.revealed = false
+    this.#afterEdit(row)
+  }
+
+  /** Collection variables / globals: a disabled variable is kept but does not resolve. */
+  toggleEnabled(rid: string): void {
+    const row = this.#row(rid)
+    if (!row || row.deleted || !this.backend.enabledColumn) return
+    row.enabled = !row.enabled
     this.#afterEdit(row)
   }
 
@@ -180,7 +199,7 @@ export class EnvModel {
     this.revealing[rid] = true
     delete this.revealError[rid]
     try {
-      const plain = await api().revealEnvironmentVariable(row.id)
+      const plain = await this.backend.reveal(row.id)
       const cur = this.#row(rid)
       if (cur && !cur.secretTouched) {
         cur.value = plain
@@ -218,6 +237,7 @@ export class EnvModel {
   /** Applies bulk text to the rows (create/update/delete by key). Returns false if the text has errors. */
   applyBulk(): boolean {
     if (this.bulkParse.errors.length > 0) return false
+    if (this.backend.replace) return this.#applyBulkReplace()
     const d = diffBulk(this.rows, this.bulkParse.entries)
     for (const u of d.update) this.edit(u.rid, { value: u.value })
     for (const c of d.create) {
@@ -233,6 +253,60 @@ export class EnvModel {
     return true
   }
 
+  /**
+   * Bulk replace (collection variables, globals): the list becomes the text's variables in the text's order,
+   * followed by the rows the text cannot show (secrets, disabled, multi-line), saved with ONE replace call.
+   */
+  #applyBulkReplace(): boolean {
+    const owner = this.environmentId ?? ''
+    const eligible = this.rows.filter(bulkEligible)
+    const kept = this.rows.filter((r) => !r.deleted && !isBlank(r) && !bulkEligible(r))
+    const keptKeys = new Set(kept.map((r) => r.key))
+    const clash = this.bulkParse.entries.find((e) => keptKeys.has(e.key))
+    if (clash) {
+      this.bulkError = `"${clash.key}" is a secret, disabled or multi-line variable: edit it in the table.`
+      return false
+    }
+    this.bulkError = null
+    const next: Row[] = []
+    for (const e of this.bulkParse.entries) {
+      const hit = eligible.find((r) => r.key === e.key && !next.includes(r))
+      if (hit) {
+        hit.value = e.value
+        next.push(hit)
+      } else next.push(newRow(owner, { key: e.key, value: e.value }))
+    }
+    next.push(...kept)
+    // The replace saves every row: per-row saves of the old list are dropped (removed rows are deleted by it).
+    for (const r of this.rows) this.queue.discard(r.rid)
+    this.rows = [...next, newRow(owner)]
+    this.queue.touch(BULK_KEY, { immediate: true })
+    this.#bulkBase = this.bulkText = serializeBulk(this.rows)
+    return true
+  }
+
+  async #saveBulk(): Promise<void> {
+    const owner = this.environmentId
+    if (!owner || !this.backend.replace) return
+    // Rows still in the list (edits made meanwhile are included; deleted rows are left out).
+    const rows = this.rows.filter((r) => !r.deleted && !isBlank(r))
+    const res = await this.backend.replace(
+      owner,
+      rows.map((r) => ({ key: r.key, value: valueToSend(r), enabled: r.enabled, isSecret: r.isSecret })),
+    )
+    for (const rec of res) {
+      const cur = this.rows.find((r) => r.key === rec.key && !r.deleted)
+      if (!cur) continue
+      cur.id = rec.id
+      cur.serverSecret = rec.isSecret
+      if (cur.isSecret && !cur.revealed) {
+        cur.value = ''
+        cur.secretTouched = false
+      }
+    }
+    this.backend.changed(owner)
+  }
+
   exitBulk(): void {
     this.bulkMode = false
   }
@@ -244,22 +318,23 @@ export class EnvModel {
   // ---- saving -----------------------------------------------------------
 
   async #save(rid: string): Promise<void> {
+    if (rid === BULK_KEY) return this.#saveBulk()
     const row = this.#row(rid)
     if (!row) return
     const envId = row.envId
     if (row.deleted) {
-      if (row.id) await api().deleteEnvironmentVariable(row.id)
+      if (row.id) await this.backend.remove(row.id)
       this.rows = this.rows.filter((r) => r.rid !== rid)
       this.queue.discard(rid)
-      this.#refreshActive(envId)
+      this.backend.changed(envId)
       return
     }
     const sent = { key: row.key, value: row.value, isSecret: row.isSecret }
-    const res = await api().upsertEnvironmentVariable({
-      environmentId: envId,
+    const res = await this.backend.upsert(envId, {
       key: row.key,
       value: valueToSend(row),
       isSecret: row.isSecret,
+      enabled: row.enabled,
       variableId: row.id,
     })
     // Merge only server-owned fields; never overwrite what the user may have typed meanwhile.
@@ -275,10 +350,6 @@ export class EnvModel {
         cur.secretTouched = false
       }
     }
-    this.#refreshActive(envId)
-  }
-
-  #refreshActive(envId: string): void {
-    if (app.activeEnvironmentId === envId) void app.refreshEnvVariables()
+    this.backend.changed(envId)
   }
 }

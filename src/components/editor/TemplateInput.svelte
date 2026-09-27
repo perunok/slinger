@@ -87,7 +87,7 @@
     return [
       singleLine,
       slingerTheme,
-      templateExtension({ getScope: currentScope, onCreateVariable: (n) => scopeStore.createVariable?.(n), suggest: (t) => suggest?.(t) ?? [] }),
+      templateExtension({ getScope: currentScope, onCreateVariable: (n, target) => scopeStore.createVariable?.(n, target), suggest: (t) => suggest?.(t) ?? [] }),
       placeholderExt(placeholder),
       EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'false', spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
       EditorView.theme({
