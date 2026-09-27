@@ -1,6 +1,7 @@
 <script lang="ts">
   import TemplateInput from '../../components/editor/TemplateInput.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
+  import OAuth2Panel from '../oauth2/OAuth2Panel.svelte'
   import type { AuthKind } from '../../lib/request'
   import type { RequestTab } from './tabs.svelte'
 
@@ -13,6 +14,7 @@
     { id: 'basic', label: 'Basic Auth' },
     { id: 'bearer', label: 'Bearer Token' },
     { id: 'apiKey', label: 'API Key' },
+    { id: 'oauth2', label: 'OAuth 2.0' },
   ]
 </script>
 
@@ -54,6 +56,8 @@
         <option value="query">Query parameter</option>
       </select>
     </div>
+  {:else if a.kind === 'oauth2'}
+    <OAuth2Panel {tab} />
   {:else if a.kind === 'unsupported'}
     <p class="rounded border border-warning bg-warning-soft px-3 py-2 text-sm">
       This request uses <strong>{a.unsupportedType ?? 'custom'}</strong> authorization, which Slinger cannot edit or send. The original settings are kept when you save;

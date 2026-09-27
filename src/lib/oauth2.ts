@@ -4,7 +4,17 @@
  */
 import { OAUTH2_GRANT_TYPES, type OAuth2GrantType } from '../../shared/oauth2'
 import type { OAuth2Config, OAuth2TokenStatus } from '../../shared/types'
-import { oauth2TemplateTexts, type OAuth2Draft } from './request'
+import { oauth2IdentityTexts, oauth2TemplateTexts, type OAuth2Draft } from './request'
+
+/**
+ * What a resolved configuration is for: `status` (just the token's identity, to find a stored token), `send` (identity
+ * plus refresh credentials) or `token` (everything the grant sends).
+ */
+export type OAuth2Purpose = 'status' | 'send' | 'token'
+
+export function oauth2TextsFor(o: OAuth2Draft, purpose: OAuth2Purpose): string[] {
+  return purpose === 'status' ? oauth2IdentityTexts(o) : purpose === 'send' ? oauth2TemplateTexts(o) : oauth2TokenRequestTexts(o)
+}
 
 export const GRANT_LABELS: Record<OAuth2GrantType | 'implicit', string> = {
   authorization_code_with_pkce: 'Authorization Code (With PKCE)',
@@ -34,11 +44,11 @@ export function oauth2TokenRequestTexts(o: OAuth2Draft): string[] {
 
 /**
  * The resolved settings main needs; `resolve` applies templates (prepare.ts `templateResolver`). Only for a supported
- * grant. `purpose: 'send'` resolves just what a send needs (the token's identity and the refresh credentials, see
- * request.ts `oauth2TemplateTexts`) and leaves the rest empty, so an unused `{{variable}}` cannot block a send.
+ * grant. Only the settings `purpose` needs are resolved (see oauth2TextsFor); the rest are left empty, so an unused
+ * `{{variable}}` cannot block a send and a status lookup reveals no secret it does not need.
  */
-export function resolveOAuth2Config(o: OAuth2Draft, workspaceId: string, resolve: (text: string) => string, purpose: 'send' | 'token' = 'token'): OAuth2Config {
-  const needed = new Set(purpose === 'send' ? oauth2TemplateTexts(o) : oauth2TokenRequestTexts(o))
+export function resolveOAuth2Config(o: OAuth2Draft, workspaceId: string, resolve: (text: string) => string, purpose: OAuth2Purpose = 'token'): OAuth2Config {
+  const needed = new Set(oauth2TextsFor(o, purpose))
   const raw = (t: string) => (needed.has(t) ? resolve(t) : '')
   const r = (t: string) => raw(t).trim()
   return {

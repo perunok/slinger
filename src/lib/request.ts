@@ -525,7 +525,12 @@ export function templateTexts(d: RequestDraft): string[] {
  * their grant, so an unused `{{variable}}` never blocks a send.
  */
 export function oauth2TemplateTexts(o: OAuth2Draft): string[] {
-  const out = [o.accessTokenUrl, o.clientId, o.clientSecret, o.scope, o.audience, o.resource, o.refreshTokenUrl, o.headerPrefix]
+  return [...oauth2IdentityTexts(o), o.clientSecret, o.refreshTokenUrl, o.headerPrefix]
+}
+
+/** The settings the stored token's key is derived from (main: `oauth2TokenKey`). */
+export function oauth2IdentityTexts(o: OAuth2Draft): string[] {
+  const out = [o.accessTokenUrl, o.clientId, o.scope, o.audience, o.resource]
   if (o.grantType === 'authorization_code' || o.grantType === 'authorization_code_with_pkce') out.push(o.authUrl)
   if (o.grantType === 'password_credentials') out.push(o.username)
   return out
