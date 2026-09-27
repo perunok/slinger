@@ -9,6 +9,8 @@ import { createCollectionVersion, listCollectionVersions } from './collectionVer
 import { compare as compareSemver, parse as parseSemver, type SemVer } from './semver'
 import { postmanUrlToString } from '../../shared/postmanUrl'
 import { restoreVersionHistory } from './versionHistory'
+import { variablesFromPostman, type CollectionVariableData } from '../../shared/postmanVariables'
+import { CollectionVariableRepository } from '../repositories/variables'
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_DEPTH = 100
@@ -123,6 +125,8 @@ export interface ParsedPostmanCollection {
   folders: FolderDraft[]
   requests: RequestDraft[]
   scriptCount: number
+  /** The collection's `variable` array (disabled ones kept as disabled). */
+  variables: CollectionVariableData[]
   /** The raw `info._slinger` version-history block (validated later by restoreVersionHistory); undefined when absent. */
   slinger: unknown
 }
@@ -159,8 +163,17 @@ export function parsePostmanCollection(fileContents: string): ParsedPostmanColle
     folders: out.folders,
     requests: out.requests,
     scriptCount: out.scriptCount,
+    variables: variablesFromPostman(parsed.variable),
     slinger: info._slinger,
   }
+}
+
+/** Stores the file's collection variables as the collection's (replacing any; inside the caller's transaction). */
+function writeVariables(db: Db, collectionId: string, variables: CollectionVariableData[]): void {
+  new CollectionVariableRepository(db).replace(
+    collectionId,
+    variables.map((v) => ({ key: v.key, value: v.value, enabled: v.enabled !== false, description: v.description ?? null })),
+  )
 }
 
 /** Inserts the parsed folders and requests into `collection` with new ids (call inside a transaction). */
@@ -221,9 +234,13 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
       nameOverride ? null : content.postmanId, now, now)
     const row = readCollection(db, collectionId)
     const { folders, requests } = insertContent(db, row, content, now)
+    writeVariables(db, collectionId, content.variables)
     // Slinger exports carry the version history in `info._slinger`; a bad block is reported, never fatal.
     const versionHistory = restoreVersionHistory(db, collectionId, content.slinger)
-    return { collection: toCollection(row), folders, requests, scriptCount: content.scriptCount, ...(versionHistory ? { versionHistory } : {}) }
+    return {
+      collection: toCollection(row), folders, requests, scriptCount: content.scriptCount, variableCount: content.variables.length,
+      ...(versionHistory ? { versionHistory } : {}),
+    }
   })()
 }
 
@@ -250,7 +267,7 @@ const MAX_SOURCE_LABEL = 500
  * 1. an automatic safety version (next patch) snapshots the current content, so the replace can be undone;
  * 2. every live folder and request is soft-deleted (the sync dirty-set triggers propagate the deletions);
  * 3. the file's folders and requests are inserted with new ids, in file order;
- * 4. collection scripts, description and `source_postman_id` are updated.
+ * 4. collection scripts, description, variables and `source_postman_id` are updated.
  * The collection keeps its id, name and versions. Any failure (bad file, read-only workspace) changes nothing.
  */
 export function replaceCollectionFromPostman(db: Db, collectionId: string, fileContents: string, sourceName?: string | null): PostmanReplaceResult {
@@ -276,9 +293,13 @@ export function replaceCollectionFromPostman(db: Db, collectionId: string, fileC
     ).run(content.scriptsJson, content.description.text, content.description.type, content.postmanId, now, collection.id)
     const row = readCollection(db, collection.id)
     const { folders, requests } = insertContent(db, row, content, now)
+    writeVariables(db, collection.id, content.variables)
     // The file's version history joins the existing versions (and the safety version); identical ones are skipped,
     // clashing ones kept as "<v>-imported". Runs in a savepoint: a bad history never undoes the replace.
     const versionHistory = restoreVersionHistory(db, collection.id, content.slinger)
-    return { collection: toCollection(row), folders, requests, scriptCount: content.scriptCount, safetyVersion, ...(versionHistory ? { versionHistory } : {}) }
+    return {
+      collection: toCollection(row), folders, requests, scriptCount: content.scriptCount, variableCount: content.variables.length, safetyVersion,
+      ...(versionHistory ? { versionHistory } : {}),
+    }
   })()
 }

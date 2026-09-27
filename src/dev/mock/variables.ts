@@ -4,6 +4,7 @@
  * variables are never secret. Secret globals keep their plaintext in the mock state (the real app: OS keychain).
  */
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
+import type { CollectionVariableData } from '../../../shared/postmanVariables'
 import type { CollectionVariable, GlobalVariable, VariableEntryInput } from '../../../shared/types'
 import { must, touch, type MockState, type ScopedVarRow } from './store'
 import { fail, nowSec, uuid } from './util'
@@ -193,4 +194,24 @@ export function variableMethodWorkspace(s: MockState, method: string, args: unkn
     default:
       return undefined
   }
+}
+
+/** The collection's variables in snapshot / import form (mirrors electron/services/collectionVersions.ts). */
+export function collectionVariablesData(s: MockState, collectionId: string): CollectionVariableData[] {
+  return s.collectionVariables
+    .filter((v) => v.ownerId === collectionId)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt)
+    .map((v) => ({ key: v.key, value: v.value, ...(v.enabled ? {} : { enabled: false }), ...(v.description ? { description: v.description } : {}) }))
+}
+
+/** Replaces the collection's variables (import, re-import, version restore). */
+export function setCollectionVariables(s: MockState, collectionId: string, workspaceId: string, vars: readonly CollectionVariableData[]): void {
+  s.collectionVariables = s.collectionVariables.filter((v) => v.ownerId !== collectionId)
+  const now = nowSec()
+  vars.forEach((v, i) =>
+    s.collectionVariables.push({
+      id: uuid(), ownerId: collectionId, workspaceId, key: v.key, value: v.value, isSecret: false, enabled: v.enabled !== false,
+      description: v.description ?? null, sortOrder: i, createdAt: now, updatedAt: now, version: 1,
+    }),
+  )
 }

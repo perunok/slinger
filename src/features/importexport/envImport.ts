@@ -60,6 +60,45 @@ export interface EnvImportResult {
   kept: number
 }
 
+type GlobalsApi = Pick<SlingerIpcApi, 'listGlobalVariables' | 'upsertGlobalVariable'>
+
+export interface GlobalsImportResult {
+  added: number
+  updated: number
+  kept: number
+}
+
+/**
+ * A Postman globals file into the workspace's Globals, with the environment-file rules: missing keys are added,
+ * existing ones take the file's value, secret flag and enabled state; an empty value never clears a stored one
+ * (a secret exported without its value keeps the one stored here), and a new secret without a value is created as
+ * a plain variable so `{{placeholders}}` resolve.
+ */
+export async function importIntoGlobals(api: GlobalsApi, workspaceId: string, vars: readonly ImportVar[]): Promise<GlobalsImportResult> {
+  const existing = await api.listGlobalVariables(workspaceId)
+  const out: GlobalsImportResult = { added: 0, updated: 0, kept: 0 }
+  for (const v of dedupeVars(vars) as Array<ImportVar & { enabled?: boolean }>) {
+    const enabled = v.enabled !== false
+    const ex = existing.find((e) => e.key === v.key)
+    if (!ex) {
+      await api.upsertGlobalVariable({ workspaceId, key: v.key, value: v.value, isSecret: v.secret && v.value !== '', enabled })
+      out.added++
+    } else if (v.value === '' || (!ex.isSecret && !v.secret && ex.value === v.value && ex.enabled === enabled)) {
+      out.kept++
+    } else {
+      await api.upsertGlobalVariable({ workspaceId, variableId: ex.id, key: v.key, value: v.value, isSecret: v.secret, enabled })
+      out.updated++
+    }
+  }
+  return out
+}
+
+/** Toast text for a globals import. */
+export function describeGlobalsImport(r: GlobalsImportResult): string {
+  const parts = [`${r.added} added`, ...(r.updated ? [`${r.updated} updated`] : []), ...(r.kept ? [`${r.kept} kept`] : [])]
+  return `Globals: ${parts.join(', ')}`
+}
+
 type EnvApi = Pick<SlingerIpcApi, 'listEnvironments' | 'createEnvironment' | 'listEnvironmentVariables' | 'upsertEnvironmentVariable'>
 
 export async function importIntoEnvironment(

@@ -65,6 +65,11 @@ export function snapshotIssue(s: CollectionSnapshot): string | null {
       seen.add(p)
     }
   }
+  const variableKeys = new Set<string>()
+  for (const v of s.collectionVariables ?? []) {
+    if (variableKeys.has(v.key.trim())) return `duplicate collection variable ${v.key}`
+    variableKeys.add(v.key.trim())
+  }
   const requestIds = new Set<string>()
   for (const r of s.requests) {
     if (requestIds.has(r.id)) return `duplicate request id ${r.id}`

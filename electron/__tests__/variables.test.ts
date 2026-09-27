@@ -7,6 +7,7 @@ import { runMigrations } from '../db/migrate'
 import { toErrorPayload } from '../lib/errors'
 import { insertLink } from '../sync/linking'
 import { makeEnv, MIGRATIONS_DIR, NIL_UUID, scaffold, type TestEnv } from './helpers'
+import { exportCollection } from './exportFixtures'
 
 let env: TestEnv
 beforeEach(() => {
@@ -248,5 +249,117 @@ describe('IPC', () => {
     await expect(env.api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(env.api.secureStoreDelete('SLINGER:GLOBAL-VAR:x')).rejects.toMatchObject({ code: 'invalid_input' })
     expect(env.secrets.get(key)).toBe('v')
+  })
+})
+
+describe('import, export and versions', () => {
+  const file = (variable: unknown, name = 'Vars') =>
+    JSON.stringify({
+      info: { _postman_id: 'aaaaaaaa-1111-4222-8333-944445555666', name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+      item: [{ name: 'One', request: { method: 'GET', url: '{{baseUrl}}/one' } }],
+      variable,
+    })
+  const kv = async (collectionId: string) => (await env.api.listCollectionVariables(collectionId)).map((v) => [v.key, v.value, v.enabled, v.description])
+
+  it('a Postman import stores the variable array (disabled kept, values as text, duplicates and empty keys skipped)', async () => {
+    const { workspace } = await scaffold(env)
+    const r = await env.api.importPostmanCollection(workspace.id, file([
+      { key: 'baseUrl', value: 'https://a.test' },
+      { key: 'off', value: 'x', disabled: true, description: { content: 'Off for now', type: 'text/plain' } },
+      { key: 'n', value: 7, type: 'any' },
+      { key: 'baseUrl', value: 'dup' },
+      { key: ' ', value: 'no key' },
+      'junk',
+    ]))
+    expect(r.variableCount).toBe(3)
+    expect(await kv(r.collection.id)).toEqual([
+      ['baseUrl', 'https://a.test', true, null],
+      ['off', 'x', false, 'Off for now'],
+      ['n', '7', true, null],
+    ])
+  })
+
+  it('export -> import round trip keeps order, values, disabled flags and descriptions', async () => {
+    const { workspace } = await scaffold(env)
+    const first = await env.api.importPostmanCollection(workspace.id, file([{ key: 'b', value: '2' }, { key: 'a', value: '1', disabled: true, description: 'A' }]))
+    const exported = await exportCollection(env, first.collection.id, { includeSnapshots: false })
+    expect(exported.variable).toEqual([{ key: 'b', value: '2', type: 'string' }, { key: 'a', value: '1', type: 'string', disabled: true, description: 'A' }])
+    const other = await env.api.createWorkspace('Other')
+    const again = await env.api.importPostmanCollection(other.id, JSON.stringify(exported))
+    expect(await kv(again.collection.id)).toEqual(await kv(first.collection.id))
+  })
+
+  it('an export without variables has no variable key', async () => {
+    const { collection } = await scaffold(env)
+    expect('variable' in (await exportCollection(env, collection.id))).toBe(false)
+  })
+
+  it('re-import (replace) replaces the variables; the safety version holds the previous ones', async () => {
+    const { workspace } = await scaffold(env)
+    const r = await env.api.importPostmanCollection(workspace.id, file([{ key: 'old', value: '1' }]))
+    const res = await env.api.replaceCollectionFromPostman(r.collection.id, file([{ key: 'new', value: '2' }]), 'vars.json')
+    expect(res.variableCount).toBe(1)
+    expect(await kv(r.collection.id)).toEqual([['new', '2', true, null]])
+    const safety = await env.api.getCollectionVersion(res.safetyVersion.id)
+    expect(safety.snapshot.collectionVariables).toEqual([{ key: 'old', value: '1' }])
+    await env.api.restoreCollectionVersion(res.safetyVersion.id, 'replace')
+    expect(await kv(r.collection.id)).toEqual([['old', '1', true, null]])
+  })
+
+  it('versions snapshot the variables; restore replace and copy bring them back; older snapshots restore without any', async () => {
+    const { collection } = await scaffold(env)
+    const repo = env.core.collectionVariables
+    // No variables: the snapshot keeps the pre-0008 shape.
+    const bare = await env.api.createCollectionVersion({ collectionId: collection.id, version: '0.1.0' })
+    const raw = env.core.db.prepare('SELECT snapshot_json FROM collection_versions WHERE id = ?').get(bare.id) as { snapshot_json: string }
+    expect(Object.keys(JSON.parse(raw.snapshot_json)).sort()).toEqual(['collectionName', 'folders', 'requests'])
+
+    repo.upsert({ collectionId: collection.id, key: 'a', value: '1', description: 'first' })
+    repo.upsert({ collectionId: collection.id, key: 'b', value: '2', enabled: false })
+    const v1 = await env.api.createCollectionVersion({ collectionId: collection.id, version: '1.0.0' })
+    expect((await env.api.getCollectionVersion(v1.id)).snapshot.collectionVariables).toEqual([
+      { key: 'a', value: '1', description: 'first' },
+      { key: 'b', value: '2', enabled: false },
+    ])
+    repo.replace(collection.id, [{ key: 'c', value: '3' }])
+    await env.api.restoreCollectionVersion(v1.id, 'replace')
+    expect(await kv(collection.id)).toEqual([['a', '1', true, 'first'], ['b', '2', false, null]])
+    const copy = await env.api.restoreCollectionVersion(v1.id, 'copy')
+    expect(await kv(copy.id)).toEqual([['a', '1', true, 'first'], ['b', '2', false, null]])
+    // A snapshot from before collection variables existed restores to no variables.
+    await env.api.restoreCollectionVersion(bare.id, 'replace')
+    expect(await kv(collection.id)).toEqual([])
+  })
+
+  it('the versioned export (info._slinger) carries snapshot variables to another workspace', async () => {
+    const { collection } = await scaffold(env)
+    env.core.collectionVariables.upsert({ collectionId: collection.id, key: 'k', value: 'v' })
+    const version = await env.api.createCollectionVersion({ collectionId: collection.id, version: '1.0.0' })
+    env.core.collectionVariables.replace(collection.id, [])
+    const exported = await exportCollection(env, collection.id)
+    expect(exported.variable).toBeUndefined()
+    const other = await env.api.createWorkspace('Other')
+    // (the scaffold collection has no requests; an import needs one)
+    const exportedWithRequest = { ...exported, item: [{ name: 'One', request: { method: 'GET', url: 'https://x' } }] }
+    const imported = await env.api.importPostmanCollection(other.id, JSON.stringify(exportedWithRequest))
+    expect(imported.versionHistory?.restored).toBe(1)
+    const [v] = await env.api.listCollectionVersions(imported.collection.id)
+    expect((await env.api.getCollectionVersion(v!.id)).snapshot.collectionVariables).toEqual([{ key: 'k', value: 'v' }])
+    await env.api.restoreCollectionVersion(v!.id, 'replace')
+    expect(await kv(imported.collection.id)).toEqual([['k', 'v', true, null]])
+    expect(v!.version).toBe(version.version)
+  })
+
+  it('an imported snapshot with duplicate variable keys is rejected as a whole (never half-restorable)', async () => {
+    const { workspace } = await scaffold(env)
+    const snapshot = { collectionName: 'X', collectionVariables: [{ key: 'a', value: '1' }, { key: 'a', value: '2' }], folders: [], requests: [] }
+    const text = JSON.stringify({
+      info: { name: 'X', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        _slinger: { formatVersion: 1, versions: [{ version: '1.0.0', createdAt: '2026-01-01T00:00:00Z', folderCount: 0, requestCount: 0, snapshot }] } },
+      item: [{ name: 'One', request: { method: 'GET', url: 'https://x' } }],
+    })
+    const r = await env.api.importPostmanCollection(workspace.id, text)
+    expect(r.versionHistory?.restored).toBe(0)
+    expect(r.versionHistory?.notes.join(' ')).toMatch(/duplicate collection variable/)
   })
 })

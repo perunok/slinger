@@ -374,6 +374,8 @@ export interface PostmanImportResult {
   requests: ApiRequest[]
   /** ADDED (scripts): non-empty pre-request/test scripts imported (collection + folders + requests). */
   scriptCount?: number
+  /** ADDED (persisted variables): collection variables stored from the file's `variable` array. */
+  variableCount?: number
   /** ADDED (versioned export): what happened to the file's `info._slinger` version history; absent when it had none. */
   versionHistory?: import('./slingerExport').VersionHistoryImportResult
 }
@@ -405,6 +407,11 @@ export interface CollectionSnapshot {
   /** ADDED (docs): collection description at snapshot time; absent in older snapshots or when empty. */
   collectionDescription?: string | null
   collectionDescriptionType?: DescriptionType | null
+  /**
+   * ADDED (persisted variables): the collection variables at snapshot time, in order; absent in older snapshots
+   * (restoring one of those leaves the collection without variables) and when there were none.
+   */
+  collectionVariables?: import('./postmanVariables').CollectionVariableData[]
   folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>

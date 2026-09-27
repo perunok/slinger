@@ -7,6 +7,8 @@ import { countScripts } from '../../lib/scripts'
 import { columnsFromPostman } from '../../lib/description'
 import { postmanUrlToString } from '../../../shared/postmanUrl'
 import { restoreVersionHistoryMock } from './versionHistory'
+import { variablesFromPostman, type CollectionVariableData } from '../../../shared/postmanVariables'
+import { setCollectionVariables } from './variables'
 
 const eventJson = (event: unknown): string | null => (Array.isArray(event) && event.length > 0 ? JSON.stringify(event) : null)
 
@@ -41,6 +43,7 @@ interface Parsed {
   info: Json
   event: unknown
   items: unknown[]
+  variables: CollectionVariableData[]
 }
 
 function parseFile(fileContents: string): Parsed {
@@ -55,7 +58,7 @@ function parseFile(fileContents: string): Parsed {
   }
   const info = isObj(parsed.info) ? parsed.info : {}
   const id = typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim().toLowerCase() : null
-  return { name: trimmedOr(info.name, 'Imported Collection'), postmanId: id, info, event: parsed.event, items: parsed.item }
+  return { name: trimmedOr(info.name, 'Imported Collection'), postmanId: id, info, event: parsed.event, items: parsed.item, variables: variablesFromPostman(parsed.variable) }
 }
 
 /** Builds the file's tree under `collection` in a scratch state (nothing is kept when it has no requests). */
@@ -81,8 +84,9 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   s.collections.push(collection)
   s.folders.push(...tree.folders)
   s.requests.push(...tree.requests)
+  setCollectionVariables(s, collection.id, collection.workspaceId, file.variables)
   const versionHistory = restoreVersionHistoryMock(s, collection.id, file.info._slinger)
-  return { collection, ...tree, ...(versionHistory ? { versionHistory } : {}) }
+  return { collection, ...tree, variableCount: file.variables.length, ...(versionHistory ? { versionHistory } : {}) }
 }
 
 /** Mirror of the main-process replace: safety version, then the collection's content is swapped (id kept). */
@@ -99,10 +103,11 @@ export function replaceFromPostman(s: MockState, collectionId: string, fileConte
   collection.scriptsJson = eventJson(file.event)
   Object.assign(collection, columnsFromPostman(file.info.description))
   if (file.postmanId) collection.sourcePostmanId = file.postmanId
+  setCollectionVariables(s, collection.id, collection.workspaceId, file.variables)
   touch(collection)
   const { snapshot: _snapshot, ...safetyVersion } = row
   const versionHistory = restoreVersionHistoryMock(s, collection.id, file.info._slinger)
-  return { collection, ...tree, safetyVersion, ...(versionHistory ? { versionHistory } : {}) }
+  return { collection, ...tree, variableCount: file.variables.length, safetyVersion, ...(versionHistory ? { versionHistory } : {}) }
 }
 
 function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }): void {

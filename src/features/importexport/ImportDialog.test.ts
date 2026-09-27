@@ -121,10 +121,24 @@ describe('ImportDialog', () => {
     expect(mock.calls.some((c) => c.method === 'createEnvironment')).toBe(false)
   })
 
-  it('creates an environment from collection variables by default and can opt out', async () => {
+  it('stores the variable array as collection variables (disabled kept) and creates no environment by default', async () => {
     const { mock, onclose } = await setup()
-    await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }] }))
-    expect(await screen.findByLabelText(/from collection variables/)).toBeChecked()
+    await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }, { key: 'off', value: 'x', disabled: true }] }))
+    expect(await screen.findByTestId('import-variables')).toHaveTextContent('3 stored with the collection (1 disabled)')
+    expect(await screen.findByLabelText(/Also copy the collection variables into environment "Pets"/)).not.toBeChecked()
+    await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    await waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(mock.calls.some((c) => c.method === 'createEnvironment')).toBe(false)
+    const col = app.collections.find((c) => c.name === 'Pets')!
+    expect((await mock.listCollectionVariables(col.id)).map((v) => [v.key, v.enabled])).toEqual([['baseUrl', true], ['token', true], ['off', false]])
+    expect(app.collectionVariables[col.id]).toHaveLength(3)
+    expect(toast.items.some((t) => /3 collection variables/.test(t.detail ?? ''))).toBe(true)
+  })
+
+  it('can also copy the (enabled) collection variables into an environment', async () => {
+    const { mock, onclose } = await setup()
+    await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }, { key: 'off', value: 'x', disabled: true }] }))
+    await fireEvent.click(await screen.findByLabelText(/Also copy the collection variables/))
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await waitFor(() => expect(onclose).toHaveBeenCalled())
     const env = app.environments.find((e) => e.name === 'Pets')
@@ -133,12 +147,31 @@ describe('ImportDialog', () => {
     expect(vars.map((v) => v.key).sort()).toEqual(['baseUrl', 'token'])
   })
 
-  it('skips the environment when unchecked', async () => {
+  it('imports a Postman globals file into Globals (secrets stay secret, disabled stay disabled)', async () => {
     const { mock, onclose } = await setup()
-    await pick(collection({ variable: [{ key: 'a', value: '1' }] }))
-    await fireEvent.click(await screen.findByLabelText(/from collection variables/))
+    await mock.upsertGlobalVariable({ workspaceId: app.workspaceId!, key: 'host', value: 'old', isSecret: false })
+    await pick(
+      JSON.stringify({
+        id: 'g', name: 'My Workspace Globals', _postman_variable_scope: 'globals',
+        values: [
+          { key: 'host', value: 'new', type: 'default', enabled: true },
+          { key: 'pw', value: 'p4ss', type: 'secret', enabled: true },
+          { key: 'off', value: 'x', type: 'default', enabled: false },
+        ],
+      }),
+      'workspace.postman_globals.json',
+    )
+    expect(await screen.findByTestId('import-source')).toHaveTextContent('Postman globals')
+    expect(screen.getByLabelText('Import preview')).toHaveTextContent('3 (1 secret, 1 disabled)')
     await fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     await waitFor(() => expect(onclose).toHaveBeenCalled())
+    const g = Object.fromEntries((await mock.listGlobalVariables(app.workspaceId!)).map((v) => [v.key, v]))
+    expect(g.host).toMatchObject({ value: 'new', isSecret: false, enabled: true })
+    expect(g.pw).toMatchObject({ value: null, isSecret: true })
+    expect(await mock.revealGlobalVariable(g.pw!.id)).toBe('p4ss')
+    expect(g.off).toMatchObject({ enabled: false })
+    expect(app.globals.map((v) => v.key).sort()).toEqual(['host', 'off', 'pw'])
+    expect(toast.items.some((t) => t.detail === 'Globals: 2 added, 1 updated')).toBe(true)
     expect(mock.calls.some((c) => c.method === 'createEnvironment')).toBe(false)
   })
 
@@ -165,7 +198,7 @@ describe('ImportDialog', () => {
     const onclose = vi.fn()
     render(ImportDialog, { open: true, onclose })
     await pick(collection({ variable: [{ key: 'baseUrl', value: 'https://x.test' }, { key: 'token', value: 'abc' }] }))
-    expect(await screen.findByLabelText(/Create or update environment "Pets" from collection variables/)).toBeChecked()
+    await fireEvent.click(await screen.findByLabelText(/Also copy the collection variables into environment "Pets"/))
     await waitFor(() =>
       expect(screen.getByTestId('import-env-help')).toHaveTextContent('Adds 1 new variable to the existing environment "pets"; existing values are kept.'),
     )

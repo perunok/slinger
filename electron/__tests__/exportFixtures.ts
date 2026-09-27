@@ -17,6 +17,12 @@ export const RICH_COLLECTION = {
     schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
   },
   event: [script('prerequest', "pm.environment.set('ts', Date.now())"), script('test', "pm.test('ok', () => {})")],
+  // Collection variables: a plain one, a disabled one with a description, and a Postman `any` value (stored as text).
+  variable: [
+    { key: 'baseUrl', value: 'https://api.example.com', type: 'string' },
+    { key: 'token', value: '', type: 'string', disabled: true, description: 'Set by the login script' },
+    { key: 'retries', value: 3, type: 'any' },
+  ],
   item: [
     {
       name: 'Users',
@@ -111,6 +117,7 @@ export async function exportCollection(env: TestEnv, collectionId: string, opts:
     folders: await env.api.listFolders(collectionId),
     requests: await env.api.listRequests(collectionId),
     version: latestVersion(summaries),
+    variables: await env.api.listCollectionVariables(collectionId),
     slinger: buildSlingerBlock({ collectionId, versions, includeSnapshots, appVersion: opts.appVersion ?? '0.0.0-test', now: opts.now }),
   })
 }

@@ -3,6 +3,7 @@ import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import { compareSemver, validateVersion } from '../../lib/semver'
 import { addCollection, must, removeCollectionContents, touch, type MockState, type VersionRow } from './store'
 import { clone, fail, nowSec, uuid } from './util'
+import { collectionVariablesData, setCollectionVariables } from './variables'
 
 type VersionApi = Pick<
   SlingerIpcApi,
@@ -20,6 +21,7 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
     ...(collection.scriptsJson ? { collectionScriptsJson: collection.scriptsJson } : {}),
     ...(collection.description ? { collectionDescription: collection.description } : {}),
     ...(collection.description && collection.descriptionType ? { collectionDescriptionType: collection.descriptionType } : {}),
+    ...(collectionVariablesData(s, collectionId).length > 0 ? { collectionVariables: collectionVariablesData(s, collectionId) } : {}),
     folders: s.folders
       .filter((f) => f.collectionId === collectionId)
       .map((f) => ({
@@ -118,6 +120,7 @@ function restoreReplace(s: MockState, collection: Collection, snapshot: Collecti
   collection.scriptsJson = snapshot.collectionScriptsJson ?? null
   collection.description = snapshot.collectionDescription ?? null
   collection.descriptionType = snapshot.collectionDescription ? (snapshot.collectionDescriptionType ?? null) : null
+  setCollectionVariables(s, collection.id, collection.workspaceId, snapshot.collectionVariables ?? [])
   return touch(collection)
 }
 
@@ -131,6 +134,7 @@ function restoreCopy(s: MockState, source: VersionRow): Collection {
     return (id) => map.get(id) ?? (map.set(id, uuid()), map.get(id) as string)
   }
   materialize(s, copy, clone(source.snapshot), resolve(), { folders: new Map(), requests: new Map() })
+  setCollectionVariables(s, copy.id, copy.workspaceId, source.snapshot.collectionVariables ?? [])
   return copy
 }
 
