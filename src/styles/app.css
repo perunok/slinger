@@ -35,13 +35,17 @@ textarea {
   font: inherit;
   color: inherit;
 }
-input[type='text'],
-input[type='url'],
-input[type='number'],
-input[type='password'],
-input[type='search'],
-select,
-textarea {
+/* :where(...) keeps this at zero specificity so a Tailwind utility (bg-*, border-*, rounded, p*-*) always wins,
+   instead of fighting it with `!important`. */
+:where(
+    input[type='text'],
+    input[type='url'],
+    input[type='number'],
+    input[type='password'],
+    input[type='search'],
+    select,
+    textarea
+  ) {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

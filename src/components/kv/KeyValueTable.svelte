@@ -180,7 +180,7 @@
             {#if fileFields}
               <td class="px-1">
                 <select
-                  class="w-full !px-1 text-xs"
+                  class="w-full px-1 text-xs"
                   aria-label="{noun} {i + 1} type"
                   value={row.kind}
                   disabled={readonly}
@@ -216,7 +216,7 @@
               <td class="px-1 py-0.5">
                 <input
                   type="text"
-                  class="w-full !border-transparent !bg-transparent focus:!border-accent"
+                  class="w-full border-transparent bg-transparent focus:border-accent"
                   aria-label="{noun} {i + 1} description"
                   placeholder="Description"
                   value={row.description}

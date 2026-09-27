@@ -71,7 +71,7 @@
     <input
       id="ex-name-{tab.id}"
       type="text"
-      class="min-w-0 max-w-md flex-1 !border-transparent !bg-transparent !px-1 text-sm font-medium text-fg hover:!border-border focus:!border-accent"
+      class="min-w-0 max-w-md flex-1 border-transparent bg-transparent px-1 text-sm font-medium text-fg hover:border-border focus:border-accent"
       value={draft.name}
       oninput={(e) => (draft.name = e.currentTarget.value)}
       placeholder="Example name"

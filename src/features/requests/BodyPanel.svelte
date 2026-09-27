@@ -59,7 +59,7 @@
     {#if b.kind === 'raw'}
       <select
         aria-label="Raw body language"
-        class="ml-auto h-7 !py-0"
+        class="ml-auto h-7 py-0"
         value={b.rawLanguage}
         onchange={(e) => (tab.draft.body.rawLanguage = e.currentTarget.value as RawLanguage)}
       >
