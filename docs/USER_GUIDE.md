@@ -10,6 +10,23 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
   Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
+- **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
+
+### Status bar
+
+The thin bar at the bottom of the window shows, from left to right:
+
+- **Cloud sync** of the open workspace: *Local only*, *Synced*, *N pending*, *Offline*, *N conflicts*, *Sync error*, *Read-only*,
+  *Signed out* and so on (the same state as the sync chip in the top bar). Click it to open the conflict center when there are
+  conflicts, otherwise the Cloud dialog.
+- **Environment:** the active environment (or *No environment*). Click it to open the Environments dialog.
+- **Activity:** *Sending…* while requests are in flight, *Running <collection>… 3/10* while the collection runner runs.
+- On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
+  *Not sent* when the last send failed before a response.
+- The **response position** button (same as the button on the divider, see below).
+
+Hide it with **Settings > Layout > Show status bar** or **View > Toggle Status Bar** (also in the command palette,
+`> status bar`).
 
 ### Response below or beside the request
 
@@ -622,8 +639,8 @@ Settings (Ctrl+, or the sun icon):
   pebble shot from a slingshot, bouncing off a target) or **Classic spinner**. The characters are drawn in the accent colour, so
   they suit every theme. The chosen character runs in its card as a preview. With *reduce motion* turned on in the operating
   system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
-- **Layout:** the response **Below the request** (default) or **Beside the request**; see
-  [Response below or beside the request](#response-below-or-beside-the-request).
+- **Layout:** the response **Below the request** (default) or **Beside the request** (see
+  [Response below or beside the request](#response-below-or-beside-the-request)), and **Show status bar** (default on).
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
@@ -658,7 +675,7 @@ Slinger has its own menu bar (on macOS at the top of the screen).
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
 | **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
-| **View** | Toggle Response Position (Ctrl+Alt+V), Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
 | **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
 

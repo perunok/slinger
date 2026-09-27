@@ -111,6 +111,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
         ? ([{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, separator] as MenuItemConstructorOptions[])
         : []),
       command('Toggle Response Position', 'toggleResponsePosition', shown('CmdOrCtrl+Alt+V')),
+      command('Toggle Status Bar', 'toggleStatusBar'),
       separator,
       { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => o.zoom('reset') },
       { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => o.zoom('in') },

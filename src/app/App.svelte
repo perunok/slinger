@@ -29,6 +29,7 @@
   import VersionsDialog from '../features/versions/VersionsDialog.svelte'
   import WorkspacesDialog from '../features/workspaces/WorkspacesDialog.svelte'
   import EmptyState from './EmptyState.svelte'
+  import StatusBar from '../features/layout/StatusBar.svelte'
   import { scopeStore } from './scope.svelte'
   import { settings } from './settings.svelte'
   import { subscribeMenuCommands } from './menuCommands'
@@ -118,6 +119,7 @@
         </main>
       {/snippet}
     </SplitPane>
+    {#if settings.showStatusBar}<StatusBar />{/if}
   {/if}
 </div>
 

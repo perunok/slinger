@@ -16,6 +16,10 @@ export function toggleResponsePosition(): void {
   settings.toggleResponsePosition()
 }
 
+export function toggleStatusBar(): void {
+  settings.setShowStatusBar(!settings.showStatusBar)
+}
+
 /** SplitPane storage key for the request/response split: each orientation remembers its own ratio. */
 export function splitKey(base: 'request' | 'example', position: ResponsePosition): string {
   return position === 'below' ? `slinger.split.${base}` : `slinger.split.${base}.beside`

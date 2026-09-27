@@ -62,7 +62,7 @@ describe('application menu template', () => {
     expect(packaged.some((i) => i.role === 'reload' || i.role === 'forceReload' || i.role === 'toggleDevTools')).toBe(false)
     const view = subOf(top(build(platform).template, 'View'))
     expect(view.filter((i) => i.label).map((i) => [i.label, i.accelerator])).toEqual([
-      ['Toggle Response Position', 'CmdOrCtrl+Alt+V'],
+      ['Toggle Response Position', 'CmdOrCtrl+Alt+V'], ['Toggle Status Bar', undefined],
       ['Actual Size', 'CmdOrCtrl+0'], ['Zoom In', 'CmdOrCtrl+='], ['Zoom Out', 'CmdOrCtrl+-'],
     ])
     expect(view.some((i) => i.role === 'togglefullscreen')).toBe(true)
@@ -121,6 +121,7 @@ describe('application menu template', () => {
       ['About Slinger', 'about'],
       ['Keyboard Shortcuts', 'shortcuts'],
       ['Toggle Response Position', 'toggleResponsePosition'],
+      ['Toggle Status Bar', 'toggleStatusBar'],
     ]
     for (const [label, command] of expected) {
       send.mockClear()

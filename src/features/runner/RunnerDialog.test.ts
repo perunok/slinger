@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { activity } from '../../app/activity.svelte'
 import { app } from '../../app/state.svelte'
 import { ui } from '../../app/ui.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
@@ -83,9 +84,12 @@ describe('RunnerDialog', () => {
     const mock = await setup([['Slow', `${H}/slow`], ['Fast', `${H}/json`]])
     await fireEvent.click(screen.getByRole('button', { name: 'Run 2 requests' }))
     await waitFor(() => expect(mock.calls.some((c) => c.method === 'executeHttpRequest')).toBe(true))
+    // The status bar reads the progress of the run.
+    expect(activity.runner).toEqual({ label: 'Runner col', done: 0, total: 2 })
     await fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
     const summary = await screen.findByTestId('summary', {}, { timeout: 2000 })
     expect(summary).toHaveTextContent('(stopped)')
+    expect(activity.runner).toBeNull()
     expect(summary).toHaveTextContent('2 skipped')
     expect(mock.calls.filter((c) => c.method === 'cancelHttpRequest')).toHaveLength(1)
     expect(mock.calls.filter((c) => c.method === 'executeHttpRequest')).toHaveLength(1)

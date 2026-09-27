@@ -15,7 +15,7 @@
   import { methodColor } from './method'
   import { sync } from '../sync/syncStore.svelte'
   import { tabsStore } from './tabs.svelte'
-  import { RESPONSE_POSITION_SHORTCUT } from '../layout/layoutActions'
+  import { RESPONSE_POSITION_SHORTCUT, toggleStatusBar } from '../layout/layoutActions'
 
   interface Command {
     key: string
@@ -81,6 +81,15 @@
       icon: 'layout-columns',
       current: () => settings.responsePosition === 'beside',
       run: () => settings.setResponsePosition('beside'),
+    },
+    {
+      key: 'layout:status-bar',
+      label: 'Layout: Toggle status bar',
+      hint: 'sync, environment, activity, last response',
+      swatch: {},
+      icon: 'layout-rows',
+      current: () => settings.showStatusBar,
+      run: () => toggleStatusBar(),
     },
     ...LOADER_OPTIONS.map((o) => ({
       key: `loader:${o.id}`,

@@ -1,5 +1,5 @@
 import type { MenuCommand } from '../../shared/menu'
-import { toggleResponsePosition } from '../features/layout/layoutActions'
+import { toggleResponsePosition, toggleStatusBar } from '../features/layout/layoutActions'
 import { tabsStore } from '../features/requests/tabs.svelte'
 import { sync } from '../features/sync/syncStore.svelte'
 import { toast } from './toast.svelte'
@@ -91,6 +91,9 @@ export function runLayoutCommand(command: MenuCommand): boolean {
   switch (command) {
     case 'toggleResponsePosition':
       toggleResponsePosition()
+      return true
+    case 'toggleStatusBar':
+      toggleStatusBar()
       return true
   }
   return false
