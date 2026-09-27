@@ -18,6 +18,7 @@
   import { tabsStore, type RequestSection, type RequestTab } from '../requests/tabs.svelte'
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
+  import SyncSizeWarning from '../sync/SyncSizeWarning.svelte'
   import TabNoticeBanner from '../sync/TabNoticeBanner.svelte'
   import ExampleResponseEditor from './ExampleResponseEditor.svelte'
   import MarkdownView from '../../components/markdown/MarkdownView.svelte'
@@ -88,6 +89,7 @@
     </div>
   {/if}
   {#if sync.blocked && tab.dirty}<ReadOnlyNote class="mx-3 mt-2" />{/if}
+  <SyncSizeWarning {tab} />
   <UrlBar
     {tab}
     onsend={() => tabsStore.tryExample(tab)}

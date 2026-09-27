@@ -9,6 +9,7 @@
   import CodePanel from './CodePanel.svelte'
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
+  import SyncSizeWarning from '../sync/SyncSizeWarning.svelte'
   import TabNoticeBanner from '../sync/TabNoticeBanner.svelte'
   import ConflictDialog from './ConflictDialog.svelte'
   import DocsPanel from './DocsPanel.svelte'
@@ -62,6 +63,7 @@
     <button type="button" class="ml-auto rounded px-2 py-1 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40" disabled={sync.blocked} title={sync.blocked ? sync.blockedMessage : undefined} onclick={() => (ui.saveAsTabId = tab.id)}>Save As…</button>
   </div>
   <TabNoticeBanner {tab} />
+  <SyncSizeWarning {tab} />
   {#if sync.blocked && tab.dirty}<ReadOnlyNote class="mx-3 mt-2" />{/if}
   <UrlBar {tab} onsend={send} oncancel={() => tabsStore.cancel(tab)} onsave={save} />
   <SplitPane direction="column" storageKey="slinger.split.request" initial={0.5} class="min-h-0">
