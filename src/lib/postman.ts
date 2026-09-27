@@ -7,6 +7,7 @@
  * never encoded or split.
  */
 import type { SlingerExportBlock } from '../../shared/slingerExport'
+import { stripOAuth2Tokens } from '../../shared/oauth2'
 import type { ApiFolder, ApiRequest, Collection, CollectionVariable } from '../../shared/types'
 import { variablesToPostman } from '../../shared/postmanVariables'
 import { postmanDescription } from './description'
@@ -325,7 +326,8 @@ export function postmanRequestFromDocument(doc: Json, fallback: { method: string
   const description = doc.description
   if (description !== null && description !== undefined && description !== '') req.description = description
   if (doc.body !== null && doc.body !== undefined) req.body = doc.body
-  if (doc.auth !== null && doc.auth !== undefined) req.auth = doc.auth
+  // Never an OAuth 2.0 token (documents saved before OAuth 2.0 support may still embed an imported one).
+  if (doc.auth !== null && doc.auth !== undefined) req.auth = stripOAuth2Tokens(doc.auth)
   return req
 }
 

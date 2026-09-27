@@ -27,6 +27,10 @@ import type {
   HttpRequestInput,
   HttpResponseData,
   MoveFolderInput,
+  GetOAuth2TokenOptions,
+  OAuth2Config,
+  OAuth2TokenStatus,
+  RefreshOAuth2TokenOptions,
   MoveRequestInput,
   PickFileOptions,
   PostmanImportOptions,
@@ -224,6 +228,22 @@ export interface SlingerIpcApi {
   replaceGlobalVariables(workspaceId: string, variables: VariableEntryInput[]): Promise<GlobalVariable[]>
   /** The only way a secret global's value reaches the renderer (like revealEnvironmentVariable). */
   revealGlobalVariable(variableId: string): Promise<string>
+  // OAuth 2.0 request authorization (tokens live in the OS keychain; the renderer gets status only)
+  /**
+   * ADDED (OAuth 2.0): runs the configured grant in main and stores the token. The authorization code grants open the
+   * system browser and wait for the redirect on the loopback redirect URI (default 5 min; `cancelOAuth2Flow`).
+   */
+  getOAuth2Token(config: OAuth2Config, options?: GetOAuth2TokenOptions): Promise<OAuth2TokenStatus>
+  /** ADDED (OAuth 2.0): aborts a running getOAuth2Token with that flowId (no-op when unknown). */
+  cancelOAuth2Flow(flowId: string): Promise<void>
+  /** ADDED (OAuth 2.0): uses the stored refresh token (`ifExpiring`: only when expired or about to be; see the type). */
+  refreshOAuth2Token(config: OAuth2Config, options?: RefreshOAuth2TokenOptions): Promise<OAuth2TokenStatus>
+  /** ADDED (OAuth 2.0): the stored token's metadata and key for this configuration (hasToken false when none). */
+  getOAuth2TokenStatus(config: OAuth2Config): Promise<OAuth2TokenStatus>
+  /** ADDED (OAuth 2.0): removes a stored token from the keychain. */
+  deleteOAuth2Token(tokenKey: string): Promise<void>
+  /** ADDED (OAuth 2.0): the access token itself, for an explicit user action only (like revealEnvironmentVariable). */
+  revealOAuth2Token(tokenKey: string): Promise<string>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -317,6 +337,12 @@ export const IPC_CHANNELS = [
   'reorderGlobalVariables',
   'replaceGlobalVariables',
   'revealGlobalVariable',
+  'getOAuth2Token',
+  'cancelOAuth2Flow',
+  'refreshOAuth2Token',
+  'getOAuth2TokenStatus',
+  'deleteOAuth2Token',
+  'revealOAuth2Token',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]

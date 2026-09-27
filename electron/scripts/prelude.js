@@ -758,6 +758,22 @@
     enumerable: true,
   })
   defineProperty(request, 'headers', { get: function () { return headerList }, enumerable: true })
+  // Read-only auth view (Postman's RequestAuth shape): type, parameters(), toJSON(). Masked credentials, no tokens.
+  function authView() {
+    var a = reqData.auth
+    if (!a || typeof a.type !== 'string') return undefined
+    var params = (a.params || []).map(function (p) { return { key: p.key, value: p.value } })
+    var view = { type: a.type }
+    view[a.type] = params.map(function (p) { return { key: p.key, value: p.value } })
+    view.parameters = function () { return new PropertyList(params.slice(), null, false) }
+    view.toJSON = function () {
+      var o = { type: a.type }
+      o[a.type] = params.map(function (p) { return { key: p.key, value: p.value } })
+      return o
+    }
+    return view
+  }
+  defineProperty(request, 'auth', { get: authView, enumerable: true })
   defineProperty(request, 'body', {
     get: function () { return body },
     set: function (v) { body.update(v) },

@@ -43,15 +43,56 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
   (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
   a body.
-- **Authorization:** No Auth, Basic Auth, Bearer Token, or API Key (added to a header or as a query parameter). Fields accept
-  `{{variables}}`. Imported Postman requests with other auth types (for example OAuth 2.0) are sent without authorization and a
-  warning says so; OAuth 2.0 is not implemented.
+- **Authorization:** No Auth, Basic Auth, Bearer Token, API Key (added to a header or as a query parameter) or
+  [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman requests with other auth types (for example Digest or
+  AWS Signature) are sent without authorization and a warning says so.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
   see [Documentation](#documentation-markdown).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
   (net/http), PHP (cURL) or PowerShell, with a Copy button. Unresolved variables are left as-is in snippets.
+
+### OAuth 2.0
+
+Choose **OAuth 2.0** in the Authorization section, pick a **grant type** and fill in the provider's settings (every field
+accepts `{{variables}}`; put the client secret and passwords in secret variables):
+
+| Grant type | Settings used |
+| --- | --- |
+| Authorization Code (With PKCE) (recommended for desktop apps) | Auth URL, Access Token URL, Client ID, Client Secret (optional for public clients), Scope, Redirect URI |
+| Authorization Code | the same, without PKCE |
+| Client Credentials | Access Token URL, Client ID, Client Secret, Scope |
+| Password Credentials | Access Token URL, Client ID, Client Secret, Username, Password, Scope |
+
+Click **Get New Access Token**. For the authorization code grants Slinger opens your system browser at the Auth URL; sign in
+there, and the browser is redirected back to Slinger (the tab then says *Authorization received*). The panel shows *Waiting for
+you to sign in in the browser…* meanwhile; **Cancel** stops waiting, and it gives up after 5 minutes. The other grants ask the
+token endpoint directly. The status line then shows how long the token is valid, its scope and a masked preview; **Reveal**
+shows the token itself, **Refresh** uses the refresh token, **Clear** deletes the token.
+
+- **Redirect URI.** A desktop app can only receive the browser's redirect on your own computer, so the redirect URI must be a
+  loopback address: `http://127.0.0.1:<port>/<path>` or `http://localhost:<port>/<path>`. When the field is empty Slinger uses
+  **`http://127.0.0.1:47125/oauth2/callback`**. Register exactly the URI you use with the provider (most providers compare it
+  character for character). Slinger listens on that port only while it waits for a sign-in; if another program uses the port you
+  get a clear error. Postman's `https://oauth.pstmn.io/v1/callback` cannot work here: register a loopback URI instead.
+- **State and PKCE.** Slinger sends a random `state` (unless you set one in *Advanced*) and rejects a redirect whose state does
+  not match. With PKCE it generates a fresh code verifier for every sign-in (SHA-256 challenge by default; *Advanced* lets you
+  choose `plain` or set a fixed verifier).
+- **Advanced:** client authentication (*Send as Basic Auth header*, the default, or *Send client credentials in body*), add the
+  token to the **request header** (`Authorization: <prefix> <token>`, prefix `Bearer` by default; an empty prefix sends the
+  token alone) or as the `access_token` **query parameter**, State, Refresh Token URL (defaults to the Access Token URL),
+  **Audience** and **Resource** (extra parameters some providers such as Auth0 or Azure AD need), and a token name (a label).
+- **Sending.** A request with OAuth 2.0 uses the stored token. When it has expired, or expires within 30 seconds, and there is a
+  refresh token, Slinger refreshes it automatically before sending; if that fails, or there is no token yet, the request is
+  not sent and an inline error says to click **Get New Access Token**. Requests with the same settings share one token (for
+  example every request of an imported collection whose collection-level auth was OAuth 2.0), per workspace. The collection
+  runner behaves the same. Code snippets show `<access token>` in place of the token.
+- **Where tokens live.** Tokens are stored only in your OS keychain (like secret variables), never in the request, history,
+  exports, version snapshots or cloud sync; the settings (without any token) are saved with the request like other auth. If
+  the keychain is not available, getting a token fails with a message and the rest of the app keeps working.
+- **Not supported:** the implicit grant (deprecated; Slinger keeps imported settings and asks you to use Authorization Code
+  (With PKCE)), and `pm.sendRequest` with OAuth 2.0 auth in scripts.
 
 Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
@@ -230,7 +271,8 @@ pm.sendRequest({
   object `{ name: value }` or `"Name: value"` lines; `disabled` entries are skipped), `body` with `mode` `raw` (`raw`, and
   `options.raw.language` `json`/`xml`/`html`/`javascript`/`text` sets the Content-Type unless you set one), `urlencoded`
   (`[{ key, value }]`), `formdata` (`[{ key, value }]`, or `{ key, type: 'file', src: '/path' }`), `file` (`{ src }`) or
-  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic` or `apikey`, in Postman's format), and `timeout` in ms.
+  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic` or `apikey`, in Postman's format; `oauth2` is refused because
+  scripts never get OAuth 2.0 tokens), and `timeout` in ms.
 - **Response.** `res.code`, `res.status` (reason text), `res.headers.get/has/toObject/each`, `res.text()`, `res.json()`,
   `res.responseTime`, `res.responseSize`, `res.cookies.get/has/toObject`, and the same `pm.expect(res).to.have.status(200)`
   assertions as `pm.response`. Bodies over 8 MB are cut to the first 8 MB.
@@ -290,6 +332,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.collectionVariables.*`, `pm.globals.*` | same methods (plus `clear`); saved, see above |
 | `pm.iterationData.get/has/toObject` | always empty (no data files) |
 | `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
+| `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
 | `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |
 | `pm.response.to.have.status(code or reason)`, `.header(name[, value])`, `.body([text or regexp or object])`, `.jsonBody([path[, value]])` | response assertions |
 | `pm.response.to.be.ok / success / error / clientError / serverError / notFound / json / withBody` (and `.not`) | response assertions |
@@ -443,7 +486,9 @@ collections keep theirs).
   as an empty plain variable. Re-importing the same file never creates duplicates, and the success message says what changed
   (for example `Environment "UAT" updated: 3 added, 16 kept`). Pre-request and test scripts are imported at every level (collection, folders,
   requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
-  collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). A Postman
+  collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). OAuth 2.0
+  settings are imported (a collection's or folder's auth is copied into its requests); an access or refresh token that Postman
+  embedded in the file is dropped, so click **Get New Access Token** once. A Postman
   **globals** file (`*.postman_globals.json`) is imported into the workspace's **Globals** with the environment-file rules
   (missing variables added, existing ones updated, an empty value keeps the stored one); `secret` values become secret globals and
   disabled ones stay disabled. Disabled environment variables are skipped. Saved examples (`response[]`) are
@@ -476,8 +521,8 @@ collections keep theirs).
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
   imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
-  collection's `variable` list, in order (`disabled: true` for disabled ones). Globals and environments are never part of a
-  collection export.
+  collection's `variable` list, in order (`disabled: true` for disabled ones). OAuth 2.0 settings are exported in Postman's
+  format without any token. Globals and environments are never part of a collection export.
 - **Versions in the export:** the file is a normal Postman Collection v2.1 file. `info.version` holds the collection's latest
   version (e.g. `1.2.0`) and Slinger's version history is stored alongside it in `info._slinger`, which Postman ignores, so the
   file imports into Postman unchanged. **Include version history snapshots** (on by default, the dialog shows how much it adds)

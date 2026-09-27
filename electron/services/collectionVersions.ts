@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { stripOAuth2TokensFromDocumentJson } from '../../shared/oauth2'
 import type {
   Collection,
   CollectionSnapshot,
@@ -194,7 +195,8 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
       name: r.name,
       method: r.method,
       url: r.url,
-      documentJson: r.document_json,
+      // Documents saved before OAuth 2.0 support may still embed an imported token; snapshots never keep it.
+      documentJson: stripOAuth2TokensFromDocumentJson(r.document_json),
       sortOrder: r.sort_order,
     }))
     const variables = snapshotVariables(db, collection.id)

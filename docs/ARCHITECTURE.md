@@ -18,10 +18,12 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
                      (collection variables + globals), history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
-                     versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback
+                     versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback,
+                     oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
   lib/               errors, ids, text, csp, permissions, windowState, appMenu (application menu template)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
-shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names) - imported by main AND renderer, no Node/DOM deps
+shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
+                     scrubbing) - imported by main AND renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
@@ -61,13 +63,15 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 89 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 95 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
 requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
-`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only), `pickFile`, `grantedFiles`.
+`openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
+tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
+`revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only), `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -179,9 +183,12 @@ array under the key `scripts` (the key the importer has always used, so existing
   is deleted with the variable (and with its workspace). The keychain is written after the row, inside the same transaction, so a
   refused write (read-only trigger, duplicate key) never changes a stored secret. Collection variables are never secret: they are
   exported and versioned with the collection (`isSecret: true` is rejected).
-- `secureStoreGet/Set/Delete` are a generic passthrough (used for cloud tokens, keys like `slinger.cloud.tokens:<baseUrl>`);
-  the reserved prefixes `slinger:env-var:`, `slinger:global-var:` and `slinger.cloud.tokens:` are refused
-  (`RESERVED_SECRET_PREFIXES`) so they cannot bypass the mask.
+- `secureStoreGet/Set/Delete` are a generic passthrough; the reserved prefixes (`RESERVED_SECRET_PREFIXES`) `slinger:env-var:`
+  and `slinger:global-var:` (secret variables), `slinger.cloud.tokens:` (cloud session tokens, `electron/cloud/`) and
+  `slinger:oauth2:` (OAuth 2.0 request tokens) are refused so the renderer cannot bypass the mask or read a token.
+- OAuth 2.0 request tokens: `slinger:oauth2:<tokenKey>` holds `{access_token, token_type, expires_at, refresh_token, scope,
+  obtained_at, workspace_id}`; `slinger:oauth2:index:<workspaceId>` lists a workspace's token keys so `deleteWorkspace`
+  deletes them. Tokens never go to SQLite, history, documents, version snapshots, exports or sync (see below).
 - History never contains secret values: the renderer sends `historyUrl` (variables resolved except secrets, which stay as
   `{{name}}`, and without API-key query parameters); main stores it instead of `url`. Collection versions and exports contain no
   environments.
@@ -200,12 +207,17 @@ array under the key `scripts` (the key the importer has always used, so existing
    scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
    reported), generates built-ins (`$guid`, `$timestamp`, ...), drops disabled rows, and moves an API key with `addTo: 'query'`
-   into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`.
+   into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
+   the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
+   calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
+   `tokenKey` into `auth.oauth2`.
 2. **Main, validation.** `api.ts` zod-validates the input; `HttpService.execute` checks `workspaceId` and `requestRunId`
    (`[A-Za-z0-9._:-]{1,128}`, not already in flight) and registers an `AbortController`.
 3. **Main, build** (`httpExecutor.buildRequest`): rejects any remaining `{{ }}` in URL, header names/values, auth, body and
    enabled form rows (`invalid_input` with `details.location`); normalizes the URL (adds `http://`; only http/https); builds
-   headers; applies auth server-side (Basic, Bearer, API key header/query); builds the body for `raw`, `urlEncoded`,
+   headers; applies auth server-side (Basic, Bearer, API key header/query, OAuth 2.0: the token read from the keychain by
+   `auth.oauth2.tokenKey`, as `Authorization: <prefix> <token>` or the `access_token` query parameter; missing or expired
+   token = `invalid_input`); builds the body for `raw`, `urlEncoded`,
    `formData` (files read from absolute paths), `binary`; fills a default `Content-Type` only when not set; rejects a body on
    GET/HEAD.
 4. **Main, fetch.** Node `fetch` with an abort signal; timeout defaults to 60 s and is clamped to 10 min; cancellation via
@@ -218,6 +230,48 @@ array under the key `scripts` (the key the importer has always used, so existing
    are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`).
 7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
    response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
+
+## OAuth 2.0 request authorization
+
+The request document keeps the settings in Postman's shape (`auth: {type: 'oauth2', oauth2: [{key, value, type}]}`, keys
+`grant_type`, `authUrl`, `accessTokenUrl`, `clientId`, `clientSecret`, `scope`, `state`, `redirect_uri`, `username`, `password`,
+`challengeAlgorithm`, `code_verifier`, `client_authentication`, `addTokenTo`, `headerPrefix`, `tokenName`, `refreshTokenUrl`,
+`audience`, `resource`; unknown entries such as `authRequestParams` are preserved). **Tokens never are:** Postman embeds
+`accessToken`, `tokenType`, refresh/id tokens in that array, and `shared/oauth2.ts` `stripOAuth2Tokens*` removes them in the
+importer (auth and the kept `source` item, main and mock), when the renderer parses a document (`lib/request.ts`), in version
+snapshots (created, and restored from `info._slinger`) and in both exports, which also covers documents saved before OAuth 2.0
+support.
+
+- **Main** (`services/oauth2.ts`, `OAuth2Service` in `core.oauth2`): the renderer sends a resolved `OAuth2Config` (zod-strict,
+  grants `authorization_code`, `authorization_code_with_pkce`, `client_credentials`, `password_credentials`; `implicit` is
+  parsed and preserved in documents but refused). Token key = SHA-256 of workspace id + grant + access token URL + auth URL
+  (authorization code only) + client id + scope + audience + resource + username (password grant only) + refresh token URL:
+  requests that share a configuration share one token; secrets are not part of it, every URL a token is sent to is (so a
+  request with another refresh URL cannot make an automatic refresh send the stored refresh token elsewhere). Token requests are `POST` form bodies through `executeHttp`
+  (never `HttpService.execute`, so no history; 30 s timeout, response capped at 1 MB), client authentication as HTTP Basic
+  (RFC 6749 2.3.1 form-encoded id/secret) or body fields (public clients without a secret always send `client_id` in the
+  body); JSON or form-encoded responses (`parseTokenResponse`), `expires_in` -> `expires_at`. Provider errors become
+  `invalid_input` with `details.oauthError`. A refresh keeps the old refresh token and scope when the answer omits them.
+- **Authorization code:** `parseLoopbackRedirect` accepts only `http://127.0.0.1|localhost|[::1]:<port>/<path>` (default
+  `http://127.0.0.1:47125/oauth2/callback`, `DEFAULT_OAUTH2_REDIRECT_URI`); anything else is `invalid_input`
+  (`redirect_not_loopback`) with an explanation, since a desktop app cannot receive a redirect elsewhere (RFC 8252 7.3).
+  `startAuthorizationCallback` (`services/oauth2Callback.ts`) binds that exact port (both 127.0.0.1 and ::1 for `localhost`,
+  ::1 best effort) before the browser is opened; a busy port is `io_error` (`port_in_use`). The authorize URL (`response_type`,
+  `client_id`, `redirect_uri` exactly as configured, `scope`, `state` = random 128 bit unless set, PKCE `code_challenge` from
+  a fresh 256-bit verifier unless set, S256 by default, `audience`/`resource`) is opened with `platform.openExternal` after
+  `assertExternalUrl` (http/https only). The listener answers only `GET <path>`; other paths are 404 and do not end the flow.
+  The first redirect settles it: `error`/`error_description` reject (`details.oauthError`), a `state` mismatch rejects
+  (`state_mismatch`) and nothing is exchanged, otherwise the code is exchanged (with `code_verifier`). Pages are static text
+  run through `escapeHtml` (`authCallback.ts` `callbackPage`, also used by the older browser-auth listener) with a
+  `default-src 'none'` CSP. Waiting is bounded (5 min default, 10 max) and cancellable by `flowId` (`cancelOAuth2Flow`); app
+  quit cancels all flows.
+- **Sending:** see the HTTP pipeline above. History never holds the token (headers are not recorded, the query parameter is
+  added in main after the history URL was taken). `pm.request.auth` in scripts is a read-only view of the stored settings
+  (templates unresolved, literal credentials masked); `pm.sendRequest` refuses `oauth2` auth. Code snippets print
+  `<access token>`.
+- **Renderer:** `lib/oauth2.ts` (grant labels, which settings each purpose needs, `resolveOAuth2Config`, status text),
+  `features/oauth2/` (`OAuth2Panel.svelte` in the Authorization tab, `oauth2Actions.ts` resolves settings with the send's scope
+  and reveals only the secrets a purpose needs; the status lookup needs none unless an identity field uses one).
 
 The cloud HTTP client, sign-in, token refresh and the sync engine run in the main process (`docs/SYNC_DESIGN.md`); the renderer
 never sees tokens and does not call `executeHttpRequest` or `cloudFetch` for cloud purposes. Only `executeHttpRequest` (the user's
@@ -588,7 +642,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
@@ -617,6 +671,7 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: OAuth 2.0 request auth, `require` of Node modules or `postman-collection` in scripts,
+Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
+Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
 cloud sync of collection/folder scripts, collection/folder documentation, collection variables and globals, loading remote images
 in docs, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.

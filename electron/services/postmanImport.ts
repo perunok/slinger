@@ -11,6 +11,7 @@ import { postmanUrlToString } from '../../shared/postmanUrl'
 import { restoreVersionHistory } from './versionHistory'
 import { variablesFromPostman, type CollectionVariableData } from '../../shared/postmanVariables'
 import { CollectionVariableRepository } from '../repositories/variables'
+import { stripOAuth2Tokens, stripOAuth2TokensFromItem } from '../../shared/oauth2'
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_DEPTH = 100
@@ -105,11 +106,12 @@ function collect(
         description: request.description ?? null,
         headers: Array.isArray(request.header) ? request.header : [],
         body: request.body ?? null,
-        // Requests without their own auth inherit the nearest folder/collection auth, as in Postman.
-        auth: request.auth ?? inheritedAuth ?? null,
+        // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
+        // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
+        auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
         scripts: Array.isArray(item.event) ? item.event : [],
         responses: Array.isArray(item.response) ? item.response : [],
-        source: item,
+        source: stripOAuth2TokensFromItem(item),
       },
     })
   }

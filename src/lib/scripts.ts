@@ -15,6 +15,7 @@ import type {
   ScriptConsoleEntry,
   ScriptErrorInfo,
   ScriptEventName,
+  ScriptAuthData,
   ScriptKeyValue,
   ScriptRequestData,
   ScriptResponseData,
@@ -23,8 +24,8 @@ import type {
   ScriptVariables,
 } from '../../shared/types'
 import { dataRows, ensureTrailingEmpty, newRow } from './kv'
-import { RAW_LANGUAGES, type RawLanguage, type RequestDraft } from './request'
-import type { TemplateScope, VariableInfo } from './template'
+import { RAW_LANGUAGES, serializeAuth, type AuthDraft, type RawLanguage, type RequestDraft } from './request'
+import { SECRET_MASK, type TemplateScope, type VariableInfo } from './template'
 
 export type ScriptListen = ScriptEventName
 
@@ -190,7 +191,36 @@ export function requestDataFromDraft(d: RequestDraft): ScriptRequestData {
     default:
       body = { mode: 'none' }
   }
-  return { method: d.method, url: d.url, headers, body }
+  const auth = scriptAuthView(d.auth)
+  return { method: d.method, url: d.url, headers, body, ...(auth ? { auth } : {}) }
+}
+
+/** Parameters of each auth type that hold a credential (masked in `pm.request.auth` unless a `{{variable}}`). */
+const CREDENTIAL_PARAMS: Record<string, ReadonlySet<string>> = {
+  basic: new Set(['password']),
+  bearer: new Set(['token']),
+  apikey: new Set(['value']),
+  oauth2: new Set(['clientSecret', 'password', 'code_verifier']),
+}
+const PURE_TEMPLATE = /^\s*\{\{[^{}]+\}\}\s*$/
+
+/**
+ * What scripts see as `pm.request.auth`: the stored Postman auth (templates unresolved), with literal credentials
+ * masked. OAuth 2.0 tokens are never in the document, so they cannot appear. Null without (supported) auth.
+ */
+export function scriptAuthView(a: AuthDraft): ScriptAuthData | null {
+  if (a.kind === 'none' || a.kind === 'unsupported') return null
+  const serialized = serializeAuth(a) as { type: string } & Record<string, unknown>
+  const list = serialized[serialized.type]
+  const secret = CREDENTIAL_PARAMS[serialized.type] ?? new Set<string>()
+  const params = (Array.isArray(list) ? list : [])
+    .filter((e): e is { key: string; value: unknown } => !!e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string')
+    .slice(0, 100)
+    .map((e) => {
+      const value = typeof e.value === 'string' ? e.value : JSON.stringify(e.value) ?? ''
+      return { key: e.key.slice(0, 256), value: secret.has(e.key) && value !== '' && !PURE_TEMPLATE.test(value) ? SECRET_MASK : value.slice(0, 65_536) }
+    })
+  return { type: serialized.type, params }
 }
 
 /** `pm.request` for a test script: what was sent, with secret variables still shown as `{{name}}`. */

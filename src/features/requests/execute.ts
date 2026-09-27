@@ -7,13 +7,13 @@
  *      the draft only;
  *   2. templates are resolved (revealing just the secrets the request references) with the variables the
  *      scripts set (local > environment > collection variables > globals), using the scope of the request's own
- *      collection;
+ *      collection; an OAuth 2.0 token is looked up (and refreshed when it is about to expire) by its resolved settings;
  *   3. the request is executed over IPC;
  *   4. test scripts run against the response.
  *
  * One run id covers the whole send, so cancelHttpRequest(runId) stops a running script as well as the request.
  */
-import type { HttpResponseData, RunScriptsInput, ScriptEventName, ScriptVariables } from '../../../shared/types'
+import type { HttpResponseData, RunScriptsInput, ScriptEventName, ScriptRequestData, ScriptVariables } from '../../../shared/types'
 import { settings } from '../../app/settings.svelte'
 import { scopeStore } from '../../app/scope.svelte'
 import { app } from '../../app/state.svelte'
@@ -26,6 +26,7 @@ import {
   requestDataFromDraft,
   requestDataFromInput,
   responseDataFrom,
+  scriptAuthView,
   scopeWithScriptVariables,
   scriptChain,
   type ScriptOutput,
@@ -167,6 +168,24 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       : { ok: false, kind: 'invalid', error: prepared.error, scripts }
   }
 
+  // OAuth 2.0: main keeps the token; find it for these settings, refreshing it first when it is about to expire.
+  if (prepared.oauth2 && prepared.input.auth.oauth2) {
+    try {
+      const status = await api().refreshOAuth2Token(prepared.oauth2, { ifExpiring: true })
+      if (!status.hasToken) {
+        return { ok: false, kind: 'invalid', error: 'No access token yet: click Get New Access Token in the Authorization tab.', scripts }
+      }
+      if (status.expired) {
+        return { ok: false, kind: 'invalid', error: 'The access token has expired: click Get New Access Token in the Authorization tab.', scripts }
+      }
+      prepared.input.auth.oauth2.tokenKey = status.tokenKey
+    } catch (e) {
+      const info = errorInfo(e)
+      return { ok: false, kind: 'failed', error: info.message, code: info.code, scripts }
+    }
+    if (ctx.wasCancelled?.()) return cancelled()
+  }
+
   // 3. The request.
   const started = performance.now()
   let response: HttpResponseData
@@ -184,7 +203,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     try {
       const shown = prepareRequest(draft, { workspaceId: ctx.workspaceId, requestId: ctx.requestId, scope, allowUnresolved: true })
       await runScripts('test', draft, {
-        request: shown.ok ? requestDataFromInput(shown.input) : requestDataFromDraft(draft),
+        request: shown.ok ? withAuthView(requestDataFromInput(shown.input), draft) : requestDataFromDraft(draft),
         response: responseDataFrom(response),
       })
     } catch (e) {
@@ -192,6 +211,12 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     }
   }
   return { ok: true, response, warnings: prepared.warnings, runId, elapsedMs, scripts }
+}
+
+/** `pm.request.auth` for test scripts: the same read-only view as in pre-request scripts. */
+function withAuthView(data: ScriptRequestData, draft: RequestDraft): ScriptRequestData {
+  const auth = scriptAuthView(draft.auth)
+  return auth ? { ...data, auth } : data
 }
 
 export async function cancelRun(runId: string): Promise<void> {

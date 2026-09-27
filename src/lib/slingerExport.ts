@@ -2,6 +2,7 @@
  * Builds the `info._slinger` version-history block of an exported collection (format: shared/slingerExport.ts).
  * Pure: the caller loads the versions (and their snapshots) and passes them in.
  */
+import { stripOAuth2TokensFromSnapshot } from '../../shared/oauth2'
 import {
   SLINGER_EXPORT_FORMAT_VERSION,
   type SlingerExportBlock,
@@ -44,7 +45,7 @@ export function buildSlingerBlock(input: SlingerBlockInput): SlingerExportBlock 
       }
       if (input.includeSnapshots) {
         if (!v.snapshot) throw new Error(`The snapshot of version ${v.version} is not loaded`)
-        out.snapshot = v.snapshot
+        out.snapshot = stripOAuth2TokensFromSnapshot(v.snapshot)
       }
       return out
     })

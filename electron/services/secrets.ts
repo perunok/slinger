@@ -9,6 +9,9 @@ export const ENV_VAR_SECRET_PREFIX = 'slinger:env-var:'
 /** Cloud session tokens (electron/cloud/auth.ts) live under this prefix, keyed by API base URL. */
 export const CLOUD_TOKEN_PREFIX = 'slinger.cloud.tokens:'
 
+/** OAuth 2.0 tokens (services/oauth2.ts) live under this prefix, keyed by a hash of workspace + configuration. */
+export const OAUTH2_TOKEN_PREFIX = 'slinger:oauth2:'
+
 export const envVarSecretKey = (variableId: string): string => `${ENV_VAR_SECRET_PREFIX}${variableId}`
 
 /** Keys under this prefix hold secret globals (pm.globals); reserved like the environment prefix. */
@@ -16,8 +19,8 @@ export const GLOBAL_VAR_SECRET_PREFIX = 'slinger:global-var:'
 
 export const globalVarSecretKey = (variableId: string): string => `${GLOBAL_VAR_SECRET_PREFIX}${variableId}`
 
-/** Namespaces the generic secureStore* passthrough refuses (variable secrets and cloud tokens). */
-export const RESERVED_SECRET_PREFIXES = [ENV_VAR_SECRET_PREFIX, GLOBAL_VAR_SECRET_PREFIX, CLOUD_TOKEN_PREFIX] as const
+/** Namespaces the generic secureStore* passthrough refuses (variable secrets, cloud tokens, OAuth 2.0 tokens). */
+export const RESERVED_SECRET_PREFIXES = [ENV_VAR_SECRET_PREFIX, GLOBAL_VAR_SECRET_PREFIX, CLOUD_TOKEN_PREFIX, OAUTH2_TOKEN_PREFIX] as const
 
 export interface SecretStore {
   get(key: string): string | null

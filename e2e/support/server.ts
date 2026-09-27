@@ -26,8 +26,16 @@ export const PDF = Buffer.from(
  * Authorization header value) so tests can assert what really went over the wire, while
  * the JSON it answers with deliberately omits credentials.
  */
-export async function startTarget(): Promise<{ url: string; requests: Recorded[]; issuedTokens: string[]; close(): Promise<void> }> {
+export async function startTarget(): Promise<{
+  url: string
+  requests: Recorded[]
+  issuedTokens: string[]
+  issuedOAuthTokens: string[]
+  close(): Promise<void>
+}> {
   const requests: Recorded[] = []
+  // OAuth 2.0 client credentials: /oauth/token (client e2e-client, HTTP Basic) issues tokens, /oauth/me accepts the latest.
+  const issuedOAuthTokens: string[] = []
   // Script flows: /login hands out a fresh token, /me accepts only the latest one.
   const issuedTokens: string[] = []
   const server: Server = createServer((req, res) => {
@@ -67,6 +75,24 @@ export async function startTarget(): Promise<{ url: string; requests: Recorded[]
         res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' })
         return void res.end(JSON.stringify(ok ? { user: 'alice', scriptHeader: req.headers['x-from-script'] ?? null } : { error: 'bad token' }))
       }
+      if (path === '/oauth/token') {
+        const form = new URLSearchParams(body.toString())
+        const basic = /^Basic (.+)$/.exec(req.headers.authorization ?? '')
+        const [id, secret] = basic ? Buffer.from(basic[1]!, 'base64').toString().split(':').map(decodeURIComponent) : []
+        if (req.method !== 'POST' || form.get('grant_type') !== 'client_credentials' || id !== 'e2e-client' || !secret) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          return void res.end(JSON.stringify({ error: 'invalid_client' }))
+        }
+        const token = `oauth-tok-${issuedOAuthTokens.length + 1}-${Math.random().toString(36).slice(2, 10)}`
+        issuedOAuthTokens.push(token)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        return void res.end(JSON.stringify({ access_token: token, token_type: 'Bearer', expires_in: 3600, scope: form.get('scope') ?? '' }))
+      }
+      if (path === '/oauth/me') {
+        const ok = issuedOAuthTokens.length > 0 && req.headers.authorization === `Bearer ${issuedOAuthTokens.at(-1)}`
+        res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' })
+        return void res.end(JSON.stringify(ok ? { user: 'oauth-user' } : { error: 'bad token' }))
+      }
       if (path === '/redirect/ok') {
         res.writeHead(302, { Location: '/redirect/landed' })
         return void res.end()
@@ -99,6 +125,7 @@ export async function startTarget(): Promise<{ url: string; requests: Recorded[]
     url: `http://127.0.0.1:${port}`,
     requests,
     issuedTokens,
+    issuedOAuthTokens,
     close: () => new Promise((r) => server.close(() => r())),
   }
 }

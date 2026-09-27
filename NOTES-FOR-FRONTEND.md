@@ -35,6 +35,24 @@ that are not obvious from the types:
   / `globalsChanged` say what to reload. `RunScriptsInput.globals` is ignored and `collectionVariables` is only the in-memory scope
   of a request without a collection.
 
+* OAuth 2.0 (request auth): `getOAuth2Token(config, {flowId?, timeoutMs?})`, `cancelOAuth2Flow(flowId)`,
+  `refreshOAuth2Token(config, {ifExpiring?})`, `getOAuth2TokenStatus(config)`, `deleteOAuth2Token(tokenKey)`,
+  `revealOAuth2Token(tokenKey)`. `config` is `OAuth2Config` with every `{{variable}}` already resolved (zod-strict: all keys,
+  no extras; `grantType` excludes `implicit`). They resolve with `OAuth2TokenStatus` (never the token): `tokenKey` (64 hex),
+  `hasToken`, `expiresAt`/`obtainedAt` (Unix seconds or null), `expired`, `hasRefreshToken`, `scope`, `tokenType`,
+  `maskedToken`. To send, put the key into `HttpRequestInput.auth = { kind: 'oauth2', oauth2: { tokenKey, addTo:
+  'header' | 'query', headerPrefix } }`; main reads the token from the keychain and rejects with `invalid_input`
+  (`details.reason` `oauth2_no_token` / `oauth2_expired`) when there is none or it has expired. Call
+  `refreshOAuth2Token(config, { ifExpiring: true })` before a send: it refreshes only when the token expires within 30 s and
+  has a refresh token, otherwise it just returns the status; a failed refresh rejects (`details.reason === 'refresh_failed'`,
+  message says to get a new token). Errors: `invalid_input` for bad settings, provider errors (`details.oauthError`,
+  `details.status`), state mismatch (`details.reason === 'state_mismatch'`), non-loopback redirect URI
+  (`redirect_not_loopback`); `io_error` for keychain failures and a busy redirect port (`details.reason === 'port_in_use'`);
+  `network_error` with `details.cancelled` / `details.timedOut` for a cancelled / timed-out browser sign-in (default 5 min).
+  Tokens are keyed by workspace + identifying settings (not secrets), so requests with the same settings share one token;
+  `deleteWorkspace` also deletes the workspace's tokens.
+* `RunScriptsInput.request.auth` (optional `ScriptAuthData`): read-only `pm.request.auth` for scripts.
+
 ## Behavior
 * Timestamps are Unix **seconds**.
 * Collection variables / globals upsert: addressed by `variableId`, else by key; `enabled` / `description` left undefined keep
@@ -75,7 +93,7 @@ that are not obvious from the types:
   folders/requests and close tabs of the old ones); `'copy'` returns the new collection. Both also set the collection variables
   from the snapshot (`snapshot.collectionVariables`, absent in older snapshots = none): reload them.
 * `openExternalUrl` only accepts http/https. `secureStore*` cannot touch the reserved
-  `slinger:env-var:`, `slinger:global-var:` and `slinger.cloud.tokens:` key prefixes.
+  `slinger:env-var:`, `slinger:global-var:`, `slinger.cloud.tokens:` and `slinger:oauth2:` key prefixes.
 * Content-Security-Policy: `script-src 'self'` (no inline/eval scripts), no network access from the
   renderer (`connect-src 'self'`): all HTTP goes through `executeHttpRequest`. Inline styles and
   data:/blob: images/workers are allowed.

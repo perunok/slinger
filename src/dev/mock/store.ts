@@ -45,6 +45,16 @@ export interface VersionRow extends CollectionVersion {
   snapshot: CollectionSnapshot
 }
 
+/** OAuth 2.0 token as the mock "keychain" keeps it (src/dev/mock/oauth2.ts). */
+export interface MockOAuth2Token {
+  accessToken: string
+  tokenType: string
+  expiresAt: number | null
+  refreshToken: string | null
+  scope: string | null
+  obtainedAt: number
+}
+
 export interface MockState {
   workspaces: Workspace[]
   environments: Environment[]
@@ -57,6 +67,8 @@ export interface MockState {
   /** ADDED (persisted variables). */
   collectionVariables: ScopedVarRow[]
   globalVariables: ScopedVarRow[]
+  /** OAuth 2.0 tokens by token key (the keychain stand-in). */
+  oauth2Tokens: Record<string, MockOAuth2Token>
 }
 
 export function emptyState(): MockState {
@@ -71,6 +83,7 @@ export function emptyState(): MockState {
     versions: [],
     collectionVariables: [],
     globalVariables: [],
+    oauth2Tokens: {},
   }
 }
 
