@@ -1,4 +1,13 @@
-import { loadAppearance, saveAppearance, type Appearance } from '../lib/appearance'
+import { loadAppearance, sanitizeAppearance, saveAppearance, type Appearance } from '../lib/appearance'
+import {
+  CUSTOM_THEMES_STYLE_ID,
+  MAX_CUSTOM_THEMES,
+  customThemesCss,
+  loadCustomThemes,
+  saveCustomThemes,
+  themeAttributes,
+  type CustomTheme,
+} from '../lib/customThemes'
 import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
 import { reportWindowBackground } from '../lib/windowBackground'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
@@ -42,7 +51,12 @@ const storage = {
 }
 
 class Settings {
-  #appearance = loadAppearance(storage)
+  /** User-defined themes (lib/customThemes.ts), persisted under `slinger.customThemes`. */
+  customThemes = $state<CustomTheme[]>(loadCustomThemes(storage))
+  /** The custom theme being edited: its rule is live (for previews) and, if `draftInApp`, <html> shows it. */
+  draftTheme = $state<CustomTheme | null>(null)
+  draftInApp = $state(false)
+  #appearance = loadAppearance(storage, this.customThemes)
   /** 'system' or a theme id. */
   theme = $state<string>(this.#appearance.theme)
   /** An accent id, or 'theme' for the theme's own accent. */
@@ -66,7 +80,7 @@ class Settings {
 
   /** The palette actually shown (resolves 'system'). */
   get resolvedTheme(): string {
-    return resolveTheme(this.theme, this.prefersLight, { light: this.systemLight, dark: this.systemDark })
+    return resolveTheme(this.theme, this.prefersLight, { light: this.systemLight, dark: this.systemDark }, this.customThemes)
   }
 
   /** Applies persisted settings to <html> and follows the OS theme while 'system' is selected. */
@@ -81,7 +95,12 @@ class Settings {
   }
   apply() {
     const root = document.documentElement
-    root.setAttribute('data-theme', this.resolvedTheme)
+    syncCustomThemeStyle(this.#themesWithDraft())
+    const shown = this.draftTheme && this.draftInApp ? this.draftTheme.id : this.resolvedTheme
+    const attrs = this.themeAttrs(shown)
+    root.setAttribute('data-theme', attrs['data-theme'])
+    if (attrs['data-custom-theme']) root.setAttribute('data-custom-theme', attrs['data-custom-theme'])
+    else root.removeAttribute('data-custom-theme')
     if (this.accent === THEME_DEFAULT_ACCENT) root.removeAttribute('data-accent')
     else root.setAttribute('data-accent', this.accent)
     root.style.setProperty('--font-size', `${this.fontSize}px`)
@@ -92,9 +111,9 @@ class Settings {
     saveAppearance(storage, a)
     this.apply()
   }
-  /** 'system' or a registered theme id; anything else is ignored. */
+  /** 'system' or a registered or custom theme id; anything else is ignored. */
   setTheme(t: string) {
-    if (t !== 'system' && !findTheme(t)) return
+    if (t !== 'system' && !this.#findTheme(t)) return
     this.theme = t
     this.#save()
   }
@@ -106,7 +125,7 @@ class Settings {
   }
   /** Which theme 'system' uses for the given OS scheme; the theme must be of that scheme. */
   setSystemTheme(scheme: Scheme, id: string) {
-    if (findTheme(id)?.scheme !== scheme) return
+    if (this.#findTheme(id)?.scheme !== scheme) return
     if (scheme === 'light') this.systemLight = id
     else this.systemDark = id
     this.#save()
@@ -133,12 +152,76 @@ class Settings {
     this.scriptContinueOnError = v
     write(K.scriptContinue, String(v))
   }
+  // ---- custom themes
+
+  /** `data-theme` (+ `data-custom-theme`) that show a built-in or custom theme id on an element (previews, swatches). */
+  themeAttrs(id: string): { 'data-theme': string; 'data-custom-theme'?: string } {
+    return themeAttributes(id, this.#themesWithDraft())
+  }
+  #themesWithDraft(): CustomTheme[] {
+    const d = this.draftTheme
+    return d ? [...this.customThemes.filter((c) => c.id !== d.id), d] : this.customThemes
+  }
+  #findTheme(id: string): { scheme: Scheme } | undefined {
+    return findTheme(id) ?? this.customThemes.find((c) => c.id === id)
+  }
+  /** Adds or replaces a custom theme and persists it; false when the list is full (MAX_CUSTOM_THEMES). */
+  saveCustomTheme(t: CustomTheme): boolean {
+    const i = this.customThemes.findIndex((c) => c.id === t.id)
+    if (i < 0 && this.customThemes.length >= MAX_CUSTOM_THEMES) return false
+    this.customThemes = i < 0 ? [...this.customThemes, t] : this.customThemes.map((c) => (c.id === t.id ? t : c))
+    saveCustomThemes(storage, this.customThemes)
+    this.#revalidate()
+    return true
+  }
+  /** Removes a custom theme; if it was in use, its base theme (or the System default) takes over. */
+  deleteCustomTheme(id: string) {
+    const gone = this.customThemes.find((c) => c.id === id)
+    if (!gone) return
+    this.customThemes = this.customThemes.filter((c) => c.id !== id)
+    saveCustomThemes(storage, this.customThemes)
+    if (this.theme === id) this.theme = gone.base
+    this.#revalidate()
+  }
+  /** Shows a theme being edited (null ends the preview and restores the saved theme). */
+  setDraftTheme(draft: CustomTheme | null, inApp = true) {
+    this.draftTheme = draft
+    this.draftInApp = !!draft && inApp
+    this.apply()
+  }
+  /** Ends the preview of draft `id` (no-op when another draft is being previewed). */
+  clearDraftTheme(id: string) {
+    if (this.draftTheme?.id === id) this.setDraftTheme(null)
+  }
+  /** After custom themes changed: drop choices that no longer exist (or changed scheme), persist and re-apply. */
+  #revalidate() {
+    const a = sanitizeAppearance({ theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark, loader: this.loader }, this.customThemes)
+    this.theme = a.theme
+    this.systemLight = a.systemLight
+    this.systemDark = a.systemDark
+    this.#save()
+  }
+
   /** Turning this off also erases every workspace's stored tabs (nothing is kept "just in case"). */
   setRestoreTabsOnStartup(v: boolean) {
     this.restoreTabsOnStartup = v
     write(K.restoreTabs, String(v))
     if (!v) clearAllPersisted()
   }
+}
+
+/** The one managed <style> holding the generated custom theme rules (public/theme-init.js creates it before first paint). */
+function syncCustomThemeStyle(themes: CustomTheme[]) {
+  if (typeof document === 'undefined') return
+  const css = customThemesCss(themes)
+  let el = document.getElementById(CUSTOM_THEMES_STYLE_ID)
+  if (!el) {
+    if (!css) return
+    el = document.createElement('style')
+    el.id = CUSTOM_THEMES_STYLE_ID
+    document.head.appendChild(el)
+  }
+  if (el.textContent !== css) el.textContent = css
 }
 
 function clampTimeout(n: number): number {

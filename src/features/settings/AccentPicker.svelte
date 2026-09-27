@@ -5,6 +5,7 @@
   import { ACCENTS, THEME_DEFAULT_ACCENT } from '../../lib/themes'
 
   const choices = [{ id: THEME_DEFAULT_ACCENT, label: 'Theme default' }, ...ACCENTS]
+  const attrs = $derived(settings.themeAttrs(settings.resolvedTheme))
 </script>
 
 <div role="radiogroup" aria-labelledby="accent-heading" class="grid grid-cols-5 gap-1 sm:grid-cols-10">
@@ -17,7 +18,8 @@
     >
       <input type="radio" name="accent" value={a.id} class="sr-only" checked={selected} onchange={() => settings.setAccent(a.id)} />
       <span
-        data-theme={settings.resolvedTheme}
+        data-theme={attrs['data-theme']}
+        data-custom-theme={attrs['data-custom-theme']}
         data-accent={a.id === THEME_DEFAULT_ACCENT ? undefined : a.id}
         class="flex h-6 w-6 items-center justify-center rounded-full border"
         style="background: var(--accent); border-color: var(--border-strong); color: var(--accent-fg)"

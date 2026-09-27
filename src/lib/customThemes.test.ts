@@ -8,6 +8,8 @@ import {
   isCustomThemeId,
   loadCustomThemes,
   newCustomThemeId,
+  newThemeFrom,
+  uniqueLabel,
   parseThemeCss,
   parseThemeImport,
   saveCustomThemes,
@@ -300,5 +302,25 @@ describe('public/theme-init.js', () => {
     localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify({ v: 1, themes: [t] }))
     run()
     expect(document.getElementById('slinger-custom-themes')!.textContent).toBe(`[data-theme][data-custom-theme='custom:x']{color-scheme:light;--surface:${hexB};}`)
+  })
+})
+
+describe('newThemeFrom', () => {
+  it('starts from a built-in theme as the base, or duplicates a custom one, with a unique name', () => {
+    const t = theme()
+    const fromBuiltin = newThemeFrom('nord', [t])
+    expect(fromBuiltin).toMatchObject({ label: 'My Nord', scheme: 'dark', base: 'nord', tokens: {} })
+    expect(isCustomThemeId(fromBuiltin.id)).toBe(true)
+    const copy = newThemeFrom(t.id, [t])
+    expect(copy).toMatchObject({ label: 'Night owl copy', base: 'midnight', tokens: t.tokens })
+    expect(copy.id).not.toBe(t.id)
+    expect(copy.tokens).not.toBe(t.tokens)
+    expect(uniqueLabel('Night owl', [t, { ...t, label: 'Night owl 2' }])).toBe('Night owl 3')
+  })
+})
+
+describe('parseThemeCss error list', () => {
+  it('reports the same problem on the same line once', () => {
+    expect(parseThemeCss(':root { --bg: red; }', supports).errors).toHaveLength(1)
   })
 })

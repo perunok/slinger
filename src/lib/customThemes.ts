@@ -318,8 +318,9 @@ export function parseThemeCss(text: string, supports: Supports | undefined = bro
     i++
   }
   declaration(buf, startLine)
-  errors.sort((a, b) => a.line - b.line)
-  return { tokens: orderTokens(tokens), scheme, errors }
+  const unique = errors.filter((e, i) => errors.findIndex((x) => x.line === e.line && x.message === e.message) === i)
+  unique.sort((a, b) => a.line - b.line)
+  return { tokens: orderTokens(tokens), scheme, errors: unique }
 }
 
 /** Tokens in THEME_TOKENS order (stable output for the CSS view, storage and the generated rule). */
@@ -547,3 +548,26 @@ function guessScheme(tokens: ThemeTokens): Scheme {
 
 /** Built-in themes a custom theme can be based on. */
 export const BASE_THEMES: readonly ThemeInfo[] = THEMES
+
+/** `label`, or `label 2`, `label 3`, ... so it does not repeat an existing custom theme's name. */
+export function uniqueLabel(label: string, customs: readonly { label: string }[]): string {
+  const base = cleanLabel(label, 'Custom theme')
+  const taken = new Set(customs.map((c) => c.label.toLowerCase()))
+  if (!taken.has(base.toLowerCase())) return base
+  for (let n = 2; ; n++) {
+    const suffix = ` ${n}`
+    const candidate = `${base.slice(0, MAX_THEME_LABEL_LENGTH - suffix.length)}${suffix}`
+    if (!taken.has(candidate.toLowerCase())) return candidate
+  }
+}
+
+/**
+ * A new (unsaved) custom theme starting from any theme: a built-in one becomes the base with no overrides; a custom
+ * one is duplicated (same base and overrides).
+ */
+export function newThemeFrom(sourceId: string, customs: readonly CustomTheme[]): CustomTheme {
+  const c = customs.find((x) => x.id === sourceId)
+  if (c) return { ...c, id: newCustomThemeId(), label: uniqueLabel(`${c.label} copy`, customs), tokens: { ...c.tokens } }
+  const b = findTheme(sourceId) ?? findTheme(DEFAULT_DARK_THEME)!
+  return { id: newCustomThemeId(), label: uniqueLabel(`My ${b.label}`, customs), scheme: b.scheme, base: b.id, tokens: {} }
+}
