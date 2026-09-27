@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
-import { checkRejectionContract } from '../sync/wireContract'
+import { checkLocalOnlyContract, checkRejectionContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
 
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
@@ -236,6 +236,19 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
       ownerToken,
       viewerToken: async (wsId) => {
         const email = `contract-viewer-${++viewers}@it.test`
+        await cloud.createUser(admin, email, PASSWORD)
+        await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
+        return cloud.login(email, PASSWORD)
+      },
+    })
+  })
+
+  it('speaks the section 21 extensions (scripts/docs, collection variables, globals) exactly as the fake server does', async () => {
+    await checkLocalOnlyContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken,
+      viewerToken: async (wsId) => {
+        const email = 'contract21-viewer@it.test'
         await cloud.createUser(admin, email, PASSWORD)
         await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
         return cloud.login(email, PASSWORD)

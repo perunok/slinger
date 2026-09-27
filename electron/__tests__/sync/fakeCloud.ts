@@ -6,16 +6,33 @@
  * Real HTTP on 127.0.0.1 so the whole desktop path (CloudHttp, CloudAuth, CloudApi) is exercised.
  * Endpoints: auth (device flow, refresh with single-use rotation + reuse detection, logout), /v1/me,
  * workspaces (list/get/publish), sync client registration, push, pull, snapshot.
+ * Section 21 extensions (scripts/docs fields, collection_variable, global_variable) are on by default; with
+ * `extensions: false` it behaves like a server from before them (no `features` in pull/snapshot, unknown types refused).
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { randomUUID } from 'node:crypto'
 
-export type ResourceType = 'collection' | 'folder' | 'request' | 'environment' | 'environment_variable' | 'collection_version'
+export type ResourceType =
+  | 'collection' | 'folder' | 'request' | 'environment' | 'environment_variable' | 'collection_version' | 'collection_variable' | 'global_variable'
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer'
 type Payload = Record<string, unknown>
 
-const TYPE_ORDER: ResourceType[] = ['collection', 'environment', 'folder', 'request', 'environment_variable', 'collection_version']
+const TYPE_ORDER: ResourceType[] = ['collection', 'environment', 'folder', 'request', 'environment_variable', 'collection_version', 'collection_variable', 'global_variable']
+const BASE_FEATURES = ['sort_order', 'snapshot', 'collection_version', 'secret_metadata', 'op_reasons', 'request_move']
+const EXTENSIONS = ['folder_scripts', 'docs', 'collection_variables', 'globals']
+/** Declared-feature gating, exactly like the server's services/syncFeatures.ts. */
+const TYPE_FEATURE: Partial<Record<ResourceType, string>> = { collection_variable: 'collection_variables', global_variable: 'globals' }
+const FIELD_FEATURE: Record<string, string> = { scripts_json: 'folder_scripts', description: 'docs', description_type: 'docs' }
+const declared = (raw: unknown): Set<string> =>
+  new Set((Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? raw.split(',') : []).map((s) => s.trim()).filter((s) => EXTENSIONS.includes(s)))
+const typeVisible = (type: ResourceType, f: Set<string>) => !TYPE_FEATURE[type] || f.has(TYPE_FEATURE[type]!)
+function shape(type: ResourceType, p: Payload, f: Set<string>): Payload {
+  if (type !== 'collection' && type !== 'folder') return p
+  const out = { ...p }
+  for (const [field, feature] of Object.entries(FIELD_FEATURE)) if (!f.has(feature)) delete out[field]
+  return out
+}
 const METHOD_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 
@@ -103,6 +120,8 @@ export interface Fault {
 
 export interface FakeCloudOptions {
   protocolVersion?: number
+  /** Section 21 extensions (default true); false = a server from before them. */
+  extensions?: boolean
   pushBodyLimit?: number
   accessTtlMs?: number
 }
@@ -114,6 +133,10 @@ export class FakeCloud {
   readonly requests: RecordedRequest[] = []
   readonly faults: Fault[] = []
   protocolVersion: number
+  /** Can be flipped at runtime to simulate a server upgrade/downgrade. */
+  extensions: boolean
+  /** Servers before slinger-admin 9ce4b08 reported a folder missing from the workspace as `invalid`, not `not_found`. */
+  legacyMissingFolder = false
   pushBodyLimit: number
   /** Test hook: runs right before a push is applied (simulates another writer racing between our pull and push). */
   beforePush: ((workspaceId: string) => void) | null = null
@@ -128,6 +151,7 @@ export class FakeCloud {
 
   constructor(opts: FakeCloudOptions = {}) {
     this.protocolVersion = opts.protocolVersion ?? 2
+    this.extensions = opts.extensions ?? true
     this.pushBodyLimit = opts.pushBodyLimit ?? 8 * 1024 * 1024
     this.accessTtlMs = opts.accessTtlMs ?? 15 * 60_000
   }
@@ -324,7 +348,7 @@ export class FakeCloud {
     if (method === 'POST' && path === '/v1/sync/clients/register') {
       const id = `cl_${randomUUID()}`
       this.clients.set(id, userId)
-      return { status: 201, body: { client: { client_id: id, registered_at: new Date().toISOString() }, protocol_version: this.protocolVersion, features: ['sort_order', 'snapshot', 'collection_version', 'secret_metadata', 'op_reasons', 'request_move'] } }
+      return { status: 201, body: { client: { client_id: id, registered_at: new Date().toISOString() }, protocol_version: this.protocolVersion, features: this.serverFeatures() } }
     }
     if (method === 'GET' && path === '/v1/workspaces') {
       const items = [...this.workspaces.values()].filter((w) => w.members.has(userId)).map((w) => this.wsDto(w, userId))
@@ -360,6 +384,10 @@ export class FakeCloud {
     throw new HttpError(404, 'not_found', `no route ${method} ${path}`)
   }
 
+  serverFeatures(): string[] {
+    return this.extensions ? [...BASE_FEATURES, ...EXTENSIONS] : [...BASE_FEATURES]
+  }
+
   private wsDto(w: Workspace, userId: string) {
     return { id: w.id, slug: w.slug, name: w.name, description: '', owner_user_id: '', visibility: 'private', default_role_for_requests: 'viewer', host_mode: 'cloud', created_at: '', updated_at: '', version: 1, role: w.members.get(userId) }
   }
@@ -375,6 +403,11 @@ export class FakeCloud {
     const clientId = this.assertClient(body.client_id, userId)
     const ops = (body.operations as Array<Record<string, unknown>>) ?? []
     if (ops.length > 500) throw new HttpError(400, 'invalid_request', 'too many operations (max 500)')
+    // An older server's body schema knows only its own resource types: the whole push is refused.
+    if (ops.some((o) => !TYPE_ORDER.includes(o.resource_type as ResourceType) || (!this.extensions && TYPE_FEATURE[o.resource_type as ResourceType]))) {
+      throw new HttpError(400, 'invalid_request', 'operations.resource_type: Invalid enum value')
+    }
+    const features = this.extensions ? declared(body.features) : new Set<string>()
     const accepted: Array<{ operation_id: string; resource_id: string; resulting_version: number }> = []
     const rejected: Array<{ operation_id: string; resource_id: string; code: string; reason: string; message: string; current_version: number | null; current_payload: Payload | null; conflicting_resource_id: string | null }> = []
     for (const op of ops) {
@@ -397,7 +430,7 @@ export class FakeCloud {
         const current = withState ? this.findIn(w, op.resource_type as ResourceType, rid) : undefined
         rejected.push({
           operation_id: opId, resource_id: rid, code: err.code, reason: err.reason, message: err.message, current_version: err.currentVersion,
-          current_payload: current ? this.wire(current) : null, conflicting_resource_id: err.conflictingResourceId,
+          current_payload: current ? shape(current.type, this.wire(current), features) : null, conflicting_resource_id: err.conflictingResourceId,
         })
       }
     }
@@ -427,16 +460,26 @@ export class FakeCloud {
     const d = e.data
     switch (e.type) {
       case 'collection':
+        return this.extensions
+          ? { name: d.name, scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null }
+          : { name: d.name }
       case 'environment':
         return { name: d.name }
       case 'folder':
-        return { collection_id: d.collection_id, parent_folder_id: d.parent_folder_id ?? null, name: d.name, sort_order: d.sort_order ?? 0 }
+        return {
+          collection_id: d.collection_id, parent_folder_id: d.parent_folder_id ?? null, name: d.name, sort_order: d.sort_order ?? 0,
+          ...(this.extensions ? { scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null } : {}),
+        }
       case 'request':
         return { collection_id: d.collection_id, folder_id: d.folder_id ?? null, name: d.name, method: d.method, url: d.url, document_json: d.document_json, sort_order: d.sort_order ?? 0 }
       case 'environment_variable':
         return { environment_id: d.environment_id, key: d.key, value: d.is_secret ? null : (d.value ?? ''), is_secret: d.is_secret === true }
       case 'collection_version':
         return { collection_id: d.collection_id, semver: d.semver, notes: d.notes ?? null, snapshot_json: d.snapshot_json, folder_count: d.folder_count, request_count: d.request_count, created_at: d.created_at }
+      case 'collection_variable':
+        return { collection_id: d.collection_id, key: d.key, value: d.value ?? '', enabled: d.enabled !== false, description: d.description ?? null, sort_order: d.sort_order ?? 0 }
+      case 'global_variable':
+        return { key: d.key, value: d.is_secret ? null : (d.value ?? ''), is_secret: d.is_secret === true, enabled: d.enabled !== false, description: d.description ?? null, sort_order: d.sort_order ?? 0 }
     }
   }
 
@@ -461,11 +504,46 @@ export class FakeCloud {
         throw invalid(`${k} ${k} must be a valid JSON string`)
       }
     }
+    const varKey = () => {
+      if (p.key === undefined && partialOk) return
+      if (typeof p.key !== 'string' || p.key.length < 1) throw invalid('key Required')
+      if (p.key.length > 256) throw tooLarge('key String must contain at most 256 character(s)')
+      if (p.key.trim() !== p.key || !p.key.trim()) throw invalid('key variable key must not be blank or start/end with whitespace')
+    }
+    const varRest = () => {
+      if (typeof p.value === 'string' && p.value.length > 1_000_000) throw tooLarge('value String must contain at most 1000000 character(s)')
+      if (typeof p.description === 'string' && p.description.length > 100_000) throw tooLarge('description String must contain at most 100000 character(s)')
+    }
+    const extras = () => {
+      if (p.scripts_json !== undefined && p.scripts_json !== null) {
+        if (typeof p.scripts_json !== 'string') throw invalid('scripts_json Expected string')
+        bytes('scripts_json', 2 * 1024 * 1024)
+        let v: unknown
+        try {
+          v = JSON.parse(p.scripts_json)
+        } catch {
+          /* below */
+        }
+        if (!Array.isArray(v)) throw invalid('scripts_json scripts_json must be a JSON array (Postman event list)')
+      }
+      bytes('description', 2 * 1024 * 1024)
+      if (p.description_type !== undefined && p.description_type !== null && p.description_type !== 'text/markdown' && p.description_type !== 'text/plain') {
+        throw invalid('description_type Invalid enum value')
+      }
+    }
     switch (type) {
       case 'collection':
-      case 'environment':
       case 'folder':
         str('name', 200)
+        if (this.extensions) extras()
+        break
+      case 'environment':
+        str('name', 200)
+        break
+      case 'collection_variable':
+      case 'global_variable':
+        varKey()
+        varRest()
         break
       case 'request':
         str('name', 500)
@@ -516,7 +594,10 @@ export class FakeCloud {
       this.cascadeDelete(w, cur, clientId, op.operation_id)
       return cur.version
     }
-    const p = op.payload
+    const p = this.extensions ? op.payload : shape(op.resource_type, op.payload, new Set()) // an older server's zod drops unknown keys
+    if (op.resource_type === 'global_variable' && (p.is_secret ?? cur?.data.is_secret) === true && p.value != null) {
+      throw new Reject('invalid_request', 'secret values must not be synced: send value null with is_secret true', null, 'invalid')
+    }
     if (cur) {
       this.validate(op.resource_type, p, true)
       const next = { ...cur.data, ...p }
@@ -540,7 +621,7 @@ export class FakeCloud {
   }
 
   private normalize(type: ResourceType, p: Payload): Payload {
-    if (type === 'environment_variable') {
+    if (type === 'environment_variable' || type === 'global_variable') {
       const secret = p.is_secret === true
       return { ...p, is_secret: secret, value: secret ? null : (p.value ?? '') }
     }
@@ -557,8 +638,11 @@ export class FakeCloud {
         if (cur && d.collection_id !== cur.data.collection_id) throw new Reject('invalid_request', 'a folder cannot move between collections')
         if (d.parent_folder_id) {
           if (d.parent_folder_id === cur?.id) throw new Reject('invalid_request', 'a folder cannot be its own parent')
+          // A folder absent from the workspace is not_found (slinger-admin 9ce4b08), one in another collection is invalid.
           const parent = find('folder', d.parent_folder_id)
-          if (!parent || parent.data.collection_id !== d.collection_id) throw new Reject('invalid_request', 'parent_folder_id does not exist in this collection')
+          if (!parent && this.legacyMissingFolder) throw new Reject('invalid_request', 'parent_folder_id does not exist in this collection')
+          if (!parent) throw new Reject('not_found', 'folder not found')
+          if (parent.data.collection_id !== d.collection_id) throw new Reject('invalid_request', 'parent_folder_id belongs to another collection')
           if (cur) {
             let walk: unknown = parent.data.parent_folder_id
             for (let i = 0; walk && i < 1000; i++) {
@@ -573,7 +657,9 @@ export class FakeCloud {
         if (!find('collection', d.collection_id)) throw new Reject('not_found', 'collection not found')
         if (d.folder_id) {
           const f = find('folder', d.folder_id)
-          if (!f || f.data.collection_id !== d.collection_id) throw new Reject('invalid_request', 'folder_id does not exist in this collection')
+          if (!f && this.legacyMissingFolder) throw new Reject('invalid_request', 'folder_id does not exist in this collection')
+          if (!f) throw new Reject('not_found', 'folder not found')
+          if (f.data.collection_id !== d.collection_id) throw new Reject('invalid_request', 'folder_id belongs to another collection')
         }
         break
       }
@@ -582,6 +668,18 @@ export class FakeCloud {
         if (cur && d.environment_id !== cur.data.environment_id) throw new Reject('invalid_request', "a variable's environment cannot change")
         const clash = [...this.entities.values()].find((e) => e.type === 'environment_variable' && e.ws === w.id && e.id !== cur?.id && e.data.environment_id === d.environment_id && e.data.key === d.key)
         if (clash) throw new Reject('conflict', 'a variable with this key already exists in the environment', null, 'duplicate_key', clash.id)
+        break
+      }
+      case 'collection_variable': {
+        if (!find('collection', d.collection_id)) throw new Reject('not_found', 'collection not found')
+        if (cur && d.collection_id !== cur.data.collection_id) throw new Reject('invalid_request', 'a collection variable cannot move between collections')
+        const clash = [...this.entities.values()].find((e) => e.type === 'collection_variable' && e.ws === w.id && e.id !== cur?.id && e.data.collection_id === d.collection_id && e.data.key === d.key)
+        if (clash) throw new Reject('conflict', 'a collection variable with this key already exists', null, 'duplicate_key', clash.id)
+        break
+      }
+      case 'global_variable': {
+        const clash = [...this.entities.values()].find((e) => e.type === 'global_variable' && e.ws === w.id && e.id !== cur?.id && e.data.key === d.key)
+        if (clash) throw new Reject('conflict', 'a global variable with this key already exists', null, 'duplicate_key', clash.id)
         break
       }
       case 'collection_version': {
@@ -603,7 +701,7 @@ export class FakeCloud {
     const kids: Entity[] = []
     if (root.type === 'collection') {
       const all = inWs().filter((e) => e.data.collection_id === root.id)
-      kids.push(...all.filter((e) => e.type === 'collection_version'), ...all.filter((e) => e.type === 'request'), ...this.foldersDeepFirst(all.filter((e) => e.type === 'folder')))
+      kids.push(...all.filter((e) => e.type === 'collection_variable'), ...all.filter((e) => e.type === 'collection_version'), ...all.filter((e) => e.type === 'request'), ...this.foldersDeepFirst(all.filter((e) => e.type === 'folder')))
     } else if (root.type === 'environment') {
       kids.push(...inWs().filter((e) => e.type === 'environment_variable' && e.data.environment_id === root.id))
     } else if (root.type === 'folder') {
@@ -644,10 +742,13 @@ export class FakeCloud {
     const rows = w.log.filter((o) => o.checkpoint > after).slice(0, limit + 1)
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
+    const f = this.extensions ? declared(q.get('features')) : new Set<string>()
     return {
-      operations: page.map(({ client_id: _c, ...op }) => op),
+      // Undeclared types are skipped, but the checkpoint still moves past them.
+      operations: page.filter((o) => typeVisible(o.resource_type, f)).map(({ client_id: _c, ...op }) => ({ ...op, payload: shape(op.resource_type, op.payload, f) })),
       checkpoint: page.length ? page[page.length - 1]!.checkpoint : after,
       has_more: hasMore,
+      ...(this.extensions ? { features: this.serverFeatures() } : {}),
     }
   }
 
@@ -661,7 +762,9 @@ export class FakeCloud {
     let t = cursor.t
     let after = cursor.a
     let next: string | null = null
+    const f = this.extensions ? declared(q.get('features')) : new Set<string>()
     outer: for (; t < TYPE_ORDER.length; t++) {
+      if (!typeVisible(TYPE_ORDER[t]!, f)) continue
       const rows = this.live(w.id, TYPE_ORDER[t]).filter((e) => e.id > after)
       for (const e of rows) {
         if (entities.length === limit) {
@@ -669,11 +772,11 @@ export class FakeCloud {
           next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: last.resource_id })).toString('base64url')
           break outer
         }
-        entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: this.wire(e) })
+        entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: shape(e.type, this.wire(e), f) })
       }
       after = ''
     }
-    return { checkpoint: cursor.c, entities, next_cursor: next }
+    return { checkpoint: cursor.c, entities, next_cursor: next, ...(this.extensions ? { features: this.serverFeatures() } : {}) }
   }
 }
 

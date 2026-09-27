@@ -11,7 +11,7 @@ import { applyTx, getEntity, getLink } from '../../sync/store'
 import type { PushResponse } from '../../sync/types'
 import { FakeCloud } from './fakeCloud'
 import { DOC, liveState, makeDevice, pendingCount, settle, type Device } from './harness'
-import { checkRejectionContract } from './wireContract'
+import { checkLocalOnlyContract, checkRejectionContract } from './wireContract'
 
 let cloud: FakeCloud
 let devices: Device[] = []
@@ -65,6 +65,19 @@ const serverMatchesDevice = (d: Device, ws: string, remoteId: string) => {
 }
 
 describe('wire contract', () => {
+  it('the fake server speaks the section 21 extensions exactly like the real one', async () => {
+    const owner = cloud.createUser('owner21@contract.test')
+    await checkLocalOnlyContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken: cloud.issueTokens(owner.id).accessToken,
+      viewerToken: async (wsId) => {
+        const v = cloud.createUser(`viewer${cloud.users.size}@contract.test`)
+        cloud.setRole(wsId, v.id, 'viewer')
+        return cloud.issueTokens(v.id).accessToken
+      },
+    })
+  })
+
   it('the fake server rejects exactly like the real one (same assertions run in sync-it against slinger-admin)', async () => {
     const owner = cloud.createUser('owner@contract.test')
     await checkRejectionContract({
@@ -216,7 +229,8 @@ describe('invalid / too_large / id_in_use', () => {
     expect(cloud.entity(req)!.data.method).toBe('PATCH')
   })
 
-  it('invalid "folder does not exist" (deleted meanwhile) is not quarantined: pull first, then remote_deleted keeps the request', async () => {
+  it('invalid "folder does not exist" (deleted meanwhile, servers before 9ce4b08) is not quarantined: pull first, then remote_deleted keeps the request', async () => {
+    cloud.legacyMissingFolder = true
     const { d, ws, remoteId, col, req } = await withRequest()
     const other = await d.api.createFolder({ workspaceId: ws, collectionId: col, name: 'Other' })
     await d.core.sync.syncNow(ws)
@@ -232,6 +246,24 @@ describe('invalid / too_large / id_in_use', () => {
     await d.api.resolveSyncConflict({ conflictId: open.find((c) => c.entityId === other.id)!.id, resolution: 'keep_local' })
     const s = await settle(d, ws)
     expect(s).toMatchObject({ openConflicts: 0, pendingChanges: 0 })
+    expect(cloud.entity(req)!.data).toMatchObject({ folder_id: other.id })
+    serverMatchesDevice(d, ws, remoteId)
+  })
+
+  it('not_found for a folder deleted meanwhile (current servers): pull first, then remote_deleted keeps the request', async () => {
+    const { d, ws, remoteId, col, req } = await withRequest()
+    const other = await d.api.createFolder({ workspaceId: ws, collectionId: col, name: 'Other' })
+    await d.core.sync.syncNow(ws)
+    await d.api.moveRequest({ requestId: req, targetCollectionId: col, targetFolderId: other.id, targetIndex: 0 })
+    cloud.beforePush = (w) => cloud.restDelete(w, 'folder', other.id)
+    cloud.clearRecorded()
+    await d.core.sync.syncNow(ws)
+    expect(firstRejection()).toMatchObject({ code: 'not_found', reason: 'not_found' })
+    expect(syncCalls().slice(0, 3)).toEqual(['pull', 'push', 'pull'])
+    const open = await d.api.listSyncConflicts(ws)
+    expect(open.map((c) => `${c.kind}:${c.entityId}`).sort()).toEqual([`remote_deleted:${other.id}`, `remote_deleted:${req}`].sort())
+    await d.api.resolveSyncConflict({ conflictId: open.find((c) => c.entityId === other.id)!.id, resolution: 'keep_local' })
+    expect(await settle(d, ws)).toMatchObject({ openConflicts: 0, pendingChanges: 0 })
     expect(cloud.entity(req)!.data).toMatchObject({ folder_id: other.id })
     serverMatchesDevice(d, ws, remoteId)
   })
