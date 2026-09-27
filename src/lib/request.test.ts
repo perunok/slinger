@@ -53,12 +53,12 @@ describe('document round trip', () => {
   })
 
   it('preserves unsupported auth and body instead of dropping them', () => {
-    const documentJson = JSON.stringify({ auth: { type: 'oauth2', oauth2: [{ key: 'accessToken', value: 'abc' }] }, body: { mode: 'graphql', graphql: { query: '{a}' } } })
+    const documentJson = JSON.stringify({ auth: { type: 'hawk', hawk: [{ key: 'authId', value: 'abc' }] }, body: { mode: 'graphql', graphql: { query: '{a}' } } })
     const d = parseDocument({ ...base, documentJson })
     expect(d.auth.kind).toBe('unsupported')
     expect(d.body.kind).toBe('unsupported')
     const out = JSON.parse(serializeDraft(d).documentJson)
-    expect(out.auth.type).toBe('oauth2')
+    expect(out.auth).toEqual({ type: 'hawk', hawk: [{ key: 'authId', value: 'abc' }] })
     expect(out.body.mode).toBe('graphql')
   })
 
@@ -195,5 +195,88 @@ describe('prepareRequest', () => {
     expect(secretsNeeded(d, scope).map((s) => s.id)).toEqual(['v9'])
     const res = prepareRequest(d, { workspaceId: 'w', scope, allowUnresolved: true })
     expect(res.ok && res.input.url).toBe('http://a/{{missing}}')
+  })
+})
+
+describe('OAuth 2.0 auth', () => {
+  const postmanOAuth2 = [
+    { key: 'grant_type', value: 'authorization_code_with_pkce', type: 'string' },
+    { key: 'authUrl', value: 'https://idp.example/authorize', type: 'string' },
+    { key: 'accessTokenUrl', value: '{{tokenUrl}}', type: 'string' },
+    { key: 'clientId', value: 'cid', type: 'string' },
+    { key: 'clientSecret', value: '{{secret}}', type: 'string' },
+    { key: 'scope', value: 'read write', type: 'string' },
+    { key: 'redirect_uri', value: 'http://127.0.0.1:5000/cb', type: 'string' },
+    { key: 'addTokenTo', value: 'queryParams', type: 'string' },
+    { key: 'client_authentication', value: 'body', type: 'string' },
+    { key: 'challengeAlgorithm', value: 'plain', type: 'string' },
+    { key: 'useBrowser', value: false, type: 'boolean' },
+    { key: 'tokenRequestParams', value: [{ key: 'x', value: 'y' }], type: 'any' },
+    { key: 'accessToken', value: 'SECRET-ACCESS-TOKEN', type: 'string' },
+    { key: 'tokenType', value: 'Bearer', type: 'string' },
+    { key: 'refresh_token', value: 'SECRET-REFRESH', type: 'string' },
+  ]
+  const doc = (auth: unknown, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ name: 'R', method: 'GET', url: 'http://x', auth, ...extra })
+
+  it('parses the Postman array, drops tokens and keeps unknown entries in order', () => {
+    const draft = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: postmanOAuth2 }) })
+    expect(draft.auth.kind).toBe('oauth2')
+    expect(draft.auth.oauth2).toMatchObject({
+      grantType: 'authorization_code_with_pkce',
+      authUrl: 'https://idp.example/authorize',
+      accessTokenUrl: '{{tokenUrl}}',
+      clientId: 'cid',
+      clientSecret: '{{secret}}',
+      scope: 'read write',
+      redirectUri: 'http://127.0.0.1:5000/cb',
+      addTokenTo: 'queryParams',
+      clientAuthentication: 'body',
+      challengeAlgorithm: 'plain',
+      headerPrefix: 'Bearer',
+    })
+    expect(draft.auth.oauth2.extra.map((e) => e.key)).toEqual(['useBrowser', 'tokenRequestParams'])
+    const json = serializeDraft(draft).documentJson
+    expect(json).not.toContain('SECRET')
+    expect(json).not.toContain('tokenType')
+    const out = JSON.parse(json).auth
+    expect(out.type).toBe('oauth2')
+    const byKey = Object.fromEntries(out.oauth2.map((e: { key: string; value: unknown }) => [e.key, e.value]))
+    expect(byKey).toMatchObject({ grant_type: 'authorization_code_with_pkce', clientSecret: '{{secret}}', addTokenTo: 'queryParams', useBrowser: false })
+    expect(byKey.tokenRequestParams).toEqual([{ key: 'x', value: 'y' }])
+    const again = parseDocument({ ...base, documentJson: json })
+    expect(draftFingerprint(again)).toBe(draftFingerprint(draft))
+  })
+
+  it('reads the Postman v2.0 object form and strips tokens from the kept source item', () => {
+    const source = { name: 'R', request: { auth: { type: 'oauth2', oauth2: [{ key: 'accessToken', value: 'SECRET-IN-SOURCE' }] } } }
+    const draft = parseDocument({
+      ...base,
+      documentJson: doc({ type: 'oauth2', oauth2: { accessToken: 'SECRET-V20', addTokenTo: 'header', clientId: 'c', grant_type: 'client_credentials' } }, { source }),
+    })
+    expect(draft.auth.oauth2).toMatchObject({ grantType: 'client_credentials', clientId: 'c', addTokenTo: 'header' })
+    const json = serializeDraft(draft).documentJson
+    expect(json).not.toContain('SECRET')
+    expect(JSON.parse(json).source.request.auth).toEqual({ type: 'oauth2', oauth2: [] })
+  })
+
+  it('keeps implicit and unknown grants verbatim and defaults a missing grant to authorization code', () => {
+    const implicit = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: [{ key: 'grant_type', value: 'implicit' }] }) })
+    expect(implicit.auth.oauth2.grantType).toBe('implicit')
+    expect(JSON.parse(serializeDraft(implicit).documentJson).auth.oauth2[0]).toMatchObject({ key: 'grant_type', value: 'implicit' })
+    const none = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: [] }) })
+    expect(none.auth.oauth2.grantType).toBe('authorization_code')
+  })
+
+  it('an explicitly empty header prefix stays empty; a missing one is Bearer', () => {
+    const empty = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: [{ key: 'headerPrefix', value: '' }] }) })
+    expect(empty.auth.oauth2.headerPrefix).toBe('')
+    const again = parseDocument({ ...base, documentJson: serializeDraft(empty).documentJson })
+    expect(again.auth.oauth2.headerPrefix).toBe('')
+  })
+
+  it('does not treat inherited object keys as settings', () => {
+    const d = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: [{ key: 'toString', value: 'x' }, { key: '__proto__', value: 'y' }] }) })
+    expect(d.auth.oauth2.extra.map((e) => e.key)).toEqual(['toString', '__proto__'])
   })
 })

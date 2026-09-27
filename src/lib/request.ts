@@ -6,13 +6,14 @@
  * share one format. Keys we do not edit (scripts, responses, source, ...) are preserved verbatim.
  */
 import type { ApiRequest } from '../../shared/types'
+import { stripOAuth2TokensFromItem } from '../../shared/oauth2'
 import { dataRows, ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { writeDescription } from './description'
 import { mergeParamsFromUrl } from './urlParams'
 
 export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
-export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'unsupported'
+export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
 
 export interface BodyDraft {
   kind: BodyKind
@@ -25,11 +26,40 @@ export interface BodyDraft {
   preserved?: unknown
 }
 
+/**
+ * OAuth 2.0 configuration, field names after Postman's `oauth2` array keys. `grantType` keeps whatever the document
+ * says (including `implicit` and unknown values, which the UI reports as unsupported). Never holds a token.
+ */
+export interface OAuth2Draft {
+  grantType: string
+  authUrl: string
+  accessTokenUrl: string
+  clientId: string
+  clientSecret: string
+  scope: string
+  state: string
+  redirectUri: string
+  username: string
+  password: string
+  challengeAlgorithm: 'S256' | 'plain'
+  codeVerifier: string
+  clientAuthentication: 'header' | 'body'
+  addTokenTo: 'header' | 'queryParams'
+  headerPrefix: string
+  tokenName: string
+  refreshTokenUrl: string
+  audience: string
+  resource: string
+  /** Entries Slinger does not edit (authRequestParams, useBrowser, ...), written back verbatim and in order. */
+  extra: Array<Record<string, unknown>>
+}
+
 export interface AuthDraft {
   kind: AuthKind
   basic: { username: string; password: string }
   bearer: { token: string }
   apiKey: { key: string; value: string; addTo: 'header' | 'query' }
+  oauth2: OAuth2Draft
   unsupportedType?: string
   preserved?: unknown
 }
@@ -79,12 +109,38 @@ export function emptyBody(): BodyDraft {
   }
 }
 
+export function emptyOAuth2(): OAuth2Draft {
+  return {
+    grantType: 'authorization_code_with_pkce',
+    authUrl: '',
+    accessTokenUrl: '',
+    clientId: '',
+    clientSecret: '',
+    scope: '',
+    state: '',
+    redirectUri: '',
+    username: '',
+    password: '',
+    challengeAlgorithm: 'S256',
+    codeVerifier: '',
+    clientAuthentication: 'header',
+    addTokenTo: 'header',
+    headerPrefix: 'Bearer',
+    tokenName: '',
+    refreshTokenUrl: '',
+    audience: '',
+    resource: '',
+    extra: [],
+  }
+}
+
 export function emptyAuth(): AuthDraft {
   return {
     kind: 'none',
     basic: { username: '', password: '' },
     bearer: { token: '' },
     apiKey: { key: '', value: '', addTo: 'header' },
+    oauth2: emptyOAuth2(),
   }
 }
 
@@ -191,6 +247,54 @@ function attr(list: unknown, key: string): string {
   return isObj(found) ? str(found.value) : ''
 }
 
+/** Postman `oauth2` key -> OAuth2Draft field, for the plain string fields. */
+const OAUTH2_STRING_FIELDS = {
+  grant_type: 'grantType',
+  authUrl: 'authUrl',
+  accessTokenUrl: 'accessTokenUrl',
+  clientId: 'clientId',
+  clientSecret: 'clientSecret',
+  scope: 'scope',
+  state: 'state',
+  redirect_uri: 'redirectUri',
+  username: 'username',
+  password: 'password',
+  code_verifier: 'codeVerifier',
+  headerPrefix: 'headerPrefix',
+  tokenName: 'tokenName',
+  refreshTokenUrl: 'refreshTokenUrl',
+  audience: 'audience',
+  resource: 'resource',
+} as const satisfies Record<string, keyof OAuth2Draft>
+const OAUTH2_ENUM_KEYS = new Set(['challengeAlgorithm', 'client_authentication', 'addTokenTo'])
+
+/** Postman's `oauth2` parameters (v2.1 array or v2.0 object), without tokens (see shared/oauth2.ts). */
+export function parseOAuth2(params: unknown): OAuth2Draft {
+  const out = { ...emptyOAuth2(), grantType: '' }
+  const stripped = stripOAuth2TokensFromItem({ auth: { type: 'oauth2', oauth2: params } }).auth.oauth2
+  const entries: Array<Record<string, unknown>> = Array.isArray(stripped)
+    ? stripped.filter(isObj)
+    : isObj(stripped)
+      ? Object.entries(stripped).map(([key, value]) => ({ key, value }))
+      : []
+  let prefixSeen = false
+  for (const e of entries) {
+    const key = str(e.key)
+    if (Object.hasOwn(OAUTH2_STRING_FIELDS, key)) {
+      const field = OAUTH2_STRING_FIELDS[key as keyof typeof OAUTH2_STRING_FIELDS]
+      out[field] = str(e.value)
+      if (key === 'headerPrefix') prefixSeen = true
+    } else if (key === 'challengeAlgorithm') out.challengeAlgorithm = str(e.value) === 'plain' ? 'plain' : 'S256'
+    else if (key === 'client_authentication') out.clientAuthentication = str(e.value) === 'body' ? 'body' : 'header'
+    else if (key === 'addTokenTo') out.addTokenTo = str(e.value) === 'queryParams' ? 'queryParams' : 'header'
+    else out.extra.push(e)
+  }
+  // Postman omits headerPrefix when it is the default.
+  if (!prefixSeen) out.headerPrefix = 'Bearer'
+  if (!out.grantType) out.grantType = 'authorization_code'
+  return out
+}
+
 export function parseAuth(auth: unknown): AuthDraft {
   const out = emptyAuth()
   if (!isObj(auth)) return out
@@ -214,6 +318,10 @@ export function parseAuth(auth: unknown): AuthDraft {
         value: attr(auth.apikey, 'value'),
         addTo: attr(auth.apikey, 'in') === 'query' ? 'query' : 'header',
       }
+      return out
+    case 'oauth2':
+      out.kind = 'oauth2'
+      out.oauth2 = parseOAuth2(auth.oauth2)
       return out
     default:
       out.kind = 'unsupported'
@@ -255,6 +363,8 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
   const url = typeof doc.url === 'string' ? doc.url : request.url
   const extras: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(doc)) if (!OWN_KEYS.has(k)) extras[k] = v
+  // The raw Postman item kept by the importer must not carry an OAuth 2.0 token either (older imports did).
+  if (isObj(extras.source)) extras.source = stripOAuth2TokensFromItem(extras.source)
   const settings = isObj(doc.settings) ? doc.settings : {}
   return {
     name: request.name,
@@ -312,6 +422,34 @@ export function serializeBody(b: BodyDraft): unknown {
 
 const attrList = (pairs: [string, string][]) => pairs.map(([key, value]) => ({ key, value, type: 'string' }))
 
+/** Postman's `oauth2` array: the settings Slinger edits (empty optional ones left out), then the preserved entries. No tokens. */
+export function serializeOAuth2(o: OAuth2Draft): Array<Record<string, unknown>> {
+  const pairs: [string, string][] = [
+    ['grant_type', o.grantType],
+    ['authUrl', o.authUrl],
+    ['accessTokenUrl', o.accessTokenUrl],
+    ['clientId', o.clientId],
+    ['clientSecret', o.clientSecret],
+    ['scope', o.scope],
+    ['state', o.state],
+    ['redirect_uri', o.redirectUri],
+    ['username', o.username],
+    ['password', o.password],
+    ['challengeAlgorithm', o.challengeAlgorithm],
+    ['code_verifier', o.codeVerifier],
+    ['client_authentication', o.clientAuthentication],
+    ['addTokenTo', o.addTokenTo],
+    ['headerPrefix', o.headerPrefix],
+    ['tokenName', o.tokenName],
+    ['refreshTokenUrl', o.refreshTokenUrl],
+    ['audience', o.audience],
+    ['resource', o.resource],
+  ]
+  const kept = pairs.filter(([key, value]) => value !== '' || key === 'headerPrefix' || OAUTH2_ENUM_KEYS.has(key))
+  const own = new Set(kept.map(([k]) => k))
+  return [...attrList(kept), ...o.extra.filter((e) => !own.has(str(e.key)))]
+}
+
 export function serializeAuth(a: AuthDraft): unknown {
   switch (a.kind) {
     case 'none':
@@ -325,6 +463,8 @@ export function serializeAuth(a: AuthDraft): unknown {
         type: 'apikey',
         apikey: attrList([['key', a.apiKey.key], ['value', a.apiKey.value], ['in', a.apiKey.addTo]]),
       }
+    case 'oauth2':
+      return { type: 'oauth2', oauth2: serializeOAuth2(a.oauth2) }
     case 'unsupported':
       return a.preserved ?? null
   }
@@ -375,5 +515,18 @@ export function templateTexts(d: RequestDraft): string[] {
   if (a.kind === 'basic') out.push(a.basic.username, a.basic.password)
   if (a.kind === 'bearer') out.push(a.bearer.token)
   if (a.kind === 'apiKey') out.push(a.apiKey.key, a.apiKey.value)
+  if (a.kind === 'oauth2') out.push(...oauth2TemplateTexts(a.oauth2))
+  return out
+}
+
+/**
+ * The OAuth 2.0 settings that must resolve before a send: the ones that identify the stored token (its key is a hash
+ * of them), the credentials an automatic refresh needs, and the header prefix. Grant-specific fields only count for
+ * their grant, so an unused `{{variable}}` never blocks a send.
+ */
+export function oauth2TemplateTexts(o: OAuth2Draft): string[] {
+  const out = [o.accessTokenUrl, o.clientId, o.clientSecret, o.scope, o.audience, o.resource, o.refreshTokenUrl, o.headerPrefix]
+  if (o.grantType === 'authorization_code' || o.grantType === 'authorization_code_with_pkce') out.push(o.authUrl)
+  if (o.grantType === 'password_credentials') out.push(o.username)
   return out
 }

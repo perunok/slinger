@@ -1,7 +1,7 @@
 /** Compares two collection snapshots (versions, or a version against the live collection). */
 import type { ApiFolder, ApiRequest, Collection, CollectionSnapshot } from '../../shared/types'
 import { dataRows, type KvRow } from './kv'
-import { parseDocument, type RequestDraft } from './request'
+import { parseDocument, serializeOAuth2, type RequestDraft } from './request'
 
 export type SnapshotFolder = CollectionSnapshot['folders'][number]
 export type SnapshotRequest = CollectionSnapshot['requests'][number]
@@ -103,6 +103,10 @@ function renderAuth(d: RequestDraft): string {
       return `bearer\ntoken: ${a.bearer.token}`
     case 'apiKey':
       return `api key\nkey: ${a.apiKey.key}\nvalue: ${a.apiKey.value}\nadd to: ${a.apiKey.addTo}`
+    case 'oauth2':
+      return `oauth2\n${serializeOAuth2(a.oauth2)
+        .map((e) => `${String(e.key)}: ${typeof e.value === 'string' ? e.value : JSON.stringify(e.value)}`)
+        .join('\n')}`
     case 'unsupported':
       return `${a.unsupportedType ?? 'unsupported'}\n${JSON.stringify(a.preserved) ?? ''}`
   }
