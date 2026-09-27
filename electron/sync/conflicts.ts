@@ -13,7 +13,8 @@ import { newId } from '../lib/ids'
 import { parse as parseSemver } from '../services/semver'
 import type { ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, type ConflictRow } from './conflictStore'
-import { GROUPS, GROUP_LABELS, canonicalJson, loadRow, parsePayload, samePayload, toWire, type AnyRow, type GroupName } from './mapping'
+import { linkFeatures } from './features'
+import { GROUPS, GROUP_LABELS, canonicalJson, groupsOf, loadRow, parsePayload, samePayload, toWire, type AnyRow, type Features, type GroupName } from './mapping'
 import {
   insertFromPayload,
   overwriteFromPayload,
@@ -46,8 +47,9 @@ export function allowedResolutions(kind: SyncConflictKind, type: SyncEntityType)
 // Display
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Breadcrumb `Collection / Folder / Item` from current local rows (names of deleted ancestors included). */
+/** Breadcrumb `Collection / Folder / Item` from current local rows (names of deleted ancestors included); globals: `Globals / key`. */
 export function pathOf(db: Db, type: SyncEntityType, id: string, label: string): string[] {
+  if (type === 'global_variable') return ['Globals', label]
   const parts = [label]
   let row = loadRow(db, type, id)
   let cur = row ? parentOf(type, row) : null
@@ -92,22 +94,54 @@ function displayGroup(db: Db, type: SyncEntityType, group: GroupName, p: Payload
       return String(p.key ?? '')
     case 'value':
       return p.is_secret === true ? '(secret, stays on each device)' : String(p.value ?? '')
+    case 'scripts':
+      return scriptsText(p.scripts_json)
+    case 'docs': {
+      const text = typeof p.description === 'string' ? clip(p.description) : ''
+      return p.description_type === 'text/plain' ? `${text}\n(plain text)` : text
+    }
+    case 'details':
+      return `${p.enabled === false ? 'Disabled' : 'Enabled'}${typeof p.description === 'string' && p.description ? `\n${clip(p.description)}` : ''}`
   }
   void type
   return null
 }
 
-export function toSyncConflict(db: Db, c: ConflictRow): SyncConflict {
+const DISPLAY_MAX = 100_000
+const clip = (s: string): string => (s.length > DISPLAY_MAX ? `${s.slice(0, DISPLAY_MAX)}\n... (truncated)` : s)
+
+/** Collection/folder scripts as readable text for the conflict diff: one section per event, the code line by line. */
+export function scriptsText(json: unknown): string {
+  if (typeof json !== 'string' || !json) return ''
+  let events: unknown
+  try {
+    events = JSON.parse(json)
+  } catch {
+    return clip(json)
+  }
+  if (!Array.isArray(events)) return clip(json)
+  const title: Record<string, string> = { prerequest: 'Pre-request script', test: 'Post-response script (tests)' }
+  const parts: string[] = []
+  for (const e of events as Array<Record<string, unknown>>) {
+    const listen = typeof e?.listen === 'string' ? e.listen : 'script'
+    const script = (e?.script ?? {}) as Record<string, unknown>
+    const exec = Array.isArray(script.exec) ? script.exec.map(String).join('\n') : typeof script.exec === 'string' ? script.exec : ''
+    parts.push(`// ${title[listen] ?? listen}\n${exec}`)
+  }
+  return clip(parts.join('\n\n'))
+}
+
+export function toSyncConflict(db: Db, c: ConflictRow, features: Features = linkFeatures(db, c.workspace_id)): SyncConflict {
   const base = parsePayload(c.base_json)
   const remote = parsePayload(c.remote_json)
   const row = loadRow(db, c.entity_type, c.entity_id)
-  const local = row && row.deleted === 0 ? toWire(c.entity_type, row) : parsePayload(c.local_json)
+  const local = row && row.deleted === 0 ? toWire(c.entity_type, row, features) : parsePayload(c.local_json)
   const conflicting = new Set(JSON.parse(c.groups) as string[])
   const groups: SyncConflictGroup[] = []
   if (c.kind === 'edit_edit') {
     const detail = (p: Payload | null): string | null =>
       p ? JSON.stringify({ name: p.name ?? null, method: p.method ?? null, url: p.url ?? null, document_json: p.document_json ?? null }) : null
-    for (const g of Object.keys(GROUPS[c.entity_type]) as GroupName[]) {
+    for (const [g] of groupsOf(c.entity_type, features)) {
       groups.push({
         group: g, label: GROUP_LABELS[g], conflicting: conflicting.has(g),
         base: displayGroup(db, c.entity_type, g, base), local: displayGroup(db, c.entity_type, g, local), remote: displayGroup(db, c.entity_type, g, remote),
@@ -207,7 +241,7 @@ function mergeGroups(ctx: ApplyCtx, c: ConflictRow, input: ResolveSyncConflictIn
   const { db } = ctx
   const type = c.entity_type
   const row = loadRow(db, type, c.entity_id)!
-  const local = toWire(type, row)
+  const local = toWire(type, row, ctx.features)
   const remote = parsePayload(c.remote_json)!
   const conflicting = JSON.parse(c.groups) as GroupName[]
   const choices = input.fieldChoices ?? {}
@@ -232,7 +266,7 @@ function duplicateRequest(ctx: ApplyCtx, c: ConflictRow): void {
   const { db } = ctx
   const row = loadRow(db, 'request', c.entity_id)!
   const remote = parsePayload(c.remote_json)!
-  const local = toWire('request', row)
+  const local = toWire('request', row, ctx.features)
   const folderId = local.folder_id as string | null
   const folderAlive = folderId ? loadRow(db, 'folder', folderId)?.deleted === 0 : false
   const targetFolder = folderAlive ? folderId : null
@@ -341,7 +375,7 @@ export function discardLocalChange(ctx: ApplyCtx, type: SyncEntityType, id: stri
   if (row) {
     if (e && e.remote_version > 0 && base) {
       if (row.deleted === 1) restoreFromPayload(ctx, type, id, base)
-      else if (!samePayload(toWire(type, row), base)) overwriteFromPayload(ctx, type, row, base)
+      else if (!samePayload(toWire(type, row, ctx.features), base)) overwriteFromPayload(ctx, type, row, base)
       noteChange(ctx, type, id, 'upsert')
       putEntity(db, type, id, ctx.workspaceId, { remote_version: e.remote_version, base_payload: e.base_payload, state: 'synced' })
     } else {
@@ -391,7 +425,7 @@ export function reevaluateOpenConflicts(ctx: ApplyCtx): number {
     const row = loadRow(db, c.entity_type, c.entity_id)
     const remote = parsePayload(c.remote_json)
     if (!row || row.deleted === 1 || !remote) continue
-    const local = toWire(c.entity_type, row)
+    const local = toWire(c.entity_type, row, ctx.features)
     const base = parsePayload(c.base_json)
     if (samePayload(local, remote)) {
       syncedTo(ctx, c.entity_type, c.entity_id, c.remote_version, remote)

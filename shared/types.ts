@@ -679,6 +679,9 @@ export type SyncEntityType =
   | 'environment'
   | 'environment_variable'
   | 'collection_version'
+  /** Synced when the server supports it (sync design section 21). */
+  | 'collection_variable'
+  | 'global_variable'
 
 export interface CloudConfig {
   apiBaseUrl: string
@@ -788,7 +791,8 @@ export type SyncResolution = 'keep_local' | 'keep_remote' | 'merge' | 'duplicate
 
 /** One field group of a conflicting entity. Values are display strings; secret values never appear. */
 export interface SyncConflictGroup {
-  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value'
+  /** `scripts`, `docs` (collections/folders) and `details` (variables: enabled + description): sync design section 21. */
+  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details'
   label: string
   conflicting: boolean
   base: string | null
