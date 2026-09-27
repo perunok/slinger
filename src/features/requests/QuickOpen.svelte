@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
    * Ctrl+K: jump to any saved request by name, URL or method. Also a small command palette: commands (switch theme /
-   * accent / loading animation, export a collection or an environment, About Slinger) show up when the query matches them, and a
-   * leading ">" lists only commands.
+   * accent / loading animation, layout, export a collection or an environment, About Slinger) show up when the query matches
+   * them, and a leading ">" lists only commands.
    */
   import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
@@ -15,6 +15,7 @@
   import { methodColor } from './method'
   import { sync } from '../sync/syncStore.svelte'
   import { tabsStore } from './tabs.svelte'
+  import { RESPONSE_POSITION_SHORTCUT } from '../layout/layoutActions'
 
   interface Command {
     key: string
@@ -23,7 +24,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload' | 'help'
+    icon?: 'download' | 'upload' | 'help' | 'layout-rows' | 'layout-columns' | 'panel-right'
     current: () => boolean
     run: () => void
   }
@@ -62,6 +63,24 @@
       icon: 'help',
       current: () => false,
       run: () => (ui.aboutOpen = true),
+    },
+    {
+      key: 'layout:response-below',
+      label: 'Layout: Response below the request',
+      hint: `stacked (${RESPONSE_POSITION_SHORTCUT} toggles)`,
+      swatch: {},
+      icon: 'layout-rows',
+      current: () => settings.responsePosition === 'below',
+      run: () => settings.setResponsePosition('below'),
+    },
+    {
+      key: 'layout:response-beside',
+      label: 'Layout: Response beside the request',
+      hint: `side by side (${RESPONSE_POSITION_SHORTCUT} toggles)`,
+      swatch: {},
+      icon: 'layout-columns',
+      current: () => settings.responsePosition === 'beside',
+      run: () => settings.setResponsePosition('beside'),
     },
     ...LOADER_OPTIONS.map((o) => ({
       key: `loader:${o.id}`,

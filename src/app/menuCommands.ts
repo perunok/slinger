@@ -5,7 +5,7 @@
 import { parseMenuCommand, type MenuCommand } from '../../shared/menu'
 import { tabsStore } from '../features/requests/tabs.svelte'
 import { api } from '../lib/ipc'
-import { dialogOpen, ranFromKeyboard } from './shortcuts'
+import { dialogOpen, ranFromKeyboard, runLayoutCommand } from './shortcuts'
 import { toast } from './toast.svelte'
 import { ui } from './ui.svelte'
 
@@ -24,6 +24,7 @@ export function runMenuCommand(value: unknown): boolean {
       return true
   }
   if (dialogOpen()) return false
+  if (runLayoutCommand(command)) return true
   switch (command) {
     case 'newRequest':
       tabsStore.newTab()

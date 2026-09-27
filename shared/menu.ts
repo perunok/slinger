@@ -13,6 +13,7 @@ export const MENU_COMMANDS = [
   'settings',
   'about',
   'shortcuts',
+  'toggleResponsePosition',
 ] as const
 
 export type MenuCommand = (typeof MENU_COMMANDS)[number]

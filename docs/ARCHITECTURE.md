@@ -111,16 +111,20 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   mnemonics).
 - **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
-  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Actual Size / Zoom In / Zoom Out,
+  Toggle Full Screen;
   **Help:** User Guide, Keyboard Shortcuts, Release Notes, Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
-  `import`, `exportCollection`, `settings`, `about`, `shortcuts`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggle `toggleResponsePosition`) over
+  `menu:command`. `deliverMenuCommand` sends only to the main
   window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
   (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
   button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
   collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
-- **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,` and `/`: the
+- **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,`, `/` and the
+  layout toggles Ctrl/Cmd+Alt+V (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
+  AltGr produced a character): the
   menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
   macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
   page did not `preventDefault`, and as a belt-and-braces guard the renderer drops a menu command that arrives within 300 ms of the

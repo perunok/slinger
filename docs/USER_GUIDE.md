@@ -9,7 +9,17 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
   Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
-- **Main area:** request tabs, the request editor, and the response pane below it.
+- **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
+
+### Response below or beside the request
+
+The response pane sits below the request editor by default. To put it side by side with the request, click the small
+button at the right end of the divider between the two panes (when they are side by side, the button sits at the bottom
+end of the vertical divider), press **Ctrl+Alt+V** (Cmd+Option+V on macOS), use **View > Toggle Response Position**, pick
+**Layout: Response beside the request** in the command palette (Ctrl+K, `> layout`), or choose it under **Settings > Layout**.
+The choice applies to every request and example tab and is remembered. Each layout remembers its own divider position, so
+switching back and forth does not lose your preferred sizes. Dragging the divider (or focusing it and using the arrow keys)
+still resizes the panes; the button itself never starts a drag.
 
 ## Workspaces
 
@@ -612,6 +622,8 @@ Settings (Ctrl+, or the sun icon):
   pebble shot from a slingshot, bouncing off a target) or **Classic spinner**. The characters are drawn in the accent colour, so
   they suit every theme. The chosen character runs in its card as a preview. With *reduce motion* turned on in the operating
   system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
+- **Layout:** the response **Below the request** (default) or **Beside the request**; see
+  [Response below or beside the request](#response-below-or-beside-the-request).
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
@@ -646,7 +658,7 @@ Slinger has its own menu bar (on macOS at the top of the screen).
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
 | **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
-| **View** | Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **View** | Toggle Response Position (Ctrl+Alt+V), Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
 | **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
 
@@ -669,8 +681,9 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; export a collection or an environment; About Slinger) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+Alt+V | Show the response below / beside the request |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |
 | Enter (in a table cell) | Move to the cell below |

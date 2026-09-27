@@ -7,6 +7,9 @@
   import { app } from '../../app/state.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import SplitPane from '../../components/ui/SplitPane.svelte'
+  import { settings } from '../../app/settings.svelte'
+  import ResponsePositionButton from '../layout/ResponsePositionButton.svelte'
+  import { splitKey } from '../layout/layoutActions'
   import Tabs from '../../components/ui/Tabs.svelte'
   import { dataRows } from '../../lib/kv'
   import AuthPanel from '../requests/AuthPanel.svelte'
@@ -98,7 +101,14 @@
     sendLabel="Try"
     sendTitle="Send this request from a new tab; the example is not changed (Ctrl+Enter)"
   />
-  <SplitPane direction="column" storageKey="slinger.split.example" initial={0.45} class="min-h-0">
+  <SplitPane
+    direction={settings.responsePosition === 'below' ? 'column' : 'row'}
+    storageKey={splitKey('example', settings.responsePosition)}
+    initial={settings.responsePosition === 'below' ? 0.45 : 0.5}
+    min={settings.responsePosition === 'below' ? 0.15 : 0.25}
+    class="min-h-0"
+  >
+    {#snippet action()}<ResponsePositionButton />{/snippet}
     {#snippet first()}
       <div class="flex h-full min-h-0 flex-col">
         <Tabs tabs={sections} value={section} onchange={(v) => (tab.section = v as RequestSection)} label="Example request sections" idPrefix="exsec" class="px-2" />

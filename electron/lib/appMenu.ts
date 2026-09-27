@@ -6,8 +6,8 @@
  * main window over the `menu:command` push channel (shared/menu.ts); the renderer runs the same action as the
  * matching keyboard shortcut (src/app/menuCommands.ts).
  *
- * Accelerators. The renderer owns Ctrl/Cmd+T (new tab), Ctrl/Cmd+W (close the request TAB), Ctrl/Cmd+, (settings)
- * and Ctrl/Cmd+/ (shortcuts) in src/app/shortcuts.ts. The menu shows those accelerators as labels only
+ * Accelerators. The renderer owns Ctrl/Cmd+T (new tab), Ctrl/Cmd+W (close the request TAB), Ctrl/Cmd+, (settings),
+ * Ctrl/Cmd+/ (shortcuts) and the View layout toggles (Ctrl/Cmd+Alt+V) in src/app/shortcuts.ts. The menu shows those accelerators as labels only
  * (`registerAccelerator: false`), so on Windows/Linux the key press reaches the renderer's handler exactly once.
  * macOS always registers menu key equivalents; there Electron gives the page the key first and only falls back to
  * the menu when the page did not handle it (preventDefault), and the renderer additionally drops a menu command that
@@ -110,6 +110,8 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       ...(dev
         ? ([{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, separator] as MenuItemConstructorOptions[])
         : []),
+      command('Toggle Response Position', 'toggleResponsePosition', shown('CmdOrCtrl+Alt+V')),
+      separator,
       { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => o.zoom('reset') },
       { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => o.zoom('in') },
       { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => o.zoom('out') },
