@@ -68,8 +68,9 @@
     <button
       type="button"
       class={item}
-      title={environment ? `Active environment: ${environment.name}. Manage environments` : 'No environment selected. Manage environments'}
-      aria-label={environment ? `Environment: ${environment.name}. Manage environments` : 'No environment. Manage environments'}
+      title={environment ? `Active environment: ${environment.name} (click to edit environments)` : 'No active environment (click to edit environments)'}
+      aria-label={environment ? `Active environment: ${environment.name}` : 'No active environment'}
+      aria-haspopup="dialog"
       data-testid="status-env"
       onclick={() => (ui.envEditor = { open: true, environmentId: environment?.id })}
     >
