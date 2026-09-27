@@ -2,10 +2,12 @@
  * Runs one draft exactly the way a manual "Send" does, so request tabs and the collection runner behave
  * identically:
  *
- *   1. pre-request scripts (collection -> folders -> request) run in the main-process sandbox; environment
- *      writes are persisted there, request mutations apply to an outgoing COPY of the draft only;
+ *   1. pre-request scripts (collection -> folders -> request) run in the main-process sandbox; environment,
+ *      collection variable and global writes are persisted there, request mutations apply to an outgoing COPY of
+ *      the draft only;
  *   2. templates are resolved (revealing just the secrets the request references) with the variables the
- *      scripts set (local > environment > collection variables > globals);
+ *      scripts set (local > environment > collection variables > globals), using the scope of the request's own
+ *      collection;
  *   3. the request is executed over IPC;
  *   4. test scripts run against the response.
  *
@@ -29,7 +31,6 @@ import {
   type ScriptOutput,
 } from '../../lib/scripts'
 import { uuid } from '../../lib/template'
-import { sessionVars } from '../scripts/sessionVars'
 
 export type ExecuteOutcome =
   | { ok: true; response: HttpResponseData; warnings: string[]; runId: string; elapsedMs: number; scripts: ScriptOutput }
@@ -46,11 +47,16 @@ export interface ScriptRunContext {
   sessionId: string
   /** pm.variables: lives for the whole run, so one request's values reach the next. */
   variables: ScriptVariables
+  /**
+   * pm.collectionVariables of a request that is not saved in a collection (in memory, for this send / run only).
+   * Requests in a collection use its persisted variables instead.
+   */
+  collectionVariables: ScriptVariables
   iteration: number
   iterationCount: number
 }
 
-export const newScriptRun = (): ScriptRunContext => ({ sessionId: uuid(), variables: {}, iteration: 0, iterationCount: 1 })
+export const newScriptRun = (): ScriptRunContext => ({ sessionId: uuid(), variables: {}, collectionVariables: {}, iteration: 0, iterationCount: 1 })
 
 export interface ExecuteContext {
   workspaceId: string
@@ -98,8 +104,8 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       request: requestDataFromDraft(draft),
       response: null,
       variables: run.variables,
-      collectionVariables: sessionVars.collection(ctx.collectionId),
-      globals: sessionVars.globals(ctx.workspaceId),
+      collectionId: ctx.collectionId ?? null,
+      collectionVariables: ctx.collectionId ? {} : run.collectionVariables,
       info: { requestName: draft.name, requestId: ctx.requestId ?? null, iteration: run.iteration, iterationCount: run.iterationCount },
       timeoutMs: settings.scriptTimeoutMs,
       sendRequestTimeoutMs: draft.timeoutMs ?? undefined,
@@ -107,14 +113,17 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       ...extra,
     })
     run.variables = result.variables
-    sessionVars.setCollection(ctx.collectionId, result.collectionVariables)
-    sessionVars.setGlobals(ctx.workspaceId, result.globals)
+    if (!ctx.collectionId) run.collectionVariables = result.collectionVariables
     scripts.console.push(...result.console)
     scripts.tests.push(...result.tests)
     scripts.errors.push(...result.errors)
     scripts.scriptCount += chain.length
-    // Reload the environment (and so the template scope) the scripts wrote to.
-    if (result.environmentChanged) await app.refreshEnvVariables()
+    // Reload the scopes (and so the template scope) the scripts wrote to.
+    await Promise.all([
+      result.environmentChanged ? app.refreshEnvVariables() : null,
+      result.collectionVariablesChanged && ctx.collectionId ? app.reloadCollectionVariables(ctx.collectionId) : null,
+      result.globalsChanged ? app.reloadGlobals() : null,
+    ])
     return result
   }
 
@@ -136,9 +145,8 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   if (ctx.wasCancelled?.()) return cancelled()
 
   // 2. Templates, with what the scripts set.
-  const scope = scopeWithScriptVariables(scopeStore.scope, {
-    globals: sessionVars.globals(ctx.workspaceId),
-    collection: sessionVars.collection(ctx.collectionId),
+  const scope = scopeWithScriptVariables(scopeStore.scopeFor(ctx.collectionId), {
+    collection: ctx.collectionId ? undefined : run.collectionVariables,
     local: run.variables,
   })
   // Reveal only the secrets this request references; they live in memory for this call only.
@@ -146,7 +154,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   try {
     for (const v of secretsNeeded(draft, scope)) {
       if (!v.id) continue
-      secrets.set(v.key, await api().revealEnvironmentVariable(v.id))
+      secrets.set(v.key, v.source === 'global' ? await api().revealGlobalVariable(v.id) : await api().revealEnvironmentVariable(v.id))
     }
   } catch (e) {
     return { ok: false, kind: 'failed', error: `Could not read a secret variable: ${errorInfo(e).message}`, scripts }

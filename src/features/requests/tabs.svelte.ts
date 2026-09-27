@@ -117,6 +117,10 @@ export class RequestTab {
   overviewDraft = $state<string | null>(null)
   /** Docs view (request Docs section / overview): null = default (rendered preview). */
   docsMode = $state<DocsMode | null>(null)
+  /** ADDED (persisted variables): which part of a collection overview is shown. */
+  overviewSection = $state<'docs' | 'variables'>('docs')
+  /** A variable name from the "create variable" action, for the collection variables editor to add. */
+  pendingVariable = $state<string | null>(null)
 
   dirty = $derived(
     this.overview

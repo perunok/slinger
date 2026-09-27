@@ -6,7 +6,7 @@
 import type { HttpRequestInput, ResolvedAuth, ResolvedBody } from '../../shared/types'
 import { dataRows } from './kv'
 import { rawContentType, templateTexts, type RequestDraft } from './request'
-import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
+import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesChecked, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
 
 export type PrepareResult =
@@ -51,7 +51,7 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     return {
       ok: false,
       unresolved,
-      error: `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. Define ${unresolved.length > 1 ? 'them' : 'it'} in the active environment.`,
+      error: `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. Not defined in ${scopesChecked(ctx.scope)}.`,
     }
   }
   const cache = new Map<string, string>()

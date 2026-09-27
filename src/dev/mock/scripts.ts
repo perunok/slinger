@@ -14,8 +14,8 @@ export function createScriptsApi(): Pick<SlingerIpcApi, 'runScripts'> {
         errors: [],
         request: null,
         variables: input.variables,
-        collectionVariables: input.collectionVariables,
-        globals: input.globals,
+        collectionVariables: input.collectionVariables ?? {},
+        globals: {},
         environmentChanged: false,
         console: [
           {

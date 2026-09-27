@@ -14,7 +14,7 @@
 
   // Regenerated on every draft/environment change; built-ins get a fresh sample value each time.
   const prepared = $derived(
-    prepareRequest(tab.draft, { workspaceId: app.workspaceId ?? '', requestId: tab.requestId, scope: scopeStore.scope, allowUnresolved: true }),
+    prepareRequest(tab.draft, { workspaceId: app.workspaceId ?? '', requestId: tab.requestId, scope: scopeStore.scopeFor(tab.collectionId), allowUnresolved: true }),
   )
   const snippet = $derived(prepared.ok ? generateSnippet(lang, prepared.input) : '')
   const info = $derived(SNIPPET_LANGS.find((l) => l.id === lang))

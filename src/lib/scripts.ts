@@ -251,21 +251,27 @@ export function templateValue(v: unknown): string {
 
 /**
  * The scope used to resolve a request after its pre-request scripts: globals < collection variables <
- * environment < local variables (pm.variables), Postman's precedence. Script values are never secret.
+ * environment < local variables (pm.variables), Postman's precedence. `base` already holds the persisted layers
+ * (scope.svelte.ts); the script layers are in-memory values (never secret): `local` always, `collection` /
+ * `globals` only when they are not persisted (a request outside a collection, tests).
  */
 export function scopeWithScriptVariables(
   base: TemplateScope,
-  layers: { globals: ScriptVariables; collection: ScriptVariables; local: ScriptVariables },
+  layers: { globals?: ScriptVariables; collection?: ScriptVariables; local: ScriptVariables },
 ): TemplateScope {
   const map = new Map<string, VariableInfo>()
-  const put = (vars: ScriptVariables) => {
-    for (const key of Object.keys(vars)) if (key) map.set(key, { key, value: templateValue(vars[key]), secret: false })
+  const put = (vars: ScriptVariables | undefined, source: VariableInfo['source']) => {
+    for (const key of Object.keys(vars ?? {})) if (key) map.set(key, { key, value: templateValue(vars![key]), secret: false, source })
   }
-  put(layers.globals)
-  put(layers.collection)
-  for (const [k, v] of base.variables) map.set(k, v)
-  put(layers.local)
-  return { environmentName: base.environmentName, variables: map }
+  const baseOf = (global: boolean) => {
+    for (const [k, v] of base.variables) if ((v.source === 'global') === global) map.set(k, v)
+  }
+  baseOf(true)
+  put(layers.globals, 'global')
+  put(layers.collection, 'collection')
+  baseOf(false)
+  put(layers.local, 'local')
+  return { ...base, variables: map }
 }
 
 // ---------------------------------------------------------------------------

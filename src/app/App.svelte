@@ -12,6 +12,7 @@
   import EnvironmentExportDialog from '../features/environments/EnvironmentExportDialog.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
+  import { openCollectionVariables } from '../features/overview/openVariables'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
   import ImportDialog from '../features/importexport/ImportDialog.svelte'
   import QuickOpen from '../features/requests/QuickOpen.svelte'
@@ -39,13 +40,23 @@
 
   onMount(() => {
     settings.init()
-    scopeStore.createVariable = (name) => (ui.envEditor = { open: true, newVariable: name })
+    scopeStore.createVariable = (name, target = 'environment') => {
+      const collectionId = scopeStore.scope.collectionId
+      if (target === 'globals') ui.envEditor = { open: true, globals: true, newVariable: name }
+      else if (target === 'collection' && collectionId) openCollectionVariables(collectionId, name)
+      else ui.envEditor = { open: true, newVariable: name }
+    }
     void app.init()
     const offMenu = subscribeMenuCommands()
     return () => {
       scopeStore.createVariable = null
       offMenu()
     }
+  })
+
+  // `{{}}` in the active tab resolve against its collection's variables too.
+  $effect(() => {
+    scopeStore.collectionId = tabsStore.active?.collectionId ?? null
   })
 
   // The launch skeleton (index.html) covers the UI until the first workspace has loaded, or startup failed.

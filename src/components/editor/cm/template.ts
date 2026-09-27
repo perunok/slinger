@@ -1,7 +1,8 @@
 /**
  * CodeMirror extension implementing `{{variable}}` behaviour: token highlighting
  * (green resolved / red unresolved / grey secret), hover popover with the resolved
- * value + source environment, autocomplete on `{{`, and a "create variable" action.
+ * value + its scope (environment, collection, globals), autocomplete on `{{`, and a
+ * "create variable" action offering each scope.
  * Shared by TemplateInput (single-line) and CodeEditor (multi-line) so both behave identically.
  */
 import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
@@ -11,9 +12,12 @@ import {
   BUILTIN_VARIABLES,
   parseTokens,
   previewValue,
+  scopesChecked,
+  sourceLabel,
   tokenStatus,
   type TemplateScope,
   type TokenStatus,
+  type VariableTarget,
 } from '../../../lib/template'
 
 /** Dispatch this effect after the scope changed so decorations are rebuilt. */
@@ -21,8 +25,8 @@ export const scopeChanged = StateEffect.define<null>()
 
 export interface TemplateHooks {
   getScope: () => TemplateScope
-  /** Called from the hover popover for unresolved tokens. */
-  onCreateVariable?: (name: string) => void
+  /** Called from the hover popover for unresolved tokens, with the scope the user picked. */
+  onCreateVariable?: (name: string, target: VariableTarget) => void
   /** Optional plain-text suggestions for the whole field value (e.g. header names). */
   suggest?: (text: string) => string[]
 }
@@ -79,19 +83,28 @@ export function popoverFor(name: string, hooks: TemplateHooks): HTMLElement {
   const row = document.createElement('div')
   row.className = 'tpl-pop-row'
   if (status === 'unresolved') {
-    row.textContent = scope.environmentName
-      ? `Not defined in "${scope.environmentName}".`
-      : 'No environment selected.'
+    row.textContent = `Not defined in ${scopesChecked(scope)}.`
     row.classList.add('tpl-pop-bad')
     dom.append(row)
     if (hooks.onCreateVariable) {
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'tpl-pop-btn'
-      btn.textContent = `Create variable "${name}"`
-      btn.addEventListener('mousedown', (e) => e.preventDefault())
-      btn.addEventListener('click', () => hooks.onCreateVariable?.(name))
-      dom.append(btn)
+      const label = document.createElement('div')
+      label.className = 'tpl-pop-src'
+      label.textContent = `Create variable "${name}" in:`
+      dom.append(label)
+      const targets: Array<[VariableTarget, string]> = []
+      if (scope.environmentName) targets.push(['environment', `Environment "${scope.environmentName}"`])
+      if (scope.collectionId) targets.push(['collection', `Collection "${scope.collectionName ?? ''}"`])
+      targets.push(['globals', 'Globals'])
+      for (const [target, text] of targets) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'tpl-pop-btn'
+        btn.dataset.target = target
+        btn.textContent = text
+        btn.addEventListener('mousedown', (e) => e.preventDefault())
+        btn.addEventListener('click', () => hooks.onCreateVariable?.(name, target))
+        dom.append(btn)
+      }
     }
   } else {
     row.textContent = value ?? ''
@@ -100,8 +113,8 @@ export function popoverFor(name: string, hooks: TemplateHooks): HTMLElement {
     dom.append(row)
     const src = document.createElement('div')
     src.className = 'tpl-pop-src'
-    src.textContent =
-      status === 'builtin' ? 'Built-in dynamic variable' : `${status === 'secret' ? 'Secret · ' : ''}Environment: ${scope.environmentName ?? '—'}`
+    const v = scope.variables.get(name)
+    src.textContent = status === 'builtin' || !v ? 'Built-in dynamic variable' : `${status === 'secret' ? 'Secret · ' : ''}${sourceLabel(v, scope)}`
     dom.append(src)
   }
   return dom
@@ -141,7 +154,7 @@ export function templateCompletionSource(hooks: TemplateHooks) {
         label: v.key,
         type: 'variable',
         detail: v.secret ? 'secret' : (v.value ?? '').slice(0, 30),
-        info: scope.environmentName ? `Environment: ${scope.environmentName}` : undefined,
+        info: sourceLabel(v, scope),
         boost: 2,
         apply: applyToken,
       })

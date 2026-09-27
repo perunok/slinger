@@ -82,7 +82,7 @@
       numC.of(lineNumbers ? [lineNumbersExt(), highlightActiveLineGutter()] : []),
       foldC.of(fold ? foldGutter() : []),
       readOnly ? [] : closeBrackets(),
-      templates ? templateExtension({ getScope: currentScope, onCreateVariable: (n) => scopeStore.createVariable?.(n) }) : [],
+      templates ? templateExtension({ getScope: currentScope, onCreateVariable: (n, target) => scopeStore.createVariable?.(n, target) }) : [],
       placeholder ? placeholderExt(placeholder) : [],
       extensions,
       EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
