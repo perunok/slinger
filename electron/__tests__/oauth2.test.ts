@@ -192,7 +192,11 @@ describe('client credentials and password grants', () => {
     expect(status.maskedToken).toBe('acce…mnop')
     expect(JSON.stringify(status)).not.toContain('access-client_credentials')
     expect(stored(status.tokenKey)).toMatchObject({ access_token: expect.stringMatching(/^access-client_credentials-/), refresh_token: expect.any(String) })
-    expect([...env.secrets.entries.keys()].filter((k) => k.startsWith(OAUTH2_TOKEN_PREFIX))).toEqual([OAUTH2_TOKEN_PREFIX + status.tokenKey])
+    // The token entry plus the workspace's index of token keys (so deleting the workspace deletes its tokens).
+    expect([...env.secrets.entries.keys()].filter((k) => k.startsWith(OAUTH2_TOKEN_PREFIX))).toEqual([
+      OAUTH2_TOKEN_PREFIX + status.tokenKey,
+      `${OAUTH2_TOKEN_PREFIX}index:${workspaceId}`,
+    ])
     // Not written anywhere else: no history, no document.
     expect(await api.listHistory(workspaceId)).toEqual([])
   })
@@ -501,5 +505,21 @@ describe('reveal, delete and the reserved keychain namespace', () => {
       throw new Error('keyring locked')
     }
     await expect(api.getOAuth2Token(config())).rejects.toMatchObject({ code: 'io_error', message: expect.stringContaining('keyring locked') })
+  })
+})
+
+describe('workspace deletion', () => {
+  it('deletes the workspace’s tokens (and only those) from the keychain', async () => {
+    const other = await api.createWorkspace('Other')
+    const mine = await api.getOAuth2Token(config())
+    const second = await api.getOAuth2Token(config({ scope: 'read' }))
+    const theirs = await api.getOAuth2Token(config({ workspaceId: other.id }))
+    await api.deleteOAuth2Token(second.tokenKey)
+    await api.deleteWorkspace(workspaceId)
+    expect(env.secrets.get(OAUTH2_TOKEN_PREFIX + mine.tokenKey)).toBeNull()
+    expect(env.secrets.get(OAUTH2_TOKEN_PREFIX + theirs.tokenKey)).not.toBeNull()
+    expect([...env.secrets.entries.keys()].filter((k) => k.startsWith(OAUTH2_TOKEN_PREFIX)).sort()).toEqual(
+      [OAUTH2_TOKEN_PREFIX + theirs.tokenKey, `${OAUTH2_TOKEN_PREFIX}index:${other.id}`].sort(),
+    )
   })
 })

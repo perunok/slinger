@@ -26,7 +26,12 @@ export interface StoredOAuth2Token {
   refresh_token: string | null
   scope: string | null
   obtained_at: number
+  /** Workspace the token belongs to (for the per-workspace index; not secret). */
+  workspace_id?: string
 }
+
+/** Keychain entry listing a workspace's token keys, so deleting the workspace deletes its tokens. */
+const indexKey = (workspaceId: string) => `${OAUTH2_TOKEN_PREFIX}index:${workspaceId.toLowerCase()}`
 
 export const DEFAULT_FLOW_TIMEOUT_MS = 5 * 60_000
 export const MAX_FLOW_TIMEOUT_MS = 10 * 60_000
@@ -144,8 +149,31 @@ export class OAuth2Service {
   private write(tokenKey: string, token: StoredOAuth2Token): void {
     try {
       this.secrets.set(OAUTH2_TOKEN_PREFIX + tokenKey, JSON.stringify(token))
+      if (token.workspace_id) {
+        const keys = this.readIndex(token.workspace_id)
+        if (!keys.includes(tokenKey)) this.secrets.set(indexKey(token.workspace_id), JSON.stringify([...keys, tokenKey]))
+      }
     } catch (err) {
       throw keychainError('store', err)
+    }
+  }
+
+  private readIndex(workspaceId: string): string[] {
+    try {
+      const parsed: unknown = JSON.parse(this.secrets.get(indexKey(workspaceId)) ?? '[]')
+      return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string' && OAUTH2_TOKEN_KEY_RE.test(k)) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Deletes every token of a deleted workspace (best effort: a keychain failure is logged, not thrown). */
+  deleteWorkspaceTokens(workspaceId: string): void {
+    try {
+      for (const key of this.readIndex(workspaceId)) this.secrets.delete(OAUTH2_TOKEN_PREFIX + key)
+      this.secrets.delete(indexKey(workspaceId))
+    } catch (err) {
+      console.warn('[slinger] could not delete OAuth 2.0 tokens of a deleted workspace:', err instanceof Error ? err.message : err)
     }
   }
 
@@ -220,6 +248,7 @@ export class OAuth2Service {
       if (config.resource) params.push(['resource', config.resource])
       const token = await this.tokenRequest(config, tokenUrl, params, controller.signal, aborted)
       if (!token.scope && config.scope.trim()) token.scope = config.scope.trim()
+      token.workspace_id = config.workspaceId
       const key = oauth2TokenKey(config)
       this.write(key, token)
       return this.statusOf(key, token)
@@ -268,14 +297,20 @@ export class OAuth2Service {
     // Servers may omit an unchanged refresh token and scope.
     fresh.refresh_token ??= stored.refresh_token
     fresh.scope ??= stored.scope
+    fresh.workspace_id = config.workspaceId
     this.write(key, fresh)
     return this.statusOf(key, fresh)
   }
 
   delete(tokenKey: string): void {
-    assertTokenKey(tokenKey)
+    const stored = this.read(assertTokenKey(tokenKey))
     try {
       this.secrets.delete(OAUTH2_TOKEN_PREFIX + tokenKey)
+      if (stored?.workspace_id) {
+        const keys = this.readIndex(stored.workspace_id).filter((k) => k !== tokenKey)
+        if (keys.length > 0) this.secrets.set(indexKey(stored.workspace_id), JSON.stringify(keys))
+        else this.secrets.delete(indexKey(stored.workspace_id))
+      }
     } catch (err) {
       throw keychainError('delete', err)
     }

@@ -264,7 +264,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, n] = parseArgs(z.tuple([uuid, name]), a)
       return core.workspaces.rename(id, n)
     },
-    deleteWorkspace: async (...a) => core.workspaces.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
+    deleteWorkspace: async (...a) => {
+      const [id] = parseArgs(z.tuple([uuid]), a)
+      core.workspaces.softDelete(id)
+      // Its OAuth 2.0 tokens go with it (like its secret variables).
+      core.oauth2.deleteWorkspaceTokens(id)
+    },
 
     // Environments
     listEnvironments: async (...a) => core.environments.list(parseArgs(z.tuple([uuid]), a)[0]),

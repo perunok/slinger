@@ -29,7 +29,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 
 - Workspaces, collections, nested folders and requests, with drag-and-drop ordering and a "Go to request" quick open.
 - Request editor with query params, headers, body (none, form-data incl. files, x-www-form-urlencoded, raw with
-  JSON/text/XML/HTML/JavaScript, binary), authorization (none, Basic, Bearer, API key in header or query), per-request timeout,
+  JSON/text/XML/HTML/JavaScript, binary), authorization (none, Basic, Bearer, API key in header or query, OAuth 2.0 with authorization code + PKCE via the system
+  browser and a loopback redirect, client credentials, password, automatic refresh; tokens only in the OS keychain), per-request timeout,
   description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell).
 - Multiple request tabs with dirty tracking, conflict detection (optimistic concurrency) and unsaved-changes prompts.
 - Environments with `{{variables}}`, secret variables kept in the OS keychain, and built-in dynamic variables
@@ -104,7 +105,7 @@ Dev and packaged builds share this directory (`productName` is set in `package.j
 workspace, cloud API URL/device name and cloud workspace links are stored in the renderer's `localStorage`
 (inside the same Electron profile), not in the database.
 
-Secrets never touch the database or `localStorage`: environment secret values and cloud tokens are stored in the OS keychain
+Secrets never touch the database or `localStorage`: environment secret values, OAuth 2.0 request tokens and cloud tokens are stored in the OS keychain
 (macOS Keychain, Windows Credential Manager, Linux Secret Service) under the service name `Slinger`. Deleting a secret
 variable, its environment or its workspace removes the keychain entries. Collection versions and exports never contain
 environments or secret values.
@@ -161,8 +162,8 @@ Set `SLINGER_BIN_DIR` to put the `slinger` command elsewhere. Your data is not t
 
 ## Roadmap / not built
 
-These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key),
-Node modules / `postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
+These do not exist in the code today: the OAuth 2.0 implicit grant (deprecated; authorization code with PKCE, client
+credentials and password are supported), other auth types such as Digest, AWS Signature or NTLM, Node modules / `postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
 `pm.collectionVariables` / `pm.globals` (session-only), realtime collaboration and plugins/extensions.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
