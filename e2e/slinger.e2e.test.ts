@@ -1065,6 +1065,26 @@ describe('themes', () => {
     await dialog.locator('[data-theme-option=midnight]').click()
     await dialog.getByRole('button', { name: 'Done' }).click()
   })
+
+  it('creates a custom theme from CSS, applies its generated rule under the app CSP, and deletes it', async () => {
+    await page.getByRole('button', { name: 'Settings' }).click()
+    const dialog = page.getByRole('dialog', { name: /Settings/ })
+    await dialog.getByRole('button', { name: 'New custom theme' }).click()
+    const editor = page.getByRole('dialog', { name: 'New custom theme' })
+    await editor.getByRole('textbox', { name: 'Theme name' }).fill('E2E Custom')
+    await editor.locator('.cm-content').click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('--bg: #203040;\n')
+    await editor.getByRole('button', { name: 'Create theme' }).click()
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())).toBe('#203040')
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('midnight') // the base
+    await dialog.getByRole('button', { name: 'Delete E2E Custom' }).click()
+    await page.getByRole('dialog', { name: 'Delete custom theme' }).getByRole('button', { name: 'Delete' }).click()
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.customTheme ?? null)).toBe(null)
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('midnight')
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    expect(ctx.problems.filter((p) => /Content Security Policy/i.test(p) && /style/i.test(p))).toEqual([])
+  })
 })
 
 describe('reopening tabs', () => {

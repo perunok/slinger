@@ -76,6 +76,15 @@
   // Export commands follow the open workspace's collections and environments.
   const commands = $derived<Command[]>([
     ...staticCommands,
+    // Custom themes (Settings > Theme): listed like built-ins, marked "custom".
+    ...settings.customThemes.map((t) => ({
+      key: `theme:${t.id}`,
+      label: `Theme: ${t.label}`,
+      hint: `custom ${t.scheme} theme`,
+      swatch: { theme: t.id },
+      current: () => settings.theme === t.id,
+      run: () => settings.setTheme(t.id),
+    })),
     // Read-only or revoked workspaces cannot import (the toolbar button is disabled too).
     ...(sync.blocked ? [] : [{
       key: 'import',
@@ -199,10 +208,13 @@
         {:else}
           <span class="flex w-12 shrink-0 items-center" aria-hidden="true">
             {#if hit.swatch.theme}
-              <span data-theme={hit.swatch.theme} class="h-3.5 w-3.5 rounded-sm border-2" style="background: var(--bg); border-color: var(--accent)"></span>
+              {@const attrs = settings.themeAttrs(hit.swatch.theme)}
+              <span data-theme={attrs['data-theme']} data-custom-theme={attrs['data-custom-theme']} class="h-3.5 w-3.5 rounded-sm border-2" style="background: var(--bg); border-color: var(--accent)"></span>
             {:else if hit.swatch.accent}
+              {@const attrs = settings.themeAttrs(settings.resolvedTheme)}
               <span
-                data-theme={settings.resolvedTheme}
+                data-theme={attrs['data-theme']}
+                data-custom-theme={attrs['data-custom-theme']}
                 data-accent={hit.swatch.accent === THEME_DEFAULT_ACCENT ? undefined : hit.swatch.accent}
                 class="h-3.5 w-3.5 rounded-full border"
                 style="background: var(--accent); border-color: var(--border-strong)"
