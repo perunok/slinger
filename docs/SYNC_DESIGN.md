@@ -1,7 +1,8 @@
 # Collection sync: Slinger desktop <-> Slinger cloud
 
 Status: implemented (desktop `ts-rewrite`, server `slinger-admin` 4a3b2c9, protocol v2). Where the code differs from this text,
-section 20 "Implementation notes" is authoritative. Originally written against desktop `ts-rewrite` (migrations 0001-0003) and `slinger-admin/server` `ts-rewrite`
+section 20 "Implementation notes" is authoritative. Section 21 extends the protocol (additively) to collection/folder scripts and
+docs, collection variables and globals. Originally written against desktop `ts-rewrite` (migrations 0001-0003) and `slinger-admin/server` `ts-rewrite`
 (sync routes in `server/src/routes/sync.ts`, `services/syncApply.ts`, `services/syncLog.ts`, `services/content.ts`).
 Everything below is a decision, not a menu; open decisions where a default was chosen are collected in section 19.
 
@@ -823,12 +824,12 @@ Layout and names
 - `SLINGER_KEYCHAIN_NAMESPACE` (main process) suffixes the keychain service name (`Slinger.<ns>`); the e2e harness sets one per
   profile so two app instances on one machine behave like two devices (no shared tokens or secret values).
 
-Local-only data (not in D1's entity list, never captured): collection/folder `scripts_json` and descriptions (migrations
-0005/0006), `collections.source_postman_id` (0007), and the `collection_variables` / `global_variables` tables (0008: persisted
-`pm.collectionVariables` and `pm.globals`, secret globals in the keychain under `slinger:global-var:<id>`). The protocol has no field
-or entity for them, so the 0004 triggers ignore those columns and the new tables have no capture triggers at all; read-only
-(viewer) triggers still refuse local writes to them. The schema drift guard (`__tests__/sync/triggers.test.ts`) lists the ignored
-columns; variable writes are tested to leave `sync_dirty` untouched.
+Local-only data: only `collections.source_postman_id` (0007, device bookkeeping) is never captured. Collection/folder
+`scripts_json` and descriptions (0005/0006) and the `collection_variables` / `global_variables` tables (0008) were local-only until
+section 21 (migration 0009); they now sync when the server advertises the matching features and stay local-only with an older
+server. The schema drift guard (`__tests__/sync/triggers.test.ts`) classifies every column as synced or ignored.
+The desktop reads the server's features from pull/snapshot answers only (they arrive before anything is applied or pushed); the
+`features` of the register response are not cached, so a server upgrade is noticed on the next pull without registering again.
 
 Push rejections (protocol v2, replaces the per-`code` list in 7.1). The engine branches on `reason`; a missing or unknown reason is
 derived from the legacy `code` (`sync_conflict` -> version_mismatch, `not_found` -> not_found, `invalid_request` -> invalid,
@@ -872,12 +873,14 @@ Other differences
 - The scheduler also announces local edits (a `status` event when the pending/conflict counts change, at most once per second,
   also with auto sync off), so the renderer never polls.
 
-Server issues found while integrating (reported, not fixed here)
-- A request/folder upsert naming a folder that does not exist is rejected `invalid`, not `not_found` as the server README describes
-  for a missing parent (handled on the desktop as above).
-- `syncPutVariable` looks up the `(environment_id, key)` clash without scoping the environment to the workspace, so a push naming
-  another workspace's environment id gets `duplicate_key` with that workspace's variable id as `conflicting_resource_id` instead of
-  `not_found` (needs the environment id, which is an unguessable UUID; still an information leak across workspaces).
+Server issues found while integrating (both fixed server-side in slinger-admin 9ce4b08, verified while writing section 21)
+- A request/folder upsert naming a folder that does not exist was rejected `invalid`, not `not_found`. Fixed: a folder missing
+  from the workspace is `not_found`; one that exists in another collection of the workspace is still `invalid`. The desktop keeps
+  its fallback (pull first, quarantine only if the same `invalid` comes back after a pull that brought nothing new) for servers
+  before 9ce4b08; both answers are tested (`rejections.test.ts`, fake option `legacyMissingFolder`; sync-it against the real one).
+- `syncPutVariable` looked up the `(environment_id, key)` clash before checking that the environment belongs to the workspace
+  (cross-workspace `duplicate_key` leak). Fixed: ownership first, a foreign environment is `not_found`. The section 21 variable
+  types check the collection/workspace first too.
 
 ---------------------------------------------------------------------------------------------------------------------------
 

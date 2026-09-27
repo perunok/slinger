@@ -123,8 +123,9 @@ collection "Payments" or the globals").
 
 A name defined in several scopes takes the value of the narrowest one: local over environment over collection over globals.
 Disabled collection variables and globals are kept but do not resolve (untick **On** in the table). Collection variables and
-globals are saved on this device (they survive restarts) but are **not synced** to the cloud; in a read-only (viewer) synced
-workspace they cannot be changed.
+globals are saved on this device (they survive restarts) and, in a workspace linked to the cloud, synced like the rest of it (secret
+globals: only the name travels, see "What syncs" under Cloud account and sync); in a read-only (viewer) synced workspace they cannot
+be changed, except for setting a secret global's value on this device.
 
 **Collection variables.** They belong to the collection: imported from and exported to a Postman collection's `variable` list,
 included in version snapshots and restored with them. Because they travel with the collection file, they are never secret; put
@@ -392,8 +393,8 @@ pm.request.headers.upsert({ key: 'X-Request-Id', value: require('uuid').v4() })
 ```
 
 **Sync and versions.** Request scripts are part of the request, so cloud sync, collection versions and Postman export carry
-them. Collection- and folder-level scripts are included in collection versions and Postman export, but **cloud sync does not carry
-them yet** (the cloud protocol has no field for them): they stay on the device where you wrote or imported them.
+them. Collection- and folder-level scripts are included in collection versions and Postman export, and cloud sync carries them too
+(with a cloud server that supports it; an older server leaves them on the device where you wrote or imported them).
 
 **Security.** Scripts from an imported collection are code from someone else. Slinger never runs them in the app window: they run
 in the main process, in a separate worker thread, inside QuickJS (a JavaScript engine compiled to WebAssembly) with nothing but
@@ -440,8 +441,8 @@ collections keep theirs).
   documentation**. **Edit** shows a Markdown editor (same font size and line-wrap setting as the other editors); **Split** shows the
   editor and the live preview side by side. The choice is remembered per tab.
 - **Saving:** request docs save with the request (**Save**, Ctrl+S). Collection and folder docs save with the overview's **Save**
-  button or Ctrl+S. They are kept on this device, included in collection versions and exported to Postman; **cloud sync does not
-  carry collection and folder docs yet** (request docs sync with the request).
+  button or Ctrl+S. They are included in collection versions, exported to Postman and synced with a linked cloud workspace (with a
+  cloud server that supports it; request docs always sync with the request).
 - **What renders:** GitHub-flavoured Markdown: headings (hover one for a `#` link to it), **bold**, *italic*, ~~strikethrough~~,
   lists and task lists (`- [x] done`), tables, block quotes, horizontal rules, inline `code` and fenced code blocks with syntax
   colours for JSON, JavaScript/TypeScript, XML, HTML and CSS (in the current theme's colours). Bare URLs become links.
@@ -562,8 +563,17 @@ requests from both sides side by side (nothing is matched by name, so duplicates
 with the same name (a plain variable that differs takes the cloud value) and never moves secret values. If a cloud workspace is
 read-only for you (viewer), it can only be downloaded into a new, read-only workspace. **Unlink** stops syncing and keeps
 everything on both sides. If publishing says items "already exist in another cloud workspace" (the same workspace was published
-before), **Publish a copy** uploads a fresh-id copy instead. Collection and folder scripts and docs, collection variables and
-globals stay on this device (the cloud has no place for them yet).
+before), **Publish a copy** uploads a fresh-id copy instead.
+
+**What syncs.** Collections, folders and requests (with their scripts, docs and saved examples), collection- and folder-level scripts
+and documentation, collection variables, environments and their variables, globals, and collection versions. Secret values
+(secret environment variables and secret globals) never leave the device: the cloud and other devices only learn the name, and a
+secret that arrives from another device shows **Value not set on this device** until you enter a value here. Request history,
+app settings and cloud tokens never sync. If the same variable was added on two devices before they synced (for example after
+importing the same Postman collection on both), identical ones become one; different ones are both kept and yours is renamed
+`<name>_conflict` (noted in the conflict history). An older cloud server that does not know collection/folder scripts and docs,
+collection variables or globals simply leaves them on each device (nothing is reported); they upload by themselves once the
+server is updated.
 
 **Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing, Offline (edits are kept and upload
 later), Sync error (with a Retry toast), conflicts, Read-only, Signed out, Access revoked. Click it for **Sync now** and the
