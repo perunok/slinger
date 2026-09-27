@@ -53,7 +53,8 @@ const isAuthCode = (c: OAuth2Config) => c.grantType === 'authorization_code' || 
 /**
  * Stable id of the token for a workspace + configuration: requests that share a configuration (common after import
  * flattened a collection-level auth into every request) share one token. Secrets and redirect details are not part
- * of it, so changing a client secret keeps the token.
+ * of it, so changing a client secret keeps the token. Every URL the token or its refresh token is sent to is: a request
+ * with a different refresh URL can never make an automatic refresh hand the stored refresh token to another host.
  */
 export function oauth2TokenKey(c: OAuth2Config): string {
   const identity = [
@@ -67,6 +68,7 @@ export function oauth2TokenKey(c: OAuth2Config): string {
     c.audience,
     c.resource,
     c.grantType === 'password_credentials' ? c.username : '',
+    c.refreshTokenUrl.trim(),
   ]
   return createHash('sha256').update(JSON.stringify(identity)).digest('hex')
 }

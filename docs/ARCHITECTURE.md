@@ -233,8 +233,9 @@ support.
 - **Main** (`services/oauth2.ts`, `OAuth2Service` in `core.oauth2`): the renderer sends a resolved `OAuth2Config` (zod-strict,
   grants `authorization_code`, `authorization_code_with_pkce`, `client_credentials`, `password_credentials`; `implicit` is
   parsed and preserved in documents but refused). Token key = SHA-256 of workspace id + grant + access token URL + auth URL
-  (authorization code only) + client id + scope + audience + resource + username (password grant only): requests that share a
-  configuration share one token; secrets are not part of it. Token requests are `POST` form bodies through `executeHttp`
+  (authorization code only) + client id + scope + audience + resource + username (password grant only) + refresh token URL:
+  requests that share a configuration share one token; secrets are not part of it, every URL a token is sent to is (so a
+  request with another refresh URL cannot make an automatic refresh send the stored refresh token elsewhere). Token requests are `POST` form bodies through `executeHttp`
   (never `HttpService.execute`, so no history; 30 s timeout, response capped at 1 MB), client authentication as HTTP Basic
   (RFC 6749 2.3.1 form-encoded id/secret) or body fields (public clients without a secret always send `client_id` in the
   body); JSON or form-encoded responses (`parseTokenResponse`), `expires_in` -> `expires_at`. Provider errors become

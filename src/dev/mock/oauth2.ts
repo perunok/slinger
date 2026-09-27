@@ -17,7 +17,7 @@ type OAuth2Api = Pick<
 export function mockTokenKey(c: OAuth2Config): string {
   const authCode = c.grantType === 'authorization_code' || c.grantType === 'authorization_code_with_pkce'
   const text = JSON.stringify([c.workspaceId, c.grantType, c.accessTokenUrl.trim(), authCode ? c.authUrl.trim() : '', c.clientId, c.scope.trim(), c.audience, c.resource,
-    c.grantType === 'password_credentials' ? c.username : ''])
+    c.grantType === 'password_credentials' ? c.username : '', c.refreshTokenUrl.trim()])
   let out = ''
   for (let seed = 0; seed < 8; seed++) {
     let h = (0x811c9dc5 ^ seed) >>> 0
