@@ -578,7 +578,7 @@ environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}
 Details: `src/README.md`.
 
 **Layout** (`src/features/layout`). The request/response split orientation and "Show status bar" are settings; the right
-panel's state is its own small store (`rightPanel.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
+panel's state is its own small store (`rightPanelStore.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
 and shows the right panel only when the main area keeps `minMainWidth` (`fitPanelWidth`), so neither the panel nor the status
 bar can squeeze the request editor below a usable size at the 900x600 minimum window. Right-panel views are registered in
 `panels.ts` (id, label, icon, component taking the active request/example tab or null, optional availability); add a view

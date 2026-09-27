@@ -4,7 +4,7 @@
  */
 import { settings, type ResponsePosition } from '../../app/settings.svelte'
 import { toast } from '../../app/toast.svelte'
-import { rightPanel } from './rightPanel.svelte'
+import { rightPanel } from './rightPanelStore.svelte'
 
 /** Shortcut labels (Windows/Linux spelling; Cmd works as well on macOS). The renderer owns these keys (shortcuts.ts). */
 export const RESPONSE_POSITION_SHORTCUT = 'Ctrl+Alt+V'

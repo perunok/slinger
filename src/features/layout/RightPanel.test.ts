@@ -12,7 +12,7 @@ import { tabsStore } from '../requests/tabs.svelte'
 import { toggleRightPanel } from './layoutActions'
 import { SIDE_PANELS } from './panels'
 import RightPanel from './RightPanel.svelte'
-import { clampPanelWidth, fitPanelWidth, minMainWidth, PANEL_DEFAULT_WIDTH, PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, RIGHT_PANEL_KEY, rightPanel } from './rightPanel.svelte'
+import { clampPanelWidth, fitPanelWidth, minMainWidth, PANEL_DEFAULT_WIDTH, PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, RIGHT_PANEL_KEY, rightPanel } from './rightPanelStore.svelte'
 
 const stored = () => JSON.parse(localStorage.getItem(RIGHT_PANEL_KEY) ?? 'null')
 

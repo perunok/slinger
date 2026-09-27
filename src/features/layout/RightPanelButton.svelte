@@ -3,7 +3,7 @@
   import IconButton from '../../components/ui/IconButton.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import { RIGHT_PANEL_SHORTCUT, rightPanelLabel, toggleRightPanel } from './layoutActions'
-  import { rightPanel } from './rightPanel.svelte'
+  import { rightPanel } from './rightPanelStore.svelte'
 
   let { variant = 'top' }: { variant?: 'top' | 'bar' } = $props()
   const title = $derived(`${rightPanelLabel()} (${RIGHT_PANEL_SHORTCUT})`)
