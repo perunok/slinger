@@ -61,7 +61,10 @@ export function createCore(deps: CoreDeps): Core {
   const environments = new EnvironmentRepository(db, secrets)
   const collectionVariables = new CollectionVariableRepository(db)
   const globals = new GlobalVariableRepository(db, secrets)
-  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants)
+  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants, {
+    collectionVariables,
+    globals,
+  })
   const core: Core = {
     db,
     secrets,

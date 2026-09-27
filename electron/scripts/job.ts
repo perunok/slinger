@@ -73,7 +73,17 @@ export interface EnvSnapshot {
   variables: Array<{ id: string; key: string; value: string | null; secret: boolean }>
 }
 
-export type EnvOp = { op: 'set'; key: string; value: string } | { op: 'unset'; key: string }
+/** A write a script made to a persisted scope; `clear` (collection variables / globals) removes every variable. */
+export type EnvOp = { op: 'set'; key: string; value: string } | { op: 'unset'; key: string } | { op: 'clear' }
+
+/**
+ * A persisted scope (collection variables of the request's collection, or the workspace's globals) as the
+ * sandbox sees it: enabled variables only; secret globals without their value (read on demand like environment
+ * secrets). Writes come back as ops that main persists.
+ */
+export interface PersistedScopeSnapshot {
+  variables: Array<{ id: string; key: string; value: string | null; secret: boolean }>
+}
 
 export interface ScriptJob {
   event: ScriptEventName
@@ -86,7 +96,14 @@ export interface ScriptJob {
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
   /** null when no environment is active: pm.environment writes then last for this run only. */
   environment: EnvSnapshot | null
-  /** Synced workspace with the viewer role: pm.environment.set/unset throw inside the script. */
+  /**
+   * ADDED (persisted variables): the stored collection variables / globals. When present they replace the
+   * `collectionVariables` / `globals` records and writes are returned as ops; absent or null, the records are an
+   * in-memory scope for this run only (a request that is not saved in a collection, and older callers/tests).
+   */
+  persistedCollection?: PersistedScopeSnapshot | null
+  persistedGlobals?: PersistedScopeSnapshot | null
+  /** Synced workspace with the viewer role: writes to every persisted scope throw inside the script. */
   readOnly: boolean
   /** Pre-request chains stop at the first failing script unless this is set. */
   continueOnError: boolean
@@ -100,6 +117,9 @@ export interface ScriptJobResult {
   collectionVariables: ScriptVariables
   globals: ScriptVariables
   envOps: EnvOp[]
+  /** ADDED (persisted variables): writes to the persisted collection variables / globals (empty when not persisted). */
+  collectionOps?: EnvOp[]
+  globalOps?: EnvOp[]
   console: ScriptConsoleEntry[]
   tests: ScriptTestResult[]
   durationMs: number

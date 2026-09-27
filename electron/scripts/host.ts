@@ -23,6 +23,7 @@ import {
   MAX_RESPONSE_BODY_CHARS,
   MAX_VALUE_CHARS,
   type EnvOp,
+  type PersistedScopeSnapshot,
   type ScriptJob,
   type ScriptJobResult,
   type ScriptRunnerDeps,
@@ -36,9 +37,22 @@ export class ScriptApiError extends Error {}
 interface EnvEntry {
   id: string | null
   secret: boolean
-  /** Known value (always for non-secrets; for secrets only after a read or a set). */
-  value: string | null
+  /**
+   * Known value (always for non-secrets; for secrets only after a read or a set). Environment values are text;
+   * collection variables and globals keep the JSON value a script set during the run (persisted as text).
+   */
+  value: unknown
   known: boolean
+}
+
+/** pm.collectionVariables / pm.globals: persisted (ops go back to main) or an in-memory scope for this run. */
+interface VarStore {
+  entries: Map<string, EnvEntry>
+  ops: EnvOp[]
+  persist: boolean
+  api: 'pm.collectionVariables' | 'pm.globals'
+  /** For messages: "collection variables" / "globals". */
+  label: string
 }
 
 type ScopeName = 'local' | 'collection' | 'globals'
@@ -96,6 +110,16 @@ function fromRecord(rec: ScriptVariables | undefined): Map<string, unknown> {
   const m = new Map<string, unknown>()
   if (rec && typeof rec === 'object') for (const k of Object.keys(rec)) m.set(k, rec[k])
   return m
+}
+
+function makeStore(snapshot: PersistedScopeSnapshot | null | undefined, record: ScriptVariables | undefined, api: VarStore['api'], label: string): VarStore {
+  const entries = new Map<string, EnvEntry>()
+  if (snapshot) {
+    for (const v of snapshot.variables) entries.set(v.key, { id: v.id, secret: v.secret, value: v.secret ? null : (v.value ?? ''), known: !v.secret })
+  } else {
+    for (const [k, v] of fromRecord(record)) entries.set(k, { id: null, secret: false, value: v, known: true })
+  }
+  return { entries, ops: [], persist: !!snapshot, api, label }
 }
 
 function randomString(n: number, alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'): string {
@@ -184,7 +208,8 @@ export class RunHost {
   readonly job: ScriptJob
   private readonly deps: ScriptRunnerDeps
   private readonly env = new Map<string, EnvEntry>()
-  private readonly scopes: Record<ScopeName, Map<string, unknown>>
+  private readonly local: Map<string, unknown>
+  private readonly stores: Record<'collection' | 'globals', VarStore>
   readonly envOps: EnvOp[] = []
   private request: ScriptRequestData
   private requestChanged = false
@@ -195,6 +220,7 @@ export class RunHost {
   private testsDropped = false
   readonly errors: ScriptErrorInfo[] = []
   private warnedNoEnv = false
+  private warnedNoCollection = false
   /** Label of the script currently running. */
   source = ''
   // pm.sendRequest: calls started in this run, the ones in flight, and results not yet handed to the script.
@@ -210,7 +236,11 @@ export class RunHost {
     for (const v of job.environment?.variables ?? []) {
       this.env.set(v.key, { id: v.id, secret: v.secret, value: v.secret ? null : (v.value ?? ''), known: !v.secret })
     }
-    this.scopes = { local: fromRecord(job.variables), collection: fromRecord(job.collectionVariables), globals: fromRecord(job.globals) }
+    this.local = fromRecord(job.variables)
+    this.stores = {
+      collection: makeStore(job.persistedCollection, job.collectionVariables, 'pm.collectionVariables', 'collection variables'),
+      globals: makeStore(job.persistedGlobals, job.globals, 'pm.globals', 'globals'),
+    }
     this.request = job.request
   }
 
@@ -225,7 +255,12 @@ export class RunHost {
   // ---- environment ---------------------------------------------------------
 
   private envGet(key: string): string | undefined {
-    const e = this.env.get(key)
+    return this.read(this.env, key) as string | undefined
+  }
+
+  /** Reads a variable of the environment or a persisted scope; a secret is fetched from main on its first read. */
+  private read(entries: Map<string, EnvEntry>, key: string): unknown {
+    const e = entries.get(key)
     if (!e) return undefined
     if (!e.known) {
       // The only place a secret value enters a script: an explicit read by name.
@@ -237,7 +272,7 @@ export class RunHost {
       e.value = value
       e.known = true
     }
-    return e.value ?? ''
+    return e.value
   }
 
   private envWritable(what: string): void {
@@ -274,7 +309,52 @@ export class RunHost {
   /** Non-secret values only: secrets are read one at a time, by name, with get(). */
   private envObject(): Record<string, string> {
     const out: [string, string][] = []
-    for (const [k, e] of this.env) if (!e.secret) out.push([k, e.value ?? ''])
+    for (const [k, e] of this.env) if (!e.secret) out.push([k, (e.value as string | null) ?? ''])
+    return Object.fromEntries(out)
+  }
+
+  // ---- collection variables and globals --------------------------------------
+
+  private storeWritable(st: VarStore, what: string): void {
+    if (st.persist && this.job.readOnly) {
+      throw new ScriptApiError(`${what} failed: this workspace is read-only (synced with the viewer role), so scripts cannot change its ${st.label}.`)
+    }
+    if (st.api === 'pm.collectionVariables' && this.job.persistedCollection === null && !this.warnedNoCollection) {
+      this.warnedNoCollection = true
+      this.log('warn', 'This request is not saved in a collection: pm.collectionVariables changes last for this run only.')
+    }
+  }
+
+  private storeSet(st: VarStore, key: string, value: unknown): void {
+    this.storeWritable(st, `${st.api}.set("${key}")`)
+    const v = checkJsonValue(value)
+    const text = envText(v)
+    const e = st.entries.get(key)
+    if (e?.secret && text === '') throw new ScriptApiError(`"${key}" is a secret variable and cannot be set to an empty value`)
+    if (e) {
+      e.value = e.secret ? text : v
+      e.known = true
+    } else st.entries.set(key, { id: null, secret: false, value: v, known: true })
+    if (st.persist) st.ops.push({ op: 'set', key, value: text })
+  }
+
+  private storeUnset(st: VarStore, key: string): void {
+    this.storeWritable(st, `${st.api}.unset("${key}")`)
+    st.entries.delete(key)
+    // Always recorded: the stored scope may hold a disabled variable of that name, which the script cannot see.
+    if (st.persist) st.ops.push({ op: 'unset', key })
+  }
+
+  private storeClear(st: VarStore): void {
+    this.storeWritable(st, `${st.api}.clear()`)
+    st.entries.clear()
+    if (st.persist) st.ops.push({ op: 'clear' })
+  }
+
+  /** Non-secret values (as the script set them during the run). */
+  private storeObject(st: VarStore): ScriptVariables {
+    const out: [string, unknown][] = []
+    for (const [k, e] of st.entries) if (!e.secret) out.push([k, e.value])
     return Object.fromEntries(out)
   }
 
@@ -282,10 +362,10 @@ export class RunHost {
 
   /** pm.variables.get: local > environment > collection > globals (Postman's precedence, no data files). */
   private resolve(key: string): { found: boolean; value: unknown } {
-    if (this.scopes.local.has(key)) return { found: true, value: this.scopes.local.get(key) }
+    if (this.local.has(key)) return { found: true, value: this.local.get(key) }
     if (this.env.has(key)) return { found: true, value: this.envGet(key) }
-    if (this.scopes.collection.has(key)) return { found: true, value: this.scopes.collection.get(key) }
-    if (this.scopes.globals.has(key)) return { found: true, value: this.scopes.globals.get(key) }
+    if (this.stores.collection.entries.has(key)) return { found: true, value: this.read(this.stores.collection.entries, key) }
+    if (this.stores.globals.entries.has(key)) return { found: true, value: this.read(this.stores.globals.entries, key) }
     return { found: false, value: undefined }
   }
 
@@ -531,14 +611,25 @@ export class RunHost {
       case 'scope.clear':
       case 'scope.toObject': {
         if (a0 !== 'local' && a0 !== 'collection' && a0 !== 'globals') throw new ScriptApiError('unknown scope')
-        const scope = this.scopes[a0]
-        if (op === 'scope.toObject') return toRecord(scope)
-        if (op === 'scope.clear') return void scope.clear()
+        if (a0 === 'local') {
+          const scope = this.local
+          if (op === 'scope.toObject') return toRecord(scope)
+          if (op === 'scope.clear') return void scope.clear()
+          const key = cleanKey(args[1])
+          if (op === 'scope.get') return scope.get(key)
+          if (op === 'scope.has') return scope.has(key)
+          if (op === 'scope.unset') return void scope.delete(key)
+          scope.set(key, checkJsonValue(args[2]))
+          return undefined
+        }
+        const st = this.stores[a0]
+        if (op === 'scope.toObject') return this.storeObject(st)
+        if (op === 'scope.clear') return void this.storeClear(st)
         const key = cleanKey(args[1])
-        if (op === 'scope.get') return scope.get(key)
-        if (op === 'scope.has') return scope.has(key)
-        if (op === 'scope.unset') return void scope.delete(key)
-        scope.set(key, checkJsonValue(args[2]))
+        if (op === 'scope.get') return this.read(st.entries, key)
+        if (op === 'scope.has') return st.entries.has(key)
+        if (op === 'scope.unset') return void this.storeUnset(st, key)
+        this.storeSet(st, key, args[2])
         return undefined
       }
       case 'vars.get':
@@ -546,9 +637,12 @@ export class RunHost {
       case 'vars.has':
         return this.resolve(cleanKey(a0)).found
       case 'vars.toObject': {
-        const merged = new Map<string, unknown>([...this.scopes.globals, ...this.scopes.collection])
+        const merged = new Map<string, unknown>([
+          ...Object.entries(this.storeObject(this.stores.globals)),
+          ...Object.entries(this.storeObject(this.stores.collection)),
+        ])
         for (const [k, v] of Object.entries(this.envObject())) merged.set(k, v)
-        for (const [k, v] of this.scopes.local) merged.set(k, v)
+        for (const [k, v] of this.local) merged.set(k, v)
         return toRecord(merged)
       }
       case 'replaceIn':
@@ -586,10 +680,12 @@ export class RunHost {
     return {
       errors: this.errors,
       request: this.job.event === 'prerequest' && this.requestChanged ? this.request : null,
-      variables: toRecord(this.scopes.local),
-      collectionVariables: toRecord(this.scopes.collection),
-      globals: toRecord(this.scopes.globals),
+      variables: toRecord(this.local),
+      collectionVariables: this.storeObject(this.stores.collection),
+      globals: this.storeObject(this.stores.globals),
       envOps: this.envOps,
+      collectionOps: this.stores.collection.ops,
+      globalOps: this.stores.globals.ops,
       console: this.console,
       tests: this.tests,
       durationMs,

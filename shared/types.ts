@@ -503,9 +503,16 @@ export interface RunScriptsInput {
   response?: ScriptResponseData | null
   /** Local scope (pm.variables.set) of this send / collection run. */
   variables: ScriptVariables
-  /** Session-only scopes (not persisted in v1). */
-  collectionVariables: ScriptVariables
-  globals: ScriptVariables
+  /**
+   * ADDED (persisted variables): the collection the request belongs to. Main loads its stored collection variables
+   * (and always the workspace's globals) and persists pm.collectionVariables / pm.globals writes. null: the request
+   * is not saved in a collection, so pm.collectionVariables is an in-memory scope seeded from `collectionVariables`.
+   */
+  collectionId?: string | null
+  /** In-memory collection scope, used only when `collectionId` is null or absent (see above). */
+  collectionVariables?: ScriptVariables
+  /** Ignored since globals are persisted (kept optional for older callers). */
+  globals?: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
   /** Per-script time limit in ms (default 5000, max 60000). Time waiting for pm.sendRequest does not count. */
   timeoutMs?: number
@@ -550,6 +557,9 @@ export interface RunScriptsResult {
   globals: ScriptVariables
   /** True when the active environment was written (the renderer reloads its variables). */
   environmentChanged: boolean
+  /** ADDED (persisted variables): the collection's stored variables / the workspace's globals were written. */
+  collectionVariablesChanged?: boolean
+  globalsChanged?: boolean
   console: ScriptConsoleEntry[]
   tests: ScriptTestResult[]
   durationMs: number

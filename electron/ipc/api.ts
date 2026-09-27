@@ -214,8 +214,9 @@ const runScriptsInput = z.object({
   request: scriptRequest,
   response: scriptResponse.nullish(),
   variables: scriptVariables,
-  collectionVariables: scriptVariables,
-  globals: scriptVariables,
+  collectionId: uuid.nullish(),
+  collectionVariables: scriptVariables.optional(),
+  globals: scriptVariables.optional(),
   info: z.object({
     requestName: z.string().max(500),
     requestId: z.string().max(128).nullable(),
