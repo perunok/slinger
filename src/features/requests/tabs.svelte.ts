@@ -210,8 +210,44 @@ class TabsStore {
 
   active = $derived(this.tabs.find((t) => t.id === this.activeId) ?? null)
 
+  /**
+   * Tabs of a workspace that isn't the active one, kept in memory so switching back within the same
+   * session is instant. `tabs`/`activeId` always hold only the CURRENT workspace's tabs - never a mix
+   * (switchWorkspace is the only place that mutates this map; see `app.onWorkspaceWillChange`).
+   */
+  private stash = new Map<string, { tabs: RequestTab[]; activeId: string | null }>()
+  private currentWorkspaceId: string | null = null
+
   find(id: string | null) {
     return id ? (this.tabs.find((t) => t.id === id) ?? null) : null
+  }
+
+  /**
+   * Called just before `app` makes `workspaceId` the active workspace (including the very first one at
+   * boot). Puts away the outgoing workspace's tabs - dirty or not, nothing is ever discarded here - and
+   * brings back `workspaceId`'s own tabs: from this session's stash if we visited it before, otherwise
+   * from disk (see `restoreFromPersisted` in the tabs-persistence commit), otherwise empty.
+   */
+  switchWorkspace(workspaceId: string) {
+    if (this.currentWorkspaceId && this.currentWorkspaceId !== workspaceId) {
+      this.stash.set(this.currentWorkspaceId, { tabs: this.tabs, activeId: this.activeId })
+    }
+    this.currentWorkspaceId = workspaceId
+    this.pendingClose = null
+    const cached = this.stash.get(workspaceId)
+    if (cached) {
+      this.stash.delete(workspaceId)
+      this.tabs = cached.tabs
+      this.activeId = cached.activeId
+      return
+    }
+    this.tabs = []
+    this.activeId = null
+  }
+
+  /** The workspace was deleted: forget any of its tabs kept in memory. */
+  forgetWorkspace(workspaceId: string) {
+    this.stash.delete(workspaceId)
   }
 
   openRequest(request: ApiRequest): RequestTab {
@@ -695,3 +731,4 @@ class TabsStore {
 
 export const tabsStore = new TabsStore()
 app.onRequestsReloaded = () => tabsStore.syncWithServer()
+app.onWorkspaceWillChange = (id) => tabsStore.switchWorkspace(id)

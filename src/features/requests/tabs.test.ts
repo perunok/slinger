@@ -180,3 +180,49 @@ describe('request tabs', () => {
     expect(tab.lastOutcome).toBe('cancelled')
   })
 })
+
+describe('tabs are scoped to their workspace', () => {
+  it('switching workspace shows only that workspace\'s tabs; nothing from the old one leaks in', async () => {
+    tabsStore.openRequest(find('Get user'))
+    tabsStore.newTab() // a scratch (unsaved) tab, easy to leak since it has no requestId at all
+    expect(tabsStore.tabs).toHaveLength(2)
+
+    const otherWs = await backend.createWorkspace('Other workspace')
+    await app.selectWorkspace(otherWs.id)
+
+    expect(tabsStore.tabs).toHaveLength(0)
+    expect(tabsStore.activeId).toBeNull()
+  })
+
+  it('a dirty tab is never lost or shown in the wrong workspace: it comes back exactly as left when switching back', async () => {
+    const firstWs = app.workspaceId!
+    const dirty = tabsStore.openRequest(find('Get user'))
+    dirty.draft.name = 'Edited while away'
+    const clean = tabsStore.openRequest(find('Create user'))
+    expect(tabsStore.tabs).toHaveLength(2)
+
+    const otherWs = await backend.createWorkspace('Other workspace')
+    await app.selectWorkspace(otherWs.id)
+    expect(tabsStore.tabs).toHaveLength(0) // nothing from firstWs visible here
+    tabsStore.newTab() // this workspace's own tab
+
+    await app.selectWorkspace(firstWs)
+    expect(tabsStore.tabs.map((t) => t.id).sort()).toEqual([dirty.id, clean.id].sort())
+    expect(tabsStore.find(dirty.id)!.draft.name).toBe('Edited while away')
+    expect(tabsStore.find(dirty.id)!.dirty).toBe(true)
+
+    await app.selectWorkspace(otherWs.id)
+    expect(tabsStore.tabs).toHaveLength(1) // the scratch tab made in this workspace, not firstWs's tabs
+    expect(tabsStore.tabs[0]!.requestId).toBeNull()
+  })
+
+  it('forgetWorkspace drops a deleted workspace\'s stashed tabs', async () => {
+    tabsStore.openRequest(find('Get user'))
+    const otherWs = await backend.createWorkspace('Other workspace')
+    const firstWs = app.workspaceId!
+    await app.selectWorkspace(otherWs.id) // stashes firstWs's tab
+    tabsStore.forgetWorkspace(firstWs)
+    await app.selectWorkspace(firstWs)
+    expect(tabsStore.tabs).toHaveLength(0) // the stash was forgotten, not silently reused
+  })
+})
