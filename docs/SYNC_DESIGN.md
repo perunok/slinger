@@ -823,6 +823,13 @@ Layout and names
 - `SLINGER_KEYCHAIN_NAMESPACE` (main process) suffixes the keychain service name (`Slinger.<ns>`); the e2e harness sets one per
   profile so two app instances on one machine behave like two devices (no shared tokens or secret values).
 
+Local-only data (not in D1's entity list, never captured): collection/folder `scripts_json` and descriptions (migrations
+0005/0006), `collections.source_postman_id` (0007), and the `collection_variables` / `global_variables` tables (0008: persisted
+`pm.collectionVariables` and `pm.globals`, secret globals in the keychain under `slinger:global-var:<id>`). The protocol has no field
+or entity for them, so the 0004 triggers ignore those columns and the new tables have no capture triggers at all; read-only
+(viewer) triggers still refuse local writes to them. The schema drift guard (`__tests__/sync/triggers.test.ts`) lists the ignored
+columns; variable writes are tested to leave `sync_dirty` untouched.
+
 Push rejections (protocol v2, replaces the per-`code` list in 7.1). The engine branches on `reason`; a missing or unknown reason is
 derived from the legacy `code` (`sync_conflict` -> version_mismatch, `not_found` -> not_found, `invalid_request` -> invalid,
 `conflict` -> duplicate_key for variables/versions else id_in_use, anything else -> internal_error). `outbox.rejectionReason()`.

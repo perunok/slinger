@@ -125,7 +125,7 @@ export interface SlingerIpcApi {
   /** `options` (re-import addition, optional): `name` overrides the file's name, e.g. "X (2)" for an import as a copy. */
   importPostmanCollection(workspaceId: string, fileContents: string, options?: PostmanImportOptions): Promise<PostmanImportResult>
   /**
-   * ADDED (re-import): replaces the folders, requests, scripts and descriptions of an existing collection with a
+   * ADDED (re-import): replaces the folders, requests, scripts, descriptions and collection variables of an existing collection with a
    * Postman file in one transaction, after an automatic safety version (next patch). Keeps the collection's id,
    * name and versions. `sourceName` (the file name) only labels the safety version's notes.
    */

@@ -33,10 +33,13 @@ All shots are the real app with a fictional "Acme Store API" collection imported
   description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell).
 - Multiple request tabs with dirty tracking, conflict detection (optimistic concurrency) and unsaved-changes prompts.
 - Environments with `{{variables}}`, secret variables kept in the OS keychain, and built-in dynamic variables
-  (`{{$guid}}`, `{{$timestamp}}`, ...). Variables are highlighted, hoverable and autocompleted in every input.
+  (`{{$guid}}`, `{{$timestamp}}`, ...). Collection variables (imported from and exported to Postman's `variable` list, versioned
+  with the collection) and workspace globals (with secrets), resolved with Postman's precedence (globals < collection <
+  environment < local). Variables are highlighted, hoverable (showing their scope) and autocompleted in every input.
 - Response viewer: Pretty / Raw / Preview (HTML, image, PDF, CSV table), headers, cookies, search, copy, save to file,
   hex preview for binary bodies.
-- Pre-request and test scripts with a Postman-compatible `pm` API (`pm.environment`, `pm.variables`, `pm.request`,
+- Pre-request and test scripts with a Postman-compatible `pm` API (`pm.environment`, `pm.collectionVariables`, `pm.globals`
+  (all saved), `pm.variables`, `pm.request`,
   `pm.response`, `pm.test`, `pm.expect`, ...) at collection, folder and request level, run in a QuickJS (WebAssembly) sandbox in
   the main process with time, memory and output limits; Tests and Console tabs in the response area. Postman's built-in
   libraries work (`require('crypto-js')`, `lodash`/`_`, `moment`, `uuid`, `chai`, `ajv`, `tv4`, `xml2js`/`xml2Json`,
@@ -47,8 +50,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 - Request history per workspace (every attempt is recorded, secrets are not).
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).
-- Import Postman collections (including collection, folder and request scripts) and environments (v2.x), export collections as
-  Postman v2.1 JSON.
+- Import Postman collections (including collection, folder and request scripts and collection variables), environments and
+  globals (v2.x), export collections as Postman v2.1 JSON.
 - Five themes plus "follow the OS", adjustable font size, keyboard shortcuts.
 - Cloud panel: device-code sign-in to a Slinger Cloud server, publishing/linking a workspace and collection sync
   ([docs/SYNC_DESIGN.md](docs/SYNC_DESIGN.md)).
@@ -104,10 +107,10 @@ Dev and packaged builds share this directory (`productName` is set in `package.j
 workspace, cloud API URL/device name and cloud workspace links are stored in the renderer's `localStorage`
 (inside the same Electron profile), not in the database.
 
-Secrets never touch the database or `localStorage`: environment secret values and cloud tokens are stored in the OS keychain
+Secrets never touch the database or `localStorage`: environment and global secret values and cloud tokens are stored in the OS keychain
 (macOS Keychain, Windows Credential Manager, Linux Secret Service) under the service name `Slinger`. Deleting a secret
 variable, its environment or its workspace removes the keychain entries. Collection versions and exports never contain
-environments or secret values.
+environments, globals or secret values (collection variables are part of the collection and are never secret).
 
 Exports (Postman JSON, saved response bodies) go to the folder you chose in the export dialog, otherwise `~/Downloads`
 (falling back to your home directory).
@@ -162,8 +165,8 @@ Set `SLINGER_BIN_DIR` to put the `slinger` command elsewhere. Your data is not t
 ## Roadmap / not built
 
 These do not exist in the code today: OAuth 2.0 as a request auth type (only Basic, Bearer and API key),
-Node modules / `postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), persisted
-`pm.collectionVariables` / `pm.globals` (session-only), realtime collaboration and plugins/extensions.
+Node modules / `postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), of
+collection variables and of globals (both are saved on the device only), realtime collaboration and plugins/extensions.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
 ## Manifesto

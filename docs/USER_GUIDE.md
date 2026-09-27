@@ -23,7 +23,7 @@ delete every workspace, "Personal" is recreated the next time you start the app.
 In the **Collections** sidebar:
 
 - **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New folder**,
-  **Run collection...**, **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
+  **Run collection...**, **Variables...**, **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
 - Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
 - Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete**.
@@ -61,9 +61,33 @@ Open tabs are not restored after restarting the app. **Go to request** (Ctrl+K) 
 ## Variables and environments
 
 Use `{{name}}` in the URL, headers, params, body, form fields and auth. Recognized names are highlighted; hover for the value
-(secrets show as bullets), type `{{` for autocomplete, and unknown names offer to create the variable. A value can itself
-reference other variables. If anything is unresolved when you press Send, the request is not sent and the response pane lists the
-missing names ("define it in the active environment").
+(secrets show as bullets) and where it comes from (*Environment: Local*, *Collection: Payments*, *Globals*), type `{{` for
+autocomplete, and unknown names offer to create the variable in the active environment, the request's collection or the
+globals. A value can itself reference other variables. If anything is unresolved when you press Send, the request is not sent
+and the response pane lists the missing names and the scopes that were checked ("Not defined in the environment "Local", the
+collection "Payments" or the globals").
+
+**Scopes and precedence** (as in Postman, the narrowest wins):
+
+| Scope | Where you edit it | Applies to | Secrets |
+| --- | --- | --- | --- |
+| Globals | Environments dialog, **Globals** (top of the list) | every request of the workspace | yes |
+| Collection variables | the collection's overview, **Variables** section (or right-click the collection, **Variables...**) | requests of that collection | no |
+| Environment | Environments dialog | every request, while the environment is active | yes |
+| Local | scripts only (`pm.variables.set`) | one send, or one collection run | no |
+
+A name defined in several scopes takes the value of the narrowest one: local over environment over collection over globals.
+Disabled collection variables and globals are kept but do not resolve (untick **On** in the table). Collection variables and
+globals are saved on this device (they survive restarts) but are **not synced** to the cloud; in a read-only (viewer) synced
+workspace they cannot be changed.
+
+**Collection variables.** They belong to the collection: imported from and exported to a Postman collection's `variable` list,
+included in version snapshots and restored with them. Because they travel with the collection file, they are never secret; put
+tokens and passwords in an environment or in the globals. The table works like the environment table (autosave, bulk edit); in
+bulk edit the order of the lines becomes the order of the variables, and disabled variables are edited in the table.
+
+**Globals.** Workspace-wide variables with the same table as environments, including **Secret** (stored in the keychain, masked,
+revealed on request) and **On**. They are not part of any collection export; import a Postman globals file to fill them.
 
 **Environments.** Click the gear next to the environment switcher (or use the switcher) to open the Environments dialog: create,
 rename, duplicate and delete environments, **Set active**, and edit variables in a table (or **bulk edit** as text). Changes
@@ -226,20 +250,22 @@ pm.sendRequest({
 | --- | --- | --- |
 | Local | `pm.variables.set/get` | one send; in the collection runner, the whole run |
 | Environment | `pm.environment.*` | the active environment; `set`/`unset` are saved immediately |
-| Collection | `pm.collectionVariables.*` | kept in memory until the app restarts (not saved in v1) |
-| Global | `pm.globals.*` | kept in memory per workspace until the app restarts (not saved in v1) |
+| Collection | `pm.collectionVariables.*` | the request's collection; `set`/`unset`/`clear` are saved immediately |
+| Global | `pm.globals.*` | the workspace's globals; `set`/`unset`/`clear` are saved immediately |
 
 `pm.variables.get(name)` and `{{name}}` in requests resolve with Postman's precedence: local, then environment, then collection
-variables, then globals. Environment values are stored as text (numbers and objects are saved as JSON text); local, collection and
-global values keep their JSON type within the session. Without an active environment, `pm.environment.set` lasts for the one send
-and a console warning says so. In a **read-only (viewer) synced workspace** `pm.environment.set/unset` throw ("this workspace is
-read-only"), which fails the script; reading still works, and the script editors are read-only. Variables that only scripts define
-are shown as unresolved in the editors until a script has run, but they resolve at send time.
+variables, then globals. Stored values are text (numbers and objects are saved as JSON text); within one send a value keeps the
+JSON type the script set. Scripts only see enabled variables; `set` on a disabled variable enables it, `clear()` removes every
+variable of that scope. Without an active environment, `pm.environment.set` lasts for the one send and a console warning says so;
+likewise `pm.collectionVariables.set` for a request that is not saved in a collection. In a **read-only (viewer) synced
+workspace** `set/unset/clear` of the environment, collection variables and globals throw ("this workspace is read-only"), which
+fails the script; reading still works, and the script editors are read-only. Variables that only scripts define are shown as
+unresolved in the editors until a script has run, but they resolve at send time.
 
-**Secret variables and scripts.** A script can read a secret environment variable, but only by asking for it by name:
-`pm.environment.get('token')`, `pm.variables.get('token')` or `replaceIn('{{token}}')`. Secrets are left out of
-`pm.environment.toObject()`, and the value is fetched from the keychain only when a script asks. `pm.environment.set` on a secret
-keeps it secret (the new value goes to the keychain). Test scripts see `pm.request` with secret variables still written as
+**Secret variables and scripts.** A script can read a secret environment variable or secret global, but only by asking for it by
+name: `pm.environment.get('token')`, `pm.globals.get('token')`, `pm.variables.get('token')` or `replaceIn('{{token}}')`. Secrets
+are left out of `toObject()`, and the value is fetched from the keychain only when a script asks. `set` on a secret keeps it
+secret (the new value goes to the keychain). Test scripts see `pm.request` with secret variables still written as
 `{{name}}`. Anything a script prints with `console.log` appears in the Console tab (in memory only; never in history, logs or files),
 so avoid printing secrets. History never stores a secret a script read or wrote: it is replaced by `{{name}}` in the recorded URL,
 even if the script put it into the URL. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
@@ -255,7 +281,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | --- | --- |
 | `pm.environment.get/set/unset/has/toObject/clear/replaceIn`, `.name` | active environment; secrets as described above |
 | `pm.variables.get/set/has/unset/toObject/replaceIn` | `get`/`has`/`toObject` look through all scopes |
-| `pm.collectionVariables.*`, `pm.globals.*` | same methods; session-only (see above) |
+| `pm.collectionVariables.*`, `pm.globals.*` | same methods (plus `clear`); saved, see above |
 | `pm.iterationData.get/has/toObject` | always empty (no data files) |
 | `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
 | `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |
@@ -335,8 +361,10 @@ Cloud sync traffic is not recorded here.
 
 ## Collection versions
 
-Right-click a collection and choose **Versions...**. A version is an immutable snapshot of that collection's folders and requests
-(not environments) labelled with a semantic version. There is no git involved.
+Right-click a collection and choose **Versions...**. A version is an immutable snapshot of that collection's folders, requests,
+scripts, documentation and collection variables (not environments or globals) labelled with a semantic version. There is no git
+involved. Restoring a version also restores its collection variables (a version made before Slinger stored collection
+variables restores the collection without any).
 
 - **Create version:** enter `MAJOR.MINOR.PATCH` (optionally `-prerelease`, e.g. `1.2.0` or `2.0.0-beta.1`; no leading `v`, no
   build metadata) and optional notes; buttons suggest the next patch, minor and major. A label can be used once per collection.
@@ -357,7 +385,8 @@ collections keep theirs).
 
 - **Where:** a request's **Docs** section; for a collection or folder, **Overview & docs** in its context menu (or the (i) button
   when hovering it in the tree). The overview tab shows the name, where it lives, how many requests and folders it holds (with a
-  count per method), buttons for **Run**, **Scripts**, **Versions**, and its documentation.
+  count per method), buttons for **Run**, **Scripts**, **Versions**, and its documentation. A collection's overview also has a
+  **Variables** section with its collection variables (see [Variables and environments](#variables-and-environments)).
 - **Preview / Edit / Split:** docs open rendered (**Preview**) when there is something to show; an empty doc offers **Add
   documentation**. **Edit** shows a Markdown editor (same font size and line-wrap setting as the other editors); **Split** shows the
   editor and the live preview side by side. The choice is remembered per tab.
@@ -383,9 +412,9 @@ collections keep theirs).
 
 - **Import:** open the **Import** dialog with the upload button in the Collections header (*Import collection or
   environment*), **Import…** on the empty state, or **Ctrl+K** > *Import collection or environment…*. It takes a
-  **collection** or an **environment** from Slinger or Postman (collection v2.0/v2.1): Slinger exports
+  **collection**, an **environment** or Postman **globals** from Slinger or Postman (collection v2.0/v2.1): Slinger exports
   (`.slinger_collection.json`, `.slinger_environment.json`), Postman exports (`.postman_collection.json`,
-  `.postman_environment.json`) or any other `.json`. Either drop or choose a file, or **paste the JSON**: into the
+  `.postman_environment.json`, `.postman_globals.json`) or any other `.json`. Either drop or choose a file, or **paste the JSON**: into the
   *Or paste JSON* box, or press **Ctrl+V** anywhere in the dialog when no text field has focus. Whichever you gave last is
   imported. Very large pastes (megabytes) are not shown in the box; a size indicator and **Clear** stand in for them. Text you
   type into the box is checked once you pause. Invalid JSON, or JSON that is neither a collection nor an environment, shows an
@@ -396,8 +425,10 @@ collections keep theirs).
   query strings and other JSON paste as usual, and the URL field's undo history is unchanged.
 - **Preview:** the preview shows the detected format (for example *Slinger collection v1.2.0*, *Postman collection v2.1*,
   *Postman environment*, *Slinger environment*) and what will be imported. Everything below works the same for a file and for
-  pasted JSON (a replaced collection's safety version then says `re-import from pasted JSON`). Collection-level variables
-  can optionally become an environment named after the collection. If an environment with that name already exists
+  pasted JSON (a replaced collection's safety version then says `re-import from pasted JSON`). A collection's `variable` list is
+  stored as its **collection variables** (disabled ones stay disabled), so `{{placeholders}}` work without any environment.
+  Optionally (off by default) the enabled ones are also copied into an environment named after the collection, for example to
+  override them per environment. If an environment with that name already exists
   (ignoring case), the import **merges into it** instead of creating a second one: only variables it does not have yet are
   added, and existing values are kept (they may hold tokens set by scripts or your edits); the preview says how many will be
   added. Importing an **environment** file whose name already exists also updates that environment: missing variables are
@@ -406,14 +437,16 @@ collections keep theirs).
   as an empty plain variable. Re-importing the same file never creates duplicates, and the success message says what changed
   (for example `Environment "UAT" updated: 3 added, 16 kept`). Pre-request and test scripts are imported at every level (collection, folders,
   requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
-  collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). Postman "globals" files
-  are rejected; export an environment instead. Disabled environment variables are skipped. Saved examples (`response[]`) are
+  collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). A Postman
+  **globals** file (`*.postman_globals.json`) is imported into the workspace's **Globals** with the environment-file rules
+  (missing variables added, existing ones updated, an empty value keeps the stored one); `secret` values become secret globals and
+  disabled ones stay disabled. Disabled environment variables are skipped. Saved examples (`response[]`) are
   imported with their requests; the preview shows how many.
 - **Importing a collection that already exists:** if the workspace already has the collection (same Postman `_postman_id`,
   which Slinger remembers from the earlier import on this device and which Slinger's own exports carry, otherwise the same name,
   ignoring case and surrounding spaces), the dialog asks what to do:
-  - **Replace existing "X"** (default): the collection's folders, requests (with their saved examples), scripts and
-    descriptions are replaced by the file's content. The collection itself stays, with its name, versions and sync link. First
+  - **Replace existing "X"** (default): the collection's folders, requests (with their saved examples), scripts,
+    descriptions and collection variables are replaced by the file's content. The collection itself stays, with its name, versions and sync link. First
     an automatic version snapshot of the current content is created (the next patch version, notes
     `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Expanded
     folders stay expanded and open request tabs without unsaved changes switch to the new content; tabs with unsaved changes keep
@@ -436,12 +469,15 @@ collections keep theirs).
   exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
   imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
-  in (a string, or `{content, type}`); docs you did not edit are written back unchanged.
+  in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
+  collection's `variable` list, in order (`disabled: true` for disabled ones). Globals and environments are never part of a
+  collection export.
 - **Versions in the export:** the file is a normal Postman Collection v2.1 file. `info.version` holds the collection's latest
   version (e.g. `1.2.0`) and Slinger's version history is stored alongside it in `info._slinger`, which Postman ignores, so the
   file imports into Postman unchanged. **Include version history snapshots** (on by default, the dialog shows how much it adds)
   stores each version's full content so it can be restored after import; untick it to keep only the version list (number,
-  notes, date). Snapshots contain the collection's folders and requests only, never environment values or secrets. If you
+  notes, date). Snapshots contain the collection's folders, requests, scripts, docs and collection variables only, never
+  environment values, globals or secrets. If you
   import the file into Postman and export it again from Postman, the history is gone (Postman drops fields it does not know);
   the collection itself still imports into Slinger.
 - **File names:** a collection is saved as `<collection name> v<latest version>.slinger_collection.json` (for example
@@ -468,14 +504,15 @@ kept in your OS keychain and never reach the interface. Plain `http://` servers 
 the server is too old for collection sync, the panel says so and syncing stays off; your workspaces keep working locally.
 
 **Publish or link a workspace.** For the current workspace, **Publish to cloud...** creates a cloud workspace and uploads
-everything in it (collections, folders, requests, environments and variables, versions) with progress; you can close the window
+everything in it (collections, folders, requests, environments and their variables, versions) with progress; you can close the window
 and it continues. **Link a cloud workspace...** connects an existing one: you can download it into a new team workspace (the
 recommended choice when both sides have content) or merge it into the current workspace. A merge keeps collections, folders and
 requests from both sides side by side (nothing is matched by name, so duplicates are possible), combines environments and variables
 with the same name (a plain variable that differs takes the cloud value) and never moves secret values. If a cloud workspace is
 read-only for you (viewer), it can only be downloaded into a new, read-only workspace. **Unlink** stops syncing and keeps
 everything on both sides. If publishing says items "already exist in another cloud workspace" (the same workspace was published
-before), **Publish a copy** uploads a fresh-id copy instead.
+before), **Publish a copy** uploads a fresh-id copy instead. Collection and folder scripts and docs, collection variables and
+globals stay on this device (the cloud has no place for them yet).
 
 **Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing, Offline (edits are kept and upload
 later), Sync error (with a Retry toast), conflicts, Read-only, Signed out, Access revoked. Click it for **Sync now** and the

@@ -21,9 +21,9 @@ main.ts                     boot: install mock if no window.slinger, mount <App/
 app/                        shell + cross-feature state
   App.svelte TopBar Sidebar EmptyState shortcuts.ts
   bootSkeleton.ts           removes index.html's static launch skeleton once the first workspace loaded (or on error)
-  state.svelte.ts           workspaces, collections/folders/requests, environments, active env
+  state.svelte.ts           workspaces, collections/folders/requests, collection variables, environments, active env, globals
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
-  scope.svelte.ts           the {{variable}} scope every template input reads
+  scope.svelte.ts           the {{variable}} scope: globals < collection variables < environment (scope = active tab's collection, scopeFor(id))
   settings.svelte.ts        theme + accent + sending animation (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error (localStorage)
   toast.svelte.ts           toast store
 components/
@@ -37,10 +37,11 @@ components/
                             (rendered docs, link interception), DocsEditor (Preview/Edit/Split), markdown.css
 features/
   workspaces/  collections/ (tree, DnD, actions)  requests/ (tabs store, editor panels, send)
-  response/    environments/ history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
+  response/    environments/ (variable table + autosave model shared by environments, globals and collection variables:
+               varBackends.ts, VariablesPanel)  history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
-  scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog, session-only pm scopes)
-  overview/ (collection/folder overview tab: counts + documentation)
+  scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog)
+  overview/ (collection/folder overview tab: counts + documentation; a collection's Variables section)
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
 lib/                        pure logic, no DOM: template, urlParams, kv, request (document model), description (Postman description shapes),
@@ -60,11 +61,14 @@ that can be pure goes in `lib/` with a colocated `*.test.ts`; every IPC call is 
 
 One implementation everywhere: `lib/template.ts` (parse/resolve/status), `components/editor/cm/template.ts`
 (CM extension: highlight, hover popover, autocomplete on `{{`, "create variable"), used by
-`TemplateInput` (single line) and `CodeEditor templates` (bodies). The scope is the active
-environment (`scopeStore`); secrets are only known by name and masked. `lib/prepare.ts` is the single
-place templates are applied before sending (URL, headers, body, form fields, auth), fetching secret
-values via `revealEnvironmentVariable` just-in-time (`features/requests/execute.ts`). Unresolved
-variables abort the send with an inline list.
+`TemplateInput` (single line) and `CodeEditor templates` (bodies). The scope (`scopeStore`, built by
+`lib/template.ts layeredScope`) layers globals < the collection's variables < the active environment, each
+entry tagged with its `source` (the hover names it, "create variable" offers environment / collection /
+globals via `scopeStore.createVariable(name, target)`); `scope` follows the active tab's collection, sends and
+the runner use `scopeFor(collectionId)`. Secrets are only known by name and masked. `lib/prepare.ts` is the
+single place templates are applied before sending (URL, headers, body, form fields, auth), fetching secret
+values via `revealEnvironmentVariable` / `revealGlobalVariable` just-in-time (`features/requests/execute.ts`).
+Unresolved variables abort the send with an inline list naming the scopes checked.
 
 ## Themes and accents
 

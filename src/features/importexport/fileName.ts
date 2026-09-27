@@ -20,6 +20,7 @@ export const IMPORT_FILE_ACCEPT = [
   ENVIRONMENT_EXPORT_EXT,
   '.postman_collection.json',
   '.postman_environment.json',
+  '.postman_globals.json',
   '.json',
   'application/json',
 ].join(',')

@@ -11,11 +11,12 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0005_scripts.sql
+  migrations/        0001_init.sql ... 0008_variables.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
-  repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, history, common
+  repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
+                     (collection variables + globals), history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback
   lib/               errors, ids, text, csp, permissions, windowState, appMenu (application menu template)
@@ -60,9 +61,10 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 76 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 89 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
-`setCollectionDescription`, `setFolderDescription`),
+`setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
+`CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
 requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only), `pickFile`, `grantedFiles`.
@@ -145,11 +147,13 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; local-only, not synced), read-only triggers for it |
 | `0006_descriptions` | nullable `description` + `description_type` on `collections` and `folders` (documentation; local-only, not synced), read-only triggers for them |
 | `0007_import_source` | nullable `collections.source_postman_id` (the `info._postman_id` a collection was imported or replaced from; local-only, not synced) |
+| `0008_variables` | `collection_variables` (per collection, never secret) and `global_variables` (per workspace, secrets like environment variables): key, value, enabled, description, `sort_order`, unique live key per owner; local-only (no capture triggers), read-only triggers for viewers |
 
-**Soft delete.** Workspaces, collections, folders, requests, environments, variables and collection versions carry
-`deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters `deleted = 0` and also
-requires live parents. Cascades (workspace to everything, collection to folders/requests/versions, folder to descendants) run in
-one transaction. Soft-deleted rows are never purged. `history` has no `deleted` column: rows are removed for real by
+**Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
+collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
+`deleted = 0` and also requires live parents. Cascades (workspace to everything incl. globals, collection to
+folders/requests/versions/collection variables, folder to descendants) run in one transaction; keychain entries of deleted
+secrets are purged after it commits. Soft-deleted rows are never purged. `history` has no `deleted` column: rows are removed for real by
 `clearHistory` / `deleteHistoryEntry`, and pruned to the newest 1000 per workspace (`HISTORY_LIMIT_PER_WORKSPACE`).
 
 **Optimistic concurrency.** Every row has `version` (starts at 1, bumped on update, rename, move and soft delete).
@@ -170,8 +174,14 @@ array under the key `scripts` (the key the importer has always used, so existing
 - A secret environment variable has `value = NULL`, `is_secret = 1`, `secret_ref = 'slinger:env-var:<variable id>'` in SQLite; the
   value exists only in the keychain. List calls return `value: null, maskedValue: '••••••••'`. The only way to read one is
   `revealEnvironmentVariable(id)`. Upserting an existing variable with an empty `value` keeps the stored value.
+- Secret **globals** work the same way: `global_variables.value = NULL`, `secret_ref = 'slinger:global-var:<variable id>'`,
+  masked in lists, read only through `revealGlobalVariable(id)`, an empty value on upsert keeps the stored one, the keychain entry
+  is deleted with the variable (and with its workspace). The keychain is written after the row, inside the same transaction, so a
+  refused write (read-only trigger, duplicate key) never changes a stored secret. Collection variables are never secret: they are
+  exported and versioned with the collection (`isSecret: true` is rejected).
 - `secureStoreGet/Set/Delete` are a generic passthrough (used for cloud tokens, keys like `slinger.cloud.tokens:<baseUrl>`);
-  the `slinger:env-var:` prefix is refused so it cannot bypass the mask.
+  the reserved prefixes `slinger:env-var:`, `slinger:global-var:` and `slinger.cloud.tokens:` are refused
+  (`RESERVED_SECRET_PREFIXES`) so they cannot bypass the mask.
 - History never contains secret values: the renderer sends `historyUrl` (variables resolved except secrets, which stay as
   `{{name}}`, and without API-key query parameters); main stores it instead of `url`. Collection versions and exports contain no
   environments.
@@ -180,11 +190,14 @@ array under the key `scripts` (the key the importer has always used, so existing
 
 0. **Pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
    calls `runScripts` with the chain and the draft; environment writes are persisted in main, request mutations are applied to an
-   outgoing copy of the draft, and `pm.variables` / collection variables / globals are layered into the template scope
-   (local > environment > collection > globals). See [Scripts sandbox](#scripts-sandbox).
+   outgoing copy of the draft, collection variable / global writes are persisted in main too (the renderer reloads the scopes a
+   script changed), and `pm.variables` is layered on top of the template scope (local > environment > collection > globals).
+   See [Scripts sandbox](#scripts-sandbox).
 1. **Renderer, template resolution.** `src/lib/prepare.ts` `prepareRequest(draft, ctx)` is the *only* place `{{variable}}`
    substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`). It
-   fails early on unresolved names, reveals just the secrets the request references through `revealEnvironmentVariable`
+   resolves against `scopeStore.scopeFor(collectionId)` of the request's own collection (globals < collection variables <
+   environment, `app/scope.svelte.ts`; disabled variables do not resolve), fails early on unresolved names (the message names the
+   scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
    reported), generates built-ins (`$guid`, `$timestamp`, ...), drops disabled rows, and moves an API key with `addTo: 'query'`
    into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`.
@@ -219,6 +232,10 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
 - **Capture**: SQLite triggers from `0004_sync.sql` mark changed rows of linked workspaces in `sync_dirty` in the same statement;
   engine writes run with `sync_control.applying = 1` and are not captured. Read-only (viewer) links are enforced by triggers too
   (`read_only` IPC error). The last state both sides agreed on is `sync_entities.base_payload` (the 3-way merge base).
+- **Local-only data**: collection/folder `scripts_json` and descriptions (0005/0006), `source_postman_id` (0007) and the
+  `collection_variables` / `global_variables` tables (0008) are never captured or pushed (no protocol field or entity exists for
+  them); viewer workspaces still refuse local writes to them. A collection deleted by a pull hides its variables (reads require a
+  live collection); restoring it brings them back.
 - **Cycle** (`engine.ts`, one per workspace at a time): register client (refuses servers below protocol v2), re-read the role,
   snapshot download for a new link, then up to 4 rounds of pull (apply pages in one transaction each; the checkpoint only advances
   with the applied page) -> build ops from the dirty set (`outbox.buildOps`: no-op elimination, limits quarantine, cascade pruning,
@@ -246,12 +263,17 @@ Postman `event` scripts come from imported, i.e. untrusted, collections. They ne
 no file loading and works from the asar; same code under vitest in plain Node).
 
 **Flow.** `runScripts(input)` (zod-validated) -> `ScriptService.run` (`services/scriptService.ts`) loads the active environment
-(`value: null` for secrets), reads the workspace's read-only flag (`cloud_links.read_only`), and hands a `ScriptJob` to the
+(`value: null` for secrets), the enabled collection variables of `input.collectionId` and the workspace's enabled globals (secret
+globals without value) as persisted scopes, reads the workspace's read-only flag (`cloud_links.read_only`), and hands a `ScriptJob` to the
 `WorkerExecutor` (`scripts/executor.ts`, up to 4 workers, 1 kept warm; the worker bundle `dist-electron/script-worker.cjs` is read
 as text and started with `eval: true`, `resourceLimits` 256 MB old space / 4 MB stack). The worker runs `runScriptChain`
 (`scripts/sandbox.ts`), returns scopes, request mutations, console, tests, errors and a list of environment operations, and main
 applies the operations with `EnvironmentRepository.setValueFromScript` / `unsetFromScript` (secrets stay secret, the value goes to
-the keychain; coalesced to the last write per key). The IPC call resolves with a `RunScriptsResult`; script failures are data
+the keychain; coalesced to the last write per key). Collection variable and global writes come back as their own op lists
+(`collectionOps`, `globalOps`, with `clear` dropping earlier ops) and are applied the same way by
+`CollectionVariableRepository` / `GlobalVariableRepository` (`set` enables a disabled variable; the result reports
+`collectionVariablesChanged` / `globalsChanged`). A request that is not in a collection (`collectionId: null`) gets an in-memory
+collection scope seeded from `input.collectionVariables`, with a console warning on write. The IPC call resolves with a `RunScriptsResult`; script failures are data
 (`errors[]`), never rejections.
 
 **Isolation.**
@@ -317,16 +339,18 @@ the keychain; coalesced to the last write per key). The IPC call resolves with a
   (pre-request -> HTTP -> tests), so Cancel and the runner's Stop work at every stage.
 
 **Secrets (policy: Postman parity, read by explicit name only).** The job carries no secret values. When a script calls
-`pm.environment.get(name)` (or `pm.variables.get`, or `replaceIn('{{name}}')`) for a secret, the worker makes a **synchronous**
-request to main: it posts the variable id on a `MessagePort` and blocks in `Atomics.wait`; main checks the id belongs to the
-job's environment, reads the keychain (`EnvironmentRepository.reveal`), posts the value and notifies; the worker takes it with
+`pm.environment.get(name)` / `pm.globals.get(name)` (or `pm.variables.get`, or `replaceIn('{{name}}')`) for a secret, the worker
+makes a **synchronous** request to main: it posts the variable id on a `MessagePort` and blocks in `Atomics.wait`; main checks the
+id belongs to the job's environment or the workspace's globals, reads the keychain (`EnvironmentRepository.reveal` /
+`GlobalVariableRepository.reveal`), posts the value and notifies; the worker takes it with
 `receiveMessageOnPort`. So a secret leaves the keychain only when a script asks for it by name, `toObject()` omits secrets, and a
 script that never asks causes no keychain read (tested). `set` on a secret keeps it secret. Main remembers the values a session's
 scripts read or wrote (`ScriptService`, per `sessionId`, 1 h TTL, 500 sessions max) and `HttpService` redacts them from history.
 Script console output travels only in the IPC result; main never logs script output or values; the renderer keeps it in memory.
 
-**Read-only workspaces.** `pm.environment.set/unset` throw inside the script (a clear error that fails it); ScriptService refuses
-to apply environment operations for a read-only workspace as a second line of defence; the 0005 triggers refuse
+**Read-only workspaces.** `set/unset/clear` of `pm.environment`, `pm.collectionVariables` and `pm.globals` throw inside the script
+(a clear error that fails it); ScriptService refuses to apply their operations for a read-only workspace as a second line of
+defence (and the 0008 triggers as a third); the 0005 triggers refuse
 `setCollectionScripts` / `setFolderScripts`; the renderer disables the script editors.
 
 **Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
@@ -346,18 +370,22 @@ to the worker's linear memory; the worker can be terminated).
 scripts: `scripts_json` (0005), included in version snapshots (`collectionScriptsJson`, folder `scriptsJson`, optional so older
 snapshots stay valid and snapshots without scripts keep the old JSON shape) and Postman import/export (`event`), but **not synced**:
 the server's collection/folder schema has no such field (it would drop it), so the column is classified as local-only in the sync
-drift guard (`electron/__tests__/sync/triggers.test.ts`). `pm.collectionVariables` and `pm.globals` are session-only in the
-renderer (`features/scripts/sessionVars.ts`).
+drift guard (`electron/__tests__/sync/triggers.test.ts`). `pm.collectionVariables` and `pm.globals` are persisted in
+`collection_variables` / `global_variables` (0008): local-only like `scripts_json` (the tables have no capture triggers, and the sync
+engine never reads them; tests check that variable writes leave `sync_dirty` untouched).
 
 **Renderer side.** `src/lib/scripts.ts` (pure: Postman `event` editing that returns the same array when nothing changed, chain
 assembly, request/response snapshots, scope layering, test counts), `features/requests/execute.ts` (the pipeline),
-`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog, session scopes). The browser
+`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog). The browser
 mock's `runScripts` does not execute scripts (it returns the scopes unchanged with a console note).
 
 ## Collection versioning
 
 Versions are immutable snapshots stored inside the database, not git. `createCollectionVersion` serializes the collection's live
-folders and requests (names, methods, URLs, `documentJson`, ordering, collection/folder scripts; no environments) into `snapshot_json` and records the counts.
+folders and requests (names, methods, URLs, `documentJson`, ordering, collection/folder scripts and descriptions, and the
+collection variables as `collectionVariables` (only when there are any, so older snapshot shapes are unchanged); no environments
+or globals) into `snapshot_json` and records the counts. Restore (replace and copy) sets the collection variables from the snapshot;
+a snapshot without the field restores to none.
 Semver is strict 2.0.0 (`services/semver.ts`): optional prerelease, no build metadata, no leading `v`, no leading zeros. A
 version label is unique per collection among live rows (`invalid_input`, `reason: 'duplicate_version'`); a SQLite trigger
 aborts any UPDATE other than the `deleted` flag. `listCollectionVersions` sorts newest first by semver precedence (parsed
@@ -370,7 +398,8 @@ runs in the renderer on snapshots.
 reuses the importer's parser (`parsePostmanCollection`), then in one transaction: creates an automatic safety version (the next
 patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`), soft-deletes the live
 folders/requests (so the sync dirty-set triggers propagate the deletions), inserts the file's tree with new ids in file order, and
-updates the collection's scripts, description and `source_postman_id`. The collection keeps its id, name and versions; any
+updates the collection's scripts, description, collection variables (the file's `variable` array, `shared/postmanVariables.ts`,
+also used by the import and the exporter) and `source_postman_id`. The collection keeps its id, name and versions; any
 failure rolls everything back. The renderer (`ImportPostmanDialog`, `importexport/reimport.ts`) matches the file to live
 collections of the workspace by `_postman_id` first (a collection's own id, as Slinger exports use it, or its local
 `source_postman_id`), else by trimmed case-insensitive name. After a replace it maps old ids to new ones with
@@ -400,7 +429,7 @@ Every collection export (built in the renderer: `lib/postman.ts` + `lib/slingerE
 
   `versions` are oldest semver first; `createdAt` is ISO-8601 with whole seconds (lossless for the stored epoch seconds);
   `snapshot` is omitted when the user unticks "Include version history snapshots" (`includesSnapshots: false`). Snapshots
-  hold folders/requests/scripts/descriptions only: no environment values, no secrets (tested).
+  hold folders/requests/scripts/descriptions/collection variables only: no environment values, no globals, no secrets (tested).
 
 **Import** (`services/versionHistory.ts`, `restoreVersionHistory(db, collectionId, raw)`, called inside the transaction of both
 `importPostmanCollection` and `replaceCollectionFromPostman`): the block is untrusted input, validated with zod
@@ -415,7 +444,8 @@ skipped, a different one is kept as `<v>-imported[.N]` (`<v>.imported[.N]` for p
 `PostmanImportResult.versionHistory = {restored, skipped, notes}` (absent when the file has no block), shown as a toast.
 
 **Compatibility guarantees** (`electron/__tests__/postmanCompat.test.ts`): every export shape (no history, with snapshots,
-metadata only, examples, scripts at all levels, descriptions, nested folders, auth, empty/Unicode collection) validates
+metadata only, examples, scripts at all levels, descriptions, collection variables incl. disabled ones, nested folders, auth,
+empty/Unicode collection) validates
 against the vendored official v2.1.0 schema (`__tests__/fixtures/`, draft-04, ajv 6) and loads in Postman's SDK
 (`postman-collection`, dev dependency for tests only) with its name, every folder/request, events and version. **Postman
 caveat:** Postman does not preserve unknown fields: its SDK moves `_`-prefixed `info` keys out of `info` on `toJSON()` and drops
@@ -478,8 +508,9 @@ first paint ~140 ms, app mounted ~190 ms, data loaded and skeleton removed ~220 
 
 ## Renderer
 
-State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tree, environments, active environment),
-`ui` (which dialogs are open), `scope` (the `{{variable}}` scope), `settings`, `toast`, and `features/requests/tabs.svelte.ts`
+State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tree, collection variables, environments, active
+environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}` scope: layers published by `app/state`,
+`scope` for the active tab's collection, `scopeFor(collectionId)` for sends and the runner), `settings`, `toast`, and `features/requests/tabs.svelte.ts`
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
 
@@ -587,5 +618,5 @@ Example: `renameFoo(fooId, name)`.
 ## Roadmap / not built
 
 Not present in the code: OAuth 2.0 request auth, `require` of Node modules or `postman-collection` in scripts,
-cloud sync of collection/folder scripts and collection/folder documentation, loading remote images in docs, persisted collection
-variables and globals, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
+cloud sync of collection/folder scripts, collection/folder documentation, collection variables and globals, loading remote images
+in docs, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
