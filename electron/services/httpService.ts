@@ -3,7 +3,7 @@ import { toErrorPayload, invalidInput } from '../lib/errors'
 import { assertUuid, isUuid } from '../lib/ids'
 import type { HistoryRepository } from '../repositories/history'
 import type { FileAccess } from './fileGrants'
-import { executeHttp, normalizeUrl } from './httpExecutor'
+import { executeHttp, normalizeUrl, type OAuth2TokenLookup } from './httpExecutor'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 
@@ -11,7 +11,8 @@ const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
  * Runs requests, tracks cancellable runs, and records every attempt (success or failure) in
  * history. History stores `historyUrl` when the renderer supplies it (secrets kept as {{name}}
  * placeholders), else the URL as typed (normalized), never an apiKey query parameter
- * added by auth, so credentials never end up in the log.
+ * added by auth and never an OAuth 2.0 token (applied by the executor after this URL was taken),
+ * so credentials never end up in the log.
  */
 export class HttpService {
   private readonly runs = new Map<string, AbortController>()
@@ -21,6 +22,8 @@ export class HttpService {
     private readonly files?: FileAccess,
     /** Replaces secret values that scripts of a session read with `{{name}}` (ScriptService.redact). */
     private readonly redact: (sessionId: string | null | undefined, text: string) => string = (_s, t) => t,
+    /** Stored OAuth 2.0 access tokens by key (OAuth2Service.accessTokenFor); applied in main, never recorded. */
+    private readonly oauth2Token?: OAuth2TokenLookup,
   ) {}
 
   async execute(input: HttpRequestInput): Promise<HttpResponseData> {
@@ -35,7 +38,7 @@ export class HttpService {
 
     const started = performance.now()
     try {
-      const response = await executeHttp(input, { signal: controller.signal, files: this.files })
+      const response = await executeHttp(input, { signal: controller.signal, files: this.files, oauth2Token: this.oauth2Token })
       this.record(input, workspaceId, {
         statusCode: response.status,
         ok: response.status >= 200 && response.status < 300,

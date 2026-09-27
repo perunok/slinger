@@ -373,7 +373,10 @@ export class RunHost {
       if (type === 'bearer') auth = { kind: 'bearer', bearer: { token: val('token') } }
       else if (type === 'basic') auth = { kind: 'basic', basic: { username: val('username'), password: val('password') } }
       else if (type === 'apikey') auth = { kind: 'apiKey', apiKey: { key: val('key'), value: val('value'), addTo: val('in') === 'query' ? 'query' : 'header' } }
-      else if (type !== 'noauth' && type !== 'none' && type !== 'inherit') {
+      else if (type === 'oauth2') {
+        // Tokens stay in the keychain and are never handed to scripts.
+        throw new ScriptApiError('pm.sendRequest: OAuth 2.0 auth is not supported in scripts (tokens are not available to scripts); send the request from a tab, or set an Authorization header from a variable')
+      } else if (type !== 'noauth' && type !== 'none' && type !== 'inherit') {
         throw new ScriptApiError(`pm.sendRequest: auth type "${type}" is not supported (use bearer, basic, apikey or set the header yourself)`)
       }
     }
@@ -574,7 +577,8 @@ export class RunHost {
       case 'http.send':
         return this.startSend(a0)
       case 'request.set':
-        this.request = checkRequestData(a0)
+        // pm.request.auth is read-only: the auth view always comes from the job, never from the script.
+        this.request = { ...checkRequestData(a0), ...(this.request.auth ? { auth: this.request.auth } : {}) }
         this.requestChanged = true
         return undefined
       default:

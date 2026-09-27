@@ -385,6 +385,47 @@ describe('errors', () => {
   })
 })
 
+describe('OAuth 2.0', () => {
+  it('gets a client-credentials token in main and sends with it; the token stays out of the renderer, history and the document', async () => {
+    await newCollection('OAuth C')
+    await newRequest(/^OAuth C/, 'OAuth profile', 'GET', '{{baseUrl}}/oauth/me')
+    await page.getByRole('tab', { name: 'Authorization' }).click()
+    await page.getByLabel('Authorization type').selectOption('oauth2')
+    await page.getByLabel('Grant type').selectOption('client_credentials')
+    await typeInto(page.getByRole('textbox', { name: 'Access Token URL' }), '{{baseUrl}}/oauth/token')
+    await typeInto(page.getByRole('textbox', { name: 'Client ID' }), 'e2e-client')
+    await typeInto(page.getByRole('textbox', { name: 'Client Secret' }), '{{token}}')
+    await typeInto(page.getByRole('textbox', { name: 'Scope' }), 'read')
+    await expect.poll(() => page.getByTestId('oauth2-status').innerText()).toContain('No access token yet')
+
+    await page.getByRole('button', { name: 'Get New Access Token' }).click()
+    await expect.poll(() => page.getByTestId('oauth2-status').innerText()).toMatch(/Valid until .*scope read/)
+    const tokenCall = target.requests.filter((r) => r.url === '/oauth/token').at(-1)!
+    expect(tokenCall.headers.authorization).toBe(`Basic ${Buffer.from(`e2e-client:${SECRET}`).toString('base64')}`)
+    expect(new URLSearchParams(tokenCall.body.toString()).get('scope')).toBe('read')
+    const token = target.issuedOAuthTokens.at(-1)!
+
+    await send()
+    expect(target.requests.at(-1)!.url).toBe('/oauth/me')
+    expect(target.requests.at(-1)!.headers.authorization).toBe(`Bearer ${token}`)
+    await expect.poll(() => response().innerText()).toContain('oauth-user')
+    await save()
+
+    // The settings are in the request document, the token is nowhere the renderer can see (history, documents, DOM).
+    const seen = await rendererSnapshot()
+    expect(seen).toContain('e2e-client')
+    expect(seen).not.toContain(token)
+    expect(seen).not.toContain(SECRET)
+    for (const file of readdirSync(userData).filter((f) => f.startsWith('slinger.db'))) {
+      expect(readFileSync(join(userData, file)).includes(token), file).toBe(false)
+    }
+    // The token request itself is not in history; the send is.
+    const urls = await page.evaluate(async () => (await window.slinger.listHistory((await window.slinger.listWorkspaces())[0]!.id)).map((h) => h.url))
+    expect(urls.some((u) => u.endsWith('/oauth/me'))).toBe(true)
+    expect(urls.some((u) => u.includes('/oauth/token'))).toBe(false)
+  })
+})
+
 describe('collection runner', () => {
   it('runs a collection and reports every request', async () => {
     await page.evaluate(async () => {

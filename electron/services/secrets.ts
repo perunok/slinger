@@ -9,6 +9,9 @@ export const ENV_VAR_SECRET_PREFIX = 'slinger:env-var:'
 /** Cloud session tokens (electron/cloud/auth.ts) live under this prefix, keyed by API base URL. */
 export const CLOUD_TOKEN_PREFIX = 'slinger.cloud.tokens:'
 
+/** OAuth 2.0 tokens (services/oauth2.ts) live under this prefix, keyed by a hash of workspace + configuration. */
+export const OAUTH2_TOKEN_PREFIX = 'slinger:oauth2:'
+
 export const envVarSecretKey = (variableId: string): string => `${ENV_VAR_SECRET_PREFIX}${variableId}`
 
 export interface SecretStore {
@@ -104,7 +107,7 @@ export function assertGenericSecureKey(key: unknown): string {
     throw invalidInput('secure store key must be 1-256 characters')
   }
   const lower = key.toLowerCase()
-  if (lower.startsWith(ENV_VAR_SECRET_PREFIX) || lower.startsWith(CLOUD_TOKEN_PREFIX)) {
+  if (lower.startsWith(ENV_VAR_SECRET_PREFIX) || lower.startsWith(CLOUD_TOKEN_PREFIX) || lower.startsWith(OAUTH2_TOKEN_PREFIX)) {
     throw invalidInput('this key namespace is reserved')
   }
   return key

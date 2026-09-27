@@ -17,7 +17,7 @@ electron/
   migrations/        numbered .sql files
   repositories/      SQL access per aggregate (workspaces, collections, tree=folders+requests, environments, history)
   services/          httpExecutor/httpService, scriptService, postmanImport, collectionVersions, semver, secrets,
-                     exportFiles, externalUrl, authCallback, core (wiring)
+                     exportFiles, externalUrl, authCallback, oauth2 + oauth2Callback (OAuth 2.0 request tokens), core (wiring)
   scripts/           pre-request/test script sandbox: QuickJS (WASM) runner, pm API prelude, worker-thread pool
   cloud/             cloud HTTP client (http.ts), device-flow sign-in + token refresh (auth.ts), typed API (api.ts)
   sync/              collection sync engine: index.ts (SyncService, IPC methods), engine (cycle, status, backoff),
@@ -125,12 +125,12 @@ overview in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md#cloud-sync-main-pr
 `services/httpExecutor.ts` (pure `fetch`): URL normalization (adds `http://`, only http/https
 allowed), rejection of unresolved `{{ }}` anywhere on the wire (URL, header names/values, auth,
 raw/urlEncoded/form bodies; disabled rows are ignored), server-side auth (basic, bearer, apiKey in
-header or query), body modes `none | raw | formData (multipart incl. files) | urlEncoded | binary`,
+header or query, OAuth 2.0 by token key: the token is read from the keychain here), body modes `none | raw | formData (multipart incl. files) | urlEncoded | binary`,
 timeouts (default 60 s), cancellation through `requestRunId`, and text-vs-base64 response bodies
 (`bodyText` when the bytes decode, else `bodyBase64`; `bodyByteLength` always set). `HttpService`
 wraps it, tracks cancellable runs and records **every** attempt in `history`
 (successes, HTTP errors, network failures, cancellations, validation failures). The history URL is
-stored without API-key query parameters added by auth, and with secret values that scripts of the
+stored without API-key query parameters added by auth (and never with an OAuth 2.0 token), and with secret values that scripts of the
 request's `scriptSessionId` read replaced by `{{name}}`.
 
 ## Scripts

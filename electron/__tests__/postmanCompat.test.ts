@@ -157,3 +157,69 @@ describe("exports load in Postman's SDK (postman-collection)", () => {
     }
   })
 })
+
+describe('OAuth 2.0 requests', () => {
+  /** A Postman-app export: collection-level OAuth 2.0 with the current token embedded, as Postman writes it. */
+  const OAUTH_COLLECTION = {
+    info: { name: 'OAuth API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+    auth: {
+      type: 'oauth2',
+      oauth2: [
+        { key: 'accessToken', value: 'POSTMAN-EMBEDDED-ACCESS-TOKEN', type: 'string' },
+        { key: 'tokenType', value: 'Bearer', type: 'string' },
+        { key: 'refresh_token', value: 'POSTMAN-EMBEDDED-REFRESH', type: 'string' },
+        { key: 'grant_type', value: 'client_credentials', type: 'string' },
+        { key: 'accessTokenUrl', value: '{{authBase}}/token', type: 'string' },
+        { key: 'clientId', value: 'app', type: 'string' },
+        { key: 'clientSecret', value: '{{clientSecret}}', type: 'string' },
+        { key: 'scope', value: 'read', type: 'string' },
+        { key: 'addTokenTo', value: 'header', type: 'string' },
+        { key: 'useBrowser', value: false, type: 'boolean' },
+      ],
+    },
+    item: [{ name: 'Me', request: { method: 'GET', header: [], url: 'https://api.example.com/me' } }],
+  }
+
+  it('import keeps the configuration without the token, and the export validates and loads in the SDK', async () => {
+    const imported = await env.api.importPostmanCollection(wsId, JSON.stringify(OAUTH_COLLECTION))
+    const rows = JSON.stringify(env.core.db.prepare('SELECT * FROM requests').all())
+    expect(rows).not.toContain('POSTMAN-EMBEDDED')
+    const doc = JSON.parse(imported.requests[0]!.documentJson)
+    expect(doc.auth.type).toBe('oauth2')
+    expect(doc.auth.oauth2.map((e: { key: string }) => e.key)).toEqual(['grant_type', 'accessTokenUrl', 'clientId', 'clientSecret', 'scope', 'addTokenTo', 'useBrowser'])
+
+    await env.api.createCollectionVersion({ collectionId: imported.collection.id, version: '1.0.0' })
+    const file = JSON.parse(JSON.stringify(await exportCollection(env, imported.collection.id))) as PostmanCollectionV21
+    expect(JSON.stringify(file)).not.toContain('POSTMAN-EMBEDDED')
+    expectValidV21(file)
+    const c = new sdk.Collection(file)
+    const items: Array<SdkItem & { request: { auth?: { type: string; parameters(): { get(k: string): unknown } } } }> = []
+    c.forEachItem((i) => items.push(i as never))
+    expect(items[0]!.request.auth!.type).toBe('oauth2')
+    expect(items[0]!.request.auth!.parameters().get('clientId')).toBe('app')
+    expect(items[0]!.request.auth!.parameters().get('accessToken')).toBeUndefined()
+  })
+
+  it('never keeps tokens from a version history block, a re-import, or a document saved before OAuth 2.0 support', async () => {
+    const withToken = JSON.stringify({ auth: { type: 'oauth2', oauth2: [{ key: 'accessToken', value: 'LEGACY-TOKEN' }, { key: 'clientId', value: 'c' }] } })
+    const col = await env.api.createCollection(wsId, 'Legacy')
+    // As an older version of Slinger stored an imported request (auth verbatim).
+    await env.api.createRequest({ workspaceId: wsId, collectionId: col.id, name: 'R', method: 'GET', url: 'https://x', documentJson: withToken })
+    const v = await env.api.createCollectionVersion({ collectionId: col.id, version: '1.0.0' })
+    expect(JSON.stringify(await env.api.getCollectionVersion(v.id))).not.toContain('LEGACY-TOKEN')
+    // The renderer export strips the live document too.
+    const file = await exportCollection(env, col.id)
+    expect(JSON.stringify(file)).not.toContain('LEGACY-TOKEN')
+
+    // A file whose snapshot carries a token (hand-made or from another tool).
+    const exported = JSON.parse(JSON.stringify(file))
+    exported.info._slinger.versions[0].snapshot.requests[0].documentJson = withToken
+    const again = await env.api.importPostmanCollection(wsId, JSON.stringify(exported))
+    expect(again.versionHistory?.restored).toBe(1)
+    const versions = await env.api.listCollectionVersions(again.collection.id)
+    expect(JSON.stringify(await env.api.getCollectionVersion(versions[0]!.id))).not.toContain('LEGACY-TOKEN')
+
+    await env.api.replaceCollectionFromPostman(col.id, JSON.stringify(OAUTH_COLLECTION), 'oauth.json')
+    expect(JSON.stringify(env.core.db.prepare('SELECT document_json FROM requests WHERE deleted = 0').all())).not.toContain('POSTMAN-EMBEDDED')
+  })
+})

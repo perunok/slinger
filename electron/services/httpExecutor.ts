@@ -1,13 +1,15 @@
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
-import { invalidInput, ioError, networkError } from '../lib/errors'
+import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
 import type { FileAccess } from './fileGrants'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
 export const MAX_TIMEOUT_MS = 10 * 60_000
 
 const PLACEHOLDER_RE = /\{\{[^{}]*\}\}/
+/** OAuth2Service token keys: SHA-256 hex. */
+export const OAUTH2_TOKEN_KEY_RE = /^[0-9a-f]{64}$/
 const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//
 
 /** True if the string still contains an unresolved `{{variable}}` placeholder. */
@@ -32,6 +34,7 @@ function wireStrings(input: HttpRequestInput): Array<[string, string | undefined
   if (a?.kind === 'basic') out.push(['basic auth username', a.basic?.username], ['basic auth password', a.basic?.password])
   if (a?.kind === 'bearer') out.push(['bearer token', a.bearer?.token])
   if (a?.kind === 'apiKey') out.push(['API key name', a.apiKey?.key], ['API key value', a.apiKey?.value])
+  if (a?.kind === 'oauth2') out.push(['OAuth 2.0 header prefix', a.oauth2?.headerPrefix])
   const b = input.body
   if (b?.mode === 'raw') out.push(['request body', b.raw?.content], ['body content type', b.raw?.contentType])
   if (b?.mode === 'formData') {
@@ -84,7 +87,7 @@ interface BuiltRequest {
 }
 
 /** Validates the input and builds fetch arguments. All auth kinds and body modes are applied here. */
-export async function buildRequest(input: HttpRequestInput, files?: FileAccess): Promise<BuiltRequest> {
+export async function buildRequest(input: HttpRequestInput, files?: FileAccess, oauth2Token?: OAuth2TokenLookup): Promise<BuiltRequest> {
   assertNoUnresolvedPlaceholders(input)
 
   const method = (input.method ?? '').trim().toUpperCase()
@@ -121,6 +124,16 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess):
       case 'bearer':
         if (auth.bearer?.token) headers.set('Authorization', `Bearer ${auth.bearer.token}`)
         break
+      case 'oauth2': {
+        // The token never crosses IPC: it is read from the keychain here, by key, and applied like a bearer token.
+        const o = auth.oauth2
+        if (!o || !OAUTH2_TOKEN_KEY_RE.test(o.tokenKey)) throw invalidInput('OAuth 2.0 token key is invalid')
+        if (!oauth2Token) throw invalidInput('OAuth 2.0 authorization is not available for this request')
+        const token = oauth2Token(o.tokenKey)
+        if (o.addTo === 'query') url.searchParams.append('access_token', token)
+        else headers.set('Authorization', o.headerPrefix.trim() ? `${o.headerPrefix.trim()} ${token}` : token)
+        break
+      }
       case 'apiKey': {
         const key = auth.apiKey?.key.trim()
         if (!key) throw invalidInput('API key name is required')
@@ -225,6 +238,38 @@ export interface ExecuteOptions {
   signal?: AbortSignal
   /** Grants for local files referenced by the body; without it any file reference is rejected. */
   files?: FileAccess
+  /** Reads the stored OAuth 2.0 access token for `auth.oauth2.tokenKey`; without it OAuth 2.0 auth is rejected. */
+  oauth2Token?: OAuth2TokenLookup
+  /** Fails with network_error instead of reading a larger response body (internal requests such as token calls). */
+  maxResponseBytes?: number
+}
+
+/** Returns the access token stored under a token key, or throws a user-facing IpcError (missing, expired). */
+export type OAuth2TokenLookup = (tokenKey: string) => string
+
+async function readBody(response: Response, max: number | undefined): Promise<Uint8Array> {
+  if (max === undefined) return new Uint8Array(await response.arrayBuffer())
+  const tooLarge = () => networkError(`The response is larger than ${max} bytes`)
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > max) {
+    await response.body?.cancel().catch(() => {})
+    throw tooLarge()
+  }
+  const reader = response.body?.getReader()
+  if (!reader) return new Uint8Array(0)
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > max) {
+      await reader.cancel().catch(() => {})
+      throw tooLarge()
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks)
 }
 
 /**
@@ -232,7 +277,7 @@ export interface ExecuteOptions {
  * headers and the complete body download. Throws IpcError for invalid input / network failure.
  */
 export async function executeHttp(input: HttpRequestInput, options: ExecuteOptions = {}): Promise<HttpResponseData> {
-  const built = await buildRequest(input, options.files)
+  const built = await buildRequest(input, options.files, options.oauth2Token)
   const timeoutMs = Math.min(Math.max(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1), MAX_TIMEOUT_MS)
 
   const controller = new AbortController()
@@ -258,7 +303,7 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
       signal: controller.signal,
       redirect: 'follow',
     })
-    const bytes = new Uint8Array(await response.arrayBuffer())
+    const bytes = await readBody(response, options.maxResponseBytes)
     const durationMs = Math.max(0, Math.round(performance.now() - started))
     const text = decodeBody(bytes, response.headers)
     const headers: RequestHeader[] = []
@@ -274,6 +319,7 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
     }
   } catch (err) {
     if (cancelled) throw networkError('Request cancelled', { cancelled: true })
+    if (err instanceof IpcError) throw err
     if (timedOut) throw networkError(`Request timed out after ${timeoutMs} ms`, { timedOut: true })
     throw networkError(describeNetworkError(err))
   } finally {

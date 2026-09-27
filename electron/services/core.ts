@@ -9,6 +9,7 @@ import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
+import { OAuth2Service } from './oauth2'
 import { ScriptService } from './scriptService'
 import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
@@ -42,6 +43,7 @@ export interface Core {
   requests: RequestRepository
   history: HistoryRepository
   http: HttpService
+  oauth2: OAuth2Service
   scripts: ScriptService
   authCallbacks: BrowserAuthCallbacks
   exportFiles: ExportFiles
@@ -55,6 +57,7 @@ export function createCore(deps: CoreDeps): Core {
   const history = new HistoryRepository(db)
   const fileGrants = new FileGrants()
   const environments = new EnvironmentRepository(db, secrets)
+  const oauth2 = new OAuth2Service(secrets)
   const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants)
   const core: Core = {
     db,
@@ -65,7 +68,8 @@ export function createCore(deps: CoreDeps): Core {
     folders: new FolderRepository(db),
     requests: new RequestRepository(db),
     history,
-    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text)),
+    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key) => oauth2.accessTokenFor(key)),
+    oauth2,
     scripts,
     authCallbacks: new BrowserAuthCallbacks(),
     exportFiles: deps.exportFiles ?? new ExportFiles(),

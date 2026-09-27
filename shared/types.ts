@@ -183,13 +183,19 @@ export interface RequestHeader {
   value: string
 }
 
-export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey'
+export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2'
 
 export interface ResolvedAuth {
   kind: AuthKind
   basic?: { username: string; password: string }
   bearer?: { token: string }
   apiKey?: { key: string; value: string; addTo: 'header' | 'query' }
+  /**
+   * ADDED (OAuth 2.0): which stored token to apply. The token itself never crosses IPC: main reads it from the
+   * keychain by `tokenKey` (from OAuth2TokenStatus) and sets `Authorization: <headerPrefix> <token>` (just the token
+   * when the prefix is empty) or the `access_token` query parameter.
+   */
+  oauth2?: { tokenKey: string; addTo: 'header' | 'query'; headerPrefix: string }
 }
 
 export type BodyMode = 'none' | 'raw' | 'formData' | 'urlEncoded' | 'binary'
@@ -258,6 +264,73 @@ export interface HttpResponseData {
   /** Present when the body is not valid UTF-8; base64-encoded raw bytes. */
   bodyBase64: string | null
   bodyByteLength: number
+}
+
+// ---------------------------------------------------------------------------
+// OAuth 2.0 (tokens live in the OS keychain only; see shared/oauth2.ts)
+// ---------------------------------------------------------------------------
+
+export type { OAuth2GrantType } from './oauth2'
+
+/**
+ * A request's OAuth 2.0 settings with every `{{variable}}` resolved by the renderer (secrets revealed just in time).
+ * Empty strings mean "not set". Main derives the token key from `workspaceId` and the identifying fields.
+ */
+export interface OAuth2Config {
+  workspaceId: string
+  grantType: import('./oauth2').OAuth2GrantType
+  authUrl: string
+  accessTokenUrl: string
+  clientId: string
+  clientSecret: string
+  scope: string
+  /** Sent as `state` (authorization code); random when empty. Always verified on the callback. */
+  state: string
+  /** Loopback redirect URI (`http://127.0.0.1:<port>/<path>` or localhost); DEFAULT_OAUTH2_REDIRECT_URI when empty. */
+  redirectUri: string
+  username: string
+  password: string
+  challengeAlgorithm: 'S256' | 'plain'
+  /** PKCE verifier; generated in main when empty. */
+  codeVerifier: string
+  /** 'header' = HTTP Basic with client id + secret, 'body' = client_id / client_secret form fields. */
+  clientAuthentication: 'header' | 'body'
+  refreshTokenUrl: string
+  /** Extra authorization / token request parameters (Auth0 `audience`, Azure / RFC 8707 `resource`). */
+  audience: string
+  resource: string
+}
+
+/** What the renderer may know about a stored token: never the token itself (see revealOAuth2Token). */
+export interface OAuth2TokenStatus {
+  /** Opaque id of the stored token for this workspace + configuration (64 hex characters). */
+  tokenKey: string
+  hasToken: boolean
+  tokenType: string | null
+  scope: string | null
+  /** Unix seconds; null when the server did not say (treated as not expiring). */
+  expiresAt: number | null
+  obtainedAt: number | null
+  /** True when expiresAt is in the past (at the time of the call). */
+  expired: boolean
+  hasRefreshToken: boolean
+  /** First and last 4 characters of a long token ("eyJh…9fQ"), bullets for a short one; null without a token. */
+  maskedToken: string | null
+}
+
+export interface GetOAuth2TokenOptions {
+  /** Lets cancelOAuth2Flow(flowId) abort a waiting authorization-code flow (1-128 chars of [A-Za-z0-9._:-]). */
+  flowId?: string
+  /** How long to wait for the browser redirect; default 5 minutes, at most 10. */
+  timeoutMs?: number
+}
+
+export interface RefreshOAuth2TokenOptions {
+  /**
+   * Only refresh when the token is expired or expires within 30 s and a refresh token exists (used before every
+   * send); otherwise resolve with the current status. A failed refresh still rejects.
+   */
+  ifExpiring?: boolean
 }
 
 /**
@@ -389,6 +462,16 @@ export interface ScriptRequestData {
     urlencoded?: ScriptKeyValue[]
     formdata?: ScriptKeyValue[]
   }
+  /**
+   * ADDED (OAuth 2.0): read-only `pm.request.auth` (Postman type + parameters, templates unresolved). Credential
+   * values that are not a `{{variable}}` reference are masked; OAuth 2.0 tokens are never part of it.
+   */
+  auth?: ScriptAuthData | null
+}
+
+export interface ScriptAuthData {
+  type: string
+  params: ScriptKeyValue[]
 }
 
 /** The response as test scripts see it (`pm.response`). */

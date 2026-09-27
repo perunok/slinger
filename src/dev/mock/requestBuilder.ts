@@ -33,9 +33,17 @@ function withApiKeyQuery(url: string, key: string, value: string): string {
   }
 }
 
-function applyAuth(input: HttpRequestInput, headers: RequestHeader[]): string {
+function applyAuth(input: HttpRequestInput, headers: RequestHeader[], oauth2Token?: (tokenKey: string) => string): string {
   const { auth } = input
   let url = input.url
+  if (auth.kind === 'oauth2' && auth.oauth2) {
+    if (!oauth2Token) return fail('invalid_input', 'OAuth 2.0 authorization is not available for this request')
+    const token = oauth2Token(auth.oauth2.tokenKey)
+    const prefix = auth.oauth2.headerPrefix.trim()
+    if (auth.oauth2.addTo === 'query') return withApiKeyQuery(url, 'access_token', token)
+    headers.push({ key: 'Authorization', value: prefix ? `${prefix} ${token}` : token })
+    return url
+  }
   if (auth.kind === 'basic' && auth.basic && !hasHeader(headers, 'authorization')) {
     headers.push({ key: 'Authorization', value: `Basic ${utf8Base64(`${auth.basic.username}:${auth.basic.password}`)}` })
   } else if (auth.kind === 'bearer' && auth.bearer && !hasHeader(headers, 'authorization')) {
@@ -90,10 +98,10 @@ function buildBody(input: HttpRequestInput, headers: RequestHeader[]): { body?: 
   }
 }
 
-export function buildRequest(input: HttpRequestInput): BuiltRequest {
+export function buildRequest(input: HttpRequestInput, oauth2Token?: (tokenKey: string) => string): BuiltRequest {
   const method = input.method.toUpperCase()
   const headers = input.headers.filter((h) => h.key.trim()).map((h) => ({ ...h }))
-  const url = applyAuth(input, headers)
+  const url = applyAuth(input, headers, oauth2Token)
   const { body, text } = buildBody(input, headers)
   const bodyAllowed = method !== 'GET' && method !== 'HEAD'
   return { url, headers, body: bodyAllowed ? body : undefined, bodyText: bodyAllowed ? text : '' }

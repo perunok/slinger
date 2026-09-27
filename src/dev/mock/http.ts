@@ -3,6 +3,7 @@ import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import { cannedResponse, isMockHost, type CannedResponse } from './canned'
 import { buildRequest, type BuiltRequest } from './requestBuilder'
 import type { MockState } from './store'
+import { mockAccessToken } from './oauth2'
 import { bytesToBase64, nowSec, uuid } from './util'
 
 type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest' | 'cloudFetch'>
@@ -85,9 +86,9 @@ async function runFetch(built: BuiltRequest, method: string, signal: AbortSignal
   }
 }
 
-async function perform(input: HttpRequestInput, run: RunControl): Promise<HttpResponseData> {
+async function perform(input: HttpRequestInput, run: RunControl, oauth2Token?: (tokenKey: string) => string): Promise<HttpResponseData> {
   const method = input.method.toUpperCase()
-  const built = buildRequest(input)
+  const built = buildRequest(input, oauth2Token)
   const started = performance.now()
   try {
     if (isMockHost(built.url)) {
@@ -140,7 +141,8 @@ export function createHttpApi(s: MockState): HttpApi {
             }, input.timeoutMs)
           : null
       const started = performance.now()
-      return perform(input, run)
+      // perform() is async, so a build error (no OAuth 2.0 token, ...) still rejects and is recorded.
+      return perform(input, run, (key) => mockAccessToken(s, key))
         .then(
           (data) => {
             record(s, input, { status: data.status, error: null, ms: data.durationMs })

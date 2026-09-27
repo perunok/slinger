@@ -3,8 +3,24 @@ import type { AddressInfo } from 'node:net'
 import { invalidInput, ioError, notFound } from '../lib/errors'
 import { assertUuid, newId } from '../lib/ids'
 
-const PAGE = (message: string) =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slinger Desktop</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f0e8;color:#1f2933;font-family:"Segoe UI",sans-serif;padding:24px}main{width:min(420px,100%);background:#fffdf8;border:1px solid #d9d0bf;border-radius:16px;padding:24px}h1{margin:0 0 12px;font-size:24px}p{margin:0;color:#52606d;line-height:1.5}</style></head><body><main><h1>Authorization received</h1><p>${message}</p></main></body></html>`
+const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+/** HTML-escapes text for the callback pages (they may show provider-supplied error text). */
+export const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (c) => ESCAPES[c]!)
+
+/** The small page the browser shows after a redirect to a loopback listener. Every argument is escaped. */
+export const callbackPage = (heading: string, message: string): string =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slinger Desktop</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f0e8;color:#1f2933;font-family:"Segoe UI",sans-serif;padding:24px}main{width:min(420px,100%);background:#fffdf8;border:1px solid #d9d0bf;border-radius:16px;padding:24px}h1{margin:0 0 12px;font-size:24px}p{margin:0;color:#52606d;line-height:1.5;overflow-wrap:anywhere}</style></head><body><main><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(message)}</p></main></body></html>`
+
+/** Headers for callback pages: no caching, nothing but inline styles may load. */
+export const CALLBACK_PAGE_HEADERS = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+  'Referrer-Policy': 'no-referrer',
+  Connection: 'close',
+} as const
+
+const PAGE = (message: string) => callbackPage('Authorization received', message)
 
 /** Listener lifetime if nobody ever calls wait(): prevents leaked loopback servers. */
 export const CALLBACK_MAX_LIFETIME_MS = 10 * 60_000
@@ -39,12 +55,7 @@ export class BrowserAuthCallbacks {
 
     const server = createServer((req, res) => {
       const respond = (status: number, message: string) => {
-        res.writeHead(status, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
-          Connection: 'close',
-        })
+        res.writeHead(status, CALLBACK_PAGE_HEADERS)
         res.end(PAGE(message))
       }
       let url: URL

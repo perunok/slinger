@@ -385,3 +385,14 @@ describe('body none', () => {
     expect(out).not.toMatch(/--data|POSTFIELDS|payload\b.*=|-Body|data:/)
   })
 })
+
+describe('OAuth 2.0 auth in snippets', () => {
+  const oauth = (addTo: 'header' | 'query', headerPrefix = 'Bearer'): HttpRequestInput['auth'] => ({ kind: 'oauth2', oauth2: { tokenKey: 'a'.repeat(64), addTo, headerPrefix } })
+  it('uses a placeholder instead of the token, in the header or the query', () => {
+    expect(generateSnippet('curl', req({ auth: oauth('header') }))).toContain('Authorization: Bearer <access token>')
+    expect(generateSnippet('curl', req({ auth: oauth('header', '') }))).toContain("Authorization: <access token>'")
+    const q = generateSnippet('curl', req({ url: 'https://api.example.com/items?a=1#top', auth: oauth('query') }))
+    expect(q).toContain('https://api.example.com/items?a=1&access_token=<access token>#top')
+    for (const lang of ALL) expect(generateSnippet(lang, req({ auth: oauth('header') }))).not.toContain('a'.repeat(64))
+  })
+})
