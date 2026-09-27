@@ -8,7 +8,7 @@
   import { tabsStore } from '../requests/tabs.svelte'
   import { RIGHT_PANEL_SHORTCUT } from './layoutActions'
   import { availablePanels, resolvePanel } from './panels'
-  import { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, rightPanel } from './rightPanel.svelte'
+  import { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, rightPanel } from './rightPanelStore.svelte'
 
   /** Width to render at (already fitted to the room next to the main area). */
   let { width }: { width: number } = $props()

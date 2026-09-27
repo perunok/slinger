@@ -32,7 +32,7 @@
   import StatusBar from '../features/layout/StatusBar.svelte'
   import RightPanel from '../features/layout/RightPanel.svelte'
   import RightPanelButton from '../features/layout/RightPanelButton.svelte'
-  import { fitPanelWidth, minMainWidth, rightPanel } from '../features/layout/rightPanel.svelte'
+  import { fitPanelWidth, minMainWidth, rightPanel } from '../features/layout/rightPanelStore.svelte'
   import { scopeStore } from './scope.svelte'
   import { settings } from './settings.svelte'
   import { subscribeMenuCommands } from './menuCommands'

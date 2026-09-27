@@ -17,7 +17,7 @@
   import { tabsStore } from './tabs.svelte'
   import { RESPONSE_POSITION_SHORTCUT, RIGHT_PANEL_SHORTCUT, showRightPanel, toggleRightPanel, toggleStatusBar } from '../layout/layoutActions'
   import { SIDE_PANELS } from '../layout/panels'
-  import { rightPanel } from '../layout/rightPanel.svelte'
+  import { rightPanel } from '../layout/rightPanelStore.svelte'
 
   interface Command {
     key: string

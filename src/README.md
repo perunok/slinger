@@ -43,7 +43,7 @@ features/
   response/    environments/ (variable table + autosave model shared by environments, globals and collection variables:
                varBackends.ts, VariablesPanel)  history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
-  layout/ (response below/beside toggle, StatusBar, RightPanel + rightPanel.svelte.ts store; panels.ts = registry of right-panel
+  layout/ (response below/beside toggle, StatusBar, RightPanel + rightPanelStore.svelte.ts store; panels.ts = registry of right-panel
           views in panels/ (Variables, Docs, Code, Info); layoutActions.ts: the layout commands shared by shortcuts, menu,
           palette, buttons, Settings)
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog)
