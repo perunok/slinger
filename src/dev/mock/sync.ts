@@ -175,6 +175,8 @@ const TYPE_ORDER: Record<SyncEntityType, number> = {
   request: 3,
   environment_variable: 4,
   collection_version: 5,
+  collection_variable: 6,
+  global_variable: 7,
 }
 const byType = (a: string, b: string) => TYPE_ORDER[splitKey(a).type] - TYPE_ORDER[splitKey(b).type]
 
