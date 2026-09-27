@@ -2,7 +2,7 @@
   /**
    * The Variables section of a collection overview: the collection's variables (Postman collection `variable`)
    * in the shared variable table (enabled toggle, bulk edit, autosave). Never secret: they are exported and
-   * versioned with the collection. Local-only (not synced).
+   * versioned with the collection. Synced with the cloud workspace (sync design section 21).
    */
   import { onDestroy } from 'svelte'
   import { EnvModel } from '../environments/envModel.svelte'
@@ -32,7 +32,7 @@
     {#snippet hint()}
       Available to every request of this collection (<code>pm.collectionVariables</code> in scripts); the active environment
       overrides them. Exported and versioned with the collection, never secret (use an environment or a global for secrets).
-      Kept on this device: not synced to the cloud yet.
+      Synced when the workspace is linked to the cloud.
     {/snippet}
   </VariablesPanel>
 </div>

@@ -608,7 +608,7 @@ class TabsStore {
     }
   }
 
-  /** Saves an overview tab's edited description (collection/folder documentation is local-only). */
+  /** Saves an overview tab's edited description (collection/folder documentation). */
   private async saveOverview(tab: RequestTab): Promise<boolean> {
     const target = tab.overview!
     const text = tab.overviewDraft

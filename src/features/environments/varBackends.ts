@@ -45,7 +45,7 @@ export interface VarBackend {
 
 const fromEnv = (v: EnvironmentVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: true })
 const fromCollection = (v: CollectionVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: false, secretMissing: false, enabled: v.enabled })
-const fromGlobal = (v: GlobalVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: false, enabled: v.enabled })
+const fromGlobal = (v: GlobalVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: v.enabled })
 
 export const environmentBackend: VarBackend = {
   kind: 'environment',

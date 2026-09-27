@@ -2,7 +2,7 @@
   /**
    * Collection- or folder-level scripts. They run for every request inside, before the request's own script:
    * collection -> folders (outer to inner) -> request, for pre-request and for tests. Stored on the collection /
-   * folder as the Postman `event` array (local-only in v1: cloud sync does not carry them).
+   * folder as the Postman `event` array (synced with the cloud workspace, sync design section 21).
    */
   import { untrack } from 'svelte'
   import type { ApiFolder } from '../../../shared/types'

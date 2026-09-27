@@ -160,7 +160,8 @@
           <VariablesPanel model={globalsModel} title="Globals" label="Globals" scopeName="Globals">
             {#snippet hint()}
               Available to every request of this workspace (<code>pm.globals</code> in scripts). Collection variables and the active
-              environment override them. Kept on this device only: not synced, not exported with collections.
+              environment override them. Synced when the workspace is linked to the cloud (secret values stay on each device); not
+              exported with collections.
             {/snippet}
           </VariablesPanel>
         </div>

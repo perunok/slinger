@@ -2,7 +2,7 @@
   /**
    * Collection / folder overview tab: name, location, what it contains, and its documentation (Postman
    * `description`, Markdown) rendered by default with Edit / Split. Saving (button or Ctrl+S) stores the text
-   * on the collection/folder; it is kept on this device and exported to Postman, but not synced in v1.
+   * on the collection/folder; it is exported to Postman and synced with the cloud workspace (sync design section 21).
    * A collection overview also has a Variables section (the collection variables editor).
    */
   import type { ApiFolder } from '../../../shared/types'
@@ -137,7 +137,7 @@
       onmodechange={(m) => (tab.docsMode = m)}
       label="{target.kind === 'collection' ? 'Collection' : 'Folder'} documentation"
       idPrefix="ov-{tab.id}"
-      hint="Kept on this device and exported to Postman · not synced to the cloud yet"
+      hint="Exported to Postman · synced when the workspace is linked to the cloud"
       class="min-h-0 flex-1"
     />
     {/if}
