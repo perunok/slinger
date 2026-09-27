@@ -1026,6 +1026,28 @@ describe('themes', () => {
   })
 })
 
+describe('reopening tabs', () => {
+  it('restores open tabs after a reload, including an unsaved edit and its dirty marker', async () => {
+    await newCollection('Tabs Col')
+    await newRequest(/^Tabs Col/, 'Tab One', 'GET', 'https://example.com/one')
+    await newRequest(/^Tabs Col/, 'Tab Two', 'GET', 'https://example.com/two')
+    // Tab Two is open and active (just created and saved); edit it further without saving.
+    await typeInto(page.getByRole('textbox', { name: 'Request URL' }), 'https://example.com/two-edited')
+    await page.getByRole('tab', { name: /Tab Two/ }).locator('[title="Unsaved changes"]').waitFor()
+    expect(await page.getByRole('tab', { name: /Tab One/ }).locator('[title="Unsaved changes"]').count()).toBe(0)
+
+    await reloadApp(page)
+
+    await page.getByRole('tab', { name: /Tab One/ }).waitFor()
+    await page.getByRole('tab', { name: /Tab Two/ }).waitFor()
+    expect(await page.getByRole('tab', { name: /Tab One/ }).locator('[title="Unsaved changes"]').count()).toBe(0)
+    await page.getByRole('tab', { name: /Tab Two/ }).locator('[title="Unsaved changes"]').waitFor()
+    // The unsaved draft's actual content came back too, not just the marker.
+    await page.getByRole('tab', { name: /Tab Two/ }).click()
+    await expect.poll(() => page.getByRole('textbox', { name: 'Request URL' }).innerText()).toBe('https://example.com/two-edited')
+  })
+})
+
 describe('persistence across restart', () => {
   it('restarts the app and finds everything, secret included, still working', async () => {
     await ctx.app.close()

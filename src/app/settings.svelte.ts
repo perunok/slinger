@@ -2,12 +2,14 @@ import { loadAppearance, saveAppearance, type Appearance } from '../lib/appearan
 import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
 import { reportWindowBackground } from '../lib/windowBackground'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
+import { clearAllPersisted } from '../features/requests/tabsPersistence'
 
 const K = {
   font: 'slinger.fontSize',
   wrap: 'slinger.editorWrap',
   scriptTimeout: 'slinger.scriptTimeoutMs',
   scriptContinue: 'slinger.scriptContinueOnError',
+  restoreTabs: 'slinger.restoreTabsOnStartup',
 }
 
 export const SCRIPT_TIMEOUT_DEFAULT_MS = 5000
@@ -58,6 +60,8 @@ class Settings {
   scriptTimeoutMs = $state<number>(clampTimeout(Number(read(K.scriptTimeout)) || SCRIPT_TIMEOUT_DEFAULT_MS))
   /** Send the request even when a pre-request script fails (off by default). */
   scriptContinueOnError = $state<boolean>(read(K.scriptContinue) === 'true')
+  /** Reopen tabs (with their unsaved drafts) as they were left, per workspace, on the next startup. */
+  restoreTabsOnStartup = $state<boolean>(read(K.restoreTabs) !== 'false')
   #mq: MediaQueryList | null = null
 
   /** The palette actually shown (resolves 'system'). */
@@ -128,6 +132,12 @@ class Settings {
   setScriptContinueOnError(v: boolean) {
     this.scriptContinueOnError = v
     write(K.scriptContinue, String(v))
+  }
+  /** Turning this off also erases every workspace's stored tabs (nothing is kept "just in case"). */
+  setRestoreTabsOnStartup(v: boolean) {
+    this.restoreTabsOnStartup = v
+    write(K.restoreTabs, String(v))
+    if (!v) clearAllPersisted()
   }
 }
 

@@ -43,6 +43,14 @@
     </label>
   </section>
 
+  <section class="mb-5">
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={settings.restoreTabsOnStartup} onchange={(e) => settings.setRestoreTabsOnStartup(e.currentTarget.checked)} />
+      Restore open tabs on startup
+    </label>
+    <p class="mt-1 text-xs text-faint">Reopens each workspace's tabs, in the same order with the same unsaved changes, next time you start Slinger. Turning this off also erases what is currently stored.</p>
+  </section>
+
   <section class="mb-2 grid gap-2">
     <h3 class="text-sm font-semibold">Scripts</h3>
     <div class="flex items-center gap-2 text-sm">

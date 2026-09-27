@@ -57,6 +57,8 @@ class AppState {
   onRequestsReloaded: (() => void) | null = null
   /** Registered by cloud sync: local data was (re)loaded after a write, so the pending-change count may have changed. */
   onLocalData: (() => void) | null = null
+  /** Registered by the tabs store: a different workspace is about to become active (put away/restore its tabs). */
+  onWorkspaceWillChange: ((workspaceId: string) => void) | null = null
 
   foldersOf(collectionId: string): ApiFolder[] {
     return this.folders.filter((f) => f.collectionId === collectionId)
@@ -95,6 +97,7 @@ class AppState {
   }
 
   async selectWorkspace(id: string) {
+    this.onWorkspaceWillChange?.(id)
     this.workspaceId = id
     lsSet(LS_WORKSPACE, id)
     this.collections = []
