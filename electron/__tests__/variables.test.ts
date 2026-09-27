@@ -175,8 +175,8 @@ describe('globals repository', () => {
   })
 })
 
-describe('local-only and read-only', () => {
-  it('variable writes never mark anything dirty for sync, and viewer workspaces refuse them', async () => {
+describe('sync capture and read-only', () => {
+  it('variable writes mark the variables dirty for sync, and viewer workspaces refuse them (except secret values)', async () => {
     const { workspace, collection } = await scaffold(env)
     const link = (readOnly: boolean) => {
       env.core.db.prepare('DELETE FROM cloud_links').run()
@@ -193,14 +193,19 @@ describe('local-only and read-only', () => {
     const g = env.core.globals.upsert({ workspaceId: workspace.id, key: 'g', value: '1', isSecret: true })
     env.core.globals.replace(workspace.id, [{ key: 'g', value: '', isSecret: true }, { key: 'h', value: 'x' }])
     env.core.collectionVariables.delete(cv.id)
-    expect(env.core.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty').get()).toEqual({ n: 0 })
+    const dirty = env.core.db.prepare('SELECT entity_type AS t, entity_id AS id FROM sync_dirty').all() as Array<{ t: string; id: string }>
+    expect(dirty.filter((d) => d.t === 'collection_variable')).toHaveLength(2)
+    expect(dirty.filter((d) => d.t === 'global_variable')).toHaveLength(2)
 
     link(true)
     expect(code(() => env.core.collectionVariables.upsert({ collectionId: collection.id, key: 'c', value: '3' }))).toBe('read_only')
     expect(code(() => env.core.collectionVariables.setValueFromScript(collection.id, 'b', '9'))).toBe('read_only')
-    expect(code(() => env.core.globals.upsert({ workspaceId: workspace.id, key: 'g', value: 'new', isSecret: true, variableId: g.id }))).toBe('read_only')
+    expect(code(() => env.core.globals.upsert({ workspaceId: workspace.id, key: 'renamed', value: 'new', isSecret: true, variableId: g.id }))).toBe('read_only')
     expect(code(() => env.core.globals.delete(g.id))).toBe('read_only')
     expect(env.core.globals.reveal(g.id)).toBe('1')
+    // this device's value of a secret stays editable (keychain only, like environment variables)
+    env.core.globals.upsert({ workspaceId: workspace.id, key: 'g', value: 'new', isSecret: true, variableId: g.id })
+    expect(env.core.globals.reveal(g.id)).toBe('new')
   })
 })
 

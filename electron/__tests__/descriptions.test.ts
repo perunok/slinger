@@ -120,7 +120,7 @@ describe('setCollectionDescription / setFolderDescription', () => {
     expect(await env.api.setCollectionDescription(c.id, null)).toMatchObject({ description: null })
   })
 
-  it('does not mark the collection or folder dirty for sync (local-only in v1)', async () => {
+  it('marks the collection and folder dirty for sync (synced since 0009)', async () => {
     const { imported, byName } = await importDocs()
     insertLink(env.core.db, {
       workspaceId: wsId, apiBaseUrl: 'http://x', remoteWorkspaceId: 'r', remoteName: 'R', role: 'editor',
@@ -129,7 +129,9 @@ describe('setCollectionDescription / setFolderDescription', () => {
     env.core.db.prepare('DELETE FROM sync_dirty').run()
     await env.api.setCollectionDescription(imported.collection.id, 'x')
     await env.api.setFolderDescription(byName['No docs']!.id, 'y')
-    expect(env.core.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty').get()).toEqual({ n: 0 })
+    expect(env.core.db.prepare('SELECT entity_type AS t, entity_id AS id FROM sync_dirty ORDER BY rowid').all()).toEqual([
+      { t: 'collection', id: imported.collection.id }, { t: 'folder', id: byName['No docs']!.id },
+    ])
   })
 
   it('is refused on read-only (viewer) workspaces', async () => {

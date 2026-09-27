@@ -30,7 +30,7 @@ const toCollectionVar = (v: ScopedVarRow): CollectionVariable => ({
   createdAt: v.createdAt, updatedAt: v.updatedAt, version: v.version,
 })
 const toGlobal = (v: ScopedVarRow): GlobalVariable => ({
-  id: v.id, workspaceId: v.ownerId, key: v.key, value: v.isSecret ? null : v.value, isSecret: v.isSecret, maskedValue: v.isSecret ? SECRET_MASK : null,
+  id: v.id, workspaceId: v.ownerId, key: v.key, value: v.isSecret ? null : v.value, isSecret: v.isSecret, maskedValue: v.isSecret ? SECRET_MASK : null, secretMissing: false,
   enabled: v.enabled, description: v.description, sortOrder: v.sortOrder, createdAt: v.createdAt, updatedAt: v.updatedAt, version: v.version,
 })
 

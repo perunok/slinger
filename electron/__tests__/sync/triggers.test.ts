@@ -101,6 +101,31 @@ describe('change capture triggers', () => {
     expect(dirtyOf('environment_variable').sort()).toEqual([v.id, s.id].sort())
   })
 
+  it('captures collection/folder scripts and docs, collection variables and globals (0009)', async () => {
+    link()
+    const c = await env.api.createCollection(ws, 'A')
+    const f = await env.api.createFolder({ workspaceId: ws, collectionId: c.id, name: 'F' })
+    clear()
+    await env.api.setCollectionScripts(c.id, JSON.stringify([{ listen: 'test', script: { exec: ['1'] } }]))
+    await env.api.setFolderDescription(f.id, 'docs')
+    expect(dirty().map((d) => `${d.t}:${d.id}`)).toEqual([`collection:${c.id}`, `folder:${f.id}`])
+    clear()
+    const cv = await env.api.upsertCollectionVariable({ collectionId: c.id, key: 'k', value: '1' })
+    const g = await env.api.upsertGlobalVariable({ workspaceId: ws, key: 'g', value: 'v', isSecret: false })
+    const s = await env.api.upsertGlobalVariable({ workspaceId: ws, key: 's', value: 'SECRET', isSecret: true })
+    expect(dirty().map((d) => d.t)).toEqual(['collection_variable', 'global_variable', 'global_variable'])
+    clear()
+    await env.api.upsertCollectionVariable({ collectionId: c.id, variableId: cv.id, key: 'k', value: '2' })
+    await env.api.reorderGlobalVariables(ws, [s.id, g.id])
+    await env.api.deleteGlobalVariable(g.id)
+    expect(dirtyOf('collection_variable')).toEqual([cv.id])
+    expect(dirtyOf('global_variable').sort()).toEqual([g.id, s.id].sort())
+    // a collection delete cascades to its variables (each one dirty)
+    clear()
+    await env.api.deleteCollection(c.id)
+    expect(dirtyOf('collection_variable')).toEqual([cv.id])
+  })
+
   it('captures postman import, version restore (replace and copy) and versions', async () => {
     link()
     const c = await env.api.createCollection(ws, 'Base')
@@ -178,6 +203,8 @@ describe('read-only enforcement', () => {
     const e = await env.api.createEnvironment(ws, 'E')
     const s = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 's', value: 'x', isSecret: true })
     await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'p', value: 'x', isSecret: false })
+    const gs = await env.api.upsertGlobalVariable({ workspaceId: ws, key: 'gs', value: 'x', isSecret: true })
+    await env.api.upsertGlobalVariable({ workspaceId: ws, key: 'plain', value: 'x', isSecret: false })
     link(true)
     await expectReadOnly(env.api.createCollection(ws, 'B'))
     await expectReadOnly(env.api.renameCollection(c.id, 'B'))
@@ -194,10 +221,17 @@ describe('read-only enforcement', () => {
     await expectReadOnly(env.api.createCollectionVersion({ collectionId: c.id, version: '1.0.0' }))
     await expectReadOnly(env.api.importPostmanCollection(ws, JSON.stringify({ info: { name: 'P', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' }, item: [{ name: 'One', request: { method: 'GET', url: 'https://a' } }] })))
     await expectReadOnly(env.api.replaceCollectionFromPostman(c.id, JSON.stringify({ info: { name: 'Col' }, item: [{ name: 'One', request: { method: 'GET', url: 'https://a' } }] })))
+    await expectReadOnly(env.api.setCollectionScripts(c.id, null))
+    await expectReadOnly(env.api.setFolderDescription(f.id, 'x'))
+    await expectReadOnly(env.api.upsertCollectionVariable({ collectionId: c.id, key: 'nope', value: '1' }))
+    await expectReadOnly(env.api.upsertGlobalVariable({ workspaceId: ws, key: 'plain', value: 'changed', isSecret: false }))
+    await expectReadOnly(env.api.deleteGlobalVariable(gs.id))
     expect((await env.api.listRequests(c.id)).map((x) => x.id)).toEqual([r.id])
     // Device-local secret values stay editable in a read-only workspace (they never sync).
     await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 's', value: 'new-local-secret', isSecret: true, variableId: s.id })
     expect(await env.api.revealEnvironmentVariable(s.id)).toBe('new-local-secret')
+    await env.api.upsertGlobalVariable({ workspaceId: ws, variableId: gs.id, key: 'gs', value: 'new-global-secret', isSecret: true })
+    expect(await env.api.revealGlobalVariable(gs.id)).toBe('new-global-secret')
     // Workspace-level operations and history stay allowed.
     await env.api.renameWorkspace(ws, 'Renamed')
     await env.api.clearHistory(ws)
@@ -219,31 +253,39 @@ describe('read-only enforcement', () => {
 describe('schema drift guard', () => {
   it('every column of a synced table is classified as synced or ignored', () => {
     const synced: Record<string, string[]> = {
-      collections: ['name', 'deleted'],
-      folders: ['collection_id', 'parent_folder_id', 'name', 'sort_order', 'deleted'],
+      collections: ['name', 'deleted', 'scripts_json', 'description', 'description_type'],
+      folders: ['collection_id', 'parent_folder_id', 'name', 'sort_order', 'deleted', 'scripts_json', 'description', 'description_type'],
       requests: ['collection_id', 'folder_id', 'name', 'method', 'url', 'document_json', 'sort_order', 'deleted'],
       environments: ['name', 'deleted'],
       environment_variables: ['environment_id', 'key', 'value', 'is_secret', 'deleted'],
       collection_versions: ['deleted'],
+      collection_variables: ['collection_id', 'key', 'value', 'enabled', 'description', 'sort_order', 'deleted'],
+      global_variables: ['key', 'value', 'is_secret', 'enabled', 'description', 'sort_order', 'deleted'],
     }
     const ignored: Record<string, string[]> = {
-      // scripts_json (0005) and description(_type) (0006): collection/folder scripts and docs are local-only in v1
-      // (the cloud protocol has no field for them)
       // source_postman_id (0007): device-local re-import bookkeeping
-      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json', 'description', 'description_type', 'source_postman_id'],
-      folders: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'scripts_json', 'description', 'description_type'],
+      collections: ['id', 'workspace_id', 'version', 'created_at', 'updated_at', 'source_postman_id'],
+      folders: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       requests: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environments: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environment_variables: ['id', 'secret_ref', 'secret_missing', 'version', 'created_at', 'updated_at'],
       // immutable content columns: covered by the immutability trigger + the INSERT trigger
       collection_versions: ['id', 'workspace_id', 'collection_id', 'version', 'version_major', 'version_minor', 'version_patch', 'version_prerelease', 'notes', 'snapshot_json', 'folder_count', 'request_count', 'created_at'],
+      collection_variables: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
+      global_variables: ['id', 'workspace_id', 'secret_ref', 'secret_missing', 'version', 'created_at', 'updated_at'],
     }
+    // 0009 captures the scripts/docs columns in separate triggers (0004's stay untouched)
+    const extras: Record<string, string[]> = { collections: ['scripts_json', 'description', 'description_type'], folders: ['scripts_json', 'description', 'description_type'] }
     for (const table of Object.keys(synced)) {
       const cols = (env.core.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
       const known = new Set([...synced[table]!, ...ignored[table]!])
       expect(cols.filter((c) => !known.has(c)), `${table} gained a column that is neither synced nor ignored`).toEqual([])
-      const trig = (env.core.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(`sync_dirty_${table}_u`) as { sql: string }).sql
-      for (const c of synced[table]!) expect(trig, `${table}.${c}`).toMatch(new RegExp(`\\b${c}\\b`))
+      const trigger = (name: string) => (env.core.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name) as { sql: string }).sql
+      const trig = trigger(`sync_dirty_${table}_u`)
+      for (const c of synced[table]!) {
+        const sql = extras[table]?.includes(c) ? trigger(`sync_dirty_${table}_extras_u`) : trig
+        expect(sql, `${table}.${c}`).toMatch(new RegExp(`\\b${c}\\b`))
+      }
     }
   })
 })

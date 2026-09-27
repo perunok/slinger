@@ -169,14 +169,15 @@ describe('runScripts: persisted collection variables and globals', () => {
     expect((await gvs()).g.value).toBe('2')
   })
 
-  it('script writes to a linked workspace never mark anything dirty for sync', async () => {
+  it('script writes to a linked workspace mark the variables dirty for sync (synced since 0009)', async () => {
     insertLink(env.core.db, {
       workspaceId: wsId, apiBaseUrl: 'http://x', remoteWorkspaceId: 'r', remoteName: 'R', role: 'editor',
       clientId: null, checkpoint: 0, snapshotCursor: null, userId: null, nowS: 1,
     })
     env.core.db.prepare('DELETE FROM sync_dirty').run()
-    const r = await env.api.runScripts(input(`pm.collectionVariables.set('a', '1'); pm.globals.set('b', '2'); pm.globals.clear()`))
+    const r = await env.api.runScripts(input(`pm.collectionVariables.set('a', '1'); pm.globals.set('b', '2')`))
     expect(r.errors).toEqual([])
-    expect(env.core.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty').get()).toEqual({ n: 0 })
+    const types = (env.core.db.prepare('SELECT DISTINCT entity_type AS t FROM sync_dirty ORDER BY t').all() as Array<{ t: string }>).map((x) => x.t)
+    expect(types).toEqual(['collection_variable', 'global_variable'])
   })
 })
