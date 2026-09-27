@@ -21,6 +21,14 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
+/* Tab strips that scroll sideways when narrow (request sections, right panel): wheel, trackpad and keyboard still scroll
+   them, but a scrollbar under a single row of tabs reads as a stray line. */
+.scroll-strip {
+  scrollbar-width: none;
+}
+.scroll-strip::-webkit-scrollbar {
+  display: none;
+}
 ::selection {
   background: var(--selection);
 }

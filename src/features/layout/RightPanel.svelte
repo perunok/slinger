@@ -72,7 +72,7 @@
       onchange={(id) => rightPanel.show(id)}
       label="Right panel views"
       idPrefix="rp"
-      class="min-w-0 flex-1 overflow-x-auto overflow-y-hidden px-1"
+      class="scroll-strip min-w-0 flex-1 overflow-x-auto overflow-y-hidden px-1"
     />
     <div class="flex items-center border-b border-border pr-1">
       <IconButton icon="x" label="Close right panel ({RIGHT_PANEL_SHORTCUT})" size={13} onclick={() => rightPanel.setOpen(false)} />

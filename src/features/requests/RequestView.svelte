@@ -79,7 +79,7 @@
     {#snippet action()}<ResponsePositionButton />{/snippet}
     {#snippet first()}
       <div class="flex h-full min-h-0 flex-col">
-        <Tabs tabs={sections} value={tab.section} onchange={(v) => (tab.section = v as RequestSection)} label="Request sections" idPrefix="sec" class="shrink-0 overflow-x-auto overflow-y-hidden px-2" />
+        <Tabs tabs={sections} value={tab.section} onchange={(v) => (tab.section = v as RequestSection)} label="Request sections" idPrefix="sec" class="scroll-strip shrink-0 overflow-x-auto overflow-y-hidden px-2" />
         <div class="min-h-0 flex-1 overflow-auto" role="tabpanel" id="sec-panel-{tab.section}" aria-labelledby="sec-{tab.section}">
           {#if tab.section === 'params'}<ParamsPanel {tab} />
           {:else if tab.section === 'auth'}<AuthPanel {tab} />
