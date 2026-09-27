@@ -878,3 +878,107 @@ Server issues found while integrating (reported, not fixed here)
 - `syncPutVariable` looks up the `(environment_id, key)` clash without scoping the environment to the workspace, so a push naming
   another workspace's environment id gets `duplicate_key` with that workspace's variable id as `conflicting_resource_id` instead of
   `not_found` (needs the environment id, which is an unguessable UUID; still an information leak across workspaces).
+
+---------------------------------------------------------------------------------------------------------------------------
+
+## 21. Syncing the former local-only data (additive extension of protocol v2)
+
+Until desktop 0.6 / server 9ce4b08, four kinds of data were local-only (section 20, "Local-only data"): collection- and
+folder-level scripts (`scripts_json`, 0005), collection/folder documentation (`description`, `description_type`, 0006),
+collection variables and workspace globals (0008). This section makes them sync with the same guarantees as everything else
+(field-group merge, conflicts, tombstones, secret metadata only). The protocol stays v2; every change is additive and gated by
+capability flags in both directions, so old clients and old servers keep working unchanged.
+`collections.source_postman_id` (0007) stays local-only (device bookkeeping).
+
+### 21.1 Capability flags
+
+Four new server features, advertised in `POST /v1/sync/clients/register` `features` and ALSO in every pull and snapshot response
+(`features`, new top-level field) so a client notices a server upgrade without registering again:
+
+| feature | what it enables |
+|---|---|
+| `folder_scripts` | field `scripts_json` on `collection` and `folder` payloads (collection- and folder-level scripts) |
+| `docs` | fields `description`, `description_type` on `collection` and `folder` payloads |
+| `collection_variables` | resource type `collection_variable` |
+| `globals` | resource type `global_variable` |
+
+The client declares what it understands on every sync call: `features` query parameter on pull and snapshot (comma separated),
+`features` array in the push body (and, informational, in the register body). The server SHAPES what it returns by that
+declaration: resource types a client did not declare are left out of pull pages and snapshots (the pull checkpoint still
+advances over them), and undeclared collection/folder fields are stripped from pull, snapshot and `current_payload`. A client that
+declares nothing (desktop <= 0.6) therefore sees byte-for-byte what it saw before. Pushes are never refused for declaring nothing,
+and a field absent from an upsert means "unchanged" (old clients never wipe scripts, docs or variables).
+
+Desktop: the effective feature set of a link (`cloud_links.sync_features`, JSON array; server features intersected with the
+client's) is updated from the `features` of every pull/snapshot page BEFORE the page is applied (a response without `features`
+= an older server = none of the four). It gates the wire mapping everywhere (`toWire(type, row, features)`):
+- a field or type whose feature is off is not part of the wire payload at all, so its edits are no-ops for sync (no-op
+  elimination clears the dirty row) and dirty rows of an unsupported type are dropped at build time without a push: with an
+  older server the data simply stays local-only, no quarantine, no conflict, no error;
+- activation (a feature appears): in the same transaction, the merge bases of collections/folders get the new fields as `null`
+  (the value an upgraded server holds for rows written before the upgrade), rows with a non-null local value are marked dirty,
+  and all live collection variables / globals are marked dirty (skipped for read-only links). Local values are thereby uploaded,
+  or merged against what another device already uploaded (a different non-null value on both sides is an ordinary `edit_edit`
+  conflict of the new group);
+- deactivation (server downgraded): the fields are removed from the stored bases; nothing is pushed for the missing types.
+Pulled payloads that lack an enabled field (log entries written before the server upgrade) are read as `null` for it.
+
+### 21.2 Wire payloads, groups, limits
+
+| entity_type | local table | wire payload (additions in bold) |
+|---|---|---|
+| `collection` | `collections` | `{name, `**`scripts_json, description, description_type`**`}` |
+| `folder` | `folders` | `{collection_id, parent_folder_id, name, sort_order, `**`scripts_json, description, description_type`**`}` |
+| **`collection_variable`** | `collection_variables` | `{collection_id, key, value, enabled, description, sort_order}` (never secret) |
+| **`global_variable`** | `global_variables` | `{key, value, is_secret, enabled, description, sort_order}`; `value = null` when `is_secret`; the workspace is the owner (URL) |
+
+`scripts_json` = the Postman `event` array as JSON text or `null`; `description_type` = `text/markdown` | `text/plain` | `null`.
+
+Field groups (3-way merge unit, section 6): collection `name` | `scripts` | `docs`; folder `name` | `location` | `order` | `scripts` |
+`docs` (so a concurrent edit of a folder's script and its name merges cleanly); `collection_variable` `key` | `value` (value) | `details`
+(enabled, description) | `order` (sort_order, remote wins silently); `global_variable` `key` | `value` (value, is_secret) | `details` | `order`.
+`collection_id` of a collection variable is immutable (like `environment_id`).
+
+Limits (server and desktop identical, equal to the desktop's own input caps, so nothing a user can save is ever quarantined):
+`scripts_json` <= 2,097,152 bytes (UTF-8) and a JSON array; `description` <= 2,097,152 bytes; variable `key` 1..256 characters, not
+blank and not padded with whitespace (collection variables and globals do NOT use the environment-variable key pattern: Postman
+collections use arbitrary names); `value` <= 1,000,000 characters; variable `description` <= 100,000 characters; `sort_order`
+0..2e9. A secret global with a value is `invalid` (metadata only, exactly like environment variables, D3).
+
+### 21.3 Server
+
+Prisma: `Collection`/`Folder` gain `scriptsJson`, `description`, `descriptionType` (nullable); new `CollectionVariable` (FK
+workspace + collection, cascade; unique `(collectionId, key)`) and `GlobalVariable` (FK workspace, cascade; unique
+`(workspaceId, key)`; `value` NULL for secrets, the server never stores a secret global's value). Sync push creates/updates by
+client id with the usual `base_version` gate; key clashes are `duplicate_key` with `conflicting_resource_id` (the lookup is scoped
+to the workspace first); ids used in another workspace are `id_in_use`; a collection of another workspace is `not_found`.
+Deleting a collection logs a tombstone per collection variable (before the collection's own); deleting the workspace removes its
+globals by FK cascade (the log goes with it). Snapshot order appends `collection_variable`, `global_variable` (cursor type indexes of
+older cursors stay valid). Viewers cannot push (unchanged 403). No REST content endpoints: the dashboard does not show these yet.
+
+### 21.4 Desktop
+
+Migration `0009_sync_local_only.sql`: capture triggers for `scripts_json`/`description`/`description_type` on collections and
+folders and for every synced column of `collection_variables` / `global_variables` (INSERT + UPDATE, linked workspaces only,
+suppressed while the engine applies); `global_variables.secret_missing` (secret global created on another device, value not set
+here: `GlobalVariable.secretMissing`, like environment variables); `cloud_links.sync_features`; the globals read-only trigger is
+recreated with the environment-variable exemption so a viewer can still set a secret's value on this device. The keychain stays
+per device (`slinger:global-var:<id>`); a secret global that arrives from the cloud has `secret_missing = 1` until a value is set.
+
+Engine: mapping/groups/limits as above; ordering puts collection-variable and global deletes first with the environment-variable
+deletes (frees keys), upserts after their collection; a collection delete covers its variables (server cascade) like folders and
+requests; a remote collection delete soft-deletes its variables (dirty ones survive as `remote_deleted`, section 8.1).
+
+Unique keys (8.4) for the two new types: when a pulled variable takes a key held locally by a variable with another id, the local
+one is FOLDED into the remote one if it never reached the cloud and is equal (same value, or both secret; same enabled and
+description): it is dropped locally without a push and a secret value moves to the remote id's keychain entry (typical after
+importing the same Postman collection on two devices). Otherwise the local one is renamed `<key>_conflict` (auto-resolved note),
+as for environment variables. A push rejected `duplicate_key` for these types (another device got there first) is retried after a
+pull, which brings the holder and runs the same fold/rename; the defensive quarantine of 7.4 still applies.
+
+Conflict center: new groups `scripts` ("Scripts": the script text per event, line-diffed), `docs` ("Documentation": the text, line-
+diffed, with its format), `details` ("Enabled & description"); paths are `Collection / key` for collection variables and
+`Globals / key` for globals.
+
+Tests: fake server and real server share the wire contract (`wireContract.ts` `checkLocalOnlyContract`), the convergence fuzzer edits
+scripts, docs, collection variables and globals on both devices, unit tests cover mapping/merge/apply/fold/activation.
