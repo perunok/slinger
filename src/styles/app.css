@@ -35,17 +35,12 @@ textarea {
   font: inherit;
   color: inherit;
 }
-/* :where(...) keeps this at zero specificity so a Tailwind utility (bg-*, border-*, rounded, p*-*) always wins,
-   instead of fighting it with `!important`. */
-:where(
-    input[type='text'],
-    input[type='url'],
-    input[type='number'],
-    input[type='password'],
-    input[type='search'],
-    select,
-    textarea
-  ) {
+/* Element specificity (0,0,1): the :where() keeps the [type] attribute from adding to it, so any Tailwind utility
+   (bg-*, border-*, rounded, p*-*, one class) wins without `!important`. Not the whole selector in :where(): at zero
+   specificity Tailwind's preflight (`input, select, textarea { padding: 0 }`) would beat it and strip the padding. */
+input:where([type='text'], [type='url'], [type='number'], [type='password'], [type='search']),
+select,
+textarea {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
