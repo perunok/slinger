@@ -16,6 +16,7 @@
  * (`ExampleLocator`), which finds it again after other examples were added/removed. Examples that
  * Slinger creates (save as example, duplicate, add) get a Postman-schema `id` (a UUID).
  */
+import { SYNC_DOCUMENT_JSON_BYTE_LIMIT } from '../../shared/syncLimits'
 import type { ApiRequest, HttpResponseData, RequestHeader } from '../../shared/types'
 import { dataRows, ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { postmanRequestFromDocument, postmanUrlToString } from './postman'
@@ -40,6 +41,31 @@ export function assertDocumentFits(documentJson: string): void {
       `The request with its saved examples would take ${formatBytes(bytes)}, above the ${formatBytes(REQUEST_DOCUMENT_LIMIT_BYTES)} a request can hold. Delete or shorten some examples first.`,
     )
   }
+}
+
+/** UTF-8 byte length of a serialized request document (same measure the main process pushes against). */
+export function documentJsonBytes(documentJson: string): number {
+  return new TextEncoder().encode(documentJson).length
+}
+
+/**
+ * Decimal KB/MB, matching the cloud's own limit wording (900_000 bytes -> "900 KB"); `formatBytes` above uses
+ * binary units for response/example sizes, which would print an odd "878.9 KB" for this cap.
+ */
+function formatSyncBytes(n: number): string {
+  return n < 1_000_000 ? `${Math.round(n / 1000)} KB` : `${(n / 1_000_000).toFixed(1)} MB`
+}
+
+/**
+ * Non-blocking "too big to sync" heads-up for the request editor: null while the document fits cloud sync's
+ * per-request cap (electron/sync/mapping.ts `LIMITS.documentJsonBytes`, shared/syncLimits.ts), otherwise the
+ * warning text. Saved examples live inside this same document, so large ones are a common cause. Only meaningful
+ * for a workspace linked to cloud sync; callers gate on `sync.current?.linked` themselves.
+ */
+export function syncSizeWarning(documentJson: string): string | null {
+  const bytes = documentJsonBytes(documentJson)
+  if (bytes <= SYNC_DOCUMENT_JSON_BYTE_LIMIT) return null
+  return `This request is ${formatSyncBytes(bytes)}, over the ${formatSyncBytes(SYNC_DOCUMENT_JSON_BYTE_LIMIT)} cloud sync limit, so it will not sync. Remove large saved examples or response bodies to sync it.`
 }
 
 export type PreviewLanguage = 'json' | 'xml' | 'html' | 'text' | 'javascript'

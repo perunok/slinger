@@ -9,6 +9,7 @@ import {
   REQUEST_DOCUMENT_LIMIT_BYTES,
   assertDocumentFits,
   blankExample,
+  documentJsonBytes,
   duplicateExample,
   exampleFingerprint,
   exampleFromResponse,
@@ -20,6 +21,7 @@ import {
   readExamples,
   serializeExample,
   statusReason,
+  syncSizeWarning,
   updateExamples,
 } from './examples'
 import { newRow } from './kv'
@@ -271,6 +273,20 @@ describe('creating examples', () => {
     expect(() => assertDocumentFits('x'.repeat(REQUEST_DOCUMENT_LIMIT_BYTES))).not.toThrow()
     // Counted in UTF-8 bytes, like the main process: 2 bytes per "é".
     expect(() => assertDocumentFits('é'.repeat(REQUEST_DOCUMENT_LIMIT_BYTES / 2 + 1))).toThrow(/Delete or shorten some examples/)
+  })
+
+  it('documentJsonBytes counts UTF-8 bytes, not characters', () => {
+    expect(documentJsonBytes('x'.repeat(10))).toBe(10)
+    expect(documentJsonBytes('é'.repeat(10))).toBe(20) // 2 bytes each
+  })
+
+  it('syncSizeWarning is null at and under the cloud sync cap, and names the size and the 900 KB limit above it', () => {
+    expect(syncSizeWarning('x'.repeat(900_000))).toBeNull()
+    const warning = syncSizeWarning('x'.repeat(1_200_000))
+    expect(warning).toMatch(/^This request is 1\.2 MB, over the 900 KB cloud sync limit, so it will not sync\./)
+    expect(warning).toMatch(/saved examples or response bodies/)
+    // Just over the cap still reports in KB, not MB.
+    expect(syncSizeWarning('x'.repeat(900_001))).toMatch(/^This request is 900 KB, over the 900 KB cloud sync limit/)
   })
 
   it('makes blank examples and duplicates', () => {

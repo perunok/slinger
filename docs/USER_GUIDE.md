@@ -129,7 +129,9 @@ returns, a fixture to compare against, or a response you want to keep.
   refused.
 - **Where they live:** examples are part of the request, so collection versions, cloud sync and Postman export carry them. A
   request with its examples can hold at most 10 MB locally; cloud sync accepts about 900 KB per request, so keep large bodies out
-  of synced examples. Read-only (viewer) workspaces can open examples but not change them.
+  of synced examples. In a workspace linked to cloud sync, the request editor warns right in the tab once a request's saved
+  examples and response bodies push it over that 900 KB limit, since an oversized one is skipped by sync instead of blocked -
+  remove or shrink examples to bring it back under the cap. Read-only (viewer) workspaces can open examples but not change them.
 
 ## Collection runner
 
@@ -483,8 +485,10 @@ later), Sync error (with a Retry toast), conflicts, Read-only, Signed out, Acces
 
 **Conflicts.** Changes are merged automatically when they do not overlap. When they do, the item is kept as you have it, is not
 uploaded, and appears in **Review conflicts**, grouped by kind: changed in both places, deleted in the cloud (you have unsent
-changes), deleted here (edited in the cloud), version number clash, and changes the cloud rejected. Each shows mine and the cloud
-side by side. Choose **Keep mine**, **Use cloud version**, **Keep both** (a request only: your version becomes a "(conflict copy)"),
+changes), deleted here (edited in the cloud), version number clash, and changes the cloud rejected (for example a request whose
+saved examples pushed it over the 900 KB per-request limit - see "Where they live" under Saved examples; the request editor warns
+about this before it ever reaches that point). Each shows mine and the cloud side by side. Choose **Keep mine**, **Use cloud
+version**, **Keep both** (a request only: your version becomes a "(conflict copy)"),
 or **Choose per part** to pick mine or the cloud value for each conflicting part. Select several and use **Keep mine** / **Use
 cloud** for bulk resolution (asks first). Keyboard: arrow keys, Home and End move through the list, Space selects, Tab reaches the
 details and buttons. If a request open in a tab is changed in the cloud while you have unsaved edits in it, the tab keeps your edits

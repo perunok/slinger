@@ -55,12 +55,12 @@
     <span class="font-medium text-muted">Saved response</span>
     <label class="flex items-center gap-1 text-muted">
       Status
-      <input type="number" min="0" max="999" class="h-7 w-20 !py-0" aria-label="Status code" value={d.code ?? ''} oninput={(e) => setCode(e.currentTarget.value)} />
+      <input type="number" min="0" max="999" class="h-7 w-20 py-0" aria-label="Status code" value={d.code ?? ''} oninput={(e) => setCode(e.currentTarget.value)} />
     </label>
-    <input type="text" class="h-7 w-44 !py-0" aria-label="Status text" placeholder="Status text" value={d.status} oninput={(e) => (d.status = e.currentTarget.value)} />
+    <input type="text" class="h-7 w-44 py-0" aria-label="Status text" placeholder="Status text" value={d.status} oninput={(e) => (d.status = e.currentTarget.value)} />
     <label class="ml-auto flex items-center gap-1 text-muted">
       Language
-      <select class="h-7 !py-0" aria-label="Body language" value={d.language} onchange={(e) => (d.language = e.currentTarget.value)}>
+      <select class="h-7 py-0" aria-label="Body language" value={d.language} onchange={(e) => (d.language = e.currentTarget.value)}>
         <option value="">Auto</option>
         {#each PREVIEW_LANGUAGES as l (l.id)}<option value={l.id}>{l.label}</option>{/each}
         {#if d.language && !known}<option value={d.language}>{d.language}</option>{/if}
