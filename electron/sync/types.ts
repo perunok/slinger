@@ -75,11 +75,15 @@ export interface PullResponse {
   operations: PullOp[]
   checkpoint: number
   has_more: boolean
+  /** The server's sync features (design section 21); absent from older servers. */
+  features?: string[]
 }
 export interface SnapshotResponse {
   checkpoint: number
   entities: SnapshotEntity[]
   next_cursor: string | null
+  /** The server's sync features (design section 21); absent from older servers. */
+  features?: string[]
 }
 
 /** Everything the pure engine needs; injected so tests run in plain Node with fake time. */
@@ -117,6 +121,8 @@ export interface LinkRow {
   last_error_code: string | null
   last_error_message: string | null
   snapshot_cursor: string | null
+  /** JSON array of the effective sync extension features (0009); NULL until the server answered once. */
+  sync_features: string | null
 }
 
 export interface EntityState {
@@ -136,4 +142,6 @@ export const SYNC_ENTITY_TYPES: readonly SyncEntityType[] = [
   'environment',
   'environment_variable',
   'collection_version',
+  'collection_variable',
+  'global_variable',
 ] as const

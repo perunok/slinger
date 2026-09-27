@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalJson, checkLimits, toWire, type AnyRow } from '../../sync/mapping'
+import { NO_FEATURES, canonicalJson, checkLimits, toWire, type AnyRow } from '../../sync/mapping'
 
 describe('wire mapping', () => {
   it('maps every entity type to its documented payload', () => {
-    expect(toWire('collection', { name: 'C' } as AnyRow)).toEqual({ name: 'C' })
-    expect(toWire('environment', { name: 'E' } as AnyRow)).toEqual({ name: 'E' })
-    expect(toWire('folder', { collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 2 } as AnyRow)).toEqual({ collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 2 })
-    expect(toWire('request', { collection_id: 'c', folder_id: 'f', name: 'R', method: 'GET', url: 'u', document_json: '{}', sort_order: 1 } as AnyRow)).toEqual({
+    expect(toWire('collection', { name: 'C' } as AnyRow, NO_FEATURES)).toEqual({ name: 'C' })
+    expect(toWire('environment', { name: 'E' } as AnyRow, NO_FEATURES)).toEqual({ name: 'E' })
+    expect(toWire('folder', { collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 2 } as AnyRow, NO_FEATURES)).toEqual({ collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 2 })
+    expect(toWire('request', { collection_id: 'c', folder_id: 'f', name: 'R', method: 'GET', url: 'u', document_json: '{}', sort_order: 1 } as AnyRow, NO_FEATURES)).toEqual({
       collection_id: 'c', folder_id: 'f', name: 'R', method: 'GET', url: 'u', document_json: '{}', sort_order: 1,
     })
-    expect(toWire('collection_version', { collection_id: 'c', version: '1.2.3', notes: null, snapshot_json: '{}', folder_count: 1, request_count: 2, created_at: 86400 } as AnyRow)).toEqual({
+    expect(toWire('collection_version', { collection_id: 'c', version: '1.2.3', notes: null, snapshot_json: '{}', folder_count: 1, request_count: 2, created_at: 86400 } as AnyRow, NO_FEATURES)).toEqual({
       collection_id: 'c', semver: '1.2.3', notes: null, snapshot_json: '{}', folder_count: 1, request_count: 2, created_at: '1970-01-02T00:00:00.000Z',
     })
   })
 
   it('a secret variable NEVER carries a value, whatever the row holds', () => {
-    const secret = toWire('environment_variable', { environment_id: 'e', key: 'k', value: 'leaked?', is_secret: 1 } as AnyRow)
+    const secret = toWire('environment_variable', { environment_id: 'e', key: 'k', value: 'leaked?', is_secret: 1 } as AnyRow, NO_FEATURES)
     expect(secret).toEqual({ environment_id: 'e', key: 'k', value: null, is_secret: true })
-    expect(toWire('environment_variable', { environment_id: 'e', key: 'k', value: null, is_secret: 0 } as AnyRow).value).toBe('')
+    expect(toWire('environment_variable', { environment_id: 'e', key: 'k', value: null, is_secret: 0 } as AnyRow, NO_FEATURES).value).toBe('')
   })
 
   it('canonicalJson sorts keys recursively and keeps null', () => {

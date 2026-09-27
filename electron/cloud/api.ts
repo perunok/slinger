@@ -1,5 +1,6 @@
 /** Typed cloud API calls used by sync (paths and shapes: slinger-admin server routes + docs/SYNC_DESIGN.md section 14). */
 import type { CloudRole } from '../../shared/types'
+import { CLIENT_FEATURES } from '../sync/mapping'
 import type { PullResponse, PushResponse, SnapshotResponse, WireOp } from '../sync/types'
 import type { CloudAuth } from './auth'
 import { CloudApiError } from './errors'
@@ -61,7 +62,7 @@ export class CloudApi implements CloudGateway {
 
   async registerClient(deviceName: string, clientVersion: string): Promise<RegisterResult> {
     const res = await this.call<{ client: { client_id: string }; protocol_version?: number; features?: string[] }>('POST', '/v1/sync/clients/register', {
-      body: { client_name: 'slinger-desktop', client_version: clientVersion, device_name: deviceName, platform: process.platform },
+      body: { client_name: 'slinger-desktop', client_version: clientVersion, device_name: deviceName, platform: process.platform, features: CLIENT_FEATURES },
     })
     return { clientId: res.client.client_id, protocolVersion: res.protocol_version ?? 1, features: res.features ?? [] }
   }
@@ -100,19 +101,20 @@ export class CloudApi implements CloudGateway {
 
   push(workspaceId: string, clientId: string, baseCheckpoint: number, operations: WireOp[]): Promise<PushResponse> {
     return this.call<PushResponse>('POST', `/v1/workspaces/${encodeURIComponent(workspaceId)}/sync/push`, {
-      body: { client_id: clientId, base_checkpoint: baseCheckpoint, operations },
+      // `features`: the sync extensions this client understands (design section 21); shapes rejection payloads.
+      body: { client_id: clientId, base_checkpoint: baseCheckpoint, operations, features: CLIENT_FEATURES },
     })
   }
 
   pull(workspaceId: string, clientId: string, afterCheckpoint: number, limit: number): Promise<PullResponse> {
     return this.call<PullResponse>('GET', `/v1/workspaces/${encodeURIComponent(workspaceId)}/sync/pull`, {
-      query: { client_id: clientId, after_checkpoint: afterCheckpoint, limit },
+      query: { client_id: clientId, after_checkpoint: afterCheckpoint, limit, features: CLIENT_FEATURES.join(',') },
     })
   }
 
   snapshot(workspaceId: string, clientId: string, cursor: string | null, limit: number): Promise<SnapshotResponse> {
     return this.call<SnapshotResponse>('GET', `/v1/workspaces/${encodeURIComponent(workspaceId)}/sync/snapshot`, {
-      query: { client_id: clientId, cursor: cursor || undefined, limit },
+      query: { client_id: clientId, cursor: cursor || undefined, limit, features: CLIENT_FEATURES.join(',') },
     })
   }
 }

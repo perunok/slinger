@@ -35,7 +35,10 @@ const resolveInput = z.object({
   conflictId: uuid,
   resolution: z.enum(['keep_local', 'keep_remote', 'merge', 'duplicate']),
   fieldChoices: z
-    .object({ name: groupChoice, content: groupChoice, location: groupChoice, order: groupChoice, key: groupChoice, value: groupChoice })
+    .object({
+      name: groupChoice, content: groupChoice, location: groupChoice, order: groupChoice, key: groupChoice, value: groupChoice,
+      scripts: groupChoice, docs: groupChoice, details: groupChoice,
+    })
     .partial()
     .optional(),
   newVersion: z.string().min(1).max(128).optional(),

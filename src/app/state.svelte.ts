@@ -248,7 +248,7 @@ class AppState {
     this.onLocalData?.()
   }
 
-  // ---- collection variables and globals (persisted, local-only) ------------------
+  // ---- collection variables and globals (persisted; synced with cloud workspaces when the server supports it) ----
 
   /** Reloads one collection's variables (after an edit, a script write, an import) and republishes the scope. */
   async reloadCollectionVariables(collectionId: string): Promise<void> {

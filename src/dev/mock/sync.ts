@@ -175,6 +175,8 @@ const TYPE_ORDER: Record<SyncEntityType, number> = {
   request: 3,
   environment_variable: 4,
   collection_version: 5,
+  collection_variable: 6,
+  global_variable: 7,
 }
 const byType = (a: string, b: string) => TYPE_ORDER[splitKey(a).type] - TYPE_ORDER[splitKey(b).type]
 
@@ -826,7 +828,7 @@ export function createSyncApi(
       case 'setFolderScripts':
       case 'setCollectionDescription':
       case 'setFolderDescription': {
-        // Local-only (not synced), but still refused for viewers, like the real triggers from migrations 0005/0006.
+        // Synced by the real engine (design section 21; this mock does not simulate that), refused for viewers like 0005/0006.
         const target = method === 'setCollectionScripts' || method === 'setCollectionDescription' ? wsOfCollection(String(a0(args))) : (s.folders.find((f) => f.id === a0(args))?.workspaceId ?? null)
         if (target && links.get(target)?.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')
         return null
@@ -834,7 +836,7 @@ export function createSyncApi(
       case 'deleteWorkspace':
         return null
       default: {
-        // Persisted variables (local-only, never synced) are still refused for viewers, like the 0008 triggers.
+        // Persisted variables (synced by the real engine, not simulated here) are refused for viewers, like the 0008 triggers.
         const target = variableMethodWorkspace(s, method, args)
         if (target && links.get(target)?.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')
         return null

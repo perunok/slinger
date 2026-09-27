@@ -80,6 +80,18 @@ function checkInvariants(p: Pair): void {
       expect(keys.has(k), `duplicate key ${k}`).toBe(false)
       keys.add(k)
     }
+    if (x.type === 'collection_variable') {
+      expect(has('collection', w.collection_id), `collection variable ${x.id} collection`).toBe(true)
+      const k = `cv:${String(w.collection_id)}:${String(w.key)}`
+      expect(keys.has(k), `duplicate key ${k}`).toBe(false)
+      keys.add(k)
+    }
+    if (x.type === 'global_variable') {
+      const k = `gv:${String(w.key)}`
+      expect(keys.has(k), `duplicate key ${k}`).toBe(false)
+      keys.add(k)
+      expect(w.is_secret === true ? w.value : null).toBeNull()
+    }
     if (x.type === 'collection_version') {
       expect(has('collection', w.collection_id)).toBe(true)
       const k = `${String(w.collection_id)}:${String(w.semver)}`
@@ -155,6 +167,10 @@ describe('two-device convergence fuzzer', () => {
         const rs = cloud.requests.filter((r) => /sync\/push$/.test(r.path) && r.response).flatMap((r) => (JSON.parse(r.response!) as { rejected: Array<{ code: string; reason: string; message: string }> }).rejected)
         console.log('REASONS', JSON.stringify(rs.map((r) => `${r.code}/${r.reason}: ${r.message.slice(0, 80)}`)))
       }
+      if (process.env.STATS) {
+        const stats = [p.a, p.b].flatMap((d) => rows<{ k: string }>(d, "SELECT kind || ':' || entity_type || ':' || status AS k FROM sync_conflicts").map((r) => r.k))
+        console.log('STATS', JSON.stringify(stats))
+      }
       checkInvariants(p)
     })
   }
@@ -220,7 +236,7 @@ function dumpEntity(p: Pair, id: string): string {
   const one = (name: string, d: Device) =>
     JSON.stringify({
       name,
-      rows: ['collections', 'folders', 'requests', 'environments', 'environment_variables', 'collection_versions'].flatMap((t) => rows(d, `SELECT * FROM ${t} WHERE id = ?`, id)).map((r) => ({ ...r, document_json: undefined, snapshot_json: undefined })),
+      rows: ['collections', 'folders', 'requests', 'environments', 'environment_variables', 'collection_versions', 'collection_variables', 'global_variables'].flatMap((t) => rows(d, `SELECT * FROM ${t} WHERE id = ?`, id)).map((r) => ({ ...r, document_json: undefined, snapshot_json: undefined })),
       entity: rows(d, 'SELECT * FROM sync_entities WHERE entity_id = ?', id),
       dirty: rows(d, 'SELECT * FROM sync_dirty WHERE entity_id = ?', id),
       conflicts: rows(d, 'SELECT id, kind, status, resolution FROM sync_conflicts WHERE entity_id = ?', id),
