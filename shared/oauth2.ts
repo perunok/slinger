@@ -95,3 +95,15 @@ export function stripOAuth2TokensFromDocumentJson(documentJson: string): string 
     return documentJson
   }
 }
+
+/** A collection snapshot (`CollectionSnapshot`-shaped) whose request documents carry no OAuth 2.0 tokens; same reference when unchanged. */
+export function stripOAuth2TokensFromSnapshot<T extends { requests: Array<{ documentJson: string }> }>(snapshot: T): T {
+  let changed = false
+  const requests = snapshot.requests.map((r) => {
+    const documentJson = stripOAuth2TokensFromDocumentJson(r.documentJson)
+    if (documentJson === r.documentJson) return r
+    changed = true
+    return { ...r, documentJson }
+  })
+  return changed ? { ...snapshot, requests } : snapshot
+}

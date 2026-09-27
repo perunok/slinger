@@ -7,6 +7,7 @@
  * descriptions are ever stored (the snapshot shape), never environments or secrets.
  */
 import { z } from 'zod'
+import { stripOAuth2TokensFromSnapshot } from '../../shared/oauth2'
 import {
   SLINGER_EXPORT_FORMAT_VERSION,
   SLINGER_IMPORT_LIMITS as LIMITS,
@@ -166,7 +167,8 @@ export function restoreVersionHistory(db: Db, collectionId: string, raw: unknown
           continue
         }
         seenInFile.add(v.version)
-        const snapshot = v.snapshot as CollectionSnapshot
+        // A file may carry OAuth 2.0 tokens inside request documents (older tools); they are never stored.
+        const snapshot = stripOAuth2TokensFromSnapshot(v.snapshot as CollectionSnapshot)
         const snapshotJson = JSON.stringify(snapshot)
         const notes = v.notes?.trim() || null
         let label = v.version

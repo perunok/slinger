@@ -1,5 +1,6 @@
 import type { Collection, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../../shared/types'
 import { suggestBumps } from '../../lib/semver'
+import { stripOAuth2Tokens, stripOAuth2TokensFromItem } from '../../../shared/oauth2'
 import { addCollection, addFolder, addRequest, must, removeCollectionContents, touch, type MockState } from './store'
 import { fail } from './util'
 import { addVersion } from './versions'
@@ -28,10 +29,10 @@ function requestDocument(item: Json, request: Json, name: string, method: string
     description: request.description ?? null,
     headers: request.header ?? [],
     body: request.body ?? null,
-    auth: request.auth ?? null,
+    auth: stripOAuth2Tokens(request.auth ?? null),
     scripts: item.event ?? [],
     responses: item.response ?? [],
-    source: item,
+    source: stripOAuth2TokensFromItem(item),
   }
 }
 
