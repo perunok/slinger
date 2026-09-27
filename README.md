@@ -53,7 +53,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
   the live collection).
 - Import Postman collections (including collection, folder and request scripts and collection variables), environments and
   globals (v2.x), export collections as Postman v2.1 JSON.
-- Five themes plus "follow the OS", adjustable font size, keyboard shortcuts.
+- 31 themes and 18 accent colours plus "follow the OS", your own custom themes (CSS or colour pickers, contrast warnings,
+  import/export as `.slinger-theme.json`), adjustable font size, keyboard shortcuts.
 - Cloud panel: device-code sign-in to a Slinger Cloud server, publishing/linking a workspace and collection sync
   ([docs/SYNC_DESIGN.md](docs/SYNC_DESIGN.md)).
 
@@ -118,8 +119,12 @@ Exports (Postman JSON, saved response bodies) go to the folder you chose in the 
 
 ## Themes
 
-Light, Dark, Midnight, Solarized Dark, High Contrast, or System (follows the OS light/dark preference). Choose in
-Settings (Ctrl+,). Themes are CSS variable palettes in `src/styles/themes.css`; see [src/README.md](src/README.md) to add one.
+31 built-in themes (light and dark, including two high-contrast ones), 18 accent colours, or System (follows the OS
+light/dark preference with a light and a dark theme of your choice). Choose in Settings (Ctrl+,). You can also create
+custom themes: pick a base theme and override any of its colour tokens in a small CSS config (`--bg: #0b1020;`) or with
+colour pickers, with live preview and contrast warnings, and share them as `.slinger-theme.json` files (see
+[docs/USER_GUIDE.md](docs/USER_GUIDE.md#custom-themes)). Built-in themes are CSS variable palettes in
+`src/styles/themes.css`; see [src/README.md](src/README.md) to add one.
 
 ## Cloud
 

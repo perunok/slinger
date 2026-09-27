@@ -541,7 +541,8 @@ The goal is that the first frame already looks like Slinger, in the user's theme
    `createWindow()` with `show: false`, `backgroundColor` = the remembered `--bg` (before the first report: the default light or
    dark theme's `--bg` per `nativeTheme`), and the remembered bounds clamped onto the displays that exist now (off-screen or
    unplugged monitor: default size, centred; too large: shrunk; partly off-screen: moved inside).
-2. **First paint** (`index.html`, no JS needed): `public/theme-init.js` sets `data-theme`/`data-accent` from localStorage, and the
+2. **First paint** (`index.html`, no JS needed): `public/theme-init.js` sets `data-theme`/`data-accent` from localStorage (for a
+   custom theme also `data-custom-theme` and its generated `<style id="slinger-custom-themes">` rule), and the
    render-blocking `src/styles/boot.css` (which `@import`s `themes.css`, so tokens load once, before first paint, in dev and in the
    build) styles the static `#boot-skeleton`: top bar, sidebar tree, request editor, response pane, with a transform-only
    shimmer (off under `prefers-reduced-motion`). `ready-to-show` fires on that frame and the window is shown (maximised first if it
@@ -631,7 +632,9 @@ rendered to HTML and sanitised by DOMPurify before `{@html}`; nothing else in th
 
 **Theming tokens.** `src/styles/themes.css` defines each palette as CSS variables on `[data-theme='<id>']`; `<html data-theme>`
 selects one (`light`, `dark`, `midnight`, `solarized`, `contrast`; `system` resolves to light or dark from
-`prefers-color-scheme`). `public/theme-init.js` applies the stored theme before first paint. Components use tokens only (Tailwind
+`prefers-color-scheme`). User-defined custom themes (`src/lib/customThemes.ts`, `slinger.customThemes`) are shown as their
+built-in base theme plus `data-custom-theme='custom:<uuid>'` and a rule generated from their validated token map (see
+`src/README.md`, "Themes and accents"). `public/theme-init.js` applies the stored theme before first paint. Components use tokens only (Tailwind
 classes such as `bg-surface`, `text-fg` map to the variables in `tailwind.config.js`; CodeMirror themes use `var(--...)`).
 Token groups: surfaces, borders, text, semantic (`accent`, `danger`, `success`, `warning`), template tokens, syntax colours, HTTP
 method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Preferences are stored in `localStorage`
