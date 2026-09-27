@@ -149,6 +149,13 @@ backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff`
 * Read-only workspaces: edit affordances read `sync.blocked` (`features/sync/syncStore.svelte.ts`); the main process still rejects writes with `read_only`.
 * Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
-* Other `localStorage` keys: `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`.
-* Open request tabs are in memory only and are not restored on restart.
+* Other `localStorage` keys: `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
+  `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below).
+* Open request tabs (saved requests, examples, collection/folder overviews, unsaved "scratch" tabs, their order, the active one,
+  and unsaved drafts/dirty markers) are persisted per workspace to `localStorage['slinger.tabs.<workspaceId>']` and restored on
+  startup and on switching to that workspace; see `features/requests/tabsPersistence.ts` (pure serialize/restore, versioned,
+  caps tab count and a single draft's size) and the debounced-save `$effect` + `beforeunload`/`pagehide` flush in `app/App.svelte`.
+  Response panes are never persisted. A restored dirty draft whose request changed remotely in the meantime is not merged or
+  overwritten: it keeps its old base version, so Save hits the normal version-conflict dialog. The "Restore open tabs on
+  startup" setting (`app/settings.svelte.ts`, default on) gates all of this; turning it off also erases what is stored.
 * Whole-app docs: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md).
