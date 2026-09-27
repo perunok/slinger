@@ -19,6 +19,7 @@
   import RequestView from '../features/requests/RequestView.svelte'
   import SaveAsDialog from '../features/requests/SaveAsDialog.svelte'
   import { tabsStore } from '../features/requests/tabs.svelte'
+  import { cancelScheduledSave, flushSave, scheduleSave, serializeTabs } from '../features/requests/tabsPersistence'
   import UnsavedDialog from '../features/requests/UnsavedDialog.svelte'
   import RunnerDialog from '../features/runner/RunnerDialog.svelte'
   import ScriptsDialogHost from '../features/scripts/ScriptsDialogHost.svelte'
@@ -52,9 +53,24 @@
   $effect(() => {
     if (app.ready) dismissBootSkeleton(app.fatalError ? 'error' : 'ready')
   })
+
+  /**
+   * Debounced autosave of open tabs, per workspace (see tabsPersistence.ts). Reading `tabsStore.tabs`
+   * and each tab's fields (inside serializeTabs) is what makes this effect re-run on every relevant
+   * change, including keystrokes in a draft; only the localStorage write itself is delayed.
+   */
+  $effect(() => {
+    const workspaceId = app.workspaceId
+    if (!workspaceId) return
+    if (!settings.restoreTabsOnStartup) {
+      cancelScheduledSave(workspaceId)
+      return
+    }
+    scheduleSave(workspaceId, serializeTabs(tabsStore.tabs, tabsStore.activeId))
+  })
 </script>
 
-<svelte:window onkeydown={handleShortcut} />
+<svelte:window onkeydown={handleShortcut} onbeforeunload={() => flushSave()} onpagehide={() => flushSave()} />
 
 <div class="flex h-full flex-col">
   <TopBar />
