@@ -235,7 +235,8 @@ class TabsStore {
    * `app.requests` actually reflects the new workspace.
    */
   switchWorkspace(workspaceId: string) {
-    if (this.currentWorkspaceId && this.currentWorkspaceId !== workspaceId) {
+    if (workspaceId === this.currentWorkspaceId) return // already active: never wipe its own tabs
+    if (this.currentWorkspaceId) {
       this.stash.set(this.currentWorkspaceId, { tabs: this.tabs, activeId: this.activeId })
     }
     this.currentWorkspaceId = workspaceId
