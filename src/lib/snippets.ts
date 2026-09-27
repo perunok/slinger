@@ -6,6 +6,9 @@
 import type { HttpRequestInput } from '../../shared/types'
 import { textToBase64, type EditorLanguage } from './response'
 
+/** Stands in for an OAuth 2.0 access token in generated code (the real token never leaves the keychain for this). */
+export const OAUTH2_TOKEN_PLACEHOLDER = '<access token>'
+
 export type SnippetLang = 'curl' | 'fetch' | 'axios' | 'python' | 'go' | 'php' | 'powershell'
 
 export const SNIPPET_LANGS: { id: SnippetLang; label: string; editorLanguage: EditorLanguage }[] = [
@@ -67,6 +70,14 @@ function prepare(input: HttpRequestInput): Prepared {
     headers.push(['Authorization', `Basic ${textToBase64(`${auth.basic.username}:${auth.basic.password}`)}`])
   } else if (auth?.kind === 'bearer' && auth.bearer?.token && !hasHeader(headers, 'Authorization')) {
     headers.push(['Authorization', `Bearer ${auth.bearer.token}`])
+  } else if (auth?.kind === 'oauth2' && auth.oauth2) {
+    // The token stays in the keychain: snippets show a placeholder to paste it into.
+    const prefix = auth.oauth2.headerPrefix.trim()
+    if (auth.oauth2.addTo === 'query') {
+      const marked = appendQuery(url, 'access_token', '\u0000')
+      const at = marked.lastIndexOf('access_token=%00')
+      url = `${marked.slice(0, at)}access_token=${OAUTH2_TOKEN_PLACEHOLDER}${marked.slice(at + 'access_token=%00'.length)}`
+    } else if (!hasHeader(headers, 'Authorization')) headers.push(['Authorization', prefix ? `${prefix} ${OAUTH2_TOKEN_PLACEHOLDER}` : OAUTH2_TOKEN_PLACEHOLDER])
   } else if (auth?.kind === 'apiKey' && auth.apiKey?.key) {
     if (auth.apiKey.addTo === 'query') url = appendQuery(url, auth.apiKey.key, auth.apiKey.value)
     else if (!hasHeader(headers, auth.apiKey.key)) headers.push([auth.apiKey.key, auth.apiKey.value])

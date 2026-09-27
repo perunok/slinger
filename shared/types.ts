@@ -462,6 +462,16 @@ export interface ScriptRequestData {
     urlencoded?: ScriptKeyValue[]
     formdata?: ScriptKeyValue[]
   }
+  /**
+   * ADDED (OAuth 2.0): read-only `pm.request.auth` (Postman type + parameters, templates unresolved). Credential
+   * values that are not a `{{variable}}` reference are masked; OAuth 2.0 tokens are never part of it.
+   */
+  auth?: ScriptAuthData | null
+}
+
+export interface ScriptAuthData {
+  type: string
+  params: ScriptKeyValue[]
 }
 
 /** The response as test scripts see it (`pm.response`). */

@@ -212,3 +212,42 @@ describe('pm API (Postman-compatible cases)', () => {
     expect(errors[0].message).toBe("ReferenceError: 'undefinedFunction' is not defined (line 3)")
   })
 })
+
+describe('pm.request.auth', () => {
+  it('is a read-only view of the auth the renderer passed, and undefined without auth', async () => {
+    const REQ = { method: 'GET', url: 'https://api.example.com/x', headers: [], body: { mode: 'none' as const } }
+    const auth = { type: 'oauth2', params: [{ key: 'grant_type', value: 'client_credentials' }, { key: 'clientId', value: 'app' }] }
+    const r = await run({
+      event: 'prerequest',
+      request: { ...REQ, auth },
+      code: `
+        pm.test('view', () => {
+          pm.expect(pm.request.auth.type).to.equal('oauth2')
+          pm.expect(pm.request.auth.parameters().get('clientId')).to.equal('app')
+          pm.expect(pm.request.auth.toJSON().oauth2[0]).to.eql({ key: 'grant_type', value: 'client_credentials' })
+          pm.expect(pm.request.toJSON().auth).to.equal(undefined)
+        })
+        pm.request.auth.type = 'basic'
+        pm.request.headers.add({ key: 'X', value: '1' })
+      `,
+    })
+    expect(r.errors).toEqual([])
+    expect(r.tests.map((t) => t.status)).toEqual(['passed'])
+    // The mutated request keeps the job's auth, whatever the script did.
+    expect(r.request?.auth).toEqual(auth)
+    const none = await run({ event: 'test', request: REQ, response: RESPONSE, code: `pm.test('none', () => pm.expect(pm.request.auth).to.equal(undefined))` })
+    expect(none.tests.map((t) => t.status)).toEqual(['passed'])
+  })
+})
+
+describe('pm.sendRequest with OAuth 2.0 auth', () => {
+  it('fails with a clear error (tokens are not available to scripts)', async () => {
+    let sent = 0
+    const r = await run(
+      { event: 'prerequest', code: `pm.sendRequest({ url: 'https://api.example.com', auth: { type: 'oauth2', oauth2: [] } }, () => {})` },
+      { sendHttp: async () => (sent++, { ok: false, error: 'unexpected', logLine: '' }) },
+    )
+    expect(sent).toBe(0)
+    expect(r.errors.map((e) => e.message).join(' ')).toContain('OAuth 2.0 auth is not supported in scripts')
+  })
+})

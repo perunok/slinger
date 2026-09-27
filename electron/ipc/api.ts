@@ -185,6 +185,9 @@ const scriptRequest = z.object({
     urlencoded: z.array(scriptKv).max(1000).optional(),
     formdata: z.array(scriptKv).max(1000).optional(),
   }),
+  auth: z
+    .object({ type: z.string().max(64), params: z.array(z.object({ key: z.string().max(256), value: z.string().max(65_536) })).max(100) })
+    .nullish(),
 })
 const scriptResponse = z.object({
   code: z.number().int().min(0).max(999),

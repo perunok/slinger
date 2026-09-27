@@ -200,3 +200,52 @@ describe('executeDraft with scripts', () => {
     expect(sent).toEqual([])
   })
 })
+
+describe('executeDraft with OAuth 2.0', () => {
+  const oauthDraft = (over: Record<string, string> = {}) => {
+    const r = getUser()
+    const draft = parseDocument(r)
+    draft.url = '{{baseUrl}}/echo'
+    draft.auth.kind = 'oauth2'
+    Object.assign(draft.auth.oauth2, {
+      grantType: 'client_credentials',
+      accessTokenUrl: '{{baseUrl}}/token',
+      clientId: 'app',
+      clientSecret: '{{apiToken}}',
+      scope: 'read',
+      password: '{{notDefinedAnywhere}}', // not used by this grant: must not block the send
+      ...over,
+    })
+    return { r, draft }
+  }
+
+  it('asks for a token first, then sends with the stored token applied by key', async () => {
+    const { r, draft } = oauthDraft()
+    const refresh = vi.spyOn(backend, 'refreshOAuth2Token')
+    const none = await executeDraft(draft, ctx(r))
+    expect(none).toMatchObject({ ok: false, kind: 'invalid', error: expect.stringContaining('No access token yet') })
+    expect(sent).toEqual([])
+
+    const config = refresh.mock.calls[0]![0]
+    expect(config).toMatchObject({ grantType: 'client_credentials', accessTokenUrl: 'https://mock.slinger.local/token', clientSecret: 'sk_live_demo_123', password: '' })
+    const status = await backend.getOAuth2Token(config)
+
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(sent[0]!.auth).toEqual({ kind: 'oauth2', oauth2: { tokenKey: status.tokenKey, addTo: 'header', headerPrefix: 'Bearer' } })
+    expect(JSON.stringify(sent[0])).not.toContain(await backend.revealOAuth2Token(status.tokenKey))
+    if (out.ok) expect(out.response.bodyText).toContain('Bearer mock-client_credentials-')
+    expect(refresh.mock.calls.at(-1)![1]).toEqual({ ifExpiring: true })
+  })
+
+  it('refuses the implicit grant with a pointer to PKCE', async () => {
+    const { r, draft } = oauthDraft({ grantType: 'implicit' })
+    expect(await executeDraft(draft, ctx(r))).toMatchObject({ ok: false, kind: 'invalid', error: expect.stringContaining('Authorization Code (With PKCE)') })
+  })
+
+  it('shows a refresh failure inline', async () => {
+    const { r, draft } = oauthDraft()
+    backend.failNext('refreshOAuth2Token', { code: 'invalid_input', message: 'The access token expired and could not be refreshed (x). Get a new access token.' })
+    expect(await executeDraft(draft, ctx(r))).toMatchObject({ ok: false, kind: 'failed', error: expect.stringContaining('Get a new access token') })
+  })
+})

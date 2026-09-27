@@ -147,3 +147,20 @@ describe('testCounts', () => {
     expect(testCounts(null)).toEqual({ passed: 0, failed: 0, skipped: 0, total: 0 })
   })
 })
+
+describe('pm.request.auth view', () => {
+  it('masks literal credentials, keeps {{variables}} and never includes tokens', () => {
+    const d = newDraft()
+    d.auth.kind = 'oauth2'
+    Object.assign(d.auth.oauth2, { grantType: 'password_credentials', clientId: 'app', clientSecret: 'literal-secret', password: '{{pw}}' })
+    const view = requestDataFromDraft(d).auth!
+    expect(view.type).toBe('oauth2')
+    const byKey = Object.fromEntries(view.params.map((p) => [p.key, p.value]))
+    expect(byKey).toMatchObject({ grant_type: 'password_credentials', clientId: 'app', clientSecret: '••••••••', password: '{{pw}}' })
+    d.auth.kind = 'basic'
+    d.auth.basic = { username: 'u', password: 'p' }
+    expect(requestDataFromDraft(d).auth).toEqual({ type: 'basic', params: [{ key: 'username', value: 'u' }, { key: 'password', value: '••••••••' }] })
+    d.auth.kind = 'none'
+    expect(requestDataFromDraft(d).auth).toBeUndefined()
+  })
+})

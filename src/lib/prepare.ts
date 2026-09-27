@@ -3,14 +3,19 @@
  * The single place where templates are applied, so single send, runner and
  * code snippets all behave identically.
  */
-import type { HttpRequestInput, ResolvedAuth, ResolvedBody } from '../../shared/types'
+import type { HttpRequestInput, OAuth2Config, ResolvedAuth, ResolvedBody } from '../../shared/types'
+import { isSupportedGrant, resolveOAuth2Config, unsupportedGrantMessage } from './oauth2'
 import { dataRows } from './kv'
 import { rawContentType, templateTexts, type RequestDraft } from './request'
 import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
 
 export type PrepareResult =
-  | { ok: true; input: HttpRequestInput; warnings: string[] }
+  /**
+   * `oauth2`: the request's resolved OAuth 2.0 settings. The caller looks the token up with them
+   * (refreshOAuth2Token ifExpiring) and puts the returned key into `input.auth.oauth2.tokenKey`, which is '' here.
+   */
+  | { ok: true; input: HttpRequestInput; warnings: string[]; oauth2?: OAuth2Config }
   | { ok: false; error: string; unresolved: string[] }
 
 export interface PrepareContext {
@@ -45,20 +50,20 @@ function appendQuery(url: string, key: string, value: string): string {
   return `${base}?${query ? `${query}&` : ''}${pair}${hash !== null ? `#${hash}` : ''}`
 }
 
-export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): PrepareResult {
-  const unresolved = findUnresolved(templateTexts(draft), ctx.scope)
-  if (unresolved.length > 0 && !ctx.allowUnresolved) {
-    return {
-      ok: false,
-      unresolved,
-      error: `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. Define ${unresolved.length > 1 ? 'them' : 'it'} in the active environment.`,
-    }
-  }
-  const cache = new Map<string, string>()
+export const unresolvedMessage = (unresolved: string[]): string =>
+  `Unresolved variable${unresolved.length > 1 ? 's' : ''}: ${unresolved.map((n) => `{{${n}}}`).join(', ')}. Define ${unresolved.length > 1 ? 'them' : 'it'} in the active environment.`
+
+export const leftoverMessage = (names: string[]): string =>
+  `Could not fully resolve ${names.map((n) => `{{${n}}}`).join(', ')} (undefined, or defined in terms of itself).`
+
+/**
+ * The resolver `prepareRequest` uses, for other callers that resolve templates the same way (OAuth 2.0 settings):
+ * values may reference other variables ({{a}} = "{{b}}/x"), so it resolves until stable (bounded, so circular
+ * definitions terminate) and remembers in `leftover` any token that survives.
+ */
+export function templateResolver(ctx: Pick<PrepareContext, 'scope' | 'secrets' | 'now'>, cache = new Map<string, string>()) {
   const leftover = new Set<string>()
-  // Values may reference other variables ({{a}} = "{{b}}/x"): resolve until stable (bounded, so
-  // circular definitions terminate) and remember any token that survives.
-  const r = (t: string) => {
+  const resolve = (t: string) => {
     let cur = t
     for (let i = 0; i < 6 && cur.includes('{{'); i++) {
       const next = resolveTemplate(cur, ctx.scope, { secrets: ctx.secrets, now: ctx.now, builtinCache: cache })
@@ -68,6 +73,16 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     for (const tok of parseTokens(cur)) leftover.add(tok.name)
     return cur
   }
+  return { resolve, leftover }
+}
+
+export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): PrepareResult {
+  const unresolved = findUnresolved(templateTexts(draft), ctx.scope)
+  if (unresolved.length > 0 && !ctx.allowUnresolved) {
+    return { ok: false, unresolved, error: unresolvedMessage(unresolved) }
+  }
+  const cache = new Map<string, string>()
+  const { resolve: r, leftover } = templateResolver(ctx, cache)
   // The history log must never contain secret values: same resolution, but secrets stay `{{name}}`.
   const rHistory = (t: string) => {
     let cur = t
@@ -91,6 +106,7 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
   // Auth
   const a = draft.auth
   const auth: ResolvedAuth = { kind: 'none' }
+  let oauth2: OAuth2Config | undefined
   if (a.kind === 'basic') {
     auth.kind = 'basic'
     auth.basic = { username: r(a.basic.username), password: r(a.basic.password) }
@@ -103,6 +119,11 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
       auth.kind = 'apiKey'
       auth.apiKey = { key, value: r(a.apiKey.value), addTo: a.apiKey.addTo }
     }
+  } else if (a.kind === 'oauth2') {
+    if (!isSupportedGrant(a.oauth2.grantType)) return { ok: false, unresolved: [], error: unsupportedGrantMessage(a.oauth2.grantType) }
+    oauth2 = resolveOAuth2Config(a.oauth2, ctx.workspaceId, r, 'send')
+    auth.kind = 'oauth2'
+    auth.oauth2 = { tokenKey: '', addTo: a.oauth2.addTokenTo === 'queryParams' ? 'query' : 'header', headerPrefix: r(a.oauth2.headerPrefix).trim() }
   } else if (a.kind === 'unsupported') {
     warnings.push(`Auth type "${a.unsupportedType ?? 'custom'}" is not supported; sent without authorization.`)
   }
@@ -147,16 +168,13 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
 
   if (leftover.size > 0 && !ctx.allowUnresolved) {
     const names = [...leftover]
-    return {
-      ok: false,
-      unresolved: names,
-      error: `Could not fully resolve ${names.map((n) => `{{${n}}}`).join(', ')} (undefined, or defined in terms of itself).`,
-    }
+    return { ok: false, unresolved: names, error: leftoverMessage(names) }
   }
 
   return {
     ok: true,
     warnings,
+    ...(oauth2 ? { oauth2 } : {}),
     input: {
       method: draft.method.toUpperCase(),
       url,
