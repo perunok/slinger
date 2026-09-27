@@ -131,8 +131,25 @@ See its root `README.md` and `server/README.md` (OpenAPI in `server/openapi.yaml
 
 `npm run electron:build` uses [electron-builder](https://www.electron.build/) with `electron-builder.yml`:
 NSIS installer (Windows), DMG (macOS), AppImage and deb (Linux). Native modules are unpacked from the asar archive.
-`install.sh` installs a built AppImage for the current user and creates a desktop launcher (Linux). No code signing or
-auto-update is configured.
+No auto-update is configured; signing is optional (see `.github/workflows/release.yml`).
+
+`install.sh` installs a build for the current user and adds a `slinger` terminal command that opens the app. Without an
+argument it takes the newest matching build in `release/`; pass a path to install a downloaded one instead.
+
+- **Linux**: copies the AppImage to `~/.local/share/slinger`, creates a desktop launcher, and writes `slinger` to `~/.local/bin`.
+- **macOS**: copies `Slinger.app` out of the DMG for your architecture into `/Applications` (`~/Applications` if that is not
+  writable) and writes `slinger` to `/opt/homebrew/bin` or `/usr/local/bin` (else `~/.local/bin`). Quit Slinger first when
+  reinstalling. Without a Developer ID certificate, build the DMG ad-hoc signed, since Apple Silicon refuses fully unsigned apps:
+
+  ```bash
+  npm run electron:build -- --mac dmg -c.mac.identity=-
+  ./install.sh
+  ```
+
+  A DMG downloaded from GitHub Releases is not notarized: open the app the first time with right-click, Open.
+
+Set `SLINGER_BIN_DIR` to put the `slinger` command elsewhere. Your data is not touched by reinstalling (see
+[Where your data lives](#where-your-data-lives)).
 
 ## Documentation
 
