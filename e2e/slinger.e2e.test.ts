@@ -982,7 +982,9 @@ describe('reopening tabs', () => {
   it('restores open tabs after a reload, including an unsaved edit and its dirty marker', async () => {
     await newCollection('Tabs Col')
     await newRequest(/^Tabs Col/, 'Tab One', 'GET', 'https://example.com/one')
+    await save()
     await newRequest(/^Tabs Col/, 'Tab Two', 'GET', 'https://example.com/two')
+    await save()
     // Tab Two is open and active (just created and saved); edit it further without saving.
     await typeInto(page.getByRole('textbox', { name: 'Request URL' }), 'https://example.com/two-edited')
     await page.getByRole('tab', { name: /Tab Two/ }).locator('[title="Unsaved changes"]').waitFor()
