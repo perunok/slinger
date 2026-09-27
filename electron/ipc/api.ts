@@ -7,6 +7,7 @@ import { assertExternalUrl } from '../services/externalUrl'
 import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
+import { OAUTH2_GRANT_TYPES } from '../../shared/oauth2'
 import type { Core } from '../services/core'
 import { cssColorSchema } from '../lib/windowState'
 import { collectVersionInfo } from '../lib/versionInfo'
@@ -48,11 +49,14 @@ const httpRequestInput = z.object({
   url: z.string().max(100_000),
   headers: z.array(requestHeader).max(500),
   auth: z.object({
-    kind: z.enum(['none', 'basic', 'bearer', 'apiKey']),
+    kind: z.enum(['none', 'basic', 'bearer', 'apiKey', 'oauth2']),
     basic: z.object({ username: z.string().max(65_536), password: z.string().max(65_536) }).optional(),
     bearer: z.object({ token: z.string().max(65_536) }).optional(),
     apiKey: z
       .object({ key: z.string().max(8192), value: z.string().max(65_536), addTo: z.enum(['header', 'query']) })
+      .optional(),
+    oauth2: z
+      .object({ tokenKey: z.string().regex(/^[0-9a-f]{64}$/), addTo: z.enum(['header', 'query']), headerPrefix: z.string().max(256) })
       .optional(),
   }),
   body: z.object({
@@ -84,6 +88,33 @@ const httpRequestInput = z.object({
   historyUrl: z.string().max(100_000).nullish(),
   scriptSessionId: z.string().max(128).nullish(),
 })
+
+// ---- OAuth 2.0 ----------------------------------------------------------------
+
+const oauth2Text = z.string().max(8192)
+const oauth2Config = z
+  .object({
+    workspaceId: uuid,
+    grantType: z.enum(OAUTH2_GRANT_TYPES),
+    authUrl: oauth2Text,
+    accessTokenUrl: oauth2Text,
+    clientId: oauth2Text,
+    clientSecret: oauth2Text,
+    scope: oauth2Text,
+    state: z.string().max(1024),
+    redirectUri: z.string().max(2048),
+    username: oauth2Text,
+    password: oauth2Text,
+    challengeAlgorithm: z.enum(['S256', 'plain']),
+    codeVerifier: z.string().max(128),
+    clientAuthentication: z.enum(['header', 'body']),
+    refreshTokenUrl: oauth2Text,
+    audience: oauth2Text,
+    resource: oauth2Text,
+  })
+  .strict()
+const oauth2FlowId = z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/)
+const oauth2TokenKey = z.string().regex(/^[0-9a-f]{64}$/)
 
 const cloudFetchInput = z.object({
   method: z.string().min(1).max(32),
@@ -374,6 +405,24 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, timeout] = parseArgs(z.tuple([z.string(), z.number()]), a)
       return core.authCallbacks.wait(id, timeout)
     },
+
+    // OAuth 2.0 request authorization (services/oauth2.ts); tokens stay in main and the keychain
+    getOAuth2Token: async (...a) => {
+      const [config, options] = parseArgs(
+        z.tuple([oauth2Config, z.object({ flowId: oauth2FlowId.optional(), timeoutMs: z.number().int().min(1).max(3_600_000).optional() }).strict().optional()]),
+        a,
+      )
+      // Only the configured (http/https) authorization URL is ever opened, through the same allow-list as openExternalUrl.
+      return core.oauth2.getToken(config, options ?? {}, (url) => platform.openExternal(assertExternalUrl(url)))
+    },
+    cancelOAuth2Flow: async (...a) => core.oauth2.cancel(parseArgs(z.tuple([oauth2FlowId]), a)[0]),
+    refreshOAuth2Token: async (...a) => {
+      const [config, options] = parseArgs(z.tuple([oauth2Config, z.object({ ifExpiring: z.boolean().optional() }).strict().optional()]), a)
+      return core.oauth2.refresh(config, options ?? {})
+    },
+    getOAuth2TokenStatus: async (...a) => core.oauth2.status(parseArgs(z.tuple([oauth2Config]), a)[0]),
+    deleteOAuth2Token: async (...a) => core.oauth2.delete(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
+    revealOAuth2Token: async (...a) => core.oauth2.reveal(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),

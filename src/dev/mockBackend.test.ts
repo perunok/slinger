@@ -329,3 +329,58 @@ describe('test hooks and seed', () => {
     expect(await seeded.listWorkspaces()).toHaveLength(2)
   })
 })
+
+describe('OAuth 2.0 (mock)', () => {
+  const config = (over: Record<string, unknown> = {}) => ({
+    workspaceId: 'w',
+    grantType: 'client_credentials' as const,
+    authUrl: '',
+    accessTokenUrl: 'https://mock.slinger.local/token',
+    clientId: 'app',
+    clientSecret: 's',
+    scope: 'read',
+    state: '',
+    redirectUri: '',
+    username: '',
+    password: '',
+    challengeAlgorithm: 'S256' as const,
+    codeVerifier: '',
+    clientAuthentication: 'header' as const,
+    refreshTokenUrl: '',
+    audience: '',
+    resource: '',
+    ...over,
+  })
+
+  it('issues, applies, refreshes, reveals and deletes a token without returning it from status calls', async () => {
+    const empty = await api.getOAuth2TokenStatus(config())
+    expect(empty).toMatchObject({ hasToken: false, maskedToken: null })
+    expect(empty.tokenKey).toMatch(/^[0-9a-f]{64}$/)
+    const e = await rejects(api.executeHttpRequest(run({ url: 'https://mock.slinger.local/echo', auth: { kind: 'oauth2', oauth2: { tokenKey: empty.tokenKey, addTo: 'header', headerPrefix: 'Bearer' } } })))
+    expect(e).toMatchObject({ code: 'invalid_input', details: { reason: 'oauth2_no_token' } })
+
+    const status = await api.getOAuth2Token(config())
+    expect(status).toMatchObject({ hasToken: true, tokenKey: empty.tokenKey, scope: 'read', hasRefreshToken: true })
+    const token = await api.revealOAuth2Token(status.tokenKey)
+    expect(JSON.stringify(status)).not.toContain(token)
+    const res = await api.executeHttpRequest(run({ url: 'https://mock.slinger.local/echo', auth: { kind: 'oauth2', oauth2: { tokenKey: status.tokenKey, addTo: 'header', headerPrefix: 'Bearer' } } }))
+    expect(res.bodyText).toContain(`Bearer ${token}`)
+
+    const refreshed = await api.refreshOAuth2Token(config())
+    expect(await api.revealOAuth2Token(refreshed.tokenKey)).not.toBe(token)
+    await api.deleteOAuth2Token(status.tokenKey)
+    expect((await api.getOAuth2TokenStatus(config())).hasToken).toBe(false)
+  })
+
+  it('refuses a non-loopback redirect URI and can cancel an authorization code flow', async () => {
+    const auth = config({ grantType: 'authorization_code', authUrl: 'https://mock.slinger.local/authorize' })
+    expect(await rejects(api.getOAuth2Token({ ...auth, redirectUri: 'https://oauth.pstmn.io/v1/callback' }))).toMatchObject({
+      details: { reason: 'redirect_not_loopback' },
+    })
+    api.setLatency(1)
+    const waiting = api.getOAuth2Token(auth, { flowId: 'f1' })
+    await new Promise((r) => setTimeout(r, 30))
+    await api.cancelOAuth2Flow('f1')
+    expect(await rejects(waiting)).toMatchObject({ code: 'network_error', details: { cancelled: true } })
+  })
+})

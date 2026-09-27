@@ -9,6 +9,7 @@ import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
 import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
+import { createOAuth2Api } from './mock/oauth2'
 import { importPostman, replaceFromPostman } from './mock/postmanImport'
 import { seedState } from './mock/seed'
 import { emptyState, type MockState } from './mock/store'
@@ -86,6 +87,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createVersionApi(state),
     ...createHttpApi(state),
     ...createScriptsApi(),
+    ...createOAuth2Api(state, () => latency),
     ...misc,
     ...sync.api,
     async listHistory(workspaceId, limit) {
