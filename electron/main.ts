@@ -430,6 +430,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     core?.sync.stop()
     core?.authCallbacks.closeAll()
+    core?.oauth2.cancelAll()
     db?.close()
     db = null
   })
