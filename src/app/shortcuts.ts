@@ -1,5 +1,5 @@
 import type { MenuCommand } from '../../shared/menu'
-import { toggleResponsePosition, toggleStatusBar } from '../features/layout/layoutActions'
+import { toggleResponsePosition, toggleRightPanel, toggleStatusBar } from '../features/layout/layoutActions'
 import { tabsStore } from '../features/requests/tabs.svelte'
 import { sync } from '../features/sync/syncStore.svelte'
 import { toast } from './toast.svelte'
@@ -12,8 +12,8 @@ export function dialogOpen(): boolean {
 // Keys that also appear in the application menu. The menu only shows them (registerAccelerator: false), but macOS
 // always registers menu key equivalents, so remember what the keyboard just ran and let the menu skip a duplicate.
 const MENU_KEYS: Partial<Record<string, MenuCommand>> = { t: 'newRequest', w: 'closeTab', ',': 'settings', '/': 'shortcuts' }
-// Ctrl/Cmd+Alt+<letter> layout toggles (also View menu items, label-only there).
-const ALT_MENU_KEYS: Partial<Record<string, MenuCommand>> = { v: 'toggleResponsePosition' }
+// Ctrl/Cmd+Alt+<letter> layout toggles (also View menu items, label-only there): V response position, B right panel.
+const ALT_MENU_KEYS: Partial<Record<string, MenuCommand>> = { v: 'toggleResponsePosition', b: 'toggleRightPanel' }
 const DUPLICATE_WINDOW_MS = 300
 let lastKeyboard: { command: MenuCommand; at: number } | null = null
 
@@ -94,6 +94,9 @@ export function runLayoutCommand(command: MenuCommand): boolean {
       return true
     case 'toggleStatusBar':
       toggleStatusBar()
+      return true
+    case 'toggleRightPanel':
+      toggleRightPanel()
       return true
   }
   return false

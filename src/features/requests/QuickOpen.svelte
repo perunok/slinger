@@ -15,7 +15,9 @@
   import { methodColor } from './method'
   import { sync } from '../sync/syncStore.svelte'
   import { tabsStore } from './tabs.svelte'
-  import { RESPONSE_POSITION_SHORTCUT, toggleStatusBar } from '../layout/layoutActions'
+  import { RESPONSE_POSITION_SHORTCUT, RIGHT_PANEL_SHORTCUT, showRightPanel, toggleRightPanel, toggleStatusBar } from '../layout/layoutActions'
+  import { SIDE_PANELS } from '../layout/panels'
+  import { rightPanel } from '../layout/rightPanel.svelte'
 
   interface Command {
     key: string
@@ -82,6 +84,24 @@
       current: () => settings.responsePosition === 'beside',
       run: () => settings.setResponsePosition('beside'),
     },
+    {
+      key: 'layout:right-panel',
+      label: 'Layout: Toggle right panel',
+      hint: RIGHT_PANEL_SHORTCUT,
+      swatch: {},
+      icon: 'panel-right',
+      current: () => rightPanel.open,
+      run: () => toggleRightPanel(),
+    },
+    ...SIDE_PANELS.map((p) => ({
+      key: `layout:right-panel:${p.id}`,
+      label: `Right panel: ${p.label}`,
+      hint: 'show in the right panel',
+      swatch: {},
+      icon: 'panel-right' as const,
+      current: () => rightPanel.open && rightPanel.panel === p.id,
+      run: () => showRightPanel(p.id),
+    })),
     {
       key: 'layout:status-bar',
       label: 'Layout: Toggle status bar',

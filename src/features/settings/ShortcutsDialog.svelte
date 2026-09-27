@@ -11,6 +11,7 @@
     ['Ctrl+K', 'Go to request (type > for commands: theme, accent, layout, export)'],
     ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
     ['Ctrl+Alt+V', 'Show the response below / beside the request'],
+    ['Ctrl+Alt+B', 'Show / hide the right panel (variables, docs, code, info)'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+/', 'This list'],
     ['Enter (in a table cell)', 'Move to the cell below'],

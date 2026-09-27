@@ -111,19 +111,19 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   mnemonics).
 - **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
-  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Status Bar, Actual Size /
-  Zoom In / Zoom Out, Toggle Full Screen;
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Right Panel, Toggle Status
+  Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
   **Help:** User Guide, Keyboard Shortcuts, Release Notes, Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
   `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggles `toggleResponsePosition`,
-  `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
   window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
   (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
   button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
   collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
 - **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,`, `/` and the
-  layout toggles Ctrl/Cmd+Alt+V (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
+  layout toggles Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
   AltGr produced a character): the
   menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
   macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
@@ -571,6 +571,14 @@ environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}
 `scope` for the active tab's collection, `scopeFor(collectionId)` for sends and the runner), `settings`, `toast`, and `features/requests/tabs.svelte.ts`
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
+
+**Layout** (`src/features/layout`). The request/response split orientation and "Show status bar" are settings; the right
+panel's state is its own small store (`rightPanel.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
+and shows the right panel only when the main area keeps `minMainWidth` (`fitPanelWidth`), so neither the panel nor the status
+bar can squeeze the request editor below a usable size at the 900x600 minimum window. Right-panel views are registered in
+`panels.ts` (id, label, icon, component taking the active request/example tab or null, optional availability); add a view
+there. Every layout command (`layoutActions.ts`) is shared by the shortcut, the View menu command, the command palette, the
+buttons and Settings.
 
 **Cloud sync in the renderer** (`src/features/sync`, `src/features/cloud`). `sync/syncStore.svelte.ts` is one reactive wrapper over
 the account/sync IPC methods plus a single `onSyncEvent` subscription (`status`, `applied`, `conflicts`, `auth`, `signInResult`);

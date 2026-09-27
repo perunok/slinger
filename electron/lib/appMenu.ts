@@ -7,7 +7,7 @@
  * matching keyboard shortcut (src/app/menuCommands.ts).
  *
  * Accelerators. The renderer owns Ctrl/Cmd+T (new tab), Ctrl/Cmd+W (close the request TAB), Ctrl/Cmd+, (settings),
- * Ctrl/Cmd+/ (shortcuts) and the View layout toggles (Ctrl/Cmd+Alt+V) in src/app/shortcuts.ts. The menu shows those accelerators as labels only
+ * Ctrl/Cmd+/ (shortcuts) and the View layout toggles (Ctrl/Cmd+Alt+V, Ctrl/Cmd+Alt+B) in src/app/shortcuts.ts. The menu shows those accelerators as labels only
  * (`registerAccelerator: false`), so on Windows/Linux the key press reaches the renderer's handler exactly once.
  * macOS always registers menu key equivalents; there Electron gives the page the key first and only falls back to
  * the menu when the page did not handle it (preventDefault), and the renderer additionally drops a menu command that
@@ -111,6 +111,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
         ? ([{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, separator] as MenuItemConstructorOptions[])
         : []),
       command('Toggle Response Position', 'toggleResponsePosition', shown('CmdOrCtrl+Alt+V')),
+      command('Toggle Right Panel', 'toggleRightPanel', shown('CmdOrCtrl+Alt+B')),
       command('Toggle Status Bar', 'toggleStatusBar'),
       separator,
       { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => o.zoom('reset') },

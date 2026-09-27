@@ -155,3 +155,20 @@ input[type='range'] {
 .code-editor .cm-scroller {
   overflow: auto;
 }
+
+/* {{variable}} names in the right panel's Variables list, coloured like in the editors. */
+.var-chip {
+  font-family: var(--font-mono);
+  border-radius: 3px;
+  padding: 0 3px;
+  color: var(--var-ok);
+  background: var(--var-ok-bg);
+}
+.var-chip[data-status='secret'] {
+  color: var(--var-secret);
+  background: var(--var-secret-bg);
+}
+.var-chip[data-status='unresolved'] {
+  color: var(--var-bad);
+  background: var(--var-bad-bg);
+}

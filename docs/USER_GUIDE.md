@@ -7,10 +7,11 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 - **Menu bar:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
 - **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
-  Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
+  Right panel, Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
+- **Right panel** (closed by default): see [Right panel](#right-panel).
 
 ### Status bar
 
@@ -23,10 +24,31 @@ The thin bar at the bottom of the window shows, from left to right:
 - **Activity:** *Sending…* while requests are in flight, *Running <collection>… 3/10* while the collection runner runs.
 - On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
   *Not sent* when the last send failed before a response.
-- The **response position** button (same as the button on the divider, see below).
+- The **response position** button (same as the button on the divider, see below) and the **right panel** button.
 
 Hide it with **Settings > Layout > Show status bar** or **View > Toggle Status Bar** (also in the command palette,
 `> status bar`).
+
+### Right panel
+
+A panel on the right of the main area with more about the active request or example tab. Open or close it with the
+panel icon in the top bar or at the right end of the status bar, **Ctrl+Alt+B** (Cmd+Option+B on macOS), **View > Toggle
+Right Panel**, or the command palette (`> right panel`, which can also open it directly on one view). It has four views:
+
+- **Variables:** every `{{variable}}` the request uses (URL, enabled headers, body, authorization) with its current value and
+  where it comes from (environment, collection, globals, built-in). Secret values are masked; variables that are not defined
+  anywhere are highlighted and have a **Create** button. Below: all variables in scope.
+- **Docs:** the request's documentation, rendered. **Edit in Docs** switches the request to its Docs section (for an example,
+  **Open request** opens the parent request).
+- **Code:** the code snippet for the request (the same generator as the request's Code section), with a language picker and
+  **Copy**.
+- **Info:** name, method, URL, collection/folder, saved or unsaved, ID, created and updated times, version, and the workspace's
+  sync state.
+
+With no request tab active (or a collection overview), the views say so. Drag the panel's left edge to resize it (or focus
+the edge and use Left/Right). Whether it is open, the view and the width are remembered. The panel only shows when the request
+editor keeps a usable width next to it (about 500 px, 640 px with the response beside the request); in a narrower window it
+hides until there is room again (the status bar icon turns amber), so widen the window or drag the sidebar narrower.
 
 ### Response below or beside the request
 
@@ -675,7 +697,7 @@ Slinger has its own menu bar (on macOS at the top of the screen).
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
 | **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
-| **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
 | **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
 
@@ -701,6 +723,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+Alt+V | Show the response below / beside the request |
+| Ctrl+Alt+B | Show / hide the right panel |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |
 | Enter (in a table cell) | Move to the cell below |
