@@ -18,13 +18,15 @@ export interface Row {
   deleted: boolean
   /** Secret variable that came from the cloud: its value is not set on this device. */
   secretMissing: boolean
+  /** Collection variables and globals can be disabled (kept, but they do not resolve). Environments: always true. */
+  enabled: boolean
 }
 
 let counter = 0
 export const newRid = (): string => `r${Date.now().toString(36)}${(counter++).toString(36)}`
 
 export function newRow(envId: string, patch: Partial<Row> = {}): Row {
-  return { rid: newRid(), envId, key: '', value: '', isSecret: false, serverSecret: false, secretTouched: false, revealed: false, deleted: false, secretMissing: false, ...patch }
+  return { rid: newRid(), envId, key: '', value: '', isSecret: false, serverSecret: false, secretTouched: false, revealed: false, deleted: false, secretMissing: false, enabled: true, ...patch }
 }
 
 export const isBlank = (r: Row): boolean => !r.id && r.key === '' && r.value === '' && !r.isSecret
@@ -106,9 +108,9 @@ export function parseBulk(text: string): BulkParse {
   return { entries, errors }
 }
 
-/** Rows that can be represented as one `key=value` line. Secrets never are. */
+/** Rows that can be represented as one `key=value` line. Secrets and disabled variables never are. */
 export function bulkEligible(r: Row): boolean {
-  return !r.deleted && !r.isSecret && !r.serverSecret && validateKey(r.key) === null && !/[\r\n]/.test(r.value) && r.value === r.value.trim()
+  return !r.deleted && r.enabled && !r.isSecret && !r.serverSecret && validateKey(r.key) === null && !/[\r\n]/.test(r.value) && r.value === r.value.trim()
 }
 
 export const serializeBulk = (rows: Row[]): string => rows.filter(bulkEligible).map((r) => `${r.key}=${r.value}`).join('\n')

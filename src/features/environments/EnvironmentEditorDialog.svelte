@@ -20,8 +20,13 @@
   import NameDialog from './NameDialog.svelte'
   import { envNameIssue } from './envLogic'
   import SaveStatus from './SaveStatus.svelte'
+  import { globalsBackend } from './varBackends'
+  import VariablesPanel from './VariablesPanel.svelte'
 
   const model = new EnvModel()
+  /** The workspace's globals: the "Globals" entry at the top of the list. */
+  const globalsModel = new EnvModel(600, globalsBackend)
+  let showGlobals = $state(false)
   let closing = $state(false)
   let closeError = $state<string | null>(null)
   let dialog = $state<null | { kind: 'create' } | { kind: 'rename'; env: Environment } | { kind: 'delete'; env: Environment }>(null)
@@ -32,13 +37,25 @@
     const wanted = ui.envEditor.newVariable ? app.activeEnvironmentId : (ui.envEditor.environmentId ?? app.activeEnvironmentId)
     const id = app.environments.find((e) => e.id === wanted)?.id ?? app.environments[0]?.id
     if (id) void model.load(id)
+    if (ui.envEditor.globals) void selectGlobals()
   })
-  onDestroy(() => model.dispose())
+  onDestroy(() => {
+    model.dispose()
+    globalsModel.dispose()
+  })
+
+  // "Create variable" in Globals (popover target): add a row for the name once the globals are loaded.
+  $effect(() => {
+    const name = ui.envEditor.newVariable
+    if (!name || !ui.envEditor.globals || !showGlobals || !globalsModel.environmentId || globalsModel.loading) return
+    ui.envEditor = { ...ui.envEditor, newVariable: undefined }
+    globalsModel.addNamed(name)
+  })
 
   // "Create variable" popover: add a row for the name, on the active environment.
   $effect(() => {
     const name = ui.envEditor.newVariable
-    if (!name || !model.environmentId || model.loading) return
+    if (!name || ui.envEditor.globals || !model.environmentId || model.loading) return
     ui.envEditor = { ...ui.envEditor, newVariable: undefined }
     void (async () => {
       const target = app.activeEnvironmentId
@@ -49,14 +66,27 @@
 
   async function select(id: string) {
     closeError = null
+    if (showGlobals) {
+      if (!(await globalsModel.flush()).ok) return void (closeError = 'Some changes could not be saved. Fix or retry them before switching.')
+      showGlobals = false
+    }
     if (!(await model.select(id))) closeError = 'Some changes could not be saved. Fix or retry them before switching environments.'
+  }
+
+  async function selectGlobals() {
+    closeError = null
+    if (model.environmentId && !(await model.flush()).ok) return void (closeError = 'Some changes could not be saved. Fix or retry them before switching.')
+    showGlobals = true
+    const ws = app.workspaceId
+    if (ws && globalsModel.environmentId !== ws) await globalsModel.load(ws)
   }
 
   async function requestClose() {
     closing = true
     closeError = null
     try {
-      const r = await model.flush()
+      const [a, b] = await Promise.all([model.flush(), globalsModel.flush()])
+      const r = { ok: a.ok && b.ok }
       if (r.ok) ui.envEditor = { open: false }
       else closeError = 'Some changes could not be saved. Fix or retry them, or discard them to close.'
     } finally {
@@ -66,6 +96,7 @@
 
   function discardAndClose() {
     model.discard()
+    globalsModel.discard()
     ui.envEditor = { open: false }
   }
 
@@ -97,10 +128,11 @@
 </script>
 
 <Dialog title="Environments" size="xl" onclose={requestClose} busy={closing}>
-  {#if app.environments.length === 0}
+  {#if app.environments.length === 0 && !showGlobals}
     <div class="flex flex-col items-center gap-3 py-12 text-sm text-muted">
       <p>There are no environments yet.</p>
       {#if sync.blocked}<ReadOnlyNote />{:else}<Button variant="primary" onclick={() => (dialog = { kind: 'create' })}>Create environment</Button>{/if}
+      <Button size="sm" icon="globe" onclick={selectGlobals}>Globals</Button>
     </div>
   {:else}
     <div class="flex min-h-[22rem] gap-4">
@@ -116,7 +148,23 @@
         onduplicate={duplicate}
         onexport={exportEnv}
         ondelete={(env) => (dialog = { kind: 'delete', env })}
+        globalsSelected={showGlobals}
+        onselectglobals={selectGlobals}
       />
+      {#if showGlobals}
+        <div class="flex min-w-0 flex-1 flex-col gap-2">
+          <InlineError message={closeError} />
+          {#if closeError}
+            <div><Button size="sm" variant="danger" onclick={discardAndClose}>Discard unsaved changes and close</Button></div>
+          {/if}
+          <VariablesPanel model={globalsModel} title="Globals" label="Globals" scopeName="Globals">
+            {#snippet hint()}
+              Available to every request of this workspace (<code>pm.globals</code> in scripts). Collection variables and the active
+              environment override them. Kept on this device only: not synced, not exported with collections.
+            {/snippet}
+          </VariablesPanel>
+        </div>
+      {:else}
       <section class="flex min-w-0 flex-1 flex-col gap-2" aria-label="Variables">
         <div class="flex items-center justify-between gap-2">
           <h3 class="truncate text-sm font-semibold">{selected?.name ?? ''}</h3>
@@ -147,6 +195,7 @@
           <EnvironmentTable {model} environmentName={selected.name} />
         {/if}
       </section>
+      {/if}
     </div>
   {/if}
   {#snippet footer()}

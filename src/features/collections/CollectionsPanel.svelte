@@ -13,6 +13,7 @@
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
   import * as examples from '../examples/actions'
+  import { openCollectionVariables } from '../overview/openVariables'
   import { buildRows, exampleRowKey, rowKey, type TreeRowModel } from './rows'
   import TreeRow, { type DropHint } from './TreeRow.svelte'
 
@@ -86,7 +87,7 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
+    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Variables…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -98,6 +99,7 @@
         { label: 'New folder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.id, parentId: null }) },
         { separator: true, label: '' },
         { label: 'Run collection…', icon: 'play', action: () => (ui.runner = { collectionId: row.id, folderId: null }) },
+        { label: 'Variables…', icon: 'list', action: () => openCollectionVariables(row.id) },
         { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'collection', id: row.id }) },
         { label: 'Versions…', icon: 'tag', action: () => (ui.versionsFor = row.id) },
         { label: 'Export as Postman JSON…', icon: 'download', action: () => (ui.exportCollectionId = row.id) },
