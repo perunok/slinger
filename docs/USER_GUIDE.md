@@ -662,7 +662,9 @@ Settings (Ctrl+, or the sun icon):
   - Dark: Dark, Midnight, Solarized Dark, GitHub Dark, Dracula, Nord, Gruvbox Dark, Catppuccin Mocha, Catppuccin Frappé,
     Tokyo Night, One Dark, Monokai, Rosé Pine, Ayu Mirage, Ayu Dark, Everforest, Kanagawa, Synthwave '84, Oceanic, High Contrast.
   - **System** follows your OS light/dark setting. Next to it, choose which theme it uses **When the OS is light** and
-    **When the OS is dark** (for example Catppuccin Latte by day and Catppuccin Mocha at night).
+    **When the OS is dark** (for example Catppuccin Latte by day and Catppuccin Mocha at night). Your custom themes of the
+    matching scheme are offered there too.
+  - **Custom** lists your own themes (see [Custom themes](#custom-themes)) above the built-in ones.
 - **Accent colour.** Buttons, selected items, focus rings and text selection use the accent. **Theme default** keeps each
   theme's own accent; or pick Blue, Indigo, Violet, Purple, Fuchsia, Pink, Rose, Red, Orange, Amber, Yellow, Lime, Green,
   Emerald, Teal, Cyan, Sky or Slate, which then applies on top of whatever theme is active (it adapts to light and dark themes).
@@ -684,6 +686,76 @@ Changes apply instantly and are remembered. Quick switch without opening Setting
 
 All themes are checked for readable contrast (WCAG AA, 4.5:1 for text) with every accent colour; the two High Contrast themes
 meet AAA (7:1). A theme chosen in version 0.2.0 carries over automatically.
+
+### Custom themes
+
+A custom theme starts from a built-in **base theme** and overrides any of its colours; everything you leave out keeps
+following the base theme. You can have up to 50.
+
+- **New custom theme** (top right of the theme gallery) starts from the theme you are using now. Hover a built-in theme and
+  click its copy icon to **duplicate it as a custom theme**. Each custom theme's card has **Edit**, **Duplicate**, **Export**
+  and **Delete** (asks first; if it was in use, Slinger switches to its base theme).
+- The editor has a **Name**, the **Base theme**, the **Scheme** (light or dark: native controls, scrollbars and accent colours
+  follow it) and two views of the same colours:
+  - **CSS**: one declaration per line, for example
+
+    ```css
+    /* Base: Midnight (dark). Tokens you leave out come from the base theme. */
+    color-scheme: dark;
+    --bg: #0b1020;
+    --surface: #121a2e;
+    --accent: #7c5cff;
+    ```
+
+    Only `color-scheme: light|dark;` and `--<token>: <colour>;` declarations are allowed (comments are fine). A value can be any
+    CSS colour your system supports: `#rgb`/`#rrggbb`/`#rrggbbaa`, colour names, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`,
+    `oklab()`, `oklch()`, `color()`, `color-mix()` and `light-dark()`. `--shadow-pop` takes a box-shadow instead (for example
+    `0 8px 28px rgba(0, 0, 0, 0.4)`). Selectors and `{ }` blocks, `@` rules, other properties, unknown tokens, `url()`,
+    `var()` and other functions, quotes, backslashes, `!important`, duplicates and values over 160 characters are rejected;
+    each problem is listed with its line number, and the theme cannot be saved until they are fixed. What you type is never
+    used as CSS directly: Slinger reads the colours from it and writes the theme's CSS itself.
+  - **Form**: every token grouped as below, with a colour picker, the value as text (empty = inherited; the base value shows
+    greyed out) and a reset button. Editing here rewrites the CSS view.
+  - **Add all tokens from base** writes out every token with its base value so you can see and tweak the whole palette.
+- **Preview in the whole app** (on by default) shows the theme everywhere while you edit; **Cancel** puts your theme back.
+- **Contrast**: the editor checks the same colour pairs as the built-in themes (text on each background, text on the accent,
+  status colours, syntax and method colours, focus ring, ...) and lists each one below its WCAG AA target, for example
+  "Muted text on Surface: 3.1:1, needs 4.5:1 (secondary text)". These are warnings only: you can save anyway, and the theme's
+  card in the gallery shows a warning badge with the count (hover it for the list).
+- **Accent colours** work with custom themes like with built-in ones: with **Theme default** the theme's own `--accent...`
+  tokens are used; any other accent replaces them.
+- **Export** saves `<name>.slinger-theme.json` to your export folder (Downloads by default):
+  `{ "format": "slinger-theme", "version": 1, "label": ..., "scheme": ..., "base": ..., "tokens": { "bg": "#0b1020", ... } }`.
+  **Import theme** reads such a file or pasted text (a theme file's JSON or CSS declarations as in the CSS view), checks it
+  with the same rules (invalid tokens are skipped and listed) and opens it in the editor so you can review it before saving.
+- Custom themes are stored on this computer only (not synced); the Ctrl+K palette lists them as `Theme: <name>` (custom).
+
+Tokens:
+
+| Group | Token | Used for |
+| --- | --- | --- |
+| Surfaces and borders | `--bg` | page background, input fields |
+| | `--surface` | panels, editors, dialogs |
+| | `--surface-raised` | sidebar, toolbars, default buttons |
+| | `--surface-hover` | hovered rows and buttons |
+| | `--border`, `--border-strong` | dividers and control outlines; emphasised outlines |
+| Text | `--text`, `--text-muted`, `--text-faint` | body text; secondary text and labels; hints and placeholders |
+| Accent | `--accent` | primary buttons, selected borders |
+| | `--accent-fg` | text on primary buttons |
+| | `--accent-soft` | selected rows, badges (`--text` sits on it) |
+| | `--accent-text` | links and accent-coloured text |
+| | `--focus-ring`, `--selection` | keyboard focus outline; selected text in editors |
+| Status | `--danger`, `--danger-fg`, `--danger-soft` | errors and 4xx/5xx status; text on delete buttons; error banners |
+| | `--success`, `--success-soft` | 2xx status, passed tests; success badges |
+| | `--warning`, `--warning-soft` | warnings, 3xx status; warning banners |
+| Misc | `--preview-bg` | background of the HTML response preview |
+| | `--overlay` | backdrop behind dialogs (usually translucent) |
+| | `--shadow-pop` | box-shadow of menus and popovers (not a colour) |
+| `{{variable}}` highlighting | `--var-ok`, `--var-ok-bg` | a resolved variable |
+| | `--var-bad`, `--var-bad-bg` | an unresolved variable |
+| | `--var-secret`, `--var-secret-bg` | a secret variable |
+| Syntax | `--syn-keyword`, `--syn-string`, `--syn-number`, `--syn-bool`, `--syn-comment`, `--syn-property`, `--syn-tag`, `--syn-attr`, `--syn-punct` | code in bodies, responses and scripts |
+| HTTP methods | `--m-get`, `--m-post`, `--m-put`, `--m-patch`, `--m-delete`, `--m-other` | method labels |
 
 ## About Slinger
 

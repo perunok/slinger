@@ -25,8 +25,8 @@ app/                        shell + cross-feature state
   state.svelte.ts           workspaces, collections/folders/requests, collection variables, environments, active env, globals
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope: globals < collection variables < environment (scope = active tab's collection, scopeFor(id))
-  settings.svelte.ts        theme + accent + sending animation (lib/appearance.ts) / font size / editor wrap / script time limit + continue-on-error /
-                            response position / status bar (localStorage)
+  settings.svelte.ts        theme + accent + custom themes (lib/customThemes.ts) + sending animation (lib/appearance.ts) / font size / editor wrap /
+                            script time limit + continue-on-error / response position / status bar (localStorage)
   activity.svelte.ts        background activity for the status bar that is not tab state (the collection runner's progress)
   toast.svelte.ts           toast store
 components/
@@ -56,7 +56,7 @@ lib/                        pure logic, no DOM: template, requestVariables (vari
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
-                            themes (theme/accent registry), appearance (persisted theme settings), loader (sending animation: pick, lap speed, sprite), contrast + themeAudit (WCAG checks)
+                            themes (theme/accent registry), appearance (persisted theme settings), customThemes (custom theme model, CSS parser, rules, storage, file format), customThemeAudit (their contrast), loader (sending animation: pick, lap speed, sprite), contrast + themeAudit (WCAG checks)
 dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
 styles/                     themes.css (tokens) + app.css (tailwind, CM overlays)
 ```
@@ -123,6 +123,22 @@ text 4.5:1 on the backgrounds they appear on, text on `--accent-soft`/`--selecti
 themes use 7:1 (and 4.5:1 for the UI pairs). It also checks that each theme declares every token and `color-scheme`, that the
 registry matches the CSS, that each accent's `-fg` is the better of light/dark ink, and that no component contains a literal colour
 or an unknown `var(--token)`.
+
+**Custom themes** (`lib/customThemes.ts`, UI in `features/settings/` `CustomThemeEditor` / `ThemeImportDialog` / `ThemeGallery`):
+`{ id: 'custom:<uuid>', label, scheme, base, tokens }`, where `base` is a built-in theme id and `tokens` overrides any subset of
+`THEME_TOKENS`. Stored as `{ v: 1, themes: [...] }` in `localStorage['slinger.customThemes']` (max 50; corrupt entries and invalid
+tokens are dropped on load); the ids are valid `theme` / `systemLight` / `systemDark` values in `slinger.appearance`. A custom
+theme is shown as `data-theme='<base>' data-custom-theme='custom:<uuid>'`, so unset tokens keep following the base palette, plus
+a rule generated from the validated map (`customThemeRule`): `[data-theme][data-custom-theme='<id>']{color-scheme; tokens}`
+(0,2,0 beats the base block) and the accent tokens under `...:not([data-accent])` so a chosen accent still wins. All rules live in
+one `<style id="slinger-custom-themes">` managed by `settings.apply()` (also holds the draft being edited);
+`public/theme-init.js` rebuilds the active theme's rule from storage before first paint (a test compares it with
+`customThemeRule`). Components render any theme id through `settings.themeAttrs(id)`. The CSS config parser
+(`parseThemeCss`) accepts only `--<known token>: <value>;` and `color-scheme`; values must pass a character whitelist
+(no `; : { } < > @ " ' \`), a colour-function whitelist (no `url()`/`var()`/...), and `CSS.supports('color' | 'box-shadow')`.
+Imports (`parseThemeImport`) go through the same checks. `lib/customThemeAudit.ts` resolves the effective palette from
+`themes.css?raw` (the renderer test config processes only `themes.css`, so the import has content in tests too) with the
+same `cascade` and `CHECKS` as `themes.test.ts`, converting colours `lib/contrast.ts` cannot evaluate through a 1x1 canvas.
 
 **Add a theme:** copy a block of the same scheme in `themes.css`, change the colours (keep all tokens), add
 `{ id, label, scheme }` to `THEMES` in `lib/themes.ts`, run `npm run test:renderer` and fix any contrast failure it lists

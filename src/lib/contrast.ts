@@ -68,6 +68,17 @@ export interface EvalContext {
   /** Custom property values (raw CSS text) visible on the element. */
   vars: Record<string, string>
   scheme: 'light' | 'dark'
+  /**
+   * Optional fallback for colours outside the subset above (named colours, hsl(), oklch(), ...): the renderer passes a
+   * browser-backed converter for user-defined custom themes. Returns null when it cannot convert either.
+   */
+  leaf?: (expr: string) => Rgba | null
+}
+
+function viaLeaf(e: string, ctx: EvalContext, why: string): Rgba {
+  const c = ctx.leaf?.(e)
+  if (c) return c
+  throw new Error(why)
 }
 
 /** Evaluates a CSS colour expression; throws on anything outside the supported subset. */
@@ -77,7 +88,7 @@ export function evalColor(expr: string, ctx: EvalContext, depth = 0): Rgba {
   const hex = parseHex(e)
   if (hex) return hex
   const fn = /^([a-z-]+)\((.*)\)$/is.exec(e)
-  if (!fn) throw new Error(`unsupported colour: ${e}`)
+  if (!fn) return viaLeaf(e, ctx, `unsupported colour: ${e}`)
   const name = fn[1]!.toLowerCase()
   const args = splitArgs(fn[2]!)
   if (name === 'var') {
@@ -92,11 +103,12 @@ export function evalColor(expr: string, ctx: EvalContext, depth = 0): Rgba {
   if (name === 'light-dark') return evalColor(ctx.scheme === 'light' ? args[0]! : args[1]!, ctx, depth + 1)
   if (name === 'rgb' || name === 'rgba') {
     const n = args.length === 1 ? args[0]!.split(/[\s/]+/) : args
-    const [r, g, b, a] = n.map((x) => (x.endsWith('%') ? parseFloat(x) / 100 : parseFloat(x)))
+    const [r, g, b, a] = n.map((x, i) => (x.endsWith('%') ? (parseFloat(x) * (i < 3 ? 255 : 1)) / 100 : parseFloat(x)))
+    if (n.length < 3 || n.length > 4 || [r, g, b, a ?? 1].some((v) => !Number.isFinite(v))) return viaLeaf(e, ctx, `unsupported colour: ${e}`)
     return { r: r!, g: g!, b: b!, a: a ?? 1 }
   }
   if (name === 'color-mix') {
-    if (!/^in srgb$/i.test(args[0]!)) throw new Error(`color-mix must use srgb: ${e}`)
+    if (!/^in srgb$/i.test(args[0]!)) return viaLeaf(e, ctx, `color-mix must use srgb: ${e}`)
     const part = (s: string) => {
       const m = /^(.*?)(?:\s+([\d.]+)%)?$/s.exec(s.trim())!
       return { color: evalColor(m[1]!, ctx, depth + 1), pct: m[2] === undefined ? undefined : parseFloat(m[2]) / 100 }
@@ -106,5 +118,5 @@ export function evalColor(expr: string, ctx: EvalContext, depth = 0): Rgba {
     const p = a.pct ?? (b.pct === undefined ? 0.5 : 1 - b.pct)
     return mix(a.color, b.color, p)
   }
-  throw new Error(`unsupported colour function: ${name}`)
+  return viaLeaf(e, ctx, `unsupported colour function: ${name}`)
 }

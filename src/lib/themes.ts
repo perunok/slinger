@@ -125,11 +125,14 @@ export function resolveTheme(
   choice: string,
   prefersLight: boolean,
   system: SystemThemes = { light: DEFAULT_LIGHT_THEME, dark: DEFAULT_DARK_THEME },
+  /** User-defined custom themes (lib/customThemes.ts), which are valid choices too. */
+  custom: readonly { id: string; scheme: Scheme }[] = [],
 ): string {
+  const find = (id: string) => findTheme(id) ?? custom.find((c) => c.id === id)
   if (choice === 'system') {
     const scheme: Scheme = prefersLight ? 'light' : 'dark'
-    const t = findTheme(prefersLight ? system.light : system.dark)
+    const t = find(prefersLight ? system.light : system.dark)
     return t && t.scheme === scheme ? t.id : prefersLight ? DEFAULT_LIGHT_THEME : DEFAULT_DARK_THEME
   }
-  return findTheme(choice) ? choice : DEFAULT_DARK_THEME
+  return find(choice) ? choice : DEFAULT_DARK_THEME
 }

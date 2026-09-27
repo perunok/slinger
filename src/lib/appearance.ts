@@ -3,10 +3,11 @@
  *
  * Stored as JSON under `slinger.appearance`. Versions up to 0.2.0 stored only the theme choice as a plain string under
  * `slinger.theme`; that value is migrated once (and the old key removed) so nobody loses their theme.
- * public/theme-init.js reads the same key before first paint, so keep the two in step.
+ * public/theme-init.js reads the same key before first paint, so keep the two in step. Custom themes (their ids are
+ * `custom:<uuid>`) are stored separately under `slinger.customThemes` (lib/customThemes.ts).
  */
 import { DEFAULT_LOADER, isLoaderSetting, type LoaderSetting } from './loader'
-import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, THEME_DEFAULT_ACCENT, findTheme, isAccent } from './themes'
+import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, THEME_DEFAULT_ACCENT, findTheme, isAccent, type Scheme } from './themes'
 
 export const APPEARANCE_KEY = 'slinger.appearance'
 export const LEGACY_THEME_KEY = 'slinger.theme'
@@ -36,28 +37,32 @@ export const DEFAULT_APPEARANCE: Appearance = {
   loader: DEFAULT_LOADER,
 }
 
-/** Drops anything unknown (e.g. a theme from a newer version) back to its default. */
-export function sanitizeAppearance(raw: Partial<Record<keyof Appearance, unknown>>): Appearance {
+/**
+ * Drops anything unknown (e.g. a theme from a newer version, a deleted custom theme) back to its default.
+ * `custom` are the user's custom themes (lib/customThemes.ts): their ids are valid choices too.
+ */
+export function sanitizeAppearance(raw: Partial<Record<keyof Appearance, unknown>>, custom: readonly { id: string; scheme: Scheme }[] = []): Appearance {
   const str = (v: unknown) => (typeof v === 'string' ? v : '')
+  const find = (id: string) => findTheme(id) ?? custom.find((c) => c.id === id)
   const theme = str(raw.theme)
   const accent = str(raw.accent)
   const light = str(raw.systemLight)
   const dark = str(raw.systemDark)
   return {
-    theme: theme === 'system' || findTheme(theme) ? theme : DEFAULT_APPEARANCE.theme,
+    theme: theme === 'system' || find(theme) ? theme : DEFAULT_APPEARANCE.theme,
     accent: isAccent(accent) ? accent : DEFAULT_APPEARANCE.accent,
-    systemLight: findTheme(light)?.scheme === 'light' ? light : DEFAULT_LIGHT_THEME,
-    systemDark: findTheme(dark)?.scheme === 'dark' ? dark : DEFAULT_DARK_THEME,
+    systemLight: find(light)?.scheme === 'light' ? light : DEFAULT_LIGHT_THEME,
+    systemDark: find(dark)?.scheme === 'dark' ? dark : DEFAULT_DARK_THEME,
     loader: isLoaderSetting(raw.loader) ? raw.loader : DEFAULT_LOADER,
   }
 }
 
-export function loadAppearance(store: KeyValueStore): Appearance {
+export function loadAppearance(store: KeyValueStore, custom: readonly { id: string; scheme: Scheme }[] = []): Appearance {
   const json = store.get(APPEARANCE_KEY)
   if (json !== null) {
     try {
       const parsed: unknown = JSON.parse(json)
-      if (parsed && typeof parsed === 'object') return sanitizeAppearance(parsed as Record<string, unknown>)
+      if (parsed && typeof parsed === 'object') return sanitizeAppearance(parsed as Record<string, unknown>, custom)
     } catch {
       /* corrupt: fall through to the legacy key / defaults */
     }

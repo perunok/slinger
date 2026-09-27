@@ -27,3 +27,17 @@ describe('contrast', () => {
     expect(() => evalColor('color-mix(in oklch, red, blue)', { vars, scheme: 'dark' })).toThrow()
   })
 })
+
+describe('evalColor fallbacks', () => {
+  const ctx = { vars: {}, scheme: 'dark' as const }
+  it('reads percentage rgb() channels and alpha', () => {
+    expect(toHex(evalColor('rgb(100% 0% 50%)', ctx))).toBe('#ff0080')
+    expect(evalColor('rgba(0, 0, 0, 50%)', ctx).a).toBeCloseTo(0.5, 5)
+  })
+  it('hands colours outside its subset to the leaf converter', () => {
+    const leaf = (e: string) => (e === 'red' || e === 'hsl(0 100% 50%)' ? { r: 255, g: 0, b: 0, a: 1 } : null)
+    expect(toHex(evalColor('red', { ...ctx, leaf }))).toBe('#ff0000')
+    expect(toHex(evalColor('color-mix(in srgb, hsl(0 100% 50%) 50%, #000000)', { ...ctx, leaf }))).toBe('#800000')
+    expect(() => evalColor('blue', { ...ctx, leaf })).toThrow(/unsupported/)
+  })
+})

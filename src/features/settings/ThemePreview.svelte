@@ -1,14 +1,18 @@
 <script lang="ts">
   /**
    * A thumbnail of the app (sidebar, URL bar, JSON response) drawn with a theme's own tokens: the element carries
-   * `data-theme` (and `data-accent`), so every var() below resolves to that palette, not the active one.
+   * `data-theme` (and `data-accent`), so every var() below resolves to that palette, not the active one. A custom theme
+   * is drawn as its base theme plus `data-custom-theme` (lib/customThemes.ts).
    */
+  import { settings } from '../../app/settings.svelte'
+
   interface Props {
     theme: string
     /** null = the theme's own accent */
     accent?: string | null
   }
   let { theme, accent = null }: Props = $props()
+  const attrs = $derived(settings.themeAttrs(theme))
 
   // [token, width] segments per JSON line: "key": value
   const lines: [string, number][][] = [
@@ -20,7 +24,8 @@
 </script>
 
 <span
-  data-theme={theme}
+  data-theme={attrs['data-theme']}
+  data-custom-theme={attrs['data-custom-theme']}
   data-accent={accent ?? undefined}
   class="flex h-[4.5rem] w-full overflow-hidden rounded border"
   style="background: var(--bg); border-color: var(--border)"
