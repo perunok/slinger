@@ -4,6 +4,7 @@
   import WorkspaceSwitcher from '../features/workspaces/WorkspaceSwitcher.svelte'
   import IconButton from '../components/ui/IconButton.svelte'
   import SyncChip from '../features/sync/SyncChip.svelte'
+  import RightPanelButton from '../features/layout/RightPanelButton.svelte'
 </script>
 
 <header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
@@ -22,6 +23,7 @@
     </button>
     <EnvSwitcher />
     <IconButton icon="cloud" label="Cloud" onclick={() => (ui.cloudOpen = true)} />
+    <RightPanelButton />
     <IconButton icon="info" label="Keyboard shortcuts" onclick={() => (ui.shortcutsOpen = true)} />
     <IconButton icon="sun" label="Settings" onclick={() => (ui.settingsOpen = true)} />
     <IconButton icon="help" label="About Slinger" onclick={() => (ui.aboutOpen = true)} />

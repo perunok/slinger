@@ -8,7 +8,8 @@ import type { Db } from '../db/database'
 import { newId } from '../lib/ids'
 import { applyRemoteState, hideClashingVersion, type ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict } from './conflictStore'
-import { canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire } from './mapping'
+import { linkFeatures } from './features'
+import { TABLE, canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire, typeSynced } from './mapping'
 import { parentOf, serverCascades, type EntityRef } from './rows'
 import { clearDirty, getEntity, isDirty, markDirty, putEntity, setEntityState } from './store'
 import type { Payload, PushRejected, PushResponse, RejectReason, WireOp } from './types'
@@ -69,6 +70,7 @@ export function quarantine(db: Db, nowS: number, workspaceId: string, type: Sync
 export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResult {
   return db.transaction((): BuildResult => {
     const nowS = Math.floor(nowMs / 1000)
+    const features = linkFeatures(db, workspaceId)
     const rows = db
       .prepare(
         `SELECT d.entity_type, d.entity_id, d.change_seq, d.op_id, e.remote_version, e.base_payload, e.state, e.remote_deleted
@@ -84,6 +86,13 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
     for (const d of rows) {
       const type = d.entity_type
       const id = d.entity_id
+      // A type the server does not support (yet): stays local-only, nothing to push (design section 21). The rows are
+      // marked dirty again when the feature appears.
+      if (!(type in TABLE) || !typeSynced(type, features)) {
+        clearDirty(db, type, id)
+        cleared++
+        continue
+      }
       const row = loadRow(db, type, id)
       if (!row) {
         clearDirty(db, type, id)
@@ -93,7 +102,7 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
       if (d.state === 'conflict') {
         const c = findOpenConflict(db, type, id)
         // A quarantined (rejected) entity that was edited again is re-armed automatically.
-        if (c && c.kind === 'rejected' && row.deleted === 0 && !samePayload(toWire(type, row), parsePayload(c.local_json))) {
+        if (c && c.kind === 'rejected' && row.deleted === 0 && !samePayload(toWire(type, row, features), parsePayload(c.local_json))) {
           closeConflict(db, c.id, nowS, 'auto_resolved')
           setEntityState(db, type, id, 'synced')
         } else continue
@@ -111,7 +120,7 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
         kind = 'delete'
         payload = {}
       } else {
-        payload = toWire(type, row)
+        payload = toWire(type, row, features)
         if (rv > 0 && base && samePayload(payload, base)) {
           clearDirty(db, type, id)
           cleared++
@@ -186,13 +195,18 @@ export function orderOps(db: Db, ops: BuiltOp[]): BuiltOp[] {
     depthCache.set(id, depth)
     return depth
   }
-  const upsertRank: Record<SyncEntityType, number> = { collection: 0, environment: 1, folder: 2, request: 3, environment_variable: 4, collection_version: 5 }
-  const deleteRank: Record<SyncEntityType, number> = { request: 0, folder: 1, collection_version: 2, collection: 3, environment: 4, environment_variable: -1 }
+  const upsertRank: Record<SyncEntityType, number> = {
+    collection: 0, environment: 1, folder: 2, request: 3, environment_variable: 4, collection_version: 5, collection_variable: 6, global_variable: 7,
+  }
+  const deleteRank: Record<SyncEntityType, number> = {
+    request: 0, folder: 1, collection_version: 2, collection: 3, environment: 4, environment_variable: -1, collection_variable: -1, global_variable: -1,
+  }
+  const keyed_ = (t: SyncEntityType) => t === 'environment_variable' || t === 'collection_variable' || t === 'global_variable'
   const keyed = ops.map((o, i) => {
     let group: number
     let rank: number
     let depth = 0
-    if (o.op.op === 'delete' && o.type === 'environment_variable') {
+    if (o.op.op === 'delete' && keyed_(o.type)) {
       group = 0
       rank = 0
     } else if (o.op.op === 'upsert') {
@@ -336,6 +350,13 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
           out.resolved++ // our own pending change frees the key: push again after it (same op id, nothing was applied)
           break
         }
+        if (b.type === 'collection_variable' || b.type === 'global_variable') {
+          // Another device got there first: the pull brings its variable, and the apply folds ours into it or renames
+          // ours (design section 21); the cycle quarantines it if the clash persists after a pull.
+          b.rejection = r.message
+          out.retry.push(b)
+          break
+        }
         handleDuplicateKey(ctx, b, r.message)
         out.conflicts++
         settled(b)
@@ -384,7 +405,8 @@ function mergedGuarded(ctx: ApplyCtx, fn: () => boolean): boolean {
  */
 function keyFreedByUs(ctx: ApplyCtx, b: BuiltOp, holderId: string | null, acceptedIds: Set<string>): boolean {
   const { db } = ctx
-  if (!holderId || holderId === b.id || (b.type !== 'environment_variable' && b.type !== 'collection_version')) return false
+  const keyed = b.type === 'environment_variable' || b.type === 'collection_variable' || b.type === 'global_variable'
+  if (!holderId || holderId === b.id || (!keyed && b.type !== 'collection_version')) return false
   const holder = loadRow(db, b.type, holderId)
   if (!holder) return false
   const pending = isDirty(db, b.type, holderId) && getEntity(db, b.type, holderId)?.state !== 'conflict'
@@ -392,9 +414,10 @@ function keyFreedByUs(ctx: ApplyCtx, b: BuiltOp, holderId: string | null, accept
   if (holder.deleted === 1) return true
   const mine = loadRow(db, b.type, b.id)
   if (!mine) return false
-  return b.type === 'environment_variable'
-    ? holder.environment_id !== mine.environment_id || holder.key !== mine.key
-    : holder.collection_id !== mine.collection_id || holder.version !== mine.version
+  if (b.type === 'environment_variable') return holder.environment_id !== mine.environment_id || holder.key !== mine.key
+  if (b.type === 'collection_variable') return holder.collection_id !== mine.collection_id || holder.key !== mine.key
+  if (b.type === 'global_variable') return holder.key !== mine.key
+  return holder.collection_id !== mine.collection_id || holder.version !== mine.version
 }
 
 function ack(ctx: ApplyCtx, b: BuiltOp, resultingVersion: number): void {

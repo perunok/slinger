@@ -1,4 +1,5 @@
 import type { MenuCommand } from '../../shared/menu'
+import { toggleResponsePosition, toggleRightPanel, toggleStatusBar } from '../features/layout/layoutActions'
 import { tabsStore } from '../features/requests/tabs.svelte'
 import { sync } from '../features/sync/syncStore.svelte'
 import { toast } from './toast.svelte'
@@ -11,6 +12,8 @@ export function dialogOpen(): boolean {
 // Keys that also appear in the application menu. The menu only shows them (registerAccelerator: false), but macOS
 // always registers menu key equivalents, so remember what the keyboard just ran and let the menu skip a duplicate.
 const MENU_KEYS: Partial<Record<string, MenuCommand>> = { t: 'newRequest', w: 'closeTab', ',': 'settings', '/': 'shortcuts' }
+// Ctrl/Cmd+Alt+<letter> layout toggles (also View menu items, label-only there): V response position, B right panel.
+const ALT_MENU_KEYS: Partial<Record<string, MenuCommand>> = { v: 'toggleResponsePosition', b: 'toggleRightPanel' }
 const DUPLICATE_WINDOW_MS = 300
 let lastKeyboard: { command: MenuCommand; at: number } | null = null
 
@@ -21,11 +24,24 @@ export function ranFromKeyboard(command: MenuCommand, now = performance.now()): 
   return recent
 }
 
+/**
+ * The letter of a Ctrl/Cmd+Alt+<letter> press, or null. On macOS Option changes `key` (Cmd+Option+V gives "√"), so
+ * with Cmd the physical key decides. With Ctrl, only an unchanged letter counts: AltGr is reported as Ctrl+Alt on
+ * Windows, and AltGr+V types "@" on some layouts, which must stay typing.
+ */
+function altLetter(e: KeyboardEvent): string | null {
+  if (!e.altKey || e.shiftKey || e.getModifierState?.('AltGraph')) return null
+  if (e.metaKey && /^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase()
+  if (e.ctrlKey && /^[a-z]$/i.test(e.key)) return e.key.toLowerCase()
+  return null
+}
+
 /** Global keyboard shortcuts. Returns true when the event was handled. */
 export function handleShortcut(e: KeyboardEvent): boolean {
   if (e.defaultPrevented) return false // an editor or widget already handled it
   const mod = e.ctrlKey || e.metaKey
-  if (!mod || e.altKey) return false
+  if (!mod) return false
+  if (e.altKey) return handleAltShortcut(e)
   const key = e.key.toLowerCase()
   const tab = tabsStore.active
 
@@ -55,6 +71,33 @@ export function handleShortcut(e: KeyboardEvent): boolean {
       return act(() => (ui.quickOpen = true))
     case 'tab':
       return act(() => tabsStore.cycle(e.shiftKey ? -1 : 1))
+  }
+  return false
+}
+
+/** Ctrl/Cmd+Alt shortcuts: layout toggles. Like the other page shortcuts, they do nothing behind a modal dialog. */
+function handleAltShortcut(e: KeyboardEvent): boolean {
+  const letter = altLetter(e)
+  const command = letter ? ALT_MENU_KEYS[letter] : undefined
+  if (!command || dialogOpen()) return false
+  e.preventDefault()
+  lastKeyboard = { command, at: performance.now() }
+  runLayoutCommand(command)
+  return true
+}
+
+/** Runs a layout toggle (keyboard, menu). Returns true for layout commands. */
+export function runLayoutCommand(command: MenuCommand): boolean {
+  switch (command) {
+    case 'toggleResponsePosition':
+      toggleResponsePosition()
+      return true
+    case 'toggleStatusBar':
+      toggleStatusBar()
+      return true
+    case 'toggleRightPanel':
+      toggleRightPanel()
+      return true
   }
   return false
 }

@@ -29,6 +29,10 @@
   import VersionsDialog from '../features/versions/VersionsDialog.svelte'
   import WorkspacesDialog from '../features/workspaces/WorkspacesDialog.svelte'
   import EmptyState from './EmptyState.svelte'
+  import StatusBar from '../features/layout/StatusBar.svelte'
+  import RightPanel from '../features/layout/RightPanel.svelte'
+  import RightPanelButton from '../features/layout/RightPanelButton.svelte'
+  import { fitPanelWidth, minMainWidth, rightPanel } from '../features/layout/rightPanel.svelte'
   import { scopeStore } from './scope.svelte'
   import { settings } from './settings.svelte'
   import { subscribeMenuCommands } from './menuCommands'
@@ -58,6 +62,13 @@
   // `{{}}` in the active tab resolve against its collection's variables too.
   $effect(() => {
     scopeStore.collectionId = tabsStore.active?.collectionId ?? null
+  })
+
+  // The right panel only shows when the main area keeps a usable width next to it (see rightPanel.svelte.ts).
+  let areaWidth = $state(0)
+  const fittedPanelWidth = $derived(fitPanelWidth(areaWidth, rightPanel.width, minMainWidth(settings.responsePosition)))
+  $effect(() => {
+    rightPanel.room = fittedPanelWidth !== null
   })
 
   // The launch skeleton (index.html) covers the UI until the first workspace has loaded, or startup failed.
@@ -98,7 +109,8 @@
     <SplitPane direction="row" storageKey="slinger.split.sidebar" initial={0.24} min={0.14} class="min-h-0">
       {#snippet first()}<Sidebar />{/snippet}
       {#snippet second()}
-        <main class="flex h-full min-h-0 flex-col bg-surface">
+        <div class="flex h-full min-h-0 min-w-0" bind:clientWidth={areaWidth}>
+        <main class="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
           {#if tabsStore.tabs.length === 0}
             <EmptyState />
           {:else}
@@ -116,8 +128,15 @@
             {/if}
           {/if}
         </main>
+        {#if rightPanel.open && fittedPanelWidth !== null}<RightPanel width={fittedPanelWidth} />{/if}
+        </div>
       {/snippet}
     </SplitPane>
+    {#if settings.showStatusBar}
+      <StatusBar>
+        {#snippet end()}<RightPanelButton variant="bar" />{/snippet}
+      </StatusBar>
+    {/if}
   {/if}
 </div>
 

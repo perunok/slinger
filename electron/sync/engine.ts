@@ -12,6 +12,7 @@ import type { SecretStore } from '../services/secrets'
 import { applyRemoteOp, applySnapshotEntity, fixFolderCycles, makeApplyCtx, type ApplyCtx } from './apply'
 import { recordAutoResolved } from './conflictStore'
 import { reevaluateOpenConflicts } from './conflicts'
+import { updateLinkFeatures } from './features'
 import { dedupeEnvironments } from './linking'
 import {
   MAX_BYTES_PER_PUSH,
@@ -406,6 +407,8 @@ export class SyncEngine {
       const link = getLink(db, workspaceId)!
       const res = await this.withClient(workspaceId, clientId, (cid) => cloud.pull(link.remote_workspace_id, cid, link.sync_checkpoint, PULL_LIMIT))
       this.runApply(workspaceId, (ctx) => {
+        // Server features first: they decide the wire shape the page is compared in (design section 21).
+        updateLinkFeatures(ctx, res.features)
         for (const op of res.operations) {
           if (op.workspace_id && op.workspace_id !== link.remote_workspace_id) continue
           this.applyGuarded(ctx, () => applyRemoteOp(ctx, op), op.resource_type, op.resource_id)
@@ -447,6 +450,7 @@ export class SyncEngine {
       if (cursor === null) return
       const res = await this.withClient(workspaceId, clientId, (cid) => cloud.snapshot(link.remote_workspace_id, cid, cursor || null, SNAPSHOT_LIMIT))
       this.runApply(workspaceId, (ctx) => {
+        updateLinkFeatures(ctx, res.features)
         for (const e of res.entities) this.applyGuarded(ctx, () => applySnapshotEntity(ctx, e), e.resource_type, e.resource_id)
         const last = !res.next_cursor
         if (last) {

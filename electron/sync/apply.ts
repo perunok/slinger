@@ -11,7 +11,21 @@ import {
   upsertOpenConflict,
   closeConflict,
 } from './conflictStore'
-import { canonicalJson, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire, type AnyRow } from './mapping'
+import { globalVarSecretKey } from '../services/secrets'
+import { linkFeatures } from './features'
+import {
+  TABLE,
+  canonicalJson,
+  loadRow,
+  normalizeIncoming,
+  parentRefs,
+  parsePayload,
+  payloadLabel,
+  samePayload,
+  toWire,
+  typeSynced,
+  type AnyRow,
+} from './mapping'
 import { merge } from './merge'
 import {
   insertFromPayload,
@@ -31,10 +45,12 @@ export interface ApplyCtx extends RowEnv {
   changed: ChangeLog
   /** Entities that got a conflict (re)opened during the current op; used to close superseded ones. */
   touched: Set<string>
+  /** Effective sync extension features of the link (design section 21); updated in place when they change. */
+  features: Set<string>
 }
 
 export function makeApplyCtx(env: RowEnv, workspaceId: string): ApplyCtx {
-  return { ...env, workspaceId, changed: new Map(), touched: new Set() }
+  return { ...env, workspaceId, changed: new Map(), touched: new Set(), features: linkFeatures(env.db, workspaceId) }
 }
 
 const k = (type: SyncEntityType, id: string) => `${type}:${id}`
@@ -48,12 +64,15 @@ const isSentOp = (db: Db, opId: string) => db.prepare('SELECT 1 FROM sync_sent_o
 const dropSentOp = (db: Db, opId: string) => void db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(opId)
 
 export function applyRemoteOp(ctx: ApplyCtx, op: PullOp): void {
+  // A type this device does not know, or whose feature is off for this link, is not ours to apply.
+  if (!(op.resource_type in TABLE) || !typeSynced(op.resource_type, ctx.features)) return
   if (op.op === 'upsert') applyUpsert(ctx, op.resource_type, op.resource_id, op.resulting_version, op.payload ?? {}, op.operation_id)
   else applyDelete(ctx, op.resource_type, op.resource_id, op.operation_id)
 }
 
 /** Snapshot entities are applied exactly like a pulled upsert (no operation id). */
 export function applySnapshotEntity(ctx: ApplyCtx, e: SnapshotEntity): void {
+  if (!(e.resource_type in TABLE) || !typeSynced(e.resource_type, ctx.features)) return
   applyUpsert(ctx, e.resource_type, e.resource_id, e.version, e.payload ?? {}, null)
 }
 
@@ -80,12 +99,13 @@ export function applyRemoteState(ctx: ApplyCtx, type: SyncEntityType, id: string
 }
 
 /** Local state differs from what the remote last confirmed (or is a frozen conflict). */
-function isModified(db: Db, type: SyncEntityType, row: AnyRow): boolean {
+function isModified(ctx: ApplyCtx, type: SyncEntityType, row: AnyRow): boolean {
+  const { db } = ctx
   const e = getEntity(db, type, row.id as string)
   if (e?.state === 'conflict') return true
   if (!isDirty(db, type, row.id as string)) return false
   const base = parsePayload(e?.base_payload ?? null)
-  return base === null || !samePayload(toWire(type, row), base)
+  return base === null || !samePayload(toWire(type, row, ctx.features), base)
 }
 
 function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: number, payload: Payload, opId: string | null): void {
@@ -101,6 +121,9 @@ function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: n
     const agreed = parsePayload(E?.base_payload ?? null)?.sort_order
     payload = { ...payload, sort_order: typeof agreed === 'number' ? agreed : ((L?.sort_order as number | undefined) ?? 0) }
   }
+  // Scripts/docs fields: absent in log entries written before the server supported them (= null there), and never
+  // compared when the feature is off for this link (design section 21).
+  payload = normalizeIncoming(type, payload, ctx.features)
   const canon = canonicalJson(payload)
 
   // 1. Our own operation coming back, or an old/duplicate one: reconcile only.
@@ -108,7 +131,7 @@ function applyUpsert(ctx: ApplyCtx, type: SyncEntityType, id: string, version: n
     if (!E || version >= E.remote_version) {
       putEntity(db, type, id, ctx.workspaceId, { remote_version: version, base_payload: canon, state: E?.state ?? 'synced' })
     }
-    if (L && L.deleted === 0 && E?.state !== 'conflict' && samePayload(toWire(type, L), payload)) clearDirty(db, type, id)
+    if (L && L.deleted === 0 && E?.state !== 'conflict' && samePayload(toWire(type, L, ctx.features), payload)) clearDirty(db, type, id)
     return
   }
 
@@ -151,7 +174,7 @@ function upsertInner(
       note(ctx, type, id, 'upsert')
       return
     }
-    if (type === 'environment_variable') renameClashingVariable(ctx, id, payload)
+    resolveKeyClash(ctx, type, id, payload)
     const deletedParent = pendingDeletedParent(db, type, payload)
     if (deletedParent) {
       // A remote item was created inside a container the user deleted locally (not pushed yet).
@@ -172,7 +195,7 @@ function upsertInner(
     return
   }
 
-  if (type === 'collection_version' && !(L.deleted === 1 && isDirty(db, type, id)) && !samePayload(toWire(type, L), payload)) {
+  if (type === 'collection_version' && !(L.deleted === 1 && isDirty(db, type, id)) && !samePayload(toWire(type, L, ctx.features), payload)) {
     // Versions are immutable on both sides: a different copy under the same id is never merged or silently un-hidden.
     hideClashingVersion(ctx, L, { remote: payload, remoteVersion: version })
     putEntity(db, type, id, ws, { ...synced, state: 'conflict' })
@@ -197,7 +220,7 @@ function upsertInner(
       return
     }
     // Tombstoned by an earlier remote delete (or delete already acknowledged) and recreated remotely: resurrect.
-    if (type === 'environment_variable') renameClashingVariable(ctx, id, payload)
+    resolveKeyClash(ctx, type, id, payload)
     overwriteFromPayload(ctx, type, L, payload)
     putEntity(db, type, id, ws, { ...synced, state: 'synced' })
     clearDirty(db, type, id)
@@ -206,12 +229,12 @@ function upsertInner(
   }
 
   // Live locally.
-  const localWire = toWire(type, L)
+  const localWire = toWire(type, L, ctx.features)
   // No known base (never synced, or tombstoned): local content is authoritative until merged.
   const dirty = baseP === null || !samePayload(localWire, baseP)
   if (!dirty) {
     if (!samePayload(localWire, payload)) {
-      if (type === 'environment_variable') renameClashingVariable(ctx, id, payload)
+      resolveKeyClash(ctx, type, id, payload)
       overwriteFromPayload(ctx, type, L, payload)
       note(ctx, type, id, 'upsert')
     }
@@ -222,7 +245,7 @@ function upsertInner(
 
   const m = merge(type, baseP, localWire, payload)
   if (!samePayload(m.merged, localWire)) {
-    if (type === 'environment_variable') renameClashingVariable(ctx, id, m.merged)
+    resolveKeyClash(ctx, type, id, m.merged)
     overwriteFromPayload(ctx, type, L, m.merged)
     note(ctx, type, id, 'upsert')
   }
@@ -253,7 +276,7 @@ function labelFor(ctx: ApplyCtx, type: SyncEntityType, id: string, ...candidates
     if (l) return l
   }
   const row = loadRow(ctx.db, type, id)
-  return row ? payloadLabel(type, toWire(type, row)) : id
+  return row ? payloadLabel(type, toWire(type, row, ctx.features)) : id
 }
 
 function openConflict(
@@ -299,6 +322,52 @@ function freezeDeletedAncestors(ctx: ApplyCtx, type: SyncEntityType, row: AnyRow
   }
 }
 
+/**
+ * A remote variable takes a key a different local variable holds (unique per environment / collection / workspace).
+ * Environment variables: the local one is renamed `<key>_conflict` (design 8.4). Collection variables and globals
+ * (section 21): a local one that never reached the cloud and is equal to the remote one (same value, or both secret;
+ * same enabled flag and description) is folded into it silently (typical after importing the same collection on two
+ * devices; a secret's local value moves to the remote id), otherwise it is renamed like an environment variable.
+ */
+function resolveKeyClash(ctx: ApplyCtx, type: SyncEntityType, id: string, payload: Payload): void {
+  if (type === 'environment_variable') return renameClashingVariable(ctx, id, payload)
+  if (type !== 'collection_variable' && type !== 'global_variable') return
+  const { db } = ctx
+  const [ownerCol, ownerId] = type === 'collection_variable' ? ['collection_id', String(payload.collection_id ?? '')] : ['workspace_id', ctx.workspaceId]
+  const key = String(payload.key ?? '')
+  const table = TABLE[type]
+  const clash = db.prepare(`SELECT * FROM ${table} WHERE ${ownerCol} = ? AND key = ? AND deleted = 0 AND id != ?`).get(ownerId, key, id) as AnyRow | undefined
+  if (!clash) return
+  const cid = clash.id as string
+  const e = getEntity(db, type, cid)
+  const neverSynced = !e || (e.remote_version === 0 && e.remote_deleted === 0 && e.state !== 'conflict')
+  const local = toWire(type, clash, ctx.features)
+  const sameValue = local.is_secret === true && payload.is_secret === true ? true : local.value === payload.value && local.is_secret === payload.is_secret
+  if (neverSynced && sameValue && local.enabled === payload.enabled && (local.description ?? null) === (payload.description ?? null)) {
+    if (type === 'global_variable' && clash.is_secret === 1) {
+      const value = ctx.secrets.get((clash.secret_ref as string | null) ?? globalVarSecretKey(cid))
+      if (value !== null && ctx.secrets.get(globalVarSecretKey(id)) === null) ctx.secrets.set(globalVarSecretKey(id), value)
+    }
+    softDeleteRow(ctx, type, cid)
+    db.prepare('DELETE FROM sync_entities WHERE entity_type = ? AND entity_id = ?').run(type, cid)
+    clearDirty(db, type, cid)
+    note(ctx, type, cid, 'delete')
+    return
+  }
+  let n = 1
+  const base = key.slice(0, 256 - '_conflict99'.length)
+  let candidate = `${base}_conflict`
+  const exists = db.prepare(`SELECT 1 FROM ${table} WHERE ${ownerCol} = ? AND key = ? AND deleted = 0`)
+  while (exists.get(ownerId, candidate)) candidate = `${base}_conflict${++n}`
+  db.prepare(`UPDATE ${table} SET key = ?, version = version + 1, updated_at = ? WHERE id = ?`).run(candidate, ctx.nowS, cid)
+  markDirty(db, type, cid, ctx.workspaceId)
+  recordAutoResolved(db, ctx.nowS, {
+    workspaceId: ctx.workspaceId, type, id: cid, kind: 'duplicate_key', label: key,
+    message: `Both devices have a ${type === 'global_variable' ? 'global' : 'collection variable'} named "${key}". Yours was renamed to "${candidate}".`,
+  })
+  note(ctx, type, cid, 'upsert')
+}
+
 /** Two variables with the same key in one environment: the LOCAL one is renamed, the remote one takes the key. */
 function renameClashingVariable(ctx: ApplyCtx, id: string, payload: Payload): void {
   const { db } = ctx
@@ -339,7 +408,7 @@ function versionLabelClash(ctx: ApplyCtx, id: string, payload: Payload): boolean
 export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow, sameId?: { remote: Payload; remoteVersion: number }): void {
   const { db } = ctx
   const cid = clash.id as string
-  const wire = toWire('collection_version', clash)
+  const wire = toWire('collection_version', clash, ctx.features)
   softDeleteRow(ctx, 'collection_version', cid)
   const e = getEntity(db, 'collection_version', cid)
   putEntity(db, 'collection_version', cid, ctx.workspaceId, {
@@ -379,12 +448,12 @@ function applyDelete(ctx: ApplyCtx, type: SyncEntityType, id: string, opId: stri
   }
 
   const container = type === 'collection' || type === 'folder' || type === 'environment'
-  const selfModified = isModified(db, type, L)
+  const selfModified = isModified(ctx, type, L)
   const survivors = new Map<string, EntityRef>()
   if (container) {
     for (const d of subtree(db, type, id)) {
       const row = loadRow(db, d.type, d.id)!
-      if (!isModified(db, d.type, row)) continue
+      if (!isModified(ctx, d.type, row)) continue
       survivors.set(k(d.type, d.id), { type: d.type, id: d.id })
       let cur = parentOf(d.type, row)
       for (let depth = 0; cur && depth < 200; depth++) {
@@ -418,7 +487,7 @@ function applyDelete(ctx: ApplyCtx, type: SyncEntityType, id: string, opId: stri
     const e = getEntity(db, s.type, s.id)
     const prior = findOpenConflict(db, s.type, s.id)
     const base = prior ? parsePayload(prior.base_json) : parsePayload(e?.base_payload ?? null)
-    const local = toWire(s.type, row)
+    const local = toWire(s.type, row, ctx.features)
     const isRoot = s.type === type && s.id === id
     if (isRoot || serverCascades(db, { type, id }, s)) {
       putEntity(db, s.type, s.id, ws, { ...TOMBSTONE, state: 'conflict' })
@@ -472,7 +541,7 @@ export function fixFolderCycles(ctx: ApplyCtx): number {
       const parent = base ? ((base.parent_folder_id as string | null) ?? null) : null
       db.prepare('UPDATE folders SET parent_folder_id = ?, version = version + 1, updated_at = ? WHERE id = ?').run(parent, ctx.nowS, id)
       const after = loadRow(db, 'folder', id)!
-      if (base && samePayload(toWire('folder', after), base)) clearDirty(db, 'folder', id)
+      if (base && samePayload(toWire('folder', after, ctx.features), base)) clearDirty(db, 'folder', id)
       else markDirty(db, 'folder', id, ctx.workspaceId)
       recordAutoResolved(db, ctx.nowS, {
         workspaceId: ctx.workspaceId, type: 'folder', id, kind: 'rejected', label: String(row.name),

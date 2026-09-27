@@ -106,6 +106,16 @@ describe('buildGroupDiffs', () => {
     const rows = buildGroupDiffs({ entityType: 'collection', groups: [group({ group: 'name', label: 'Name', local: '{"name":"x"}', remote: '{"name":"y"}' })] })[0].rows
     expect(rows[0].local).toBe('{"name":"x"}')
   })
+  it('collection/folder scripts and docs (sync design section 21) are line-diffed text', () => {
+    const [g] = buildGroupDiffs({
+      entityType: 'folder',
+      groups: [group({ group: 'scripts', label: 'Scripts', local: '// Pre-request script\nline 1\nB', remote: '// Pre-request script\nline 1\nA' })],
+    })
+    expect(g.rows).toHaveLength(1)
+    expect(g.rows[0]).toMatchObject({ label: 'Scripts', changed: true })
+    expect(g.rows[0].localLines?.map((l) => l.op)).toEqual(['same', 'same', 'del'])
+    expect(g.rows[0].remoteLines?.map((l) => l.op)).toEqual(['same', 'same', 'add'])
+  })
   it('lists conflicting groups and formats deleted/empty values', () => {
     const groups = [group({ group: 'name', conflicting: true }), group({ group: 'order', conflicting: false })]
     expect(conflictingGroups({ groups })).toEqual(['name'])

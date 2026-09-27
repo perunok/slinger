@@ -27,6 +27,12 @@ export const ICONS: Record<string, string> = {
   upload: 'M12 16V5M7 9l5-5 5 5M5 20h14',
   refresh: 'M20 11a8 8 0 00-14-4L4 9M4 4v5h5M4 13a8 8 0 0014 4l2-2M20 20v-5h-5',
   layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  /** Two panes stacked (response below the request). */
+  'layout-rows': 'M4 5h16v14H4zM4 12h16',
+  /** Two panes side by side (response beside the request). */
+  'layout-columns': 'M4 5h16v14H4zM12 5v14',
+  /** A window with a panel on its right. */
+  'panel-right': 'M4 5h16v14H4zM15 5v14',
   tag: 'M3 12V4h8l10 10-8 8zM7.5 8h.01',
   wrap: 'M4 6h16M4 12h13a3 3 0 010 6h-4M15 16l-2 2 2 2M4 18h5',
   sun: 'M12 8a4 4 0 100 8 4 4 0 000-8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5',

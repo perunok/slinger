@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
-import { checkRejectionContract } from '../sync/wireContract'
+import { checkLocalOnlyContract, checkRejectionContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
 
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
@@ -51,12 +51,21 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
     const env = await a.api.createEnvironment(ws, 'Prod')
     await a.api.upsertEnvironmentVariable({ environmentId: env.id, key: 'host', value: 'api.example.com', isSecret: false })
     await a.api.upsertEnvironmentVariable({ environmentId: env.id, key: 'token', value: 'PLAINTEXT-SECRET-42', isSecret: true })
+    // section 21: scripts, docs, collection variables, globals (a secret one too)
+    const script = JSON.stringify([{ listen: 'prerequest', script: { exec: ['pm.variables.set("x", 1)'], type: 'text/javascript' } }])
+    await a.api.setCollectionScripts(col.id, script)
+    await a.api.setFolderDescription(folder.id, '# Auth docs')
+    await a.api.upsertCollectionVariable({ collectionId: col.id, key: 'base url', value: 'https://pay.example.com' })
+    await a.api.upsertGlobalVariable({ workspaceId: ws, key: 'tenant', value: 'acme', isSecret: false })
+    await a.api.upsertGlobalVariable({ workspaceId: ws, key: 'api key', value: 'PLAINTEXT-GLOBAL-43', isSecret: true })
     await a.api.publishWorkspace(ws)
     const s = await a.core.sync.syncNow(ws)
     expect(s).toMatchObject({ state: 'idle', pendingChanges: 0, initialSyncPending: false, role: 'owner' })
     expect(await a.api.listHistory(ws)).toEqual([]) // cloud traffic never becomes history
     expect(await serverState(s.remoteWorkspaceId!)).toEqual(deviceState(a, ws))
     expect(cloud.server.dump()).not.toContain('PLAINTEXT-SECRET-42')
+    expect(cloud.server.dump()).not.toContain('PLAINTEXT-GLOBAL-43')
+    expect((await serverState(s.remoteWorkspaceId!)).filter((x) => /^(collection_variable|global_variable):/.test(x))).toHaveLength(3)
 
     // a second device downloads it
     const b = await device(emails.owner)
@@ -66,6 +75,9 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
     expect(deviceState(b, link.workspace.id)).toEqual(deviceState(a, ws))
     const vars = await b.api.listEnvironmentVariables(env.id)
     expect(vars.find((v) => v.key === 'token')).toMatchObject({ isSecret: true, secretMissing: true })
+    expect((await b.api.listGlobalVariables(link.workspace.id)).map((g) => [g.key, g.secretMissing])).toEqual([['tenant', false], ['api key', true]])
+    expect((await b.api.listCollectionVariables(col.id)).map((v) => v.value)).toEqual(['https://pay.example.com'])
+    expect((await b.api.listCollections(link.workspace.id))[0]).toMatchObject({ scriptsJson: script })
     expect(await b.api.listCollectionVersions(col.id)).toHaveLength(1)
   })
 
@@ -243,6 +255,19 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
     })
   })
 
+  it('speaks the section 21 extensions (scripts/docs, collection variables, globals) exactly as the fake server does', async () => {
+    await checkLocalOnlyContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken,
+      viewerToken: async (wsId) => {
+        const email = 'contract21-viewer@it.test'
+        await cloud.createUser(admin, email, PASSWORD)
+        await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
+        return cloud.login(email, PASSWORD)
+      },
+    })
+  })
+
   describe('push rejections with a writer racing between pull and push', () => {
     /** A device whose next push is preceded by `race` (a REST write by the owner), recording the pull/push sequence. */
     async function racingDevice() {
@@ -310,7 +335,7 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
       expect(await serverState(remoteId)).toEqual(deviceState(a, ws))
     })
 
-    it('a move into a folder deleted meanwhile (server: invalid) pulls first and ends as remote_deleted, not quarantined', async () => {
+    it('a move into a folder deleted meanwhile (server: not_found since slinger-admin 9ce4b08, invalid before) pulls first and ends as remote_deleted, not quarantined', async () => {
       const { a, ws, col, req, remoteId, state, rest } = await racingDevice()
       const other = await a.api.createFolder({ workspaceId: ws, collectionId: col.id, name: 'Other' })
       await a.core.sync.syncNow(ws)

@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0008_variables.sql
+  migrations/        0001_init.sql ... 0009_sync_local_only.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -111,16 +111,20 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   mnemonics).
 - **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
-  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Right Panel, Toggle Status
+  Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
   **Help:** User Guide, Keyboard Shortcuts, Release Notes, Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
-  `import`, `exportCollection`, `settings`, `about`, `shortcuts`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggles `toggleResponsePosition`,
+  `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
   window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
   (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
   button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
   collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
-- **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,` and `/`: the
+- **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,`, `/` and the
+  layout toggles Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
+  AltGr produced a character): the
   menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
   macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
   page did not `preventDefault`, and as a belt-and-braces guard the renderer drops a menu command that arrives within 300 ms of the
@@ -148,10 +152,11 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0002_collection_versions` | `collection_versions` (semver columns, `snapshot_json`, counts), unique index on `(collection_id, version)` among live rows |
 | `0003_integrity` | unique live `(environment_id, key)`, sibling-order indexes, trigger `collection_versions_immutable` |
 | `0004_sync` | sync bookkeeping tables, change-capture and read-only triggers (see Cloud sync) |
-| `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; local-only, not synced), read-only triggers for it |
-| `0006_descriptions` | nullable `description` + `description_type` on `collections` and `folders` (documentation; local-only, not synced), read-only triggers for them |
+| `0005_scripts` | nullable `scripts_json` on `collections` and `folders` (Postman `event` array as text; synced since 0009), read-only triggers for it |
+| `0006_descriptions` | nullable `description` + `description_type` on `collections` and `folders` (documentation; synced since 0009), read-only triggers for them |
 | `0007_import_source` | nullable `collections.source_postman_id` (the `info._postman_id` a collection was imported or replaced from; local-only, not synced) |
-| `0008_variables` | `collection_variables` (per collection, never secret) and `global_variables` (per workspace, secrets like environment variables): key, value, enabled, description, `sort_order`, unique live key per owner; local-only (no capture triggers), read-only triggers for viewers |
+| `0008_variables` | `collection_variables` (per collection, never secret) and `global_variables` (per workspace, secrets like environment variables): key, value, enabled, description, `sort_order`, unique live key per owner; read-only triggers for viewers |
+| `0009_sync_local_only` | capture triggers for collection/folder `scripts_json` / `description` / `description_type` and for `collection_variables` / `global_variables`; `global_variables.secret_missing`; `cloud_links.sync_features`; the globals read-only trigger lets a viewer set a secret's local value (sync design section 21) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -286,10 +291,14 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
 - **Capture**: SQLite triggers from `0004_sync.sql` mark changed rows of linked workspaces in `sync_dirty` in the same statement;
   engine writes run with `sync_control.applying = 1` and are not captured. Read-only (viewer) links are enforced by triggers too
   (`read_only` IPC error). The last state both sides agreed on is `sync_entities.base_payload` (the 3-way merge base).
-- **Local-only data**: collection/folder `scripts_json` and descriptions (0005/0006), `source_postman_id` (0007) and the
-  `collection_variables` / `global_variables` tables (0008) are never captured or pushed (no protocol field or entity exists for
-  them); viewer workspaces still refuse local writes to them. A collection deleted by a pull hides its variables (reads require a
-  live collection); restoring it brings them back.
+- **Scripts, docs, collection variables, globals** (design section 21): captured by the 0009 triggers and synced when the
+  server advertises the matching feature (`folder_scripts`, `docs`, `collection_variables`, `globals`; learnt from every
+  pull/snapshot answer into `cloud_links.sync_features`, `sync/features.ts`). The link's feature set gates the wire mapping
+  (`toWire(type, row, features)`), so with an older server these stay local-only: nothing is pushed and nothing is reported.
+  When a feature appears, local values are uploaded (merge bases get the new fields as `null`). Secret globals travel as metadata;
+  a global created elsewhere has `secretMissing` until this device sets a value (keychain `slinger:global-var:<id>`). Equal
+  never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
+  `source_postman_id` (0007) stays device-local.
 - **Cycle** (`engine.ts`, one per workspace at a time): register client (refuses servers below protocol v2), re-read the role,
   snapshot download for a new link, then up to 4 rounds of pull (apply pages in one transaction each; the checkpoint only advances
   with the applied page) -> build ops from the dirty set (`outbox.buildOps`: no-op elimination, limits quarantine, cascade pruning,
@@ -422,11 +431,10 @@ to the worker's linear memory; the worker can be terminated).
 
 **Storage and sync.** Request scripts: `requests.document_json` key `scripts` (synced, versioned, exported). Collection/folder
 scripts: `scripts_json` (0005), included in version snapshots (`collectionScriptsJson`, folder `scriptsJson`, optional so older
-snapshots stay valid and snapshots without scripts keep the old JSON shape) and Postman import/export (`event`), but **not synced**:
-the server's collection/folder schema has no such field (it would drop it), so the column is classified as local-only in the sync
-drift guard (`electron/__tests__/sync/triggers.test.ts`). `pm.collectionVariables` and `pm.globals` are persisted in
-`collection_variables` / `global_variables` (0008): local-only like `scripts_json` (the tables have no capture triggers, and the sync
-engine never reads them; tests check that variable writes leave `sync_dirty` untouched).
+snapshots stay valid and snapshots without scripts keep the old JSON shape) and Postman import/export (`event`), and synced (field
+group `scripts`, feature `folder_scripts`, sync design section 21). `pm.collectionVariables` and `pm.globals` are persisted in
+`collection_variables` / `global_variables` (0008) and synced as the `collection_variable` / `global_variable` entities (secret
+globals as metadata only); script writes are captured like any other write.
 
 **Renderer side.** `src/lib/scripts.ts` (pure: Postman `event` editing that returns the same array when nothing changed, chain
 assembly, request/response snapshots, scope layering, test counts), `features/requests/execute.ts` (the pipeline),
@@ -569,6 +577,14 @@ environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
 
+**Layout** (`src/features/layout`). The request/response split orientation and "Show status bar" are settings; the right
+panel's state is its own small store (`rightPanel.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
+and shows the right panel only when the main area keeps `minMainWidth` (`fitPanelWidth`), so neither the panel nor the status
+bar can squeeze the request editor below a usable size at the 900x600 minimum window. Right-panel views are registered in
+`panels.ts` (id, label, icon, component taking the active request/example tab or null, optional availability); add a view
+there. Every layout command (`layoutActions.ts`) is shared by the shortcut, the View menu command, the command palette, the
+buttons and Settings.
+
 **Cloud sync in the renderer** (`src/features/sync`, `src/features/cloud`). `sync/syncStore.svelte.ts` is one reactive wrapper over
 the account/sync IPC methods plus a single `onSyncEvent` subscription (`status`, `applied`, `conflicts`, `auth`, `signInResult`);
 nothing polls the main process (the only timer refreshes "synced 2 min ago" labels, and the pending count is re-read once,
@@ -603,10 +619,9 @@ rendered to HTML and sanitised by DOMPurify before `{@html}`; nothing else in th
   (so `text/plain` stays plain). Collections and folders have `description` (text) and `description_type` (NULL for the string form,
   else the object's MIME type) from migration 0006, set by `setCollectionDescription` / `setFolderDescription` (the type is kept
   while there is text), imported from `info.description` / folder `description`, exported back in the same shape, and captured in
-  version snapshots (`collectionDescription(Type)`, folder `description(Type)`). **Sync:** the cloud protocol has no field for
-  collection/folder descriptions (the server's collection and folder schemas carry only name/location/order), so, like
-  `scripts_json`, the columns are local-only in v1: the 0004 change-capture triggers ignore them (schema-drift test classifies them
-  as ignored) and the read-only triggers still refuse edits for viewers. Request descriptions sync as part of `document_json`.
+  version snapshots (`collectionDescription(Type)`, folder `description(Type)`). **Sync:** both columns are the field group `docs`
+  (feature `docs`, captured by the 0009 triggers, sync design section 21); with an older server they stay on the device. The
+  read-only triggers refuse edits for viewers. Request descriptions sync as part of `document_json`.
 - *Sanitiser policy* (`render.ts`). Allowlisted tags only: text formatting, headings, lists, tables, `blockquote`, `pre`/`code`,
   `details`/`summary`, `hr`, `br`, `img`, `a`, and `input` (forced to a disabled checkbox, for task lists). Allowed attributes: `href`,
   `src`, `alt`, `title`, table `align`/`colspan`/`rowspan`, list `start`/`reversed`, `open`, `width`/`height`, `checked`/`disabled`,

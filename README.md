@@ -172,8 +172,9 @@ Set `SLINGER_BIN_DIR` to put the `slinger` command elsewhere. Your data is not t
 
 These do not exist in the code today: the OAuth 2.0 implicit grant (deprecated; authorization code with PKCE, client
 credentials and password are supported), other auth types such as Digest, AWS Signature or NTLM, Node modules /
-`postman-collection` in scripts, cloud sync of collection- and folder-level scripts (request scripts do sync), of
-collection variables and of globals (both are saved on the device only), realtime collaboration and plugins/extensions.
+`postman-collection` in scripts, realtime collaboration and plugins/extensions. Cloud sync covers collection- and folder-level
+scripts and docs, collection variables and globals only with a server that supports them (slinger-admin with the
+`sync_local_only` migration); with an older server they stay on the device.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
 
 ## Manifesto

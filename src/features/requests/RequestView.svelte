@@ -1,6 +1,9 @@
 <script lang="ts">
   import Tabs from '../../components/ui/Tabs.svelte'
   import SplitPane from '../../components/ui/SplitPane.svelte'
+  import { settings } from '../../app/settings.svelte'
+  import ResponsePositionButton from '../layout/ResponsePositionButton.svelte'
+  import { splitKey } from '../layout/layoutActions'
   import { dataRows } from '../../lib/kv'
   import { ui } from '../../app/ui.svelte'
   import ResponsePane from '../response/ResponsePane.svelte'
@@ -66,10 +69,17 @@
   <SyncSizeWarning {tab} />
   {#if sync.blocked && tab.dirty}<ReadOnlyNote class="mx-3 mt-2" />{/if}
   <UrlBar {tab} onsend={send} oncancel={() => tabsStore.cancel(tab)} onsave={save} />
-  <SplitPane direction="column" storageKey="slinger.split.request" initial={0.5} class="min-h-0">
+  <SplitPane
+    direction={settings.responsePosition === 'below' ? 'column' : 'row'}
+    storageKey={splitKey('request', settings.responsePosition)}
+    initial={settings.responsePosition === 'below' ? 0.5 : 0.5}
+    min={settings.responsePosition === 'below' ? 0.15 : 0.25}
+    class="min-h-0"
+  >
+    {#snippet action()}<ResponsePositionButton />{/snippet}
     {#snippet first()}
       <div class="flex h-full min-h-0 flex-col">
-        <Tabs tabs={sections} value={tab.section} onchange={(v) => (tab.section = v as RequestSection)} label="Request sections" idPrefix="sec" class="px-2" />
+        <Tabs tabs={sections} value={tab.section} onchange={(v) => (tab.section = v as RequestSection)} label="Request sections" idPrefix="sec" class="scroll-strip shrink-0 overflow-x-auto overflow-y-hidden px-2" />
         <div class="min-h-0 flex-1 overflow-auto" role="tabpanel" id="sec-panel-{tab.section}" aria-labelledby="sec-{tab.section}">
           {#if tab.section === 'params'}<ParamsPanel {tab} />
           {:else if tab.section === 'auth'}<AuthPanel {tab} />

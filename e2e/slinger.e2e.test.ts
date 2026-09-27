@@ -241,6 +241,36 @@ describe('workspace content', () => {
     await expect.poll(() => panel.innerText()).toContain('/v1/echo?who=alice')
     await page.getByRole('tab', { name: 'Collections' }).click()
   })
+
+  it('puts the response beside the request and back, and the right panel shows the resolved variables', async () => {
+    const requestPanel = page.locator('#request-panel')
+    const divider = requestPanel.getByRole('separator', { name: 'Resize panes' })
+    await expect.poll(() => divider.getAttribute('aria-orientation')).toBe('horizontal')
+    await requestPanel.getByTestId('split-action').getByRole('button', { name: 'Show response beside the request' }).click()
+    await expect.poll(() => divider.getAttribute('aria-orientation')).toBe('vertical')
+    const response = await page.getByRole('region', { name: 'Response' }).boundingBox()
+    const sections = await page.getByRole('tablist', { name: 'Request sections' }).boundingBox()
+    expect(response!.x).toBeGreaterThanOrEqual(sections!.x + sections!.width - 1) // side by side
+    // The status bar shows the last response; Ctrl/Cmd+Alt+V switches back.
+    await expect.poll(() => page.getByTestId('status-response').innerText()).toContain('200')
+    await page.getByRole('textbox', { name: 'Request name' }).click()
+    await page.keyboard.press('ControlOrMeta+Alt+v')
+    await expect.poll(() => divider.getAttribute('aria-orientation')).toBe('horizontal')
+
+    await page.getByTestId('right-panel-toggle').click()
+    const side = page.getByRole('complementary', { name: 'Right panel' })
+    await side.getByRole('tab', { name: 'Variables' }).click()
+    const used = side.getByTestId('used-var')
+    await expect.poll(() => used.count()).toBe(4) // baseUrl, pathPart, user (URL + header + body), token (auth)
+    const baseUrl = used.filter({ hasText: 'baseUrl' })
+    await expect.poll(() => baseUrl.innerText()).toContain(target.url)
+    expect(await baseUrl.innerText()).toMatch(/Environment/)
+    expect(await used.filter({ hasText: 'token' }).getAttribute('data-status')).toBe('secret')
+    expect(await side.innerText()).not.toContain(SECRET)
+    await capture(ctx.app, join(SHOTS, 'right-panel-variables.png'))
+    await side.getByRole('button', { name: /Close right panel/ }).click()
+    await side.waitFor({ state: 'hidden' })
+  })
 })
 
 describe('request bodies and responses', () => {

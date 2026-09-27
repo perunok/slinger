@@ -8,7 +8,8 @@ import { MemorySecretStore } from '../../services/secrets'
 import { tokenKey } from '../../cloud/auth'
 import { SYNC_ENTITY_TYPES } from '../../sync/types'
 import type { Payload, SyncEntityType } from '../../sync/types'
-import { TABLE, toWire, type AnyRow } from '../../sync/mapping'
+import { linkFeatures } from '../../sync/features'
+import { TABLE, toWire, typeSynced, type AnyRow } from '../../sync/mapping'
 import { MIGRATIONS_DIR } from '../helpers'
 import { FakeCloud } from './fakeCloud'
 
@@ -122,14 +123,16 @@ export interface EntitySnapshot {
 /** Live content of a workspace as wire payloads (no secret values), sorted by (type, id). */
 export function liveState(dev: Device, workspaceId: string): EntitySnapshot[] {
   const out: EntitySnapshot[] = []
+  const features = linkFeatures(dev.db, workspaceId)
   for (const type of SYNC_ENTITY_TYPES) {
+    if (!typeSynced(type, features)) continue
     const rows = dev.db.prepare(`SELECT * FROM ${TABLE[type]} WHERE deleted = 0 ORDER BY id`).all() as AnyRow[]
     for (const r of rows) {
       const ws =
         type === 'environment_variable'
           ? (dev.db.prepare('SELECT workspace_id FROM environments WHERE id = ?').get(r.environment_id) as { workspace_id: string }).workspace_id
           : (r.workspace_id as string)
-      if (ws === workspaceId) out.push({ type, id: r.id as string, wire: toWire(type, r) })
+      if (ws === workspaceId) out.push({ type, id: r.id as string, wire: toWire(type, r, features) })
     }
   }
   return out

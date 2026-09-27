@@ -109,7 +109,7 @@ export interface EnvironmentVariable {
 
 /**
  * ADDED (persisted variables): a collection variable (Postman collection `variable`). Part of the collection:
- * exported and versioned, never secret. Local-only (not synced).
+ * exported and versioned, never secret. Synced with cloud workspaces when the server supports it (sync design section 21).
  */
 export interface CollectionVariable {
   id: string
@@ -128,7 +128,7 @@ export interface CollectionVariable {
 /**
  * ADDED (persisted variables): a workspace global (`pm.globals`). Secrets work like environment variables: the
  * value lives in the OS keychain only, lists carry `value: null` + `maskedValue`, `revealGlobalVariable` reads one.
- * Local-only (not synced, not exported with collections).
+ * Not exported with collections. Synced with cloud workspaces when the server supports it (secrets as metadata only).
  */
 export interface GlobalVariable {
   id: string
@@ -138,6 +138,8 @@ export interface GlobalVariable {
   value: string | null
   isSecret: boolean
   maskedValue: string | null
+  /** Secret global created by another device: its value is not set on this device yet (sync design D3, section 21). */
+  secretMissing: boolean
   enabled: boolean
   description: string | null
   sortOrder: number
@@ -677,6 +679,9 @@ export type SyncEntityType =
   | 'environment'
   | 'environment_variable'
   | 'collection_version'
+  /** Synced when the server supports it (sync design section 21). */
+  | 'collection_variable'
+  | 'global_variable'
 
 export interface CloudConfig {
   apiBaseUrl: string
@@ -786,7 +791,8 @@ export type SyncResolution = 'keep_local' | 'keep_remote' | 'merge' | 'duplicate
 
 /** One field group of a conflicting entity. Values are display strings; secret values never appear. */
 export interface SyncConflictGroup {
-  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value'
+  /** `scripts`, `docs` (collections/folders) and `details` (variables: enabled + description): sync design section 21. */
+  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details'
   label: string
   conflicting: boolean
   base: string | null

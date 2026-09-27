@@ -48,6 +48,13 @@ export function markAllLiveDirty(db: Db, workspaceId: string): number {
       `SELECT v.id AS id, v.workspace_id AS workspace_id FROM collection_versions v JOIN collections c ON c.id = v.collection_id
        WHERE v.workspace_id = ? AND v.deleted = 0 AND c.deleted = 0`,
     ],
+    // Dropped again without a push when the server does not support them (design section 21).
+    [
+      'collection_variable',
+      `SELECT v.id AS id, v.workspace_id AS workspace_id FROM collection_variables v JOIN collections c ON c.id = v.collection_id
+       WHERE v.workspace_id = ? AND v.deleted = 0 AND c.deleted = 0`,
+    ],
+    ['global_variable', 'SELECT id, workspace_id FROM global_variables WHERE workspace_id = ? AND deleted = 0'],
   ]
   let n = 0
   for (const [type, query] of sql) {
@@ -60,7 +67,7 @@ export function markAllLiveDirty(db: Db, workspaceId: string): number {
 }
 
 export function hasLiveContent(db: Db, workspaceId: string): boolean {
-  for (const t of ['collections', 'environments']) {
+  for (const t of ['collections', 'environments', 'global_variables']) {
     if (db.prepare(`SELECT 1 FROM ${t} WHERE workspace_id = ? AND deleted = 0 LIMIT 1`).get(workspaceId)) return true
   }
   return false

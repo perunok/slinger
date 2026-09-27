@@ -2,6 +2,9 @@
 import { startSyncItServer, type SyncItServer } from '../../../scripts/sync-it-server.mjs'
 import type { Device } from '../sync/harness'
 
+/** Every sync extension (design section 21), so snapshots compare with what the devices sync. */
+const FEATURES = 'folder_scripts,docs,collection_variables,globals'
+
 export interface Json {
   [k: string]: any // eslint-disable-line @typescript-eslint/no-explicit-any
 }
@@ -102,7 +105,7 @@ export class RealCloud {
     const out: Array<{ resource_type: string; resource_id: string; version: number; payload: Json }> = []
     let cursor = ''
     for (;;) {
-      const res = await this.call('GET', `/v1/workspaces/${wsId}/sync/snapshot?client_id=${clientId}&limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { token })
+      const res = await this.call('GET', `/v1/workspaces/${wsId}/sync/snapshot?client_id=${clientId}&limit=500&features=${FEATURES}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { token })
       if (res.status !== 200) throw new Error(`snapshot failed: ${res.text}`)
       out.push(...(res.json.entities as typeof out))
       if (!res.json.next_cursor) return out

@@ -7,9 +7,58 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 - **Menu bar:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
 - **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
-  Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
+  Right panel, Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
 - **Sidebar:** two tabs, **Collections** and **History**.
-- **Main area:** request tabs, the request editor, and the response pane below it.
+- **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
+- **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
+- **Right panel** (closed by default): see [Right panel](#right-panel).
+
+### Status bar
+
+The thin bar at the bottom of the window shows, from left to right:
+
+- **Cloud sync** of the open workspace: *Local only*, *Synced*, *N pending*, *Offline*, *N conflicts*, *Sync error*, *Read-only*,
+  *Signed out* and so on (the same state as the sync chip in the top bar). Click it to open the conflict center when there are
+  conflicts, otherwise the Cloud dialog.
+- **Environment:** the active environment (or *No environment*). Click it to open the Environments dialog.
+- **Activity:** *Sending…* while requests are in flight, *Running <collection>… 3/10* while the collection runner runs.
+- On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
+  *Not sent* when the last send failed before a response.
+- The **response position** button (same as the button on the divider, see below) and the **right panel** button.
+
+Hide it with **Settings > Layout > Show status bar** or **View > Toggle Status Bar** (also in the command palette,
+`> status bar`).
+
+### Right panel
+
+A panel on the right of the main area with more about the active request or example tab. Open or close it with the
+panel icon in the top bar or at the right end of the status bar, **Ctrl+Alt+B** (Cmd+Option+B on macOS), **View > Toggle
+Right Panel**, or the command palette (`> right panel`, which can also open it directly on one view). It has four views:
+
+- **Variables:** every `{{variable}}` the request uses (URL, enabled headers, body, authorization) with its current value and
+  where it comes from (environment, collection, globals, built-in). Secret values are masked; variables that are not defined
+  anywhere are highlighted and have a **Create** button. Below: all variables in scope.
+- **Docs:** the request's documentation, rendered. **Edit in Docs** switches the request to its Docs section (for an example,
+  **Open request** opens the parent request).
+- **Code:** the code snippet for the request (the same generator as the request's Code section), with a language picker and
+  **Copy**.
+- **Info:** name, method, URL, collection/folder, saved or unsaved, ID, created and updated times, version, and the workspace's
+  sync state.
+
+With no request tab active (or a collection overview), the views say so. Drag the panel's left edge to resize it (or focus
+the edge and use Left/Right). Whether it is open, the view and the width are remembered. The panel only shows when the request
+editor keeps a usable width next to it (about 500 px, 640 px with the response beside the request); in a narrower window it
+hides until there is room again (the status bar icon turns amber), so widen the window or drag the sidebar narrower.
+
+### Response below or beside the request
+
+The response pane sits below the request editor by default. To put it side by side with the request, click the small
+button at the right end of the divider between the two panes (when they are side by side, the button sits at the bottom
+end of the vertical divider), press **Ctrl+Alt+V** (Cmd+Option+V on macOS), use **View > Toggle Response Position**, pick
+**Layout: Response beside the request** in the command palette (Ctrl+K, `> layout`), or choose it under **Settings > Layout**.
+The choice applies to every request and example tab and is remembered. Each layout remembers its own divider position, so
+switching back and forth does not lose your preferred sizes. Dragging the divider (or focusing it and using the arrow keys)
+still resizes the panes; the button itself never starts a drag.
 
 ## Workspaces
 
@@ -123,8 +172,9 @@ collection "Payments" or the globals").
 
 A name defined in several scopes takes the value of the narrowest one: local over environment over collection over globals.
 Disabled collection variables and globals are kept but do not resolve (untick **On** in the table). Collection variables and
-globals are saved on this device (they survive restarts) but are **not synced** to the cloud; in a read-only (viewer) synced
-workspace they cannot be changed.
+globals are saved on this device (they survive restarts) and, in a workspace linked to the cloud, synced like the rest of it (secret
+globals: only the name travels, see "What syncs" under Cloud account and sync); in a read-only (viewer) synced workspace they cannot
+be changed, except for setting a secret global's value on this device.
 
 **Collection variables.** They belong to the collection: imported from and exported to a Postman collection's `variable` list,
 included in version snapshots and restored with them. Because they travel with the collection file, they are never secret; put
@@ -392,8 +442,8 @@ pm.request.headers.upsert({ key: 'X-Request-Id', value: require('uuid').v4() })
 ```
 
 **Sync and versions.** Request scripts are part of the request, so cloud sync, collection versions and Postman export carry
-them. Collection- and folder-level scripts are included in collection versions and Postman export, but **cloud sync does not carry
-them yet** (the cloud protocol has no field for them): they stay on the device where you wrote or imported them.
+them. Collection- and folder-level scripts are included in collection versions and Postman export, and cloud sync carries them too
+(with a cloud server that supports it; an older server leaves them on the device where you wrote or imported them).
 
 **Security.** Scripts from an imported collection are code from someone else. Slinger never runs them in the app window: they run
 in the main process, in a separate worker thread, inside QuickJS (a JavaScript engine compiled to WebAssembly) with nothing but
@@ -440,8 +490,8 @@ collections keep theirs).
   documentation**. **Edit** shows a Markdown editor (same font size and line-wrap setting as the other editors); **Split** shows the
   editor and the live preview side by side. The choice is remembered per tab.
 - **Saving:** request docs save with the request (**Save**, Ctrl+S). Collection and folder docs save with the overview's **Save**
-  button or Ctrl+S. They are kept on this device, included in collection versions and exported to Postman; **cloud sync does not
-  carry collection and folder docs yet** (request docs sync with the request).
+  button or Ctrl+S. They are included in collection versions, exported to Postman and synced with a linked cloud workspace (with a
+  cloud server that supports it; request docs always sync with the request).
 - **What renders:** GitHub-flavoured Markdown: headings (hover one for a `#` link to it), **bold**, *italic*, ~~strikethrough~~,
   lists and task lists (`- [x] done`), tables, block quotes, horizontal rules, inline `code` and fenced code blocks with syntax
   colours for JSON, JavaScript/TypeScript, XML, HTML and CSS (in the current theme's colours). Bare URLs become links.
@@ -562,8 +612,17 @@ requests from both sides side by side (nothing is matched by name, so duplicates
 with the same name (a plain variable that differs takes the cloud value) and never moves secret values. If a cloud workspace is
 read-only for you (viewer), it can only be downloaded into a new, read-only workspace. **Unlink** stops syncing and keeps
 everything on both sides. If publishing says items "already exist in another cloud workspace" (the same workspace was published
-before), **Publish a copy** uploads a fresh-id copy instead. Collection and folder scripts and docs, collection variables and
-globals stay on this device (the cloud has no place for them yet).
+before), **Publish a copy** uploads a fresh-id copy instead.
+
+**What syncs.** Collections, folders and requests (with their scripts, docs and saved examples), collection- and folder-level scripts
+and documentation, collection variables, environments and their variables, globals, and collection versions. Secret values
+(secret environment variables and secret globals) never leave the device: the cloud and other devices only learn the name, and a
+secret that arrives from another device shows **Value not set on this device** until you enter a value here. Request history,
+app settings and cloud tokens never sync. If the same variable was added on two devices before they synced (for example after
+importing the same Postman collection on both), identical ones become one; different ones are both kept and yours is renamed
+`<name>_conflict` (noted in the conflict history). An older cloud server that does not know collection/folder scripts and docs,
+collection variables or globals simply leaves them on each device (nothing is reported); they upload by themselves once the
+server is updated.
 
 **Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing, Offline (edits are kept and upload
 later), Sync error (with a Retry toast), conflicts, Read-only, Signed out, Access revoked. Click it for **Sync now** and the
@@ -614,6 +673,8 @@ Settings (Ctrl+, or the sun icon):
   pebble shot from a slingshot, bouncing off a target) or **Classic spinner**. The characters are drawn in the accent colour, so
   they suit every theme. The chosen character runs in its card as a preview. With *reduce motion* turned on in the operating
   system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
+- **Layout:** the response **Below the request** (default) or **Beside the request** (see
+  [Response below or beside the request](#response-below-or-beside-the-request)), and **Show status bar** (default on).
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
@@ -718,7 +779,7 @@ Slinger has its own menu bar (on macOS at the top of the screen).
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
 | **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
-| **View** | Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
 | **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
 
@@ -741,8 +802,10 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet) |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; export a collection or an environment; About Slinger) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+Alt+V | Show the response below / beside the request |
+| Ctrl+Alt+B | Show / hide the right panel |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |
 | Enter (in a table cell) | Move to the cell below |

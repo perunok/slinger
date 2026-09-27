@@ -26,6 +26,8 @@ export async function randomOp(d: Device, ws: string, rnd: () => number, n: numb
   const r = rnd()
   const c = pick(collections)
   try {
+    // One op in five touches the section 21 data (scripts, docs, collection variables, globals).
+    if (c && rnd() < 0.2) return await localOnlyOp(d, ws, rnd, n, c.id, folders)
     if (!c || r < 0.04) await d.api.createCollection(ws, `Col ${n}`)
     else if (r < 0.14) await d.api.createFolder({ workspaceId: ws, collectionId: c.id, parentFolderId: pick(folders.filter((f) => f.collection_id === c.id))?.id ?? null, name: `Folder ${n}` })
     else if (r < 0.3) await d.api.createRequest({ workspaceId: ws, collectionId: c.id, folderId: pick(folders.filter((f) => f.collection_id === c.id))?.id ?? null, name: `Req ${n}`, method: pick(['GET', 'POST', 'PUT'])!, url: `https://x/${n}`, documentJson: JSON.stringify({ headers: [], body: `b${n}` }) })
@@ -55,6 +57,26 @@ export async function randomOp(d: Device, ws: string, rnd: () => number, n: numb
     const code = (err as { code?: string }).code
     if (code && !['invalid_input', 'not_found', 'version_conflict'].includes(code) && !/UNIQUE|constraint/i.test(String((err as Error).message))) throw err
   }
+}
+
+async function localOnlyOp(d: Device, ws: string, rnd: () => number, n: number, colId: string, folders: Array<{ id: string; collection_id: string }>): Promise<void> {
+  const pick = <T,>(xs: T[]): T | undefined => xs[Math.floor(rnd() * xs.length)]
+  const script = () => JSON.stringify([{ listen: rnd() < 0.5 ? 'prerequest' : 'test', script: { exec: [`// ${n}`, `pm.variables.set('x', ${n})`], type: 'text/javascript' } }])
+  const cvs = rows<{ id: string; key: string }>(d, 'SELECT id, key FROM collection_variables WHERE collection_id = ? AND deleted = 0', colId)
+  const gvs = rows<{ id: string; key: string; is_secret: number }>(d, 'SELECT id, key, is_secret FROM global_variables WHERE workspace_id = ? AND deleted = 0', ws)
+  const f = pick(folders.filter((x) => x.collection_id === colId))
+  const r = rnd()
+  if (r < 0.1) await d.api.setCollectionScripts(colId, rnd() < 0.2 ? null : script())
+  else if (r < 0.2) { if (f) await d.api.setFolderScripts(f.id, rnd() < 0.2 ? null : script()) }
+  else if (r < 0.28) await d.api.setCollectionDescription(colId, rnd() < 0.2 ? null : `Docs ${n}\nline two`)
+  else if (r < 0.36) { if (f) await d.api.setFolderDescription(f.id, `Folder docs ${n}`) }
+  else if (r < 0.52) await d.api.upsertCollectionVariable({ collectionId: colId, key: `cv${Math.floor(rnd() * 4)}`, value: rnd() < 0.5 ? 'same' : `v${n}`, enabled: rnd() < 0.8 })
+  else if (r < 0.6) { const v = pick(cvs); if (v) await d.api.upsertCollectionVariable({ collectionId: colId, variableId: v.id, key: rnd() < 0.3 ? `cv${Math.floor(rnd() * 4)}` : v.key, value: `e${n}`, description: rnd() < 0.3 ? `about ${n}` : null }) }
+  else if (r < 0.66) { const v = pick(cvs); if (v) await d.api.deleteCollectionVariable(v.id) }
+  else if (r < 0.8) { const secret = rnd() < 0.3; await d.api.upsertGlobalVariable({ workspaceId: ws, key: `g${Math.floor(rnd() * 4)}`, value: secret ? `SECRET-g${n}` : rnd() < 0.5 ? 'same' : `gv${n}`, isSecret: secret }) }
+  else if (r < 0.88) { const g = pick(gvs); const secret = rnd() < 0.4; if (g) await d.api.upsertGlobalVariable({ workspaceId: ws, variableId: g.id, key: g.key, value: secret ? `SECRET-g${n}` : `gv${n}`, isSecret: secret, enabled: rnd() < 0.8 }) }
+  else if (r < 0.94) { const g = pick(gvs); if (g) await d.api.deleteGlobalVariable(g.id) }
+  else if (gvs.length > 1) await d.api.reorderGlobalVariables(ws, [...gvs].reverse().map((g) => g.id))
 }
 
 export async function resolveAll(d: Device, ws: string, rnd: () => number): Promise<number> {

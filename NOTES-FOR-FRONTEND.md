@@ -26,9 +26,9 @@ that are not obvious from the types:
   `RunScriptsResult` (script failures are in `errors[]`, not rejections; environment writes are already saved when it resolves,
   `environmentChanged` says to reload variables). `cancelHttpRequest(runId)` also cancels a script run with that `runId`.
   `setCollectionScripts(id, json|null)` / `setFolderScripts(id, json|null)` store the Postman `event` array (`[]` is stored as
-  null); `Collection.scriptsJson` / `ApiFolder.scriptsJson` carry it (local-only, not synced). `HttpRequestInput.scriptSessionId`
+  null); `Collection.scriptsJson` / `ApiFolder.scriptsJson` carry it (synced with cloud workspaces when the server supports it). `HttpRequestInput.scriptSessionId`
   names the script session whose secret reads are redacted from history.
-* Persisted variables (local-only, not synced): `list/upsert/delete/reorder/replaceCollectionVariables` (per collection, never
+* Persisted variables (synced with cloud workspaces when the server supports it; secret globals as metadata, `GlobalVariable.secretMissing` like environment variables): `list/upsert/delete/reorder/replaceCollectionVariables` (per collection, never
   secret: `isSecret: true` is rejected) and `list/upsert/delete/reorder/replaceGlobalVariables` + `revealGlobalVariable` (per
   workspace, secrets like environment variables). Pass `RunScriptsInput.collectionId` (null for a request outside a collection):
   main loads the collection's variables and the globals itself and saves script writes; `RunScriptsResult.collectionVariablesChanged`

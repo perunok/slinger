@@ -34,6 +34,8 @@ interface Row {
   value: string | null
   is_secret?: number
   secret_ref?: string | null
+  /** Globals only (0009): secret synced from another device, no value in this device's keychain yet. */
+  secret_missing?: number
   enabled: number
   description: string | null
   sort_order: number
@@ -195,16 +197,18 @@ abstract class ScopedVariableRepository<T> {
       return []
     }
     let effective = value
+    // A secret synced from another device without a value here may be edited (key, flags) without giving one.
+    const keepMissing = effective === '' && isSecret && wasSecret && existing.secret_missing === 1
     if (effective === '' && isSecret && wasSecret) effective = this.storedSecret(existing)
-    if (isSecret && effective === '') throw invalidInput('a secret variable needs a value')
+    if (isSecret && effective === '' && !keepMissing) throw invalidInput('a secret variable needs a value')
     const ref = existing.secret_ref ?? this.secretKey(existing.id)
     this.db
       .prepare(
-        `UPDATE global_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?, enabled = ?, description = ?, sort_order = ?,
-           updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0`,
+        `UPDATE global_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?, secret_missing = ?, enabled = ?, description = ?,
+           sort_order = ?, updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0`,
       )
-      .run(key, isSecret ? null : effective, isSecret ? 1 : 0, isSecret ? ref : null, enabled ? 1 : 0, description, sortOrder, now, existing.id)
-    if (isSecret) this.requireStore().set(ref, effective) // after the row (see insertRow)
+      .run(key, isSecret ? null : effective, isSecret ? 1 : 0, isSecret ? ref : null, keepMissing ? 1 : 0, enabled ? 1 : 0, description, sortOrder, now, existing.id)
+    if (isSecret && !keepMissing) this.requireStore().set(ref, effective) // after the row (see insertRow)
     return wasSecret && !isSecret ? [ref] : []
   }
 
@@ -359,7 +363,7 @@ abstract class ScopedVariableRepository<T> {
       if (value === '') throw invalidInput(`"${clean}" is a secret variable and cannot be empty`)
       const ref = existing.secret_ref ?? this.secretKey(existing.id)
       this.db
-        .prepare('UPDATE global_variables SET secret_ref = ?, enabled = 1, updated_at = ?, version = version + 1 WHERE id = ?')
+        .prepare('UPDATE global_variables SET secret_ref = ?, secret_missing = 0, enabled = 1, updated_at = ?, version = version + 1 WHERE id = ?')
         .run(ref, now, existing.id)
       this.requireStore().set(ref, value)
       return { secret: true }
@@ -448,6 +452,7 @@ export class GlobalVariableRepository extends ScopedVariableRepository<GlobalVar
       value: secret ? null : r.value,
       isSecret: secret,
       maskedValue: secret ? SECRET_MASK : null,
+      secretMissing: secret && r.secret_missing === 1,
       enabled: r.enabled === 1,
       description: r.description,
       sortOrder: r.sort_order,

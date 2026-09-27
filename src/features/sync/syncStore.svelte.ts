@@ -60,7 +60,7 @@ export class SyncStore {
   #unsub: (() => void) | null = null
   #ticker: ReturnType<typeof setInterval> | null = null
   #reloadTimer: ReturnType<typeof setTimeout> | null = null
-  #pendingApplied = new Map<string, { requests: Set<string>; environments: boolean; truncated: boolean }>()
+  #pendingApplied = new Map<string, { requests: Set<string>; environments: boolean; globals: boolean; truncated: boolean }>()
   #initStarted = false
   #quiet = false
   #conflictToast: number | null = null
@@ -251,10 +251,12 @@ export class SyncStore {
   /** Coalesces `applied` events, refetches lists, and warns tabs whose request changed under unsaved edits. */
   #queueApplied(e: Extract<SyncEvent, { type: 'applied' }>): void {
     if (e.workspaceId !== app.workspaceId) return
-    const acc = this.#pendingApplied.get(e.workspaceId) ?? { requests: new Set<string>(), environments: false, truncated: false }
+    const acc = this.#pendingApplied.get(e.workspaceId) ?? { requests: new Set<string>(), environments: false, globals: false, truncated: false }
     for (const c of e.changed) {
       if (c.entityType === 'request') acc.requests.add(c.entityId)
       if (c.entityType === 'environment' || c.entityType === 'environment_variable') acc.environments = true
+      // Collection variables, scripts and docs arrive with the collections reload below.
+      if (c.entityType === 'global_variable') acc.globals = true
     }
     acc.truncated ||= e.truncated
     this.#pendingApplied.set(e.workspaceId, acc)
@@ -275,6 +277,7 @@ export class SyncStore {
     const originals = new Map(tabsStore.tabs.filter((t) => affected.includes(t.id) && t.requestId).map((t) => [t.id, t.requestId as string]))
     await app.reloadCollections()
     if (acc.environments || acc.truncated) await app.reloadEnvironments()
+    if (acc.globals || acc.truncated) await app.reloadGlobals()
     for (const [tabId, notice] of planNotices(facts(), affected, originals, (id) => app.requestById(id))) {
       const tab = tabsStore.find(tabId)
       // An example tab only cares about its own example: other edits to the request were merged in, and
