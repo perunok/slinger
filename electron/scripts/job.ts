@@ -122,6 +122,8 @@ export interface ScriptJobResult {
   globalOps?: EnvOp[]
   console: ScriptConsoleEntry[]
   tests: ScriptTestResult[]
+  /** pm.execution.setNextRequest: a request name or id, null to end the run; absent when no script called it. */
+  nextRequest?: string | null
   durationMs: number
 }
 

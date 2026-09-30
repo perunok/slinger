@@ -654,6 +654,11 @@ export interface RunScriptsResult {
   globalsChanged?: boolean
   console: ScriptConsoleEntry[]
   tests: ScriptTestResult[]
+  /**
+   * ADDED (setNextRequest): the last pm.execution.setNextRequest / postman.setNextRequest of these scripts, a request
+   * name or id, or null to end the collection run. Absent when no script called it. Only the collection runner uses it.
+   */
+  nextRequest?: string | null
   durationMs: number
 }
 

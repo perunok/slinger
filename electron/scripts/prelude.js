@@ -1084,6 +1084,12 @@
     }
   }
 
+  // Collection runner only: the request to run after this one (name or id), or null to end the run. The last call
+  // wins; a single Send ignores it, as in Postman.
+  function setNextRequest(nameOrId) {
+    host('next.set', [nameOrId === null || nameOrId === undefined ? null : String(nameOrId)])
+  }
+
   var pm = {
     info: {
       eventName: EVENT,
@@ -1107,7 +1113,7 @@
     expect: expect,
     sendRequest: sendRequest,
     visualizer: { set: unsupported('pm.visualizer') },
-    execution: { setNextRequest: unsupported('pm.execution.setNextRequest'), skipRequest: unsupported('pm.execution.skipRequest') },
+    execution: { setNextRequest: setNextRequest, skipRequest: unsupported('pm.execution.skipRequest') },
   }
   defineProperty(pm, 'cookies', { get: cookieJar, enumerable: true })
   if (response) pm.response = response
@@ -1263,7 +1269,7 @@
     clearGlobalVariables: pm.globals.clear,
     getResponseHeader: function (name) { return response ? response.headers.get(name) : undefined },
     getResponseCookie: function (name) { var v = cookieJar().get(name); return v === undefined ? undefined : { name: name, value: v } },
-    setNextRequest: unsupported('postman.setNextRequest'),
+    setNextRequest: setNextRequest,
   }
   G.iteration = INIT.info.iteration
   defineProperty(G, 'environment', { get: function () { return environment.toObject() }, configurable: true })

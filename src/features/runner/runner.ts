@@ -19,6 +19,8 @@ export interface RunItem {
 export type RowStatus = 'pending' | 'running' | 'passed' | 'failed' | 'cancelled' | 'skipped'
 
 export interface RunRow {
+  /** Unique within a run: pm.execution.setNextRequest can run the same item more than once. */
+  key: string
   item: RunItem
   status: RowStatus
   statusCode: number | null
@@ -83,6 +85,8 @@ export interface RunDeps {
 }
 
 export const BODY_PREVIEW_CHARS = 2048
+/** Most requests one run executes, so a setNextRequest loop without an exit cannot grow the results forever. */
+export const MAX_RUN_REQUESTS = 10_000
 
 /** Requests of a collection (or of one folder incl. nested folders) in tree order. */
 export function collectRunItems(folders: ApiFolder[], requests: ApiRequest[], folderId: string | null): RunItem[] {
@@ -112,8 +116,9 @@ export function collectRunItems(folders: ApiFolder[], requests: ApiRequest[], fo
   return out
 }
 
-function blankRow(item: RunItem): RunRow {
+function blankRow(item: RunItem, key = ''): RunRow {
   return {
+    key,
     item,
     status: 'pending',
     statusCode: null,
@@ -164,13 +169,20 @@ export class CollectionRun {
   #runId: string | null = null
   #wake: (() => void) | null = null
   #finished: Promise<RunState> | null = null
+  #nextKey = 0
+  readonly #items: RunItem[]
   readonly #deps: RunDeps
   readonly #options: RunOptions
 
   constructor(items: RunItem[], options: RunOptions, deps: RunDeps) {
     this.#deps = deps
     this.#options = options
-    this.#state = { phase: 'idle', rows: items.map(blankRow), completed: 0, startedAt: null, finishedAt: null, stopped: false }
+    this.#items = items
+    this.#state = { phase: 'idle', rows: items.map((it) => this.#blank(it)), completed: 0, startedAt: null, finishedAt: null, stopped: false }
+  }
+
+  #blank(item: RunItem): RunRow {
+    return blankRow(item, String(this.#nextKey++))
   }
 
   get state(): RunState {
@@ -205,9 +217,27 @@ export class CollectionRun {
 
   #setRow(i: number, row: RunRow) {
     const rows = this.#state.rows.slice()
-    rows[i] = row
+    rows[i] = { ...row, key: rows[i].key }
+    this.#setRows(rows)
+  }
+
+  #setRows(rows: RunRow[]) {
     this.#state = { ...this.#state, rows, completed: rows.filter((r) => r.status !== 'pending' && r.status !== 'running').length }
     this.#deps.onUpdate?.(this.#state)
+  }
+
+  /**
+   * Applies pm.execution.setNextRequest after row `i` ran: the rows after it are replaced by the run's items from the
+   * target on (items jumped over forwards are listed as skipped). Returns why the run ends, or null to go on.
+   */
+  #jump(i: number, target: string | null): string | null {
+    if (target === null) return 'Not run: the run was ended by setNextRequest(null)'
+    const k = findRunItem(this.#items, target)
+    if (k < 0) return `Not run: setNextRequest("${target}") names no request of this run`
+    const cur = this.#items.findIndex((it) => it.id === this.#state.rows[i].item.id)
+    const jumped = k > cur ? this.#items.slice(cur + 1, k).map((it) => ({ ...this.#blank(it), status: 'skipped' as const, reason: `Skipped by setNextRequest("${target}")` })) : []
+    this.#setRows([...this.#state.rows.slice(0, i + 1), ...jumped, ...this.#items.slice(k).map((it) => this.#blank(it))])
+    return null
   }
 
   #sleep(ms: number): Promise<void> {
@@ -226,19 +256,27 @@ export class CollectionRun {
   async #run(): Promise<RunState> {
     const now = this.#deps.now ?? Date.now
     this.#emit({ phase: 'running', startedAt: now() })
-    const rows = this.#state.rows
     let stopReason: string | null = null
-    for (let i = 0; i < rows.length; i++) {
+    let executed = 0
+    // Rows can change while running (setNextRequest), so the bound is re-read every time.
+    for (let i = 0; i < this.#state.rows.length; i++) {
+      if (this.#state.rows[i].status !== 'pending') continue
+      if (executed >= MAX_RUN_REQUESTS) {
+        stopReason = `Not run: the run stopped after ${MAX_RUN_REQUESTS} requests (setNextRequest loop?)`
+        break
+      }
       if (this.#cancelled) break
-      if (i > 0 && this.#options.delayMs > 0) {
+      if (executed > 0 && this.#options.delayMs > 0) {
         await this.#sleep(this.#options.delayMs)
         if (this.#cancelled) break
       }
-      const item = rows[i].item
+      executed++
+      const item = this.#state.rows[i].item
       this.#setRow(i, { ...blankRow(item), status: 'running' })
       this.#runId = null
       const t0 = now()
       let row: RunRow
+      let next: string | null | undefined
       try {
         const outcome = await this.#deps.execute(item, {
           onRunId: (id) => {
@@ -249,6 +287,7 @@ export class CollectionRun {
           wasCancelled: () => this.#cancelled,
         })
         row = this.#toRow(item, outcome, now() - t0)
+        next = outcome.scripts.nextRequest
       } catch (e) {
         row = { ...blankRow(item), status: 'failed', durationMs: now() - t0, reason: errorInfo(e).message }
       }
@@ -258,6 +297,10 @@ export class CollectionRun {
       if (row.status === 'failed' && this.#options.stopOnFailure) {
         stopReason = 'Skipped: run stopped after a failure'
         break
+      }
+      if (next !== undefined && !this.#cancelled) {
+        stopReason = this.#jump(i, next)
+        if (stopReason) break
       }
     }
     const finalRows = this.#state.rows.slice()
@@ -304,6 +347,12 @@ export class CollectionRun {
         : outcome.error
     return { ...base, status: 'failed', durationMs: elapsed, reason }
   }
+}
+
+/** Index of the run item setNextRequest names: by request id, else by the first request with that name; -1 if none. */
+export function findRunItem(items: RunItem[], target: string): number {
+  const byId = items.findIndex((it) => it.id === target)
+  return byId >= 0 ? byId : items.findIndex((it) => it.name === target)
 }
 
 export function resultsToJson(name: string, state: RunState): string {
