@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ApiFolder, ApiRequest, HttpResponseData } from '../../../shared/types'
 import type { ExecuteOutcome } from '../requests/execute'
 import { emptyScriptOutput } from '../../lib/scripts'
-import { classifyStatus, CollectionRun, collectRunItems, resultsToJson, summarize, type RunItem, type RunState } from './runner'
+import { classifyStatus, CollectionRun, collectRunItems, findRunItem, MAX_RUN_REQUESTS, resultsToJson, summarize, type RunItem, type RunState } from './runner'
 
 const req = (id: string, folderId: string | null, sortOrder = 0): ApiRequest => ({
   id, workspaceId: 'w', collectionId: 'c', folderId, name: id, method: 'GET', url: `https://x/${id}`, documentJson: '{}', sortOrder, createdAt: 0, updatedAt: 0, version: 1,
@@ -245,5 +245,79 @@ describe('pass/fail classification', () => {
   it('4xx and 5xx fail even with treat3xxAsPass', async () => {
     expect((await runWith(404, true)).status).toBe('failed')
     expect((await runWith(500, true)).status).toBe('failed')
+  })
+})
+
+describe('setNextRequest', () => {
+  const next = (target: string | null): ExecuteOutcome => ({ ...ok(), scripts: { ...emptyScriptOutput(), nextRequest: target } })
+  const runPlan = (ids: string[], plan: (id: string, count: number) => ExecuteOutcome, opts = { delayMs: 0, stopOnFailure: false }) => {
+    const order: string[] = []
+    const run = new CollectionRun(ids.map(item), opts, {
+      execute: async (it) => {
+        order.push(it.id)
+        return plan(it.id, order.filter((x) => x === it.id).length)
+      },
+      cancel: async () => {},
+    })
+    return { order, run }
+  }
+
+  it('finds the target by id first, then by the first request with that name', () => {
+    const items = [{ ...item('a'), name: 'Login' }, { ...item('b'), name: 'Login' }, { ...item('c'), name: 'a' }]
+    expect(findRunItem(items, 'Login')).toBe(0)
+    expect(findRunItem(items, 'a')).toBe(0)
+    expect(findRunItem(items, 'c')).toBe(2)
+    expect(findRunItem(items, 'nope')).toBe(-1)
+  })
+
+  it('jumps forward and lists the requests jumped over as skipped', async () => {
+    const { order, run } = runPlan(['a', 'b', 'c', 'd'], (id) => (id === 'a' ? next('c') : ok()))
+    const state = await run.start()
+    expect(order).toEqual(['a', 'c', 'd'])
+    expect(state.rows.map((r) => [r.item.id, r.status])).toEqual([['a', 'passed'], ['b', 'skipped'], ['c', 'passed'], ['d', 'passed']])
+    expect(state.rows[1].reason).toBe('Skipped by setNextRequest("c")')
+    expect(summarize(state)).toMatchObject({ passed: 3, skipped: 1, total: 4 })
+  })
+
+  it('jumps back to run requests again (a loop), with a unique key per row', async () => {
+    // b loops back to a twice, then lets the run continue.
+    const { order, run } = runPlan(['a', 'b', 'c'], (id, n) => (id === 'b' && n < 3 ? next('a') : ok()))
+    const state = await run.start()
+    expect(order).toEqual(['a', 'b', 'a', 'b', 'a', 'b', 'c'])
+    expect(state.rows.map((r) => r.status).every((s) => s === 'passed')).toBe(true)
+    expect(new Set(state.rows.map((r) => r.key)).size).toBe(state.rows.length)
+    expect(state.completed).toBe(7)
+  })
+
+  it('null ends the run; the rest is skipped with the reason', async () => {
+    const { order, run } = runPlan(['a', 'b', 'c'], (id) => (id === 'a' ? next(null) : ok()))
+    const state = await run.start()
+    expect(order).toEqual(['a'])
+    expect(state.rows.slice(1).map((r) => [r.status, r.reason])).toEqual([
+      ['skipped', 'Not run: the run was ended by setNextRequest(null)'],
+      ['skipped', 'Not run: the run was ended by setNextRequest(null)'],
+    ])
+  })
+
+  it('an unknown name ends the run', async () => {
+    const { order, run } = runPlan(['a', 'b'], (id) => (id === 'a' ? next('Nope') : ok()))
+    const state = await run.start()
+    expect(order).toEqual(['a'])
+    expect(state.rows[1].reason).toBe('Not run: setNextRequest("Nope") names no request of this run')
+  })
+
+  it('an endless loop stops after MAX_RUN_REQUESTS requests', async () => {
+    const { order, run } = runPlan(['a', 'b'], () => next('a'))
+    const state = await run.start()
+    expect(order).toHaveLength(MAX_RUN_REQUESTS)
+    expect(state.rows.at(-1)?.status).toBe('skipped')
+    expect(state.rows.at(-1)?.reason).toContain(`stopped after ${MAX_RUN_REQUESTS} requests`)
+  })
+
+  it('stop on failure wins over a jump', async () => {
+    const { order, run } = runPlan(['a', 'b', 'c'], (id) => (id === 'a' ? { ...next('c'), response: response(500) } : ok()), { delayMs: 0, stopOnFailure: true })
+    const state = await run.start()
+    expect(order).toEqual(['a'])
+    expect(state.rows.map((r) => r.status)).toEqual(['failed', 'skipped', 'skipped'])
   })
 })

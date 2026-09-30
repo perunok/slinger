@@ -39,6 +39,8 @@ export interface ScriptOutput {
   errors: ScriptErrorInfo[]
   /** Scripts that ran (pre-request + test). 0 means the request has no scripts at all. */
   scriptCount: number
+  /** Last pm.execution.setNextRequest of the send (name or id, null = end the run); absent when not called. */
+  nextRequest?: string | null
 }
 
 export const emptyScriptOutput = (): ScriptOutput => ({ tests: [], console: [], errors: [], scriptCount: 0 })

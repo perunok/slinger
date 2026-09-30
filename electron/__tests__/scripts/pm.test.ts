@@ -197,6 +197,21 @@ describe('pm API (Postman-compatible cases)', () => {
     }
   })
 
+  it('setNextRequest reports the last call (name, id or null), and nothing when not called', async () => {
+    expect((await check(`pm.variables.set('a', 1)`)).r.nextRequest).toBeUndefined()
+    expect((await check(`pm.execution.setNextRequest('Login'); pm.execution.setNextRequest('Create Customer')`)).r.nextRequest).toBe('Create Customer')
+    expect((await check(`postman.setNextRequest('req-1')`, { event: 'prerequest' })).r.nextRequest).toBe('req-1')
+    expect((await check(`pm.execution.setNextRequest('Login'); pm.execution.setNextRequest(null)`)).r.nextRequest).toBeNull()
+    const { r, errors } = await check(`pm.execution.setNextRequest('Login'); throw new Error('later')`)
+    expect(errors).toHaveLength(1)
+    expect(r.nextRequest).toBe('Login')
+  })
+
+  it('pm.execution.skipRequest is still not supported', async () => {
+    const { errors } = await check(`pm.execution.skipRequest()`, { event: 'prerequest' })
+    expect(errors[0].message).toMatch(/pm.execution.skipRequest is not supported/)
+  })
+
   it('console output is captured with levels and formatting', async () => {
     const { r } = await check(`console.log('a', 1, {b: [1, 'x']}); console.info('%s=%d', 'n', 5); console.warn(null, undefined); console.error(new Error('bad'))`)
     expect(r.console.map((c) => [c.level, c.message])).toEqual([

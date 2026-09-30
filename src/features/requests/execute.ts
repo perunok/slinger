@@ -119,6 +119,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     scripts.tests.push(...result.tests)
     scripts.errors.push(...result.errors)
     scripts.scriptCount += chain.length
+    if (result.nextRequest !== undefined) scripts.nextRequest = result.nextRequest
     // Reload the scopes (and so the template scope) the scripts wrote to.
     await Promise.all([
       result.environmentChanged ? app.refreshEnvVariables() : null,

@@ -78,6 +78,16 @@ describe('runScripts: environment writes', () => {
     expect(v.tmp).toBeUndefined()
   })
 
+  it('setNextRequest reaches the result across the chain (last call wins); absent when not called', async () => {
+    const chain: ScriptSource[] = [
+      { origin: 'collection', name: 'API', code: `pm.execution.setNextRequest('Login')` },
+      { origin: 'request', name: 'Login', code: `postman.setNextRequest(null)` },
+    ]
+    expect((await env.api.runScripts(input(chain))).nextRequest).toBeNull()
+    expect((await env.api.runScripts(input(chain.slice(0, 1)))).nextRequest).toBe('Login')
+    expect('nextRequest' in (await env.api.runScripts(input('1')))).toBe(false)
+  })
+
   it('without an active environment, writes last for the run only and a warning says so', async () => {
     const r = await env.api.runScripts(input(`pm.environment.set('x', '1'); pm.test('same run', () => pm.expect(pm.environment.get('x')).to.equal('1'))`, { environmentId: null }))
     expect(r.environmentChanged).toBe(false)

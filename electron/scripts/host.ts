@@ -213,6 +213,8 @@ export class RunHost {
   readonly envOps: EnvOp[] = []
   private request: ScriptRequestData
   private requestChanged = false
+  /** pm.execution.setNextRequest: undefined until a script calls it. */
+  private nextRequest: string | null | undefined = undefined
   readonly console: ScriptConsoleEntry[] = []
   private consoleChars = 0
   private consoleDropped = false
@@ -670,6 +672,11 @@ export class RunHost {
         return randomUUID()
       case 'http.send':
         return this.startSend(a0)
+      case 'next.set':
+        if (a0 !== null && typeof a0 !== 'string') throw new ScriptApiError('setNextRequest: expected a request name or id, or null')
+        if (typeof a0 === 'string' && a0.length > MAX_VALUE_CHARS) throw new ScriptApiError('setNextRequest: name is too long')
+        this.nextRequest = a0
+        return undefined
       case 'request.set':
         // pm.request.auth is read-only: the auth view always comes from the job, never from the script.
         this.request = { ...checkRequestData(a0), ...(this.request.auth ? { auth: this.request.auth } : {}) }
@@ -692,6 +699,7 @@ export class RunHost {
       globalOps: this.stores.globals.ops,
       console: this.console,
       tests: this.tests,
+      ...(this.nextRequest !== undefined ? { nextRequest: this.nextRequest } : {}),
       durationMs,
     }
   }

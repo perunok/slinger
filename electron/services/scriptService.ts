@@ -263,6 +263,7 @@ export class ScriptService {
       globalsChanged,
       console: result.console,
       tests: result.tests,
+      ...(result.nextRequest !== undefined ? { nextRequest: result.nextRequest } : {}),
       durationMs: result.durationMs,
     }
   }

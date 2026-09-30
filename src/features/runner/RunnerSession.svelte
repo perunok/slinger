@@ -244,8 +244,8 @@
       <InlineError message={exportError} />
 
       <ul class="rounded border border-border" aria-label="Run results">
-        {#each rowsToShow as row (row.item.id)}
-          {@const open = expanded.has(row.item.id)}
+        {#each rowsToShow as row (row.key)}
+          {@const open = expanded.has(row.key)}
           {@const canOpen = row.status === 'passed' || row.status === 'failed'}
           <li class="border-b border-border last:border-b-0" data-status={row.status}>
             <div class="flex items-center gap-2 px-2 py-1.5">
@@ -278,7 +278,7 @@
                   class="rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
                   aria-expanded={open}
                   aria-label="{open ? 'Hide' : 'Show'} details for {row.item.name}"
-                  onclick={() => (expanded = toggle(expanded, row.item.id))}
+                  onclick={() => (expanded = toggle(expanded, row.key))}
                 >
                   <Icon name={open ? 'chevron-down' : 'chevron-right'} size={14} />
                 </button>

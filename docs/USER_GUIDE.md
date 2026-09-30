@@ -267,6 +267,13 @@ the whole run, and `pm.environment.set` writes to the active environment, so the
 `{{token}}`* flow works. The summary adds test counts (`Tests: 4 passed, 1 failed`), expanded rows list each test and the console
 output, and **Export results as JSON** includes the tests. **Stop** also interrupts a running script.
 
+`pm.execution.setNextRequest(nameOrId)` (or the older `postman.setNextRequest`) changes what runs next, as in Postman: after the
+current request (and its test scripts), the run continues at the named request (matched by id, else by the first request with that
+name) and goes on in tree order from there. Only requests picked for the run can be targets; requests jumped over are listed as
+skipped, and jumping back runs requests again (a loop ends when a script stops calling it, or after 10000 requests).
+`setNextRequest(null)` ends the run, and so does a name that matches no request of the run. The last call of a send wins, whether
+it came from a pre-request or a test script. A single **Send** ignores it.
+
 ## Scripts
 
 Slinger runs Postman-style JavaScript **pre-request scripts** (before a request is sent) and **test scripts** (after its
@@ -395,7 +402,8 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `require(name)`, `_`, `CryptoJS`, `tv4`, `cheerio`, `xml2Json`, `crypto.getRandomValues/randomUUID` | built-in libraries, see below |
 | Legacy: `postman.setEnvironmentVariable/getEnvironmentVariable/clearEnvironmentVariable`, `postman.setGlobalVariable/...`, `tests["name"] = bool`, `responseBody`, `responseCode`, `responseHeaders`, `responseTime`, `environment`, `globals`, `request`, `iteration` | old Postman sandbox names |
 | `pm.sendRequest(request[, callback])` | see above; returns a promise |
-| `pm.visualizer`, `pm.execution.*`, `postman.setNextRequest`, `require` of other modules | not supported: throw an error |
+| `pm.execution.setNextRequest(nameOrId or null)`, `postman.setNextRequest` | collection runner only, see [Collection runner](#collection-runner) |
+| `pm.visualizer`, `pm.execution.skipRequest`, `require` of other modules | not supported: throw an error |
 
 **Built-in libraries.** The libraries Postman's sandbox provides are available through `require()` (and Postman's globals), so
 scripts like `const CryptoJS = require('crypto-js')` run unchanged. They run inside the same sandbox as your script, are loaded
