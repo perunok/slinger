@@ -219,7 +219,7 @@ class TabsStore {
   /**
    * Tabs of a workspace that isn't the active one, kept in memory so switching back within the same
    * session is instant. `tabs`/`activeId` always hold only the CURRENT workspace's tabs - never a mix
-   * (switchWorkspace is the only place that mutates this map; see `app.onWorkspaceWillChange`).
+   * (switchWorkspace is the only place that mutates this map; see `app.workspaceWillChange`).
    */
   private stash = new Map<string, { tabs: RequestTab[]; activeId: string | null }>()
   private currentWorkspaceId: string | null = null
@@ -816,4 +816,4 @@ class TabsStore {
 
 export const tabsStore = new TabsStore()
 app.onRequestsReloaded = () => tabsStore.syncWithServer()
-app.onWorkspaceWillChange = (id) => tabsStore.switchWorkspace(id)
+app.workspaceWillChange.push((id) => tabsStore.switchWorkspace(id))

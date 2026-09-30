@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ApiFolder, ApiRequest, HttpResponseData } from '../../../shared/types'
 import type { ExecuteOutcome } from '../requests/execute'
 import { emptyScriptOutput } from '../../lib/scripts'
-import { classifyStatus, CollectionRun, collectRunItems, findRunItem, MAX_RUN_REQUESTS, resultsToJson, summarize, type RunItem, type RunState } from './runner'
+import { classifyStatus, CollectionRun, collectRunItems, DETAIL_ROWS, findRunItem, MAX_RUN_REQUESTS, resultsToJson, summarize, type ExecHooks, type RunItem, type RunState } from './runner'
 
 const req = (id: string, folderId: string | null, sortOrder = 0): ApiRequest => ({
   id, workspaceId: 'w', collectionId: 'c', folderId, name: id, method: 'GET', url: `https://x/${id}`, documentJson: '{}', sortOrder, createdAt: 0, updatedAt: 0, version: 1,
@@ -319,5 +319,96 @@ describe('setNextRequest', () => {
     const state = await run.start()
     expect(order).toEqual(['a'])
     expect(state.rows.map((r) => r.status)).toEqual(['failed', 'skipped', 'skipped'])
+  })
+})
+
+describe('iterations and data-driven runs', () => {
+  const data = [{ name: 'Acme' }, { name: 'Globex' }, { name: 'Initech' }]
+  const next = (target: string | null): ExecuteOutcome => ({ ...ok(), scripts: { ...emptyScriptOutput(), nextRequest: target } })
+  function iterRun(ids: string[], opts: { iterations: number; data?: typeof data; stopOnFailure?: boolean }, plan: (id: string, h: ExecHooks) => ExecuteOutcome = () => ok()) {
+    const calls: Array<[string, number, unknown]> = []
+    const updates: RunState[] = []
+    const run = new CollectionRun(ids.map(item), { delayMs: 0, stopOnFailure: opts.stopOnFailure ?? false, iterations: opts.iterations, data: opts.data }, {
+      execute: async (it, hooks) => {
+        calls.push([it.id, hooks.iteration, hooks.data])
+        return plan(it.id, hooks)
+      },
+      cancel: async () => {},
+      onUpdate: (st) => updates.push(st),
+    })
+    return { run, calls, updates }
+  }
+
+  it('runs the selection once per iteration, with each iteration number and data row', async () => {
+    const { run, calls, updates } = iterRun(['a', 'b'], { iterations: 3, data })
+    expect(run.state.rows.map((r) => [r.item.id, r.iteration])).toEqual([['a', 0], ['b', 0], ['a', 1], ['b', 1], ['a', 2], ['b', 2]])
+    const state = await run.start()
+    expect(calls).toEqual([
+      ['a', 0, data[0]], ['b', 0, data[0]],
+      ['a', 1, data[1]], ['b', 1, data[1]],
+      ['a', 2, data[2]], ['b', 2, data[2]],
+    ])
+    expect(summarize(state)).toMatchObject({ passed: 6, total: 6, iterations: 3 })
+    expect(new Set(state.rows.map((r) => r.key)).size).toBe(6)
+    // The state says which iteration is going on.
+    expect([...new Set(updates.filter((u) => u.phase === 'running').map((u) => u.currentIteration))]).toEqual([0, 1, 2])
+  })
+
+  it('plain iterations (no data file) pass no data', async () => {
+    const { run, calls } = iterRun(['a'], { iterations: 2 })
+    await run.start()
+    expect(calls).toEqual([['a', 0, null], ['a', 1, null]])
+  })
+
+  it('setNextRequest(null) ends only the current iteration', async () => {
+    const { run, calls } = iterRun(['a', 'b'], { iterations: 2 }, (id, h) => (id === 'a' && h.iteration === 0 ? next(null) : ok()))
+    const state = await run.start()
+    expect(calls.map(([id, it]) => `${id}${it}`)).toEqual(['a0', 'a1', 'b1'])
+    expect(state.rows.map((r) => [r.item.id, r.iteration, r.status])).toEqual([['a', 0, 'passed'], ['b', 0, 'skipped'], ['a', 1, 'passed'], ['b', 1, 'passed']])
+    expect(state.rows[1]!.reason).toBe('Not run: setNextRequest(null) ended this iteration')
+  })
+
+  it('jumps stay inside their iteration', async () => {
+    const { run, calls } = iterRun(['a', 'b', 'c'], { iterations: 2 }, (id, h) => (id === 'a' && h.iteration === 0 ? next('c') : ok()))
+    const state = await run.start()
+    expect(calls.map(([id, it]) => `${id}${it}`)).toEqual(['a0', 'c0', 'a1', 'b1', 'c1'])
+    expect(state.rows.map((r) => `${r.item.id}${r.iteration}:${r.status}`)).toEqual(['a0:passed', 'b0:skipped', 'c0:passed', 'a1:passed', 'b1:passed', 'c1:passed'])
+  })
+
+  it('an unknown target ends the iteration and says so', async () => {
+    const { run } = iterRun(['a', 'b'], { iterations: 2 }, (id, h) => (id === 'a' && h.iteration === 1 ? next('Nope') : ok()))
+    const state = await run.start()
+    expect(state.rows.map((r) => r.status)).toEqual(['passed', 'passed', 'passed', 'skipped'])
+    expect(state.rows[3]!.reason).toBe('Not run: setNextRequest("Nope") names no request of this run (this iteration ended)')
+  })
+
+  it('stop on first failure stops every remaining iteration', async () => {
+    const { run, calls } = iterRun(['a', 'b'], { iterations: 3, stopOnFailure: true }, (id, h) => (id === 'b' && h.iteration === 1 ? ok(500) : ok()))
+    const state = await run.start()
+    expect(calls.map(([id, it]) => `${id}${it}`)).toEqual(['a0', 'b0', 'a1', 'b1'])
+    expect(state.rows.slice(4).map((r) => [r.status, r.reason])).toEqual([
+      ['skipped', 'Skipped: run stopped after a failure'],
+      ['skipped', 'Skipped: run stopped after a failure'],
+    ])
+  })
+
+  it(`runs of more than ${DETAIL_ROWS} requests keep headers and bodies only for failures`, async () => {
+    const { run } = iterRun(['a'], { iterations: DETAIL_ROWS + 1 }, (_id, h) => (h.iteration === 5 ? ok(500, 'boom') : ok(200, 'fine')))
+    const state = await run.start()
+    expect(state.rows[0]).toMatchObject({ status: 'passed', statusCode: 200, headers: [], bodyPreview: null, detailsDropped: true })
+    expect(state.rows[5]).toMatchObject({ status: 'failed', bodyPreview: 'boom', headers: [{ key: 'A', value: 'b' }] })
+    expect(state.rows[5]!.detailsDropped).toBeUndefined()
+    // Smaller runs keep everything.
+    const small = await iterRun(['a'], { iterations: 2 }).run.start()
+    expect(small.rows[0]).toMatchObject({ bodyPreview: 'ok', headers: [{ key: 'A', value: 'b' }] })
+  })
+
+  it('the JSON export has the iterations, each result\'s iteration and the data rows that ran', async () => {
+    const { run } = iterRun(['a'], { iterations: 2, data })
+    const state = await run.start()
+    const json = JSON.parse(resultsToJson('C', state, data))
+    expect(json.iterations).toBe(2)
+    expect(json.data).toEqual([data[0], data[1]])
+    expect(json.results.map((r: { iteration: number; name: string }) => [r.iteration, r.name])).toEqual([[1, 'a'], [2, 'a']])
   })
 })

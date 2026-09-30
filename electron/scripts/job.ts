@@ -94,6 +94,8 @@ export interface ScriptJob {
   collectionVariables: ScriptVariables
   globals: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
+  /** The current row of a data-driven collection run (pm.iterationData); resolves between local and environment. */
+  iterationData?: ScriptVariables
   /** null when no environment is active: pm.environment writes then last for this run only. */
   environment: EnvSnapshot | null
   /**

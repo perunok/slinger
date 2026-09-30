@@ -1102,10 +1102,12 @@
     variables: variables,
     collectionVariables: scopeApi('collection'),
     globals: scopeApi('globals'),
+    // The current row of a collection run's data file (empty outside data-driven runs); read-only, as in Postman.
     iterationData: {
-      get: function () { return undefined },
-      has: function () { return false },
-      toObject: function () { return {} },
+      get: function (key) { return host('data.get', [key]) },
+      has: function (key) { return host('data.has', [key]) },
+      toObject: function () { return host('data.toObject') },
+      toJSON: function () { return host('data.toObject') },
       replaceIn: function (t) { return host('replaceIn', [t]) },
     },
     request: request,
@@ -1272,6 +1274,7 @@
     setNextRequest: setNextRequest,
   }
   G.iteration = INIT.info.iteration
+  defineProperty(G, 'data', { get: function () { return pm.iterationData.toObject() }, configurable: true })
   defineProperty(G, 'environment', { get: function () { return environment.toObject() }, configurable: true })
   defineProperty(G, 'globals', { get: function () { return pm.globals.toObject() }, configurable: true })
   defineProperty(G, 'request', {

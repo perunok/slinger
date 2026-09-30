@@ -471,11 +471,28 @@ describe('collection runner', () => {
     const before = target.requests.length
     await contextMenu(item(/^Run C/), 'Run collection…')
     const dialog = page.getByRole('dialog')
-    await dialog.getByRole('button', { name: /^Run/ }).first().click()
+    await dialog.getByRole('button', { name: /^Run 2 requests/ }).click()
     await expect.poll(() => dialog.getByRole('list', { name: 'Run results' }).innerText()).toMatch(/run-one[\s\S]*run-two/)
     await expect.poll(() => target.requests.slice(before).map((r) => r.url)).toEqual(['/runner/one', '/runner/two'])
     await expect.poll(() => dialog.getByRole('button', { name: 'Run again' }).count()).toBe(1)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  })
+
+  it('runs in the background: the status bar follows it and reopens the results', async () => {
+    const before = target.requests.length
+    await contextMenu(item(/^Run C/), 'Run collection…')
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Delay between requests (ms)').fill('400')
+    await dialog.getByRole('button', { name: 'Run in background' }).click()
+    await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
+    const status = page.getByTestId('status-runs')
+    await expect.poll(() => status.innerText(), { timeout: 5000 }).toMatch(/Running Run C… [01]\/2/)
+    await expect.poll(() => status.innerText(), { timeout: 10000 }).toBe('Run finished: Run C')
+    expect(target.requests.slice(before).map((r) => r.url)).toEqual(['/runner/one', '/runner/two'])
+    await status.click()
+    await expect.poll(() => page.getByTestId('summary').innerText()).toContain('2 passed')
+    await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+    await expect.poll(() => status.count()).toBe(0)
   })
 })
 

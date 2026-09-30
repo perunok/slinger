@@ -26,6 +26,8 @@ import type {
   HistoryEntry,
   HttpRequestInput,
   HttpResponseData,
+  ExtractFolderInput,
+  ExtractFolderResult,
   MoveFolderInput,
   GetOAuth2TokenOptions,
   OAuth2Config,
@@ -94,6 +96,8 @@ export interface SlingerIpcApi {
   createFolder(input: CreateFolderInput): Promise<ApiFolder>
   renameFolder(folderId: string, name: string): Promise<ApiFolder>
   moveFolder(input: MoveFolderInput): Promise<ApiFolder>
+  /** ADDED (extract folder): the folder becomes a collection of its own (its requests move, keeping their ids). */
+  extractFolderToCollection(input: ExtractFolderInput): Promise<ExtractFolderResult>
   deleteFolder(folderId: string): Promise<void>
   /** ADDED (scripts): replaces the folder's Postman `event` array (JSON text, or null to clear). Local-only. */
   setFolderScripts(folderId: string, scriptsJson: string | null): Promise<ApiFolder>
@@ -271,6 +275,7 @@ export const IPC_CHANNELS = [
   'createFolder',
   'renameFolder',
   'moveFolder',
+  'extractFolderToCollection',
   'deleteFolder',
   'setFolderScripts',
   'setFolderDescription',

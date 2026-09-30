@@ -10,8 +10,9 @@
   import NameDialog from '../../components/ui/NameDialog.svelte'
   import { api } from '../../lib/ipc'
   import { tabsStore } from '../requests/tabs.svelte'
+  import { runsStore } from '../runner/runs.svelte'
 
-  type Sub = { t: 'create' } | { t: 'rename'; ws: Workspace } | { t: 'delete'; ws: Workspace }
+  type Sub = { t: 'create' } | { t: 'rename'; ws: Workspace } | { t: 'delete'; ws: Workspace } | { t: 'switch'; ws: Workspace; warning: string }
   let sub = $state<Sub | null>(null)
 
   async function create(name: string) {
@@ -23,6 +24,12 @@
   async function rename(ws: Workspace, name: string) {
     await api().renameWorkspace(ws.id, name)
     await app.refreshWorkspaces()
+  }
+  /** Opens `ws`, first confirming that the collection runs of the open workspace stop. */
+  function openWorkspace(ws: Workspace) {
+    const warning = runsStore.switchWarning()
+    if (warning) sub = { t: 'switch', ws, warning }
+    else void app.selectWorkspace(ws.id)
   }
   async function remove(ws: Workspace) {
     await api().deleteWorkspace(ws.id)
@@ -44,7 +51,7 @@
         <span class="min-w-0 flex-1 truncate">{w.name}</span>
         {#if w.workspaceType === 'team'}<span class="rounded bg-raised px-1.5 text-xs text-muted">team</span>{/if}
         {#if w.id === app.workspaceId}<span class="rounded bg-accent-soft px-1.5 text-xs">current</span>{/if}
-        {#if w.id !== app.workspaceId}<Button size="sm" onclick={() => app.selectWorkspace(w.id)}>Open</Button>{/if}
+        {#if w.id !== app.workspaceId}<Button size="sm" onclick={() => openWorkspace(w)}>Open</Button>{/if}
         <IconButton icon="edit" label="Rename {w.name}" onclick={() => (sub = { t: 'rename', ws: w })} />
         <IconButton icon="trash" label="Delete {w.name}" onclick={() => (sub = { t: 'delete', ws: w })} />
       </li>
@@ -62,6 +69,19 @@
   {:else if sub.t === 'rename'}
     {@const ws = sub.ws}
     <NameDialog title="Rename workspace" label="Name" initial={ws.name} submitLabel="Rename" onsubmit={(n) => rename(ws, n)} oncancel={() => (sub = null)} />
+  {:else if sub.t === 'switch'}
+    {@const ws = sub.ws}
+    <ConfirmDialog
+      title="Switch workspace?"
+      message={sub.warning}
+      confirmLabel="Stop run and switch"
+      danger
+      onconfirm={async () => {
+        await app.selectWorkspace(ws.id)
+        sub = null
+      }}
+      oncancel={() => (sub = null)}
+    />
   {:else}
     {@const ws = sub.ws}
     <ConfirmDialog

@@ -72,16 +72,17 @@ describe('fitting and persistence', () => {
 })
 
 describe('toggling in the app', () => {
-  it('opens and closes from the status bar, the top bar, Ctrl+Alt+B and View > Toggle Right Panel; persisted', async () => {
+  it('opens and closes from the top-bar toggle, Ctrl+Alt+B and View > Toggle Right Panel; persisted', async () => {
     render(App)
     const barToggle = await screen.findByTestId('right-panel-toggle')
+    // One toggle only (the status bar has none).
+    expect(screen.getAllByRole('button', { name: 'Right panel' })).toHaveLength(1)
     expect(screen.queryByTestId('right-panel')).toBeNull()
     expect(barToggle).toHaveAttribute('aria-pressed', 'false')
 
     await fireEvent.click(barToggle)
     expect(await screen.findByRole('complementary', { name: 'Right panel' })).toBeInTheDocument()
     expect(barToggle).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('right-panel-toggle-top')).toHaveAttribute('aria-pressed', 'true')
     expect(stored()).toMatchObject({ open: true, panel: 'variables' })
 
     expect(runMenuCommand('toggleRightPanel')).toBe(true)
@@ -92,7 +93,7 @@ describe('toggling in the app', () => {
     await screen.findByTestId('right-panel')
     // The macOS menu key equivalent of that same press is dropped.
     expect(runMenuCommand('toggleRightPanel')).toBe(false)
-    await fireEvent.click(screen.getByTestId('right-panel-toggle-top'))
+    await fireEvent.click(screen.getByTestId('right-panel-toggle'))
     await waitFor(() => expect(screen.queryByTestId('right-panel')).toBeNull())
   })
 

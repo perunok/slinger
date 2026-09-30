@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { capture, launch, reloadApp, ROOT, type Launched } from './support/app'
+import { openCloud } from './support/cloud'
 import { startTarget } from './support/server'
 
 const OUT = join(ROOT, 'test-results', 'screenshots')
@@ -57,7 +58,7 @@ describe('screenshots', () => {
       await capture(app, join(OUT, `${theme}-main.png`))
       for (const [label, open, dialogName] of [
         ['environments', () => page.getByRole('button', { name: 'Manage environments' }).click(), 'Environments'],
-        ['cloud', () => page.getByRole('button', { name: 'Cloud', exact: true }).click(), 'Cloud'],
+        ['cloud', () => openCloud(page), 'Cloud'],
         ['shortcuts', () => page.getByRole('button', { name: 'Keyboard shortcuts' }).click(), 'Keyboard shortcuts'],
       ] as const) {
         await open()

@@ -36,7 +36,7 @@ export function usedVariables(draft: RequestDraft, scope: TemplateScope): UsedVa
   return variableNamesUsed(draft).map((n) => describeVariable(n, scope))
 }
 
-const SOURCE_ORDER: Record<VariableSource, number> = { local: 0, environment: 1, collection: 2, global: 3 }
+const SOURCE_ORDER: Record<VariableSource, number> = { local: 0, data: 1, environment: 2, collection: 3, global: 4 }
 
 /** Every variable in scope (the winning value per name), narrowest scope first, then by name. */
 export function variablesInScope(scope: TemplateScope): Array<VariableInfo & { label: string; shown: string }> {

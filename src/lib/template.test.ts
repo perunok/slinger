@@ -3,12 +3,14 @@ import {
   findSecretsUsed,
   findUnresolved,
   isBuiltin,
+  layeredScope,
   makeScope,
   parseTokens,
   partialTokenBefore,
   previewValue,
   resolveTemplate,
   SECRET_MASK,
+  sourceLabel,
   tokenStatus,
 } from './template'
 
@@ -80,5 +82,19 @@ describe('partialTokenBefore', () => {
     expect(partialTokenBefore('http://{{ho', 11)).toEqual({ from: 9, query: 'ho' })
     expect(partialTokenBefore('{{', 2)).toEqual({ from: 2, query: '' })
     expect(partialTokenBefore('{{done}} x', 10)).toBeNull()
+  })
+})
+
+describe('layeredScope: iteration data', () => {
+  it('sits between the environment and local variables, and is labelled as such', () => {
+    const scope = layeredScope({
+      environmentName: 'Local',
+      environment: [{ key: 'a', value: 'env', secret: false }, { key: 'b', value: 'env', secret: false }],
+      data: [{ key: 'a', value: 'row', secret: false }, { key: 'b', value: 'row', secret: false }],
+      local: [{ key: 'b', value: 'local', secret: false }],
+    })
+    expect(scope.variables.get('a')).toMatchObject({ value: 'row', source: 'data' })
+    expect(scope.variables.get('b')).toMatchObject({ value: 'local', source: 'local' })
+    expect(sourceLabel(scope.variables.get('a')!, scope)).toBe('Iteration data')
   })
 })

@@ -1,13 +1,14 @@
 /** Status bar: sync states, environment, activity, the active tab's response summary, and showing/hiding it. */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { activity } from '../../app/activity.svelte'
 import App from '../../app/App.svelte'
 import { runMenuCommand } from '../../app/menuCommands'
 import { settings } from '../../app/settings.svelte'
 import { app } from '../../app/state.svelte'
 import { ui } from '../../app/ui.svelte'
 import { tabsStore } from '../requests/tabs.svelte'
+import type { RowStatus, RunRow, RunState } from '../runner/runner'
+import { RunSession, runsStore } from '../runner/runs.svelte'
 import { sync } from '../sync/syncStore.svelte'
 import { flush, setupSync, signInMock, teardownSync, type Backend } from '../sync/testUtils'
 import StatusBar from './StatusBar.svelte'
@@ -18,64 +19,24 @@ beforeEach(async () => {
   b = await setupSync()
   ws = app.workspaceId!
   ui.envEditor = { open: false }
-  activity.runner = null
+  runsStore.sessions = []
 })
 afterEach(() => {
   cleanup()
   teardownSync()
-  activity.runner = null
+  runsStore.sessions = []
+  ui.runner = null
   ui.envEditor = { open: false }
   settings.setShowStatusBar(true)
 })
 
-const syncItem = () => screen.getByTestId('status-sync')
-
-describe('status bar: cloud sync', () => {
-  it('shows "Local only" for an unlinked workspace; clicking opens the Cloud dialog', async () => {
+describe('status bar: activity', () => {
+  it('holds status only: the sync chip, environment switcher and layout toggles live elsewhere', () => {
     render(StatusBar)
-    expect(syncItem()).toHaveTextContent('Local only')
-    expect(syncItem().dataset.kind).toBe('unlinked')
-    await fireEvent.click(syncItem())
-    expect(ui.cloudOpen).toBe(true)
-  })
-
-  it('follows synced, pending, offline and conflict states; with conflicts it opens the conflict center', async () => {
-    render(StatusBar)
-    await signInMock(b)
-    await sync.publish(ws)
-    await b.cloud.runCycle(ws)
-    await flush()
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('idle'))
-    expect(syncItem()).toHaveTextContent('Synced')
-    expect(syncItem().getAttribute('aria-label')).toMatch(/^Cloud sync: Synced\. .*Last synced/)
-
-    b.cloud.setOffline(true)
-    await sync.syncNow(ws)
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('offline'))
-    expect(syncItem()).toHaveTextContent('Offline')
-    b.cloud.setOffline(false)
-    await sync.syncNow(ws)
-
-    b.cloud.injectConflict({ workspaceId: ws, kind: 'rejected' })
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('conflicts'))
-    expect(syncItem()).toHaveTextContent('1 conflict')
-    await fireEvent.click(syncItem())
-    expect(ui.conflictsOpen).toBe(true)
-    expect(ui.cloudOpen).toBe(false)
-  })
-})
-
-describe('status bar: environment and activity', () => {
-  it('names the active environment and opens the Environments dialog on it', async () => {
-    render(StatusBar)
-    const env = app.environments.find((e) => e.id === app.activeEnvironmentId)!
-    expect(env).toBeTruthy()
-    expect(screen.getByTestId('status-env')).toHaveTextContent(env.name)
-    await fireEvent.click(screen.getByTestId('status-env'))
-    expect(ui.envEditor).toEqual({ open: true, environmentId: env.id })
-
-    await app.setActiveEnvironment(null)
-    await waitFor(() => expect(screen.getByTestId('status-env')).toHaveTextContent('No environment'))
+    const bar = screen.getByTestId('status-bar')
+    expect(bar.querySelector('[data-testid="status-sync"], [data-testid="status-env"]')).toBeNull()
+    expect(within(bar).queryByRole('button', { name: 'Right panel' })).toBeNull()
+    expect(bar.querySelector('[data-testid="response-position-toggle"]')).toBeNull()
   })
 
   it('reports sends and a running collection', async () => {
@@ -87,12 +48,70 @@ describe('status bar: environment and activity', () => {
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Sending…'))
     c.sending = true
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Sending 2 requests…'))
-    activity.runner = { label: 'Demo API', done: 3, total: 10 }
-    await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Running Demo API… 3/10'))
-    activity.runner = null
     a.sending = false
     c.sending = false
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent(''))
+  })
+})
+
+/** A run as the runs store holds it, without running anything. */
+function fakeRun(label: string, collectionId: string, statuses: RowStatus[], phase: RunState['phase'], unseen = false): RunSession {
+  const s = new RunSession(ws, { collectionId, folderId: null }, label, null, null)
+  const rows = statuses.map((status) => ({ status, tests: [], scriptErrors: [] }) as unknown as RunRow)
+  s.state = { phase, rows, iterations: 1, currentIteration: 0, completed: statuses.filter((x) => x !== 'pending' && x !== 'running').length, startedAt: 0, finishedAt: phase === 'done' ? 1 : null, stopped: false }
+  s.unseen = unseen
+  return s
+}
+
+describe('status bar: collection runs', () => {
+  it('shows a running collection and opens it on click', async () => {
+    runsStore.sessions = [fakeRun('Demo API', 'c1', ['passed', 'passed', 'failed', 'running', 'pending'], 'running')]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('Running Demo API… 3/5')
+    await fireEvent.click(btn)
+    expect(ui.runner).toEqual({ collectionId: 'c1', folderId: null })
+  })
+
+  it('a run finished in the background stays until opened, in red when something failed', async () => {
+    const s = fakeRun('Payments', 'c2', ['passed', 'failed'], 'done', true)
+    runsStore.sessions = [s]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('Run finished: Payments')
+    expect(btn.className).toContain('text-danger')
+    await fireEvent.click(btn)
+    expect(ui.runner).toEqual({ collectionId: 'c2', folderId: null })
+    expect(s.unseen).toBe(false)
+    await waitFor(() => expect(screen.queryByTestId('status-runs')).toBeNull())
+    // Finished runs whose results were already seen (their dialog is open or was open) are not shown.
+    runsStore.sessions = [fakeRun('Seen', 'c3', ['passed'], 'done', false)]
+    await waitFor(() => expect(screen.queryByTestId('status-runs')).toBeNull())
+  })
+
+  it('a data-driven run shows its iteration', async () => {
+    const s = fakeRun('Drive Automation', 'c1', ['passed', 'running', 'pending'], 'running')
+    s.state = { ...s.state, iterations: 200, currentIteration: 36 }
+    runsStore.sessions = [s]
+    render(StatusBar)
+    expect(screen.getByTestId('status-runs')).toHaveTextContent('Running Drive Automation… iteration 37/200')
+  })
+
+  it('with several runs, sums the progress and lets you pick one from a menu', async () => {
+    runsStore.sessions = [
+      fakeRun('Demo API', 'c1', ['passed', 'running'], 'running'),
+      fakeRun('Payments', 'c2', ['passed', 'passed', 'pending'], 'running'),
+      fakeRun('Old', 'c3', ['passed'], 'done', true),
+    ]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('2 runs… 3/5')
+    await fireEvent.click(btn)
+    const menu = await screen.findByRole('menu')
+    const items = [...menu.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent?.trim())
+    expect(items).toEqual(['Demo API: 1/2', 'Payments: 2/3', 'Old: 1 passed, 0 failed'])
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Payments/ }))
+    expect(ui.runner).toEqual({ collectionId: 'c2', folderId: null })
   })
 })
 

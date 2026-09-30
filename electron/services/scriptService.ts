@@ -161,6 +161,7 @@ export class ScriptService {
       collectionVariables: input.collectionVariables ?? {},
       globals: input.globals ?? {},
       info: input.info,
+      iterationData: input.iterationData ?? {},
       environment,
       persistedCollection,
       persistedGlobals,

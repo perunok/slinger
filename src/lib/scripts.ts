@@ -117,6 +117,24 @@ export function scriptsJsonOf(events: unknown[]): string | null {
   return events.length === 0 ? null : JSON.stringify(events)
 }
 
+/**
+ * One script set made of several, run in the given order (e.g. a collection's and its folders' scripts, for a folder that
+ * becomes a collection of its own). Each block is headed with where it came from when more than one source has code
+ * for that event. null: no code at all.
+ */
+export function mergeScripts(sources: ReadonlyArray<{ label: string; scriptsJson: string | null | undefined }>): string | null {
+  let events: unknown[] = []
+  for (const listen of ['prerequest', 'test'] as const) {
+    const parts = sources
+      .map((src) => ({ label: src.label, code: runnableCode(parseScriptsJson(src.scriptsJson), listen) }))
+      .filter((p) => p.code.trim() !== '')
+    if (parts.length === 0) continue
+    const code = parts.length === 1 ? parts[0]!.code : parts.map((p) => `// ---- From ${p.label} ----\n${p.code}`).join('\n\n')
+    events = withScript(events, listen, code)
+  }
+  return scriptsJsonOf(events)
+}
+
 /** Number of pre-request/test entries with code (Postman import preview). */
 export function countScripts(events: unknown): number {
   return eventList(events).filter((e) => isObj(e) && (e.listen === 'prerequest' || e.listen === 'test') && e.disabled !== true && isObj(e.script) && execText(e.script.exec).trim() !== '').length
@@ -283,13 +301,13 @@ export function templateValue(v: unknown): string {
 
 /**
  * The scope used to resolve a request after its pre-request scripts: globals < collection variables <
- * environment < local variables (pm.variables), Postman's precedence. `base` already holds the persisted layers
+ * environment < iteration data (a data-driven run's current row) < local variables (pm.variables), Postman's precedence. `base` already holds the persisted layers
  * (scope.svelte.ts); the script layers are in-memory values (never secret): `local` always, `collection` /
  * `globals` only when they are not persisted (a request outside a collection, tests).
  */
 export function scopeWithScriptVariables(
   base: TemplateScope,
-  layers: { globals?: ScriptVariables; collection?: ScriptVariables; local: ScriptVariables },
+  layers: { globals?: ScriptVariables; collection?: ScriptVariables; data?: ScriptVariables | null; local: ScriptVariables },
 ): TemplateScope {
   const map = new Map<string, VariableInfo>()
   const put = (vars: ScriptVariables | undefined, source: VariableInfo['source']) => {
@@ -302,6 +320,7 @@ export function scopeWithScriptVariables(
   put(layers.globals, 'global')
   put(layers.collection, 'collection')
   baseOf(false)
+  put(layers.data ?? undefined, 'data')
   put(layers.local, 'local')
   return { ...base, variables: map }
 }

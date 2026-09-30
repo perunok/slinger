@@ -200,6 +200,30 @@ export interface CreateFolderInput {
   name: string
 }
 
+/** ADDED (extract folder): turns a folder into a collection of its own; see electron/services/extractFolder.ts. */
+export interface ExtractFolderInput {
+  folderId: string
+  /** Name of the new collection (usually the folder's). */
+  name: string
+  /**
+   * The new collection's scripts (Postman `event` array JSON, or null for none). Absent: the folder's own scripts. The
+   * renderer passes them merged with the scripts that used to run before the folder's (collection, parent folders).
+   */
+  scriptsJson?: string | null
+  /** Copy the original collection's variables into the new collection. */
+  copyCollectionVariables: boolean
+}
+
+export interface ExtractFolderResult {
+  collection: Collection
+  sourceCollectionId: string
+  /** Subfolders recreated in the new collection. */
+  folderCount: number
+  /** Requests moved (with their ids, history and examples). */
+  requestCount: number
+  variableCount: number
+}
+
 export interface MoveFolderInput {
   folderId: string
   targetParentFolderId: string | null
@@ -606,6 +630,11 @@ export interface RunScriptsInput {
   /** Ignored since globals are persisted (kept optional for older callers). */
   globals?: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
+  /**
+   * ADDED (data-driven runs): the current row of the collection run's data file, as `pm.iterationData` and a variable
+   * scope between the local one and the environment. Absent: empty.
+   */
+  iterationData?: ScriptVariables
   /** Per-script time limit in ms (default 5000, max 60000). Time waiting for pm.sendRequest does not count. */
   timeoutMs?: number
   /** Default pm.sendRequest timeout in ms (the request's own timeout; default 60000, capped at 120000). */

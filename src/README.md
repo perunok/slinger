@@ -27,7 +27,6 @@ app/                        shell + cross-feature state
   scope.svelte.ts           the {{variable}} scope: globals < collection variables < environment (scope = active tab's collection, scopeFor(id))
   settings.svelte.ts        theme + accent + custom themes (lib/customThemes.ts) + sending animation (lib/appearance.ts) / font size / editor wrap /
                             script time limit + continue-on-error / response position / status bar (localStorage)
-  activity.svelte.ts        background activity for the status bar that is not tab state (the collection runner's progress)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
@@ -41,7 +40,8 @@ components/
 features/
   workspaces/  collections/ (tree, DnD, actions)  requests/ (tabs store, editor panels, send)
   response/    environments/ (variable table + autosave model shared by environments, globals and collection variables:
-               varBackends.ts, VariablesPanel)  history/ runner/ importexport/ versions/ cloud/ (account, sign-in)
+               varBackends.ts, VariablesPanel)  history/ runner/ (runs.svelte.ts: runs live in a store, not the
+               dialog, so they go on in the background; the status bar reopens them)  importexport/ versions/ cloud/ (account, sign-in)
   sync/ (store, chip, publish/link flows, conflict center, read-only banner, tab notices)  settings/
   layout/ (response below/beside toggle, StatusBar, RightPanel + rightPanelStore.svelte.ts store; panels.ts = registry of right-panel
           views in panels/ (Variables, Docs, Code, Info); layoutActions.ts: the layout commands shared by shortcuts, menu,
@@ -73,7 +73,7 @@ One implementation everywhere: `lib/template.ts` (parse/resolve/status), `compon
 `lib/template.ts layeredScope`) layers globals < the collection's variables < the active environment, each
 entry tagged with its `source` (the hover names it, "create variable" offers environment / collection /
 globals via `scopeStore.createVariable(name, target)`); `scope` follows the active tab's collection, sends and
-the runner use `scopeFor(collectionId)`. Secrets are only known by name and masked. `lib/prepare.ts` is the
+the runner use `scopeFor(collectionId)` (a run passes the environment it started with, see `ExecuteContext.environment`). Secrets are only known by name and masked. `lib/prepare.ts` is the
 single place templates are applied before sending (URL, headers, body, form fields, auth), fetching secret
 values via `revealEnvironmentVariable` / `revealGlobalVariable` just-in-time (`features/requests/execute.ts`).
 Unresolved variables abort the send with an inline list naming the scopes checked.

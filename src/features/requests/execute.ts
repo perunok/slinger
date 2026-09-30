@@ -31,7 +31,7 @@ import {
   scriptChain,
   type ScriptOutput,
 } from '../../lib/scripts'
-import { uuid } from '../../lib/template'
+import { uuid, type VariableInfo } from '../../lib/template'
 
 export type ExecuteOutcome =
   | { ok: true; response: HttpResponseData; warnings: string[]; runId: string; elapsedMs: number; scripts: ScriptOutput }
@@ -55,9 +55,18 @@ export interface ScriptRunContext {
   collectionVariables: ScriptVariables
   iteration: number
   iterationCount: number
+  /** The current row of a data-driven run's data file (pm.iterationData, `{{column}}`), or null. */
+  iterationData: ScriptVariables | null
 }
 
-export const newScriptRun = (): ScriptRunContext => ({ sessionId: uuid(), variables: {}, collectionVariables: {}, iteration: 0, iterationCount: 1 })
+export const newScriptRun = (): ScriptRunContext => ({
+  sessionId: uuid(),
+  variables: {},
+  collectionVariables: {},
+  iteration: 0,
+  iterationCount: 1,
+  iterationData: null,
+})
 
 export interface ExecuteContext {
   workspaceId: string
@@ -67,6 +76,12 @@ export interface ExecuteContext {
   folderId?: string | null
   /** Collection runs pass one context for all their requests. */
   run?: ScriptRunContext
+  /**
+   * The environment to use instead of the active one (null: none). Collection runs pin the one they started with, so
+   * switching environments while a run goes on in the background does not change the rest of the run. Absent: the
+   * active environment of this workspace.
+   */
+  environment?: { id: string; name: string } | null
   /** Called with the run id as soon as it is assigned, so callers can cancel. */
   onRunId?: (runId: string) => void
   /** Set by the caller when it requested cancellation; used to label the failure. */
@@ -90,7 +105,8 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   const runId = uuid()
   ctx.onRunId?.(runId)
   const cancelled = (): ExecuteOutcome => ({ ok: false, kind: 'cancelled', error: 'Request cancelled', scripts })
-  const environmentId = app.activeEnvironment?.workspaceId === ctx.workspaceId ? app.activeEnvironmentId : null
+  const activeEnvironmentId = app.activeEnvironment?.workspaceId === ctx.workspaceId ? app.activeEnvironmentId : null
+  const environmentId = ctx.environment !== undefined ? (ctx.environment?.id ?? null) : activeEnvironmentId
 
   const runScripts = async (event: ScriptEventName, draft: RequestDraft, extra: Partial<RunScriptsInput> = {}) => {
     const chain = scriptsOf(draft, ctx, event)
@@ -108,6 +124,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       collectionId: ctx.collectionId ?? null,
       collectionVariables: ctx.collectionId ? {} : run.collectionVariables,
       info: { requestName: draft.name, requestId: ctx.requestId ?? null, iteration: run.iteration, iterationCount: run.iterationCount },
+      ...(run.iterationData ? { iterationData: run.iterationData } : {}),
       timeoutMs: settings.scriptTimeoutMs,
       sendRequestTimeoutMs: draft.timeoutMs ?? undefined,
       continueOnError: settings.scriptContinueOnError,
@@ -146,9 +163,23 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   }
   if (ctx.wasCancelled?.()) return cancelled()
 
-  // 2. Templates, with what the scripts set.
-  const scope = scopeWithScriptVariables(scopeStore.scopeFor(ctx.collectionId), {
+  // 2. Templates, with what the scripts set. A pinned environment that is no longer the active one is read fresh here,
+  // after the pre-request scripts (which may have written to it).
+  let envLayer: { name: string | null; vars: VariableInfo[] } | undefined
+  if (environmentId !== activeEnvironmentId) {
+    try {
+      const vars = environmentId ? await api().listEnvironmentVariables(environmentId) : []
+      envLayer = {
+        name: ctx.environment?.name ?? null,
+        vars: vars.map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id })),
+      }
+    } catch (e) {
+      return { ok: false, kind: 'failed', error: `Could not read the environment "${ctx.environment?.name ?? ''}": ${errorInfo(e).message}`, scripts }
+    }
+  }
+  const scope = scopeWithScriptVariables(scopeStore.scopeFor(ctx.collectionId, envLayer), {
     collection: ctx.collectionId ? undefined : run.collectionVariables,
+    data: run.iterationData,
     local: run.variables,
   })
   // Reveal only the secrets this request references; they live in memory for this call only.

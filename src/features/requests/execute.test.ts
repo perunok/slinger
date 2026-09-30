@@ -284,3 +284,83 @@ describe('executeDraft with OAuth 2.0', () => {
     expect(await executeDraft(draft, ctx(r))).toMatchObject({ ok: false, kind: 'failed', error: expect.stringContaining('Get a new access token') })
   })
 })
+
+describe('executeDraft with a pinned environment (collection runs)', () => {
+  async function otherActive() {
+    const other = await backend.createEnvironment(app.workspaceId!, 'Other')
+    await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'baseUrl', value: 'https://other.test', isSecret: false })
+    await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'userId', value: '99', isSecret: false })
+    await app.reloadEnvironments()
+    await app.setActiveEnvironment(other.id)
+    return other
+  }
+
+  it('resolves templates and runs the scripts with the given environment, not the active one', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    const localVars = await backend.listEnvironmentVariables(local.id)
+    const localBase = localVars.find((v) => v.key === 'baseUrl')!.value!
+    await otherActive()
+    const { r, draft } = withScripts(pre('pm.environment.get("baseUrl")'))
+    const out = await executeDraft(draft, { ...ctx(r), environment: { id: local.id, name: 'Local' } })
+    expect(out.ok).toBe(true)
+    expect(sent.at(-1)!.url.startsWith(localBase)).toBe(true)
+    expect(calls[0]!.environmentId).toBe(local.id)
+    // Without a pinned environment the active one applies.
+    await executeDraft(parseDocument(r), ctx(r))
+    expect(sent.at(-1)!.url.startsWith('https://other.test')).toBe(true)
+  })
+
+  it('reads the pinned environment after the pre-request scripts wrote to it', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    await otherActive()
+    const localVarId = (await backend.listEnvironmentVariables(local.id)).find((v) => v.key === 'userId')!.id
+    const { r, draft } = withScripts(pre('pm.environment.set("userId", "7")'))
+    // The mock does not run scripts: do the write the script would make, to the environment it was given.
+    respond = (input) => {
+      if (input.event === 'prerequest') {
+        void backend.upsertEnvironmentVariable({
+          environmentId: input.environmentId!,
+          variableId: localVarId,
+          key: 'userId',
+          value: '7',
+          isSecret: false,
+        })
+      }
+      return {}
+    }
+    await executeDraft(draft, { ...ctx(r), environment: { id: local.id, name: 'Local' } })
+    expect(sent.at(-1)!.url).toContain('userId=7')
+  })
+
+  it('null means no environment, even when one is active', async () => {
+    await otherActive()
+    const r = getUser()
+    const out = await executeDraft(parseDocument(r), { ...ctx(r), environment: null })
+    expect(out.ok).toBe(false)
+    expect(out.ok ? [] : 'unresolved' in out ? out.unresolved : []).toEqual(expect.arrayContaining(['baseUrl']))
+    expect(sent).toHaveLength(0)
+  })
+})
+
+describe('executeDraft in a data-driven run', () => {
+  it('passes the iteration row to the scripts and resolves {{column}} over the environment, under pm.variables', async () => {
+    const r = getUser()
+    const run = newScriptRun()
+    run.iteration = 1
+    run.iterationCount = 3
+    run.iterationData = { userId: '42', baseUrl: 'https://data.test' }
+    // A script variable still wins over the row.
+    run.variables = { baseUrl: 'https://local.test' }
+    const { draft } = withScripts(pre('pm.iterationData.get("userId")'))
+    await executeDraft(draft, { ...ctx(r), run })
+    expect(calls[0]!.iterationData).toEqual({ userId: '42', baseUrl: 'https://data.test' })
+    expect(calls[0]!.info).toMatchObject({ iteration: 1, iterationCount: 3 })
+    expect(sent.at(-1)!.url.startsWith('https://local.test/json?userId=42')).toBe(true)
+  })
+
+  it('outside data-driven runs no iterationData is sent', async () => {
+    const { r, draft } = withScripts(pre('1'))
+    await executeDraft(draft, ctx(r))
+    expect('iterationData' in calls[0]!).toBe(false)
+  })
+})

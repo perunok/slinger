@@ -209,6 +209,8 @@ export class RunHost {
   private readonly deps: ScriptRunnerDeps
   private readonly env = new Map<string, EnvEntry>()
   private readonly local: Map<string, unknown>
+  /** The current iteration's row of a data-driven collection run (read-only). */
+  private readonly data: Map<string, unknown>
   private readonly stores: Record<'collection' | 'globals', VarStore>
   readonly envOps: EnvOp[] = []
   private request: ScriptRequestData
@@ -239,6 +241,7 @@ export class RunHost {
       this.env.set(v.key, { id: v.id, secret: v.secret, value: v.secret ? null : (v.value ?? ''), known: !v.secret })
     }
     this.local = fromRecord(job.variables)
+    this.data = fromRecord(job.iterationData ?? {})
     this.stores = {
       collection: makeStore(job.persistedCollection, job.collectionVariables, 'pm.collectionVariables', 'collection variables'),
       globals: makeStore(job.persistedGlobals, job.globals, 'pm.globals', 'globals'),
@@ -365,6 +368,7 @@ export class RunHost {
   /** pm.variables.get: local > environment > collection > globals (Postman's precedence, no data files). */
   private resolve(key: string): { found: boolean; value: unknown } {
     if (this.local.has(key)) return { found: true, value: this.local.get(key) }
+    if (this.data.has(key)) return { found: true, value: this.data.get(key) }
     if (this.env.has(key)) return { found: true, value: this.envGet(key) }
     if (this.stores.collection.entries.has(key)) return { found: true, value: this.read(this.stores.collection.entries, key) }
     if (this.stores.globals.entries.has(key)) return { found: true, value: this.read(this.stores.globals.entries, key) }
@@ -637,6 +641,12 @@ export class RunHost {
         this.storeSet(st, key, args[2])
         return undefined
       }
+      case 'data.get':
+        return this.data.get(cleanKey(a0))
+      case 'data.has':
+        return this.data.has(cleanKey(a0))
+      case 'data.toObject':
+        return toRecord(this.data)
       case 'vars.get':
         return this.resolve(cleanKey(a0)).value
       case 'vars.has':
@@ -647,6 +657,7 @@ export class RunHost {
           ...Object.entries(this.storeObject(this.stores.collection)),
         ])
         for (const [k, v] of Object.entries(this.envObject())) merged.set(k, v)
+        for (const [k, v] of this.data) merged.set(k, v)
         for (const [k, v] of this.local) merged.set(k, v)
         return toRecord(merged)
       }

@@ -12,6 +12,7 @@
   import { planDrop, type DragItem, type DropPosition, type DropTarget } from '../../lib/tree'
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
+  import ExtractFolderDialog from './ExtractFolderDialog.svelte'
   import * as examples from '../examples/actions'
   import { openCollectionVariables } from '../overview/openVariables'
   import { buildRows, exampleRowKey, rowKey, type TreeRowModel } from './rows'
@@ -31,6 +32,7 @@
     | { t: 'newExample'; requestId: string }
     | { t: 'rename'; row: TreeRowModel }
     | { t: 'delete'; row: TreeRowModel }
+    | { t: 'extract'; folderId: string }
   let dlg = $state<Dlg | null>(null)
 
   const rows = $derived(buildRows({ collections: app.collections, folders: app.folders, requests: app.requests, expanded, filter }))
@@ -116,6 +118,7 @@
         { label: 'New subfolder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.collectionId, parentId: row.id }) },
         { label: 'Run folder…', icon: 'play', action: () => (ui.runner = { collectionId: row.collectionId, folderId: row.id }) },
         { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'folder', id: row.id }) },
+        { label: 'Extract to new collection…', icon: 'layers', action: () => (dlg = { t: 'extract', folderId: row.id }) },
         { separator: true, label: '' },
         { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
         { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
@@ -409,6 +412,8 @@
     <NameDialog title="Add example" label="Example name" initial="New example" submitLabel="Add" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'rename'}
     <NameDialog title="Rename {dlg.row.kind}" label="Name" initial={dlg.row.label} submitLabel="Rename" onsubmit={submitName} oncancel={() => (dlg = null)} />
+  {:else if dlg.t === 'extract'}
+    <ExtractFolderDialog folderId={dlg.folderId} onclose={() => (dlg = null)} />
   {:else if dlg.t === 'delete'}
     {@const row = dlg.row}
     <ConfirmDialog title="Delete {row.kind}" message={deleteMessage(row)} confirmLabel="Delete" danger onconfirm={() => confirmDelete(row)} oncancel={() => (dlg = null)} />

@@ -1,24 +1,21 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
-  import { activity } from '../../app/activity.svelte'
-  import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
-  import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
+  import InfoTip from '../../components/ui/InfoTip.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import LoadingCharacter from '../../components/ui/LoadingCharacter.svelte'
-  import { pickLoader, prefersReducedMotion, type LoaderKind } from '../../lib/loader'
+  import { DataFileError, MAX_DATA_BYTES, parseDataFile, type DataFile } from '../../lib/dataFile'
   import { saveExport } from '../../lib/exportFile'
   import { errorInfo } from '../../lib/ipc'
-  import { parseDocument } from '../../lib/request'
   import { formatDuration, statusTone } from '../../lib/response'
   import { sanitizeFileStem } from '../importexport/fileName'
-  import { cancelRun, executeDraft, newScriptRun } from '../requests/execute'
-  import { testCounts } from '../../lib/scripts'
-  import { collectRunItems, CollectionRun, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
+  import { templateValue, testCounts } from '../../lib/scripts'
+  import { collectRunItems, MAX_ITERATIONS, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
+  import { runsStore, type RunSession } from './runs.svelte'
 
   interface Props {
     collectionId: string
@@ -35,87 +32,113 @@
   }))
   const workspaceId = app.workspaceId
 
-  let selected = $state<Set<string>>(new Set(items.map((i) => i.id)))
-  let delayText = $state('0')
-  let stopOnFailure = $state(false)
-  let treat3xxAsPass = $state(false)
-  let run = $state.raw<CollectionRun | null>(null)
-  let view = $state.raw<RunState | null>(null)
+  const target = untrack(() => ({ collectionId, folderId }))
+  /** A run of this target that is going on or finished unseen: shown right away, and its options come back. */
+  const opened = untrack(() => runsStore.forTarget(target) ?? null)
+  // Its results are being looked at now.
+  if (opened) opened.unseen = false
+
+  let selected = $state<Set<string>>(new Set(opened ? opened.itemIds.filter((id) => items.some((i) => i.id === id)) : items.map((i) => i.id)))
+  // bind:value on a number input yields a number (or null when empty), not the text.
+  let delayValue = $state<number | string | null>(opened?.options.delayMs ?? 0)
+  const delayText = $derived(delayValue === null || delayValue === undefined ? '' : String(delayValue))
+  let stopOnFailure = $state(opened?.options.stopOnFailure ?? false)
+  let treat3xxAsPass = $state(opened?.options.treat3xxAsPass ?? false)
+  // Data-driven runs: one iteration per row of the data file (or N plain iterations).
+  let dataFile = $state.raw<DataFile | null>(opened?.dataFile ?? null)
+  let dataError = $state<string | null>(null)
+  let iterationsValue = $state<number | string | null>(opened?.options.iterations ?? 1)
+  let fileInput = $state<HTMLInputElement | null>(null)
+  /** The run shown here; it lives in the runs store, so closing the dialog does not stop it (see runs.svelte.ts). */
+  let session = $state.raw<RunSession | null>(opened)
+  const view = $derived<RunState | null>(session?.state ?? null)
+  const loader = $derived(session?.loader ?? null)
   let expanded = $state<Set<string>>(new Set())
-  let confirmClose = $state(false)
   let exportError = $state<string | null>(null)
-  /** The small loading character over the progress bar (per run; none for the classic spinner or reduced motion). */
-  let loader = $state<{ kind: LoaderKind; startedAt: number; seq: number } | null>(null)
 
   const delayMs = $derived.by(() => {
     const n = Number(delayText)
     return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 60000) : 0
   })
   const delayInvalid = $derived(delayText.trim() !== '' && !(Number(delayText) >= 0))
+  const maxIterations = $derived(dataFile ? dataFile.rows.length : MAX_ITERATIONS)
+  const iterations = $derived.by(() => {
+    const n = Number(iterationsValue === null || iterationsValue === undefined ? '' : iterationsValue)
+    return Number.isInteger(n) && n >= 1 && n <= maxIterations ? n : null
+  })
+  const iterationsInvalid = $derived(iterations === null)
+  /** The preview shows the first rows and at most this many columns. */
+  const PREVIEW_COLUMNS = 6
+  const cannotRun = $derived(selected.size === 0 || delayInvalid || iterationsInvalid || !workspaceId)
   const running = $derived(view?.phase === 'running')
   const done = $derived(view?.phase === 'done')
   const summary = $derived(view ? summarize(view) : null)
   const title = $derived(`Run ${folder ? `folder "${folder.name}"` : collection ? `"${collection.name}"` : 'collection'}`)
 
-  function start() {
+  function start(inBackground = false) {
     if (!workspaceId) return
     const chosen = items.filter((i) => selected.has(i.id))
     if (chosen.length === 0) return
     expanded = new Set()
     exportError = null
-    const kind = pickLoader(settings.loader)
-    loader = kind === 'classic' || prefersReducedMotion() ? null : { kind, startedAt: Date.now(), seq: (loader?.seq ?? 0) + 1 }
-    // One script context for the whole run: pm.variables set by one request reach the next ones.
-    const scriptRun = newScriptRun()
-    const r = new CollectionRun(
-      chosen,
-      { delayMs, stopOnFailure, treat3xxAsPass },
-      {
-        execute: (item, hooks) =>
-          executeDraft(parseDocument(item.request), {
-            workspaceId,
-            requestId: item.request.id,
-            collectionId: item.request.collectionId,
-            folderId: item.request.folderId,
-            run: scriptRun,
-            onRunId: hooks.onRunId,
-            wasCancelled: hooks.wasCancelled,
-          }),
-        cancel: cancelRun,
-        onUpdate: (s) => (view = s),
-        onItemFinished: () => app.historyTick++,
-      },
-    )
-    run = r
-    view = r.state
-    void r.start()
+    session = runsStore.start({
+      workspaceId,
+      target,
+      label: folder?.name ?? collection?.name ?? 'collection',
+      items: chosen,
+      options: { delayMs, stopOnFailure, treat3xxAsPass, iterations: iterations ?? 1 },
+      dataFile,
+    })
+    if (inBackground) toBackground()
   }
 
+  async function chooseData(e: Event) {
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    // Choosing the same file again (after editing it) must fire change again.
+    input.value = ''
+    if (!file) return
+    dataError = null
+    try {
+      if (file.size > MAX_DATA_BYTES) throw new DataFileError(`The file is larger than ${MAX_DATA_BYTES / 1024 / 1024} MB.`)
+      dataFile = parseDataFile(file.name, await readText(file))
+      iterationsValue = dataFile.rows.length
+    } catch (err) {
+      dataError = `${file.name}: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  function readText(file: File): Promise<string> {
+    if (typeof file.text === 'function') return file.text()
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(reader.error ?? new Error('could not read the file'))
+      reader.readAsText(file)
+    })
+  }
+
+  function removeData() {
+    dataFile = null
+    dataError = null
+    iterationsValue = 1
+  }
+
+  /** Back to the options, forgetting the finished run. */
   function reset() {
-    run = null
-    view = null
+    if (session) runsStore.dismiss(session)
+    session = null
   }
 
-  function requestClose() {
-    if (running) confirmClose = true
-    else onclose()
-  }
-
-  async function stopAndClose() {
-    run?.stop()
-    await run?.finished
+  /** Closes the dialog; a run going on continues (the status bar shows it and brings it back). */
+  function toBackground() {
+    if (session?.running) toast.info('The run continues in the background', 'Its progress is in the status bar; click it to come back here.')
     onclose()
   }
 
-  // Progress for the status bar while a run is going.
-  $effect(() => {
-    activity.runner = view?.phase === 'running' ? { label: folder?.name ?? collection?.name ?? 'collection', done: view.completed, total: view.rows.length } : null
-  })
-
-  // No orphan runs after unmount.
+  // A run going on stays in the store; finished results go when their dialog closes.
   onDestroy(() => {
-    run?.stop()
-    activity.runner = null
+    if (session) runsStore.closed(session)
   })
 
   function toggle(set: Set<string>, id: string): Set<string> {
@@ -128,7 +151,7 @@
     if (!view) return
     exportError = null
     try {
-      const path = await saveExport(`${sanitizeFileStem(collection?.name ?? '', 'collection')}.run-results.json`, resultsToJson(collection?.name ?? 'collection', view))
+      const path = await saveExport(`${sanitizeFileStem(collection?.name ?? '', 'collection')}.run-results.json`, resultsToJson(collection?.name ?? 'collection', view, session?.options.data))
       toast.success('Results exported', path)
     } catch (e) {
       exportError = errorInfo(e).message
@@ -154,16 +177,148 @@
     return `var(--m-${['get', 'post', 'put', 'patch', 'delete'].includes(k) ? k : 'other'})`
   }
   const rowsToShow = $derived<RunRow[]>(view?.rows ?? [])
+
+  // Several iterations: results grouped per iteration, the first `shownIterations` of them (a run can have thousands;
+  // rows are in iteration order, so grouping stops at the first iteration not shown).
+  let shownIterations = $state(100)
+  let openIterations = $state<Set<number>>(new Set())
+  const groups = $derived.by(() => {
+    if (!view || view.iterations <= 1) return null
+    const out: Array<{ index: number; rows: RunRow[] }> = []
+    for (const r of view.rows) {
+      if (r.iteration >= shownIterations) break
+      ;(out[r.iteration] ??= { index: r.iteration, rows: [] }).rows.push(r)
+    }
+    return out
+  })
+  /** "customerName: Acme Ltd" for iteration `i` of a data-driven run (its first column), else ''. */
+  function iterationLabel(i: number): string {
+    const file = session?.dataFile
+    const col = file?.columns[0]
+    const row = session?.options.data?.[i]
+    return col && row ? `${col}: ${templateValue(row[col])}` : ''
+  }
+  function counts(rows: RunRow[]) {
+    let passed = 0
+    let failed = 0
+    let running = false
+    for (const r of rows) {
+      if (r.status === 'passed') passed++
+      else if (r.status === 'failed') failed++
+      else if (r.status === 'running') running = true
+    }
+    return { passed, failed, running, done: rows.every((r) => r.status !== 'pending' && r.status !== 'running') }
+  }
+  function toggleIteration(i: number) {
+    const next = new Set(openIterations)
+    if (!next.delete(i)) next.add(i)
+    openIterations = next
+  }
 </script>
 
-<Dialog {title} onclose={requestClose} size="lg">
+{#snippet runRow(row: RunRow)}
+    {@const open = expanded.has(row.key)}
+    {@const canOpen = row.status === 'passed' || row.status === 'failed'}
+    <li class="border-b border-border last:border-b-0" data-status={row.status}>
+      <div class="flex items-center gap-2 px-2 py-1.5">
+        <span class="w-4 shrink-0" aria-label={STATUS_LABEL[row.status]} title={STATUS_LABEL[row.status]}>
+          {#if row.status === 'running'}
+            <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted border-t-transparent"></span>
+          {:else if row.status === 'passed'}
+            <span class="text-success"><Icon name="check" size={14} /></span>
+          {:else if row.status === 'failed'}
+            <span class="text-danger"><Icon name="x" size={14} /></span>
+          {:else}
+            <span class="text-faint"><Icon name="stop" size={12} /></span>
+          {/if}
+        </span>
+        <span class="w-14 shrink-0 text-xs font-semibold" style="color: {methodColor(row.item.method)}">{row.item.method}</span>
+        <span class="min-w-0 flex-1 truncate" title={row.item.url}>{row.item.name}</span>
+        {#if row.tests.length || row.scriptErrors.length}
+          {@const c = testCounts({ tests: row.tests, errors: row.scriptErrors })}
+          <span class="rounded px-1.5 py-0.5 text-xs {c.failed ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}" data-testid="row-tests" title="Tests passed / total">{c.passed}/{c.total}</span>
+        {/if}
+        {#if row.statusCode !== null}
+          <span class="rounded px-1.5 py-0.5 text-xs font-medium {TONE[statusTone(row.statusCode)]}">{row.statusCode}</span>
+        {/if}
+        {#if row.durationMs !== null}
+          <span class="w-16 shrink-0 text-right text-xs text-muted">{formatDuration(row.durationMs)}</span>
+        {/if}
+        {#if canOpen}
+          <button
+            type="button"
+            class="rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
+            aria-expanded={open}
+            aria-label="{open ? 'Hide' : 'Show'} details for {row.item.name}"
+            onclick={() => (expanded = toggle(expanded, row.key))}
+          >
+            <Icon name={open ? 'chevron-down' : 'chevron-right'} size={14} />
+          </button>
+        {:else}
+          <span class="w-5"></span>
+        {/if}
+      </div>
+      {#if row.reason && row.status !== 'passed'}
+        <p class="px-2 pb-1.5 pl-[3.25rem] text-xs {row.status === 'failed' ? 'text-danger' : 'text-muted'}">{row.reason}</p>
+      {/if}
+      {#if open && canOpen}
+        <div class="border-t border-border bg-raised px-3 py-2 text-xs">
+          {#if row.tests.length || row.scriptErrors.length}
+            <p class="mb-1 font-medium">Tests</p>
+            <ul class="mb-2" aria-label="Tests of {row.item.name}">
+              {#each row.scriptErrors as e, i (i)}<li class="text-danger">Script error ({e.source}): {e.message}</li>{/each}
+              {#each row.tests as t, i (i)}
+                <li class={t.status === 'passed' ? 'text-success' : t.status === 'failed' ? 'text-danger' : 'text-muted'}>
+                  {t.status === 'passed' ? '✓' : t.status === 'failed' ? '✗' : '–'} {t.name}{t.error ? `: ${t.error}` : ''}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if row.console.length}
+            <p class="mb-1 font-medium">Console</p>
+            <pre class="mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono">{row.console.map((c) => `[${c.level}] ${c.message}`).join('\n')}</pre>
+          {/if}
+          {#if row.headers.length > 0}
+            <p class="mb-1 font-medium">Response headers</p>
+            <dl class="mb-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">
+              {#each row.headers as h, i (i)}
+                <dt class="text-muted">{h.key}</dt>
+                <dd class="break-all">{h.value}</dd>
+              {/each}
+            </dl>
+          {/if}
+          {#if row.detailsDropped}
+            <p class="text-muted">Headers and body are kept only for failed requests in runs of more than 1000 requests.</p>
+          {:else}
+            <p class="mb-1 font-medium">Body{row.bodyTruncated ? ' (first 2 KB)' : ''}</p>
+            <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono">{row.bodyPreview ?? '(empty)'}</pre>
+          {/if}
+        </div>
+      {/if}
+    </li>
+{/snippet}
+
+<Dialog {title} onclose={toBackground} size="lg">
   {#if !view}
     <div class="flex flex-col gap-3 text-sm">
       {#if items.length === 0}
         <p class="text-muted">There are no requests to run here.</p>
       {:else}
         <div class="flex items-center justify-between">
-          <span class="text-xs text-muted">{selected.size} of {items.length} selected</span>
+          <span class="flex items-center gap-1 text-xs text-muted">
+            {selected.size} of {items.length} selected
+            <InfoTip label="How collection runs work">
+              <span>
+                Requests run one after another exactly like Send: templates, secrets and auth of the active environment
+                ({app.activeEnvironment?.name ?? 'none'}) apply. The run keeps that environment even if you switch to another one meanwhile.
+              </span>
+              <span>
+                Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets
+                are available to the requests after it, and failed tests fail the request.
+              </span>
+              <span>Run in background to keep working while it runs: the status bar shows the progress and brings you back to the results.</span>
+            </InfoTip>
+          </span>
           <span class="flex gap-1">
             <Button size="sm" onclick={() => (selected = new Set(items.map((i) => i.id)))}>Select all</Button>
             <Button size="sm" onclick={() => (selected = new Set())}>Select none</Button>
@@ -188,7 +343,7 @@
               type="number"
               min="0"
               max="60000"
-              bind:value={delayText}
+              bind:value={delayValue}
               aria-invalid={delayInvalid || undefined}
               class="h-8 w-32 rounded border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-focus {delayInvalid ? 'border-danger' : 'border-border'}"
             />
@@ -197,14 +352,88 @@
             <input type="checkbox" bind:checked={stopOnFailure} />
             Stop on first failure
           </label>
-          <label class="flex items-center gap-2 pb-1.5 text-sm" title="By default only 2xx passes; a 3xx that redirect-following did not turn into a 2xx fails.">
-            <input type="checkbox" bind:checked={treat3xxAsPass} />
-            Treat 3xx as pass
-          </label>
+          <span class="flex items-center gap-1 pb-1.5">
+            <label class="flex items-center gap-2 text-sm">
+              <input type="checkbox" bind:checked={treat3xxAsPass} />
+              Treat 3xx as pass
+            </label>
+            <InfoTip label="When a request passes">
+              <span>A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</span>
+              <span>Treat 3xx as pass also counts a 3xx that redirect-following did not turn into a 2xx as passed.</span>
+            </InfoTip>
+          </span>
         </div>
-        <p class="text-xs text-muted">A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</p>
-        <p class="text-xs text-muted">Requests run one after another exactly like Send: templates, secrets and auth of the active environment apply.</p>
-        <p class="text-xs text-muted">Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets are available to the requests after it, and failed tests fail the request.</p>
+        <div class="flex flex-col gap-2 rounded border border-border p-2" data-testid="data-file">
+          <div class="flex flex-wrap items-end gap-4">
+            <div class="flex flex-col gap-1">
+              <label for="rn-iterations" class="text-xs font-medium">Iterations</label>
+              <input
+                id="rn-iterations"
+                type="number"
+                min="1"
+                max={maxIterations}
+                bind:value={iterationsValue}
+                aria-invalid={iterationsInvalid || undefined}
+                title={dataFile ? `At most one per data row (${dataFile.rows.length})` : `1 to ${MAX_ITERATIONS}`}
+                class="h-8 w-24 rounded border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-focus {iterationsInvalid ? 'border-danger' : 'border-border'}"
+              />
+            </div>
+            <div class="flex min-w-0 flex-1 flex-col gap-1">
+              <span class="flex items-center gap-1 text-xs font-medium">
+                Data file
+                <InfoTip label="About data files">
+                  <span>Optional. A CSV (the first line names the columns) or a JSON array of objects: one iteration per row.</span>
+                  <span>
+                    In each iteration the row's columns are variables: {'{{customerName}}'} in the URL, headers or body, and
+                    pm.iterationData.get('customerName') in scripts. They override the environment; pm.variables.set still overrides them.
+                  </span>
+                  <span>Up to 10000 rows and 5 MB. Iterations is set to the number of rows.</span>
+                </InfoTip>
+              </span>
+              <div class="flex min-w-0 items-center gap-2">
+                {#if dataFile}
+                  <span class="min-w-0 truncate font-mono text-xs" title={dataFile.name}>{dataFile.name}</span>
+                  <span class="shrink-0 text-xs text-muted" data-testid="data-summary">
+                    {dataFile.rows.length} row{dataFile.rows.length === 1 ? '' : 's'} · {dataFile.columns.length} column{dataFile.columns.length === 1 ? '' : 's'}
+                  </span>
+                  <Button size="sm" onclick={() => fileInput?.click()}>Change…</Button>
+                  <Button size="sm" onclick={removeData}>Remove</Button>
+                {:else}
+                  <Button size="sm" icon="upload" onclick={() => fileInput?.click()}>Choose CSV or JSON…</Button>
+                {/if}
+                <input bind:this={fileInput} type="file" accept=".csv,.json,text/csv,application/json" class="hidden" aria-label="Data file" onchange={chooseData} />
+              </div>
+            </div>
+          </div>
+          {#if iterationsInvalid}
+            <p class="text-xs text-danger">Iterations must be a whole number from 1 to {maxIterations}{dataFile ? ' (one per data row at most)' : ''}.</p>
+          {/if}
+          <InlineError message={dataError} />
+          {#if dataFile}
+            {@const cols = dataFile.columns.slice(0, PREVIEW_COLUMNS)}
+            <div class="max-h-36 overflow-auto rounded border border-border">
+              <table class="w-full text-xs" aria-label="Data preview">
+                <thead class="bg-raised text-left text-muted">
+                  <tr>
+                    <th class="px-2 py-1 font-medium">#</th>
+                    {#each cols as c (c)}<th class="px-2 py-1 font-mono font-medium">{c}</th>{/each}
+                    {#if dataFile.columns.length > cols.length}<th class="px-2 py-1 font-medium">+{dataFile.columns.length - cols.length} more</th>{/if}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each dataFile.rows.slice(0, 3) as row, i (i)}
+                    <tr class="border-t border-border">
+                      <td class="px-2 py-1 text-muted">{i + 1}</td>
+                      {#each cols as c (c)}<td class="max-w-40 truncate px-2 py-1 font-mono" title={templateValue(row[c])}>{templateValue(row[c])}</td>{/each}
+                      {#if dataFile.columns.length > cols.length}<td></td>{/if}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            {#if dataFile.rows.length > 3}<p class="text-xs text-muted">…and {dataFile.rows.length - 3} more row{dataFile.rows.length - 3 === 1 ? '' : 's'}.</p>{/if}
+          {/if}
+        </div>
       {/if}
     </div>
   {:else}
@@ -214,7 +443,7 @@
           {#if running && loader && loader.kind !== 'classic'}
             <!-- the character runs along the top of the progress bar -->
             <div class="pointer-events-none absolute inset-x-0 bottom-full">
-              {#key loader.seq}
+              {#key session?.id}
                 <LoadingCharacter kind={loader.kind} size="sm" startedAt={loader.startedAt} line={false} />
               {/key}
             </div>
@@ -223,15 +452,22 @@
             <div class="h-full bg-accent transition-all" style="width: {view.rows.length ? (view.completed / view.rows.length) * 100 : 0}%"></div>
           </div>
         </div>
-        <span class="shrink-0 text-xs text-muted" data-testid="progress">{view.completed}/{view.rows.length}</span>
+        <span class="shrink-0 text-xs text-muted" data-testid="progress">
+          {view.completed}/{view.rows.length}{#if view.iterations > 1}&nbsp;· iteration {view.currentIteration + 1}/{view.iterations}{/if}
+        </span>
       </div>
+      <p class="-mt-1 text-xs text-muted" data-testid="run-environment">
+        Environment: {session?.environment?.name ?? 'none'}{#if session?.dataFile}{` · Data: ${session.dataFile.name}`}{/if}
+      </p>
 
       {#if done && summary}
         <div class="rounded border border-border bg-raised px-3 py-2 text-sm" role="status" data-testid="summary">
           <span class="text-success">{summary.passed} passed</span>,
           <span class={summary.failed ? 'text-danger' : 'text-muted'}>{summary.failed} failed</span>,
           <span class="text-muted">{summary.skipped} skipped</span>
-          <span class="text-muted"> in {formatDuration(summary.totalMs)}{view.stopped ? ' (stopped)' : ''}</span>
+          <span class="text-muted">
+            in {formatDuration(summary.totalMs)}{summary.iterations > 1 ? `, ${summary.iterations} iterations` : ''}{view.stopped ? ' (stopped)' : ''}
+          </span>
           {#if summary.tests.total > 0}
             <span class="ml-2 border-l border-border pl-2" data-testid="summary-tests">
               Tests: <span class="text-success">{summary.tests.passed} passed</span>,
@@ -243,112 +479,74 @@
       {/if}
       <InlineError message={exportError} />
 
-      <ul class="rounded border border-border" aria-label="Run results">
-        {#each rowsToShow as row (row.key)}
-          {@const open = expanded.has(row.key)}
-          {@const canOpen = row.status === 'passed' || row.status === 'failed'}
-          <li class="border-b border-border last:border-b-0" data-status={row.status}>
-            <div class="flex items-center gap-2 px-2 py-1.5">
-              <span class="w-4 shrink-0" aria-label={STATUS_LABEL[row.status]} title={STATUS_LABEL[row.status]}>
-                {#if row.status === 'running'}
-                  <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted border-t-transparent"></span>
-                {:else if row.status === 'passed'}
-                  <span class="text-success"><Icon name="check" size={14} /></span>
-                {:else if row.status === 'failed'}
-                  <span class="text-danger"><Icon name="x" size={14} /></span>
-                {:else}
-                  <span class="text-faint"><Icon name="stop" size={12} /></span>
-                {/if}
-              </span>
-              <span class="w-14 shrink-0 text-xs font-semibold" style="color: {methodColor(row.item.method)}">{row.item.method}</span>
-              <span class="min-w-0 flex-1 truncate" title={row.item.url}>{row.item.name}</span>
-              {#if row.tests.length || row.scriptErrors.length}
-                {@const c = testCounts({ tests: row.tests, errors: row.scriptErrors })}
-                <span class="rounded px-1.5 py-0.5 text-xs {c.failed ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}" data-testid="row-tests" title="Tests passed / total">{c.passed}/{c.total}</span>
+      {#if groups}
+        <ul class="rounded border border-border" aria-label="Iterations">
+          {#each groups as g (g.index)}
+            {@const c = counts(g.rows)}
+            {@const label = iterationLabel(g.index)}
+            {@const open = openIterations.has(g.index)}
+            <li class="border-b border-border last:border-b-0" data-iteration={g.index + 1}>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-hover"
+                aria-expanded={open}
+                onclick={() => toggleIteration(g.index)}
+              >
+                <span class="w-4 shrink-0">
+                  {#if c.running}
+                    <span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted border-t-transparent"></span>
+                  {:else if c.failed > 0}
+                    <span class="text-danger"><Icon name="x" size={14} /></span>
+                  {:else if c.done && c.passed > 0}
+                    <span class="text-success"><Icon name="check" size={14} /></span>
+                  {:else}
+                    <span class="text-faint"><Icon name="stop" size={12} /></span>
+                  {/if}
+                </span>
+                <span class="shrink-0 font-medium">Iteration {g.index + 1}</span>
+                {#if label}<span class="min-w-0 truncate text-xs text-muted" title={label}>{label}</span>{/if}
+                <span class="ml-auto shrink-0 text-xs {c.failed ? 'text-danger' : 'text-muted'}">
+                  {c.passed} passed{c.failed ? `, ${c.failed} failed` : ''}
+                </span>
+                <Icon name={open ? 'chevron-down' : 'chevron-right'} size={14} />
+              </button>
+              {#if open}
+                <ul class="border-t border-border pl-4" aria-label="Results of iteration {g.index + 1}">
+                  {#each g.rows as row (row.key)}{@render runRow(row)}{/each}
+                </ul>
               {/if}
-              {#if row.statusCode !== null}
-                <span class="rounded px-1.5 py-0.5 text-xs font-medium {TONE[statusTone(row.statusCode)]}">{row.statusCode}</span>
-              {/if}
-              {#if row.durationMs !== null}
-                <span class="w-16 shrink-0 text-right text-xs text-muted">{formatDuration(row.durationMs)}</span>
-              {/if}
-              {#if canOpen}
-                <button
-                  type="button"
-                  class="rounded p-0.5 text-muted hover:bg-hover hover:text-fg"
-                  aria-expanded={open}
-                  aria-label="{open ? 'Hide' : 'Show'} details for {row.item.name}"
-                  onclick={() => (expanded = toggle(expanded, row.key))}
-                >
-                  <Icon name={open ? 'chevron-down' : 'chevron-right'} size={14} />
-                </button>
-              {:else}
-                <span class="w-5"></span>
-              {/if}
-            </div>
-            {#if row.reason && row.status !== 'passed'}
-              <p class="px-2 pb-1.5 pl-[3.25rem] text-xs {row.status === 'failed' ? 'text-danger' : 'text-muted'}">{row.reason}</p>
-            {/if}
-            {#if open && canOpen}
-              <div class="border-t border-border bg-raised px-3 py-2 text-xs">
-                {#if row.tests.length || row.scriptErrors.length}
-                  <p class="mb-1 font-medium">Tests</p>
-                  <ul class="mb-2" aria-label="Tests of {row.item.name}">
-                    {#each row.scriptErrors as e, i (i)}<li class="text-danger">Script error ({e.source}): {e.message}</li>{/each}
-                    {#each row.tests as t, i (i)}
-                      <li class={t.status === 'passed' ? 'text-success' : t.status === 'failed' ? 'text-danger' : 'text-muted'}>
-                        {t.status === 'passed' ? '✓' : t.status === 'failed' ? '✗' : '–'} {t.name}{t.error ? `: ${t.error}` : ''}
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-                {#if row.console.length}
-                  <p class="mb-1 font-medium">Console</p>
-                  <pre class="mb-2 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono">{row.console.map((c) => `[${c.level}] ${c.message}`).join('\n')}</pre>
-                {/if}
-                {#if row.headers.length > 0}
-                  <p class="mb-1 font-medium">Response headers</p>
-                  <dl class="mb-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono">
-                    {#each row.headers as h, i (i)}
-                      <dt class="text-muted">{h.key}</dt>
-                      <dd class="break-all">{h.value}</dd>
-                    {/each}
-                  </dl>
-                {/if}
-                <p class="mb-1 font-medium">Body{row.bodyTruncated ? ' (first 2 KB)' : ''}</p>
-                <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono">{row.bodyPreview ?? '(empty)'}</pre>
-              </div>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+            </li>
+          {/each}
+        </ul>
+        {#if view.iterations > shownIterations}
+          <div class="flex items-center gap-2 text-xs text-muted">
+            Showing {shownIterations} of {view.iterations} iterations.
+            <Button size="sm" onclick={() => (shownIterations += 100)}>Show 100 more</Button>
+          </div>
+        {/if}
+      {:else}
+        <ul class="rounded border border-border" aria-label="Run results">
+          {#each rowsToShow as row (row.key)}{@render runRow(row)}{/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 
   {#snippet footer()}
     {#if !view}
       <Button onclick={onclose}>Cancel</Button>
-      <Button variant="primary" icon="play" onclick={start} disabled={selected.size === 0 || delayInvalid || !workspaceId} data-autofocus>
-        Run {selected.size} request{selected.size === 1 ? '' : 's'}
+      <Button onclick={() => start(true)} disabled={cannotRun}>Run in background</Button>
+      <Button variant="primary" icon="play" onclick={() => start()} disabled={cannotRun} data-autofocus>
+        Run {selected.size} request{selected.size === 1 ? '' : 's'}{iterations && iterations > 1 ? ` × ${iterations}` : ''}
       </Button>
     {:else if running}
-      <Button variant="danger" icon="stop" onclick={() => run?.stop()}>Stop</Button>
+      <Button variant="danger" icon="stop" onclick={() => session?.run.stop()}>Stop</Button>
+      <Button variant="primary" onclick={toBackground} data-autofocus>Run in background</Button>
     {:else}
       <Button icon="download" onclick={exportResults}>Export results as JSON</Button>
       <Button onclick={reset}>Configure</Button>
-      <Button variant="primary" icon="refresh" onclick={start}>Run again</Button>
+      <Button variant="primary" icon="refresh" onclick={() => start()}>Run again</Button>
       <Button onclick={onclose}>Close</Button>
     {/if}
   {/snippet}
 </Dialog>
-
-{#if confirmClose}
-  <ConfirmDialog
-    title="Stop the run?"
-    message="A run is in progress. Closing will cancel the request in flight and skip the rest."
-    confirmLabel="Stop and close"
-    danger
-    onconfirm={stopAndClose}
-    oncancel={() => (confirmClose = false)}
-  />
-{/if}

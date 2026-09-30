@@ -106,7 +106,8 @@ export function generateBuiltin(name: string, now = new Date()): string | null {
 // ---------------------------------------------------------------------------
 
 /** Where a variable's value comes from (Postman scopes, narrowest wins: local > environment > collection > global). */
-export type VariableSource = 'global' | 'collection' | 'environment' | 'local'
+/** 'data': the current row of a data-driven collection run. */
+export type VariableSource = 'global' | 'collection' | 'environment' | 'data' | 'local'
 
 /** Where the "create variable" action can put a new variable. */
 export type VariableTarget = 'environment' | 'collection' | 'globals'
@@ -146,6 +147,8 @@ export interface ScopeLayers {
   collectionName?: string | null
   collection?: readonly VariableInfo[]
   globals?: readonly VariableInfo[]
+  /** The current iteration's row of a data-driven collection run. */
+  data?: readonly VariableInfo[]
   /** pm.variables of the current send / run. */
   local?: readonly VariableInfo[]
 }
@@ -162,6 +165,7 @@ export function layeredScope(l: ScopeLayers): TemplateScope {
   put(l.globals, 'global')
   put(l.collection, 'collection')
   put(l.environment, 'environment')
+  put(l.data, 'data')
   put(l.local, 'local')
   return { environmentName: l.environmentName, variables: map, collectionId: l.collectionId ?? null, collectionName: l.collectionName ?? null }
 }
@@ -173,6 +177,8 @@ export function sourceLabel(v: VariableInfo, scope: Pick<TemplateScope, 'environ
       return 'Globals'
     case 'collection':
       return `Collection: ${scope.collectionName ?? '—'}`
+    case 'data':
+      return 'Iteration data'
     case 'local':
       return 'Local (pm.variables)'
     default:
