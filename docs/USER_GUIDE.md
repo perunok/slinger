@@ -21,7 +21,9 @@ The thin bar at the bottom of the window shows, from left to right:
   *Signed out* and so on (the same state as the sync chip in the top bar). Click it to open the conflict center when there are
   conflicts, otherwise the Cloud dialog.
 - **Environment:** the active environment (or *No environment*). Click it to open the Environments dialog.
-- **Activity:** *Sending…* while requests are in flight, *Running <collection>… 3/10* while the collection runner runs.
+- **Activity:** *Running <collection>… 3/10* while a collection run goes on (also in the background), *Run finished:
+  <collection>* when one finished in the background; click it to open the run (with several runs, choose one from the list).
+  *Sending…* while requests are in flight.
 - On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
   *Not sent* when the last send failed before a response.
 - The **response position** button (same as the button on the divider, see below) and the **right panel** button.
@@ -268,9 +270,21 @@ network errors fail, unless you tick **Treat 3xx as pass**; requests with unreso
 While the run is going, a small version of the loading character runs along the progress bar.
 Runner requests are recorded in History.
 
+**Running in the background.** A run does not have to hold up the app. Start it with **Run in background** instead of
+**Run N requests**, or press **Run in background** (or close the dialog) while it runs: the dialog closes and the run goes on
+while you keep working, including sending other requests. The status bar shows *Running <collection>… 3/10*; click it to open
+the run again with its live progress. When a run finishes in the background, a notification says how it went (*8 passed,
+2 failed*) with **View results**, and the status bar keeps *Run finished: <collection>* until you open them. Several collections
+can run at the same time; with more than one, clicking the status bar lists them. Closing the dialog of a finished run discards
+its results, as before; **Stop** stops a run at any time.
+
+A run keeps the environment it started with (shown under the progress bar), so you can switch environments while it runs
+without affecting it; scripts that write with `pm.environment.set` also write to that environment. A run needs the workspace it
+started in: switching workspaces asks first and then stops the runs of the workspace you leave.
+
 Scripts run for every request exactly as for **Send** (collection, folder and request scripts). A failing test fails its row
 ("1 of 3 tests failed"); a failing pre-request script fails the row without sending it. Values set with `pm.variables.set` live for
-the whole run, and `pm.environment.set` writes to the active environment, so the classic *login -> save token -> next request uses
+the whole run, and `pm.environment.set` writes to the run's environment, so the classic *login -> save token -> next request uses
 `{{token}}`* flow works. The summary adds test counts (`Tests: 4 passed, 1 failed`), expanded rows list each test and the console
 output, and **Export results as JSON** includes the tests. **Stop** also interrupts a running script.
 

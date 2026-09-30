@@ -1,13 +1,14 @@
 /** Status bar: sync states, environment, activity, the active tab's response summary, and showing/hiding it. */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { activity } from '../../app/activity.svelte'
 import App from '../../app/App.svelte'
 import { runMenuCommand } from '../../app/menuCommands'
 import { settings } from '../../app/settings.svelte'
 import { app } from '../../app/state.svelte'
 import { ui } from '../../app/ui.svelte'
 import { tabsStore } from '../requests/tabs.svelte'
+import type { RowStatus, RunRow, RunState } from '../runner/runner'
+import { RunSession, runsStore } from '../runner/runs.svelte'
 import { sync } from '../sync/syncStore.svelte'
 import { flush, setupSync, signInMock, teardownSync, type Backend } from '../sync/testUtils'
 import StatusBar from './StatusBar.svelte'
@@ -18,12 +19,13 @@ beforeEach(async () => {
   b = await setupSync()
   ws = app.workspaceId!
   ui.envEditor = { open: false }
-  activity.runner = null
+  runsStore.sessions = []
 })
 afterEach(() => {
   cleanup()
   teardownSync()
-  activity.runner = null
+  runsStore.sessions = []
+  ui.runner = null
   ui.envEditor = { open: false }
   settings.setShowStatusBar(true)
 })
@@ -87,12 +89,62 @@ describe('status bar: environment and activity', () => {
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Sending…'))
     c.sending = true
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Sending 2 requests…'))
-    activity.runner = { label: 'Demo API', done: 3, total: 10 }
-    await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent('Running Demo API… 3/10'))
-    activity.runner = null
     a.sending = false
     c.sending = false
     await waitFor(() => expect(screen.getByTestId('status-activity')).toHaveTextContent(''))
+  })
+})
+
+/** A run as the runs store holds it, without running anything. */
+function fakeRun(label: string, collectionId: string, statuses: RowStatus[], phase: RunState['phase'], unseen = false): RunSession {
+  const s = new RunSession(ws, { collectionId, folderId: null }, label, null, null)
+  const rows = statuses.map((status) => ({ status, tests: [], scriptErrors: [] }) as unknown as RunRow)
+  s.state = { phase, rows, completed: statuses.filter((x) => x !== 'pending' && x !== 'running').length, startedAt: 0, finishedAt: phase === 'done' ? 1 : null, stopped: false }
+  s.unseen = unseen
+  return s
+}
+
+describe('status bar: collection runs', () => {
+  it('shows a running collection and opens it on click', async () => {
+    runsStore.sessions = [fakeRun('Demo API', 'c1', ['passed', 'passed', 'failed', 'running', 'pending'], 'running')]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('Running Demo API… 3/5')
+    await fireEvent.click(btn)
+    expect(ui.runner).toEqual({ collectionId: 'c1', folderId: null })
+  })
+
+  it('a run finished in the background stays until opened, in red when something failed', async () => {
+    const s = fakeRun('Payments', 'c2', ['passed', 'failed'], 'done', true)
+    runsStore.sessions = [s]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('Run finished: Payments')
+    expect(btn.className).toContain('text-danger')
+    await fireEvent.click(btn)
+    expect(ui.runner).toEqual({ collectionId: 'c2', folderId: null })
+    expect(s.unseen).toBe(false)
+    await waitFor(() => expect(screen.queryByTestId('status-runs')).toBeNull())
+    // Finished runs whose results were already seen (their dialog is open or was open) are not shown.
+    runsStore.sessions = [fakeRun('Seen', 'c3', ['passed'], 'done', false)]
+    await waitFor(() => expect(screen.queryByTestId('status-runs')).toBeNull())
+  })
+
+  it('with several runs, sums the progress and lets you pick one from a menu', async () => {
+    runsStore.sessions = [
+      fakeRun('Demo API', 'c1', ['passed', 'running'], 'running'),
+      fakeRun('Payments', 'c2', ['passed', 'passed', 'pending'], 'running'),
+      fakeRun('Old', 'c3', ['passed'], 'done', true),
+    ]
+    render(StatusBar)
+    const btn = screen.getByTestId('status-runs')
+    expect(btn).toHaveTextContent('2 runs… 3/5')
+    await fireEvent.click(btn)
+    const menu = await screen.findByRole('menu')
+    const items = [...menu.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent?.trim())
+    expect(items).toEqual(['Demo API: 1/2', 'Payments: 2/3', 'Old: 1 passed, 0 failed'])
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Payments/ }))
+    expect(ui.runner).toEqual({ collectionId: 'c2', folderId: null })
   })
 })
 

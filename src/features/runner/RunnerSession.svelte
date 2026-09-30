@@ -1,24 +1,19 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte'
-  import { activity } from '../../app/activity.svelte'
-  import { settings } from '../../app/settings.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
-  import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import LoadingCharacter from '../../components/ui/LoadingCharacter.svelte'
-  import { pickLoader, prefersReducedMotion, type LoaderKind } from '../../lib/loader'
   import { saveExport } from '../../lib/exportFile'
   import { errorInfo } from '../../lib/ipc'
-  import { parseDocument } from '../../lib/request'
   import { formatDuration, statusTone } from '../../lib/response'
   import { sanitizeFileStem } from '../importexport/fileName'
-  import { cancelRun, executeDraft, newScriptRun } from '../requests/execute'
   import { testCounts } from '../../lib/scripts'
-  import { collectRunItems, CollectionRun, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
+  import { collectRunItems, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
+  import { runsStore, type RunSession } from './runs.svelte'
 
   interface Props {
     collectionId: string
@@ -35,17 +30,24 @@
   }))
   const workspaceId = app.workspaceId
 
-  let selected = $state<Set<string>>(new Set(items.map((i) => i.id)))
-  let delayText = $state('0')
-  let stopOnFailure = $state(false)
-  let treat3xxAsPass = $state(false)
-  let run = $state.raw<CollectionRun | null>(null)
-  let view = $state.raw<RunState | null>(null)
+  const target = untrack(() => ({ collectionId, folderId }))
+  /** A run of this target that is going on or finished unseen: shown right away, and its options come back. */
+  const opened = untrack(() => runsStore.forTarget(target) ?? null)
+  // Its results are being looked at now.
+  if (opened) opened.unseen = false
+
+  let selected = $state<Set<string>>(new Set(opened ? opened.itemIds.filter((id) => items.some((i) => i.id === id)) : items.map((i) => i.id)))
+  // bind:value on a number input yields a number (or null when empty), not the text.
+  let delayValue = $state<number | string | null>(opened?.options.delayMs ?? 0)
+  const delayText = $derived(delayValue === null || delayValue === undefined ? '' : String(delayValue))
+  let stopOnFailure = $state(opened?.options.stopOnFailure ?? false)
+  let treat3xxAsPass = $state(opened?.options.treat3xxAsPass ?? false)
+  /** The run shown here; it lives in the runs store, so closing the dialog does not stop it (see runs.svelte.ts). */
+  let session = $state.raw<RunSession | null>(opened)
+  const view = $derived<RunState | null>(session?.state ?? null)
+  const loader = $derived(session?.loader ?? null)
   let expanded = $state<Set<string>>(new Set())
-  let confirmClose = $state(false)
   let exportError = $state<string | null>(null)
-  /** The small loading character over the progress bar (per run; none for the classic spinner or reduced motion). */
-  let loader = $state<{ kind: LoaderKind; startedAt: number; seq: number } | null>(null)
 
   const delayMs = $derived.by(() => {
     const n = Number(delayText)
@@ -57,65 +59,37 @@
   const summary = $derived(view ? summarize(view) : null)
   const title = $derived(`Run ${folder ? `folder "${folder.name}"` : collection ? `"${collection.name}"` : 'collection'}`)
 
-  function start() {
+  function start(inBackground = false) {
     if (!workspaceId) return
     const chosen = items.filter((i) => selected.has(i.id))
     if (chosen.length === 0) return
     expanded = new Set()
     exportError = null
-    const kind = pickLoader(settings.loader)
-    loader = kind === 'classic' || prefersReducedMotion() ? null : { kind, startedAt: Date.now(), seq: (loader?.seq ?? 0) + 1 }
-    // One script context for the whole run: pm.variables set by one request reach the next ones.
-    const scriptRun = newScriptRun()
-    const r = new CollectionRun(
-      chosen,
-      { delayMs, stopOnFailure, treat3xxAsPass },
-      {
-        execute: (item, hooks) =>
-          executeDraft(parseDocument(item.request), {
-            workspaceId,
-            requestId: item.request.id,
-            collectionId: item.request.collectionId,
-            folderId: item.request.folderId,
-            run: scriptRun,
-            onRunId: hooks.onRunId,
-            wasCancelled: hooks.wasCancelled,
-          }),
-        cancel: cancelRun,
-        onUpdate: (s) => (view = s),
-        onItemFinished: () => app.historyTick++,
-      },
-    )
-    run = r
-    view = r.state
-    void r.start()
+    session = runsStore.start({
+      workspaceId,
+      target,
+      label: folder?.name ?? collection?.name ?? 'collection',
+      items: chosen,
+      options: { delayMs, stopOnFailure, treat3xxAsPass },
+    })
+    if (inBackground) toBackground()
   }
 
+  /** Back to the options, forgetting the finished run. */
   function reset() {
-    run = null
-    view = null
+    if (session) runsStore.dismiss(session)
+    session = null
   }
 
-  function requestClose() {
-    if (running) confirmClose = true
-    else onclose()
-  }
-
-  async function stopAndClose() {
-    run?.stop()
-    await run?.finished
+  /** Closes the dialog; a run going on continues (the status bar shows it and brings it back). */
+  function toBackground() {
+    if (session?.running) toast.info('The run continues in the background', 'Its progress is in the status bar; click it to come back here.')
     onclose()
   }
 
-  // Progress for the status bar while a run is going.
-  $effect(() => {
-    activity.runner = view?.phase === 'running' ? { label: folder?.name ?? collection?.name ?? 'collection', done: view.completed, total: view.rows.length } : null
-  })
-
-  // No orphan runs after unmount.
+  // A run going on stays in the store; finished results go when their dialog closes.
   onDestroy(() => {
-    run?.stop()
-    activity.runner = null
+    if (session) runsStore.closed(session)
   })
 
   function toggle(set: Set<string>, id: string): Set<string> {
@@ -156,7 +130,7 @@
   const rowsToShow = $derived<RunRow[]>(view?.rows ?? [])
 </script>
 
-<Dialog {title} onclose={requestClose} size="lg">
+<Dialog {title} onclose={toBackground} size="lg">
   {#if !view}
     <div class="flex flex-col gap-3 text-sm">
       {#if items.length === 0}
@@ -188,7 +162,7 @@
               type="number"
               min="0"
               max="60000"
-              bind:value={delayText}
+              bind:value={delayValue}
               aria-invalid={delayInvalid || undefined}
               class="h-8 w-32 rounded border bg-raised px-2 text-sm outline-none focus:ring-2 focus:ring-focus {delayInvalid ? 'border-danger' : 'border-border'}"
             />
@@ -203,7 +177,11 @@
           </label>
         </div>
         <p class="text-xs text-muted">A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</p>
-        <p class="text-xs text-muted">Requests run one after another exactly like Send: templates, secrets and auth of the active environment apply.</p>
+        <p class="text-xs text-muted">
+          Requests run one after another exactly like Send: templates, secrets and auth of the active environment
+          ({app.activeEnvironment?.name ?? 'none'}) apply. The run keeps that environment even if you switch to another one meanwhile.
+        </p>
+        <p class="text-xs text-muted">Run in background to keep working while it runs: the status bar shows the progress and brings you back to the results.</p>
         <p class="text-xs text-muted">Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets are available to the requests after it, and failed tests fail the request.</p>
       {/if}
     </div>
@@ -214,7 +192,7 @@
           {#if running && loader && loader.kind !== 'classic'}
             <!-- the character runs along the top of the progress bar -->
             <div class="pointer-events-none absolute inset-x-0 bottom-full">
-              {#key loader.seq}
+              {#key session?.id}
                 <LoadingCharacter kind={loader.kind} size="sm" startedAt={loader.startedAt} line={false} />
               {/key}
             </div>
@@ -225,6 +203,7 @@
         </div>
         <span class="shrink-0 text-xs text-muted" data-testid="progress">{view.completed}/{view.rows.length}</span>
       </div>
+      <p class="-mt-1 text-xs text-muted" data-testid="run-environment">Environment: {session?.environment?.name ?? 'none'}</p>
 
       {#if done && summary}
         <div class="rounded border border-border bg-raised px-3 py-2 text-sm" role="status" data-testid="summary">
@@ -328,27 +307,18 @@
   {#snippet footer()}
     {#if !view}
       <Button onclick={onclose}>Cancel</Button>
-      <Button variant="primary" icon="play" onclick={start} disabled={selected.size === 0 || delayInvalid || !workspaceId} data-autofocus>
+      <Button onclick={() => start(true)} disabled={selected.size === 0 || delayInvalid || !workspaceId}>Run in background</Button>
+      <Button variant="primary" icon="play" onclick={() => start()} disabled={selected.size === 0 || delayInvalid || !workspaceId} data-autofocus>
         Run {selected.size} request{selected.size === 1 ? '' : 's'}
       </Button>
     {:else if running}
-      <Button variant="danger" icon="stop" onclick={() => run?.stop()}>Stop</Button>
+      <Button variant="danger" icon="stop" onclick={() => session?.run.stop()}>Stop</Button>
+      <Button variant="primary" onclick={toBackground} data-autofocus>Run in background</Button>
     {:else}
       <Button icon="download" onclick={exportResults}>Export results as JSON</Button>
       <Button onclick={reset}>Configure</Button>
-      <Button variant="primary" icon="refresh" onclick={start}>Run again</Button>
+      <Button variant="primary" icon="refresh" onclick={() => start()}>Run again</Button>
       <Button onclick={onclose}>Close</Button>
     {/if}
   {/snippet}
 </Dialog>
-
-{#if confirmClose}
-  <ConfirmDialog
-    title="Stop the run?"
-    message="A run is in progress. Closing will cancel the request in flight and skip the rest."
-    confirmLabel="Stop and close"
-    danger
-    onconfirm={stopAndClose}
-    oncancel={() => (confirmClose = false)}
-  />
-{/if}

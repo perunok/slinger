@@ -29,12 +29,18 @@ class ScopeStore {
   /** Registered by the app shell: why variables cannot be edited now (read-only workspace), or null. */
   editBlocked: (() => string | null) | null = null
 
-  scopeFor(collectionId: string | null | undefined): TemplateScope {
+  /**
+   * `environment` replaces the active environment's layer, e.g. for a collection run that keeps the environment it
+   * started with while the user switches to another one.
+   */
+  scopeFor(collectionId: string | null | undefined, environment?: { name: string | null; vars: VariableInfo[] }): TemplateScope {
     const col = collectionId ? this.collections.get(collectionId) : undefined
-    if (!col && this.environment.length === 0 && this.globals.length === 0 && this.environmentName === null) return EMPTY_SCOPE
+    const envName = environment ? environment.name : this.environmentName
+    const envVars = environment ? environment.vars : this.environment
+    if (!col && envVars.length === 0 && this.globals.length === 0 && envName === null) return EMPTY_SCOPE
     return layeredScope({
-      environmentName: this.environmentName,
-      environment: this.environment,
+      environmentName: envName,
+      environment: envVars,
       collectionId: col ? collectionId : null,
       collectionName: col?.name ?? null,
       collection: col?.vars,
