@@ -99,7 +99,7 @@ describe('status bar: environment and activity', () => {
 function fakeRun(label: string, collectionId: string, statuses: RowStatus[], phase: RunState['phase'], unseen = false): RunSession {
   const s = new RunSession(ws, { collectionId, folderId: null }, label, null, null)
   const rows = statuses.map((status) => ({ status, tests: [], scriptErrors: [] }) as unknown as RunRow)
-  s.state = { phase, rows, completed: statuses.filter((x) => x !== 'pending' && x !== 'running').length, startedAt: 0, finishedAt: phase === 'done' ? 1 : null, stopped: false }
+  s.state = { phase, rows, iterations: 1, currentIteration: 0, completed: statuses.filter((x) => x !== 'pending' && x !== 'running').length, startedAt: 0, finishedAt: phase === 'done' ? 1 : null, stopped: false }
   s.unseen = unseen
   return s
 }
@@ -128,6 +128,14 @@ describe('status bar: collection runs', () => {
     // Finished runs whose results were already seen (their dialog is open or was open) are not shown.
     runsStore.sessions = [fakeRun('Seen', 'c3', ['passed'], 'done', false)]
     await waitFor(() => expect(screen.queryByTestId('status-runs')).toBeNull())
+  })
+
+  it('a data-driven run shows its iteration', async () => {
+    const s = fakeRun('Drive Automation', 'c1', ['passed', 'running', 'pending'], 'running')
+    s.state = { ...s.state, iterations: 200, currentIteration: 36 }
+    runsStore.sessions = [s]
+    render(StatusBar)
+    expect(screen.getByTestId('status-runs')).toHaveTextContent('Running Drive Automation… iteration 37/200')
   })
 
   it('with several runs, sums the progress and lets you pick one from a menu', async () => {

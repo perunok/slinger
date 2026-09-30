@@ -177,9 +177,11 @@ right away; **Escape**, **Cancel** or clicking elsewhere closes it without savin
 | Globals | Environments dialog, **Globals** (top of the list) | every request of the workspace | yes |
 | Collection variables | the collection's overview, **Variables** section (or right-click the collection, **Variables...**) | requests of that collection | no |
 | Environment | Environments dialog | every request, while the environment is active | yes |
+| Iteration data | the runner's **Data file** (see [Collection runner](#collection-runner)) | one iteration of a data-driven run | no |
 | Local | scripts only (`pm.variables.set`) | one send, or one collection run | no |
 
-A name defined in several scopes takes the value of the narrowest one: local over environment over collection over globals.
+A name defined in several scopes takes the value of the narrowest one: local over iteration data over environment over collection
+over globals.
 Disabled collection variables and globals are kept but do not resolve (untick **On** in the table). Collection variables and
 globals are saved on this device (they survive restarts) and, in a workspace linked to the cloud, synced like the rest of it (secret
 globals: only the name travels, see "What syncs" under Cloud account and sync); in a read-only (viewer) synced workspace they cannot
@@ -282,6 +284,24 @@ A run keeps the environment it started with (shown under the progress bar), so y
 without affecting it; scripts that write with `pm.environment.set` also write to that environment. A run needs the workspace it
 started in: switching workspaces asks first and then stops the runs of the workspace you leave.
 
+**Iterations and data files.** **Iterations** runs the whole selection that many times (1 to 10000). **Data file** makes a
+data-driven run: choose a **CSV** (the first line names the columns, each further line is one iteration) or a **JSON** array of
+objects (one object per iteration). The dialog shows the file's row and column counts and a preview of its first rows, and sets
+**Iterations** to the number of rows (you can lower it to run only the first rows). In iteration *n*, each column of row *n* is a
+variable: `{{customerName}}` in a URL, header or body is that row's value, scripts read it with `pm.iterationData.get('customerName')`
+(also `pm.variables.get`, and the old `data` object), and `pm.info.iteration` / `pm.info.iterationCount` say which iteration is
+running. Row values override the environment, collection variables and globals, while a value set with `pm.variables.set` still
+overrides them (Postman's order); variables set by scripts carry over from one iteration to the next. CSV values are text (quoted
+values may contain commas, `""` and line breaks); JSON values keep their types, and objects or arrays read as JSON text in
+`{{}}`. Files are limited to 10000 rows and 5 MB; the dialog names the line of a malformed row.
+
+Results of a run with several iterations are grouped: *Iteration 2 · customerName: Globex · 4 passed, 1 failed*; expand one to see
+its requests (the first 100 iterations are listed, **Show 100 more** adds more). The progress, the status bar (*Running
+Drive Automation… iteration 37/200*) and the summary count iterations, and **Export results as JSON** records each result's
+iteration and the data rows that ran. **Stop on first failure** stops the whole run. In a run of more than 1000 requests, headers
+and body previews are kept only for failed requests, so large runs do not fill the memory. Reopening a data-driven run keeps its
+data file and iteration count for **Configure** and **Run again**.
+
 Scripts run for every request exactly as for **Send** (collection, folder and request scripts). A failing test fails its row
 ("1 of 3 tests failed"); a failing pre-request script fails the row without sending it. Values set with `pm.variables.set` live for
 the whole run, and `pm.environment.set` writes to the run's environment, so the classic *login -> save token -> next request uses
@@ -292,7 +312,8 @@ output, and **Export results as JSON** includes the tests. **Stop** also interru
 current request (and its test scripts), the run continues at the named request (matched by id, else by the first request with that
 name) and goes on in tree order from there. Only requests picked for the run can be targets; requests jumped over are listed as
 skipped, and jumping back runs requests again (a loop ends when a script stops calling it, or after 10000 requests).
-`setNextRequest(null)` ends the run, and so does a name that matches no request of the run. The last call of a send wins, whether
+`setNextRequest(null)` ends the run, and so does a name that matches no request of the run. With several iterations, jumps stay
+within the current iteration, and `null` or an unknown name ends that iteration: the next one starts as usual. The last call of a send wins, whether
 it came from a pre-request or a test script. A single **Send** ignores it.
 
 ## Scripts
@@ -408,7 +429,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.environment.get/set/unset/has/toObject/clear/replaceIn`, `.name` | active environment; secrets as described above |
 | `pm.variables.get/set/has/unset/toObject/replaceIn` | `get`/`has`/`toObject` look through all scopes |
 | `pm.collectionVariables.*`, `pm.globals.*` | same methods (plus `clear`); saved, see above |
-| `pm.iterationData.get/has/toObject` | always empty (no data files) |
+| `pm.iterationData.get/has/toObject`, legacy `data` | the current row of a data-driven collection run (read-only); empty otherwise |
 | `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
 | `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
 | `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |

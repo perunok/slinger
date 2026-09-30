@@ -606,6 +606,11 @@ export interface RunScriptsInput {
   /** Ignored since globals are persisted (kept optional for older callers). */
   globals?: ScriptVariables
   info: { requestName: string; requestId: string | null; iteration: number; iterationCount: number }
+  /**
+   * ADDED (data-driven runs): the current row of the collection run's data file, as `pm.iterationData` and a variable
+   * scope between the local one and the environment. Absent: empty.
+   */
+  iterationData?: ScriptVariables
   /** Per-script time limit in ms (default 5000, max 60000). Time waiting for pm.sendRequest does not count. */
   timeoutMs?: number
   /** Default pm.sendRequest timeout in ms (the request's own timeout; default 60000, capped at 120000). */

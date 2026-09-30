@@ -283,13 +283,13 @@ export function templateValue(v: unknown): string {
 
 /**
  * The scope used to resolve a request after its pre-request scripts: globals < collection variables <
- * environment < local variables (pm.variables), Postman's precedence. `base` already holds the persisted layers
+ * environment < iteration data (a data-driven run's current row) < local variables (pm.variables), Postman's precedence. `base` already holds the persisted layers
  * (scope.svelte.ts); the script layers are in-memory values (never secret): `local` always, `collection` /
  * `globals` only when they are not persisted (a request outside a collection, tests).
  */
 export function scopeWithScriptVariables(
   base: TemplateScope,
-  layers: { globals?: ScriptVariables; collection?: ScriptVariables; local: ScriptVariables },
+  layers: { globals?: ScriptVariables; collection?: ScriptVariables; data?: ScriptVariables | null; local: ScriptVariables },
 ): TemplateScope {
   const map = new Map<string, VariableInfo>()
   const put = (vars: ScriptVariables | undefined, source: VariableInfo['source']) => {
@@ -302,6 +302,7 @@ export function scopeWithScriptVariables(
   put(layers.globals, 'global')
   put(layers.collection, 'collection')
   baseOf(false)
+  put(layers.data ?? undefined, 'data')
   put(layers.local, 'local')
   return { ...base, variables: map }
 }

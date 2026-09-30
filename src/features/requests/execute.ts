@@ -55,9 +55,18 @@ export interface ScriptRunContext {
   collectionVariables: ScriptVariables
   iteration: number
   iterationCount: number
+  /** The current row of a data-driven run's data file (pm.iterationData, `{{column}}`), or null. */
+  iterationData: ScriptVariables | null
 }
 
-export const newScriptRun = (): ScriptRunContext => ({ sessionId: uuid(), variables: {}, collectionVariables: {}, iteration: 0, iterationCount: 1 })
+export const newScriptRun = (): ScriptRunContext => ({
+  sessionId: uuid(),
+  variables: {},
+  collectionVariables: {},
+  iteration: 0,
+  iterationCount: 1,
+  iterationData: null,
+})
 
 export interface ExecuteContext {
   workspaceId: string
@@ -115,6 +124,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       collectionId: ctx.collectionId ?? null,
       collectionVariables: ctx.collectionId ? {} : run.collectionVariables,
       info: { requestName: draft.name, requestId: ctx.requestId ?? null, iteration: run.iteration, iterationCount: run.iterationCount },
+      ...(run.iterationData ? { iterationData: run.iterationData } : {}),
       timeoutMs: settings.scriptTimeoutMs,
       sendRequestTimeoutMs: draft.timeoutMs ?? undefined,
       continueOnError: settings.scriptContinueOnError,
@@ -169,6 +179,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   }
   const scope = scopeWithScriptVariables(scopeStore.scopeFor(ctx.collectionId, envLayer), {
     collection: ctx.collectionId ? undefined : run.collectionVariables,
+    data: run.iterationData,
     local: run.variables,
   })
   // Reveal only the secrets this request references; they live in memory for this call only.

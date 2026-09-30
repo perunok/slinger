@@ -11,6 +11,7 @@ import { settings } from '../../app/settings.svelte'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import { ui } from '../../app/ui.svelte'
+import type { DataFile } from '../../lib/dataFile'
 import { pickLoader, prefersReducedMotion, type LoaderKind } from '../../lib/loader'
 import { parseDocument } from '../../lib/request'
 import { uuid } from '../../lib/template'
@@ -48,6 +49,8 @@ export class RunSession {
     /** What was run, and how: a reopened dialog's "Configure" / "Run again" start from these. */
     readonly itemIds: string[] = [],
     readonly options: RunOptions = { delayMs: 0, stopOnFailure: false },
+    /** The data file of a data-driven run (its rows are `options.data`). */
+    readonly dataFile: DataFile | null = null,
   ) {}
 
   run!: CollectionRun
@@ -63,6 +66,7 @@ export function runSummaryText(state: RunState): string {
   const parts = [`${s.passed} passed`, `${s.failed} failed`]
   if (s.skipped) parts.push(`${s.skipped} skipped`)
   let text = parts.join(', ')
+  if (s.iterations > 1) text += ` in ${s.iterations} iterations`
   if (s.tests.total > 0) text += ` · tests ${s.tests.passed}/${s.tests.total}`
   return text
 }
@@ -77,7 +81,7 @@ class RunsStore {
   }
 
   /** Starts a run of `items` for `target` (a running one for the same target is returned as is). */
-  start(input: { workspaceId: string; target: RunTarget; label: string; items: RunItem[]; options: RunOptions }): RunSession {
+  start(input: { workspaceId: string; target: RunTarget; label: string; items: RunItem[]; options: RunOptions; dataFile?: DataFile | null }): RunSession {
     const existing = this.forTarget(input.target)
     if (existing?.running) return existing
     const { workspaceId } = input
@@ -85,20 +89,18 @@ class RunsStore {
     const environment = active && active.workspaceId === workspaceId ? { id: active.id, name: active.name } : null
     const kind = pickLoader(settings.loader)
     const loader = kind === 'classic' || prefersReducedMotion() ? null : { kind, startedAt: Date.now() }
-    const session = new RunSession(
-      workspaceId,
-      { ...input.target },
-      input.label,
-      environment,
-      loader,
-      input.items.map((i) => i.id),
-      { ...input.options },
-    )
-    // One script context for the whole run: pm.variables set by one request reach the next ones.
+    const dataFile = input.dataFile ?? null
+    const options: RunOptions = { ...input.options, data: dataFile?.rows ?? null }
+    const session = new RunSession(workspaceId, { ...input.target }, input.label, environment, loader, input.items.map((i) => i.id), options, dataFile)
+    // One script context for the whole run: pm.variables set by one request reach the next ones (across iterations,
+    // as in Postman); the iteration fields follow the request being run.
     const scriptRun = newScriptRun()
-    session.run = new CollectionRun(input.items, input.options, {
-      execute: (item, hooks) =>
-        executeDraft(parseDocument(item.request), {
+    scriptRun.iterationCount = Math.max(1, options.iterations ?? 1)
+    session.run = new CollectionRun(input.items, options, {
+      execute: (item, hooks) => {
+        scriptRun.iteration = hooks.iteration
+        scriptRun.iterationData = hooks.data
+        return executeDraft(parseDocument(item.request), {
           workspaceId,
           requestId: item.request.id,
           collectionId: item.request.collectionId,
@@ -107,7 +109,8 @@ class RunsStore {
           environment,
           onRunId: hooks.onRunId,
           wasCancelled: hooks.wasCancelled,
-        }),
+        })
+      },
       cancel: cancelRun,
       onUpdate: (s) => (session.state = s),
       onItemFinished: () => app.historyTick++,

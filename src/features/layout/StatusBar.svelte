@@ -13,7 +13,7 @@
   import { formatBytes, formatDuration, statusTone } from '../../lib/response'
   import { tabsStore } from '../requests/tabs.svelte'
   import { summarize } from '../runner/runner'
-  import { runsStore, runSummaryText } from '../runner/runs.svelte'
+  import { runsStore, runSummaryText, type RunSession } from '../runner/runs.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import ResponsePositionButton from './ResponsePositionButton.svelte'
   import type { Snippet } from 'svelte'
@@ -37,11 +37,14 @@
 
   // Collection runs going on, and finished ones whose results were not opened yet (they ran in the background).
   const runs = $derived(runsStore.attention)
+  /** "3/10", or "iteration 37/200" for a run with several iterations. */
+  const progressOf = (r: RunSession) =>
+    r.state.iterations > 1 ? `iteration ${r.state.currentIteration + 1}/${r.state.iterations}` : `${r.state.completed}/${r.state.rows.length}`
   const runningRuns = $derived(runs.filter((r) => r.running))
   const runText = $derived.by(() => {
     if (runningRuns.length === 1) {
       const r = runningRuns[0]!
-      return `Running ${r.label}… ${r.state.completed}/${r.state.rows.length}`
+      return `Running ${r.label}… ${progressOf(r)}`
     }
     if (runningRuns.length > 1) {
       const done = runningRuns.reduce((n, r) => n + r.state.completed, 0)
@@ -54,7 +57,7 @@
   const runsFailed = $derived(runningRuns.length === 0 && runs.some((r) => summarize(r.state).failed > 0))
   const runItems = $derived<MenuItem[]>(
     runs.map((r) => ({
-      label: r.running ? `${r.label}: ${r.state.completed}/${r.state.rows.length}` : `${r.label}: ${runSummaryText(r.state)}`,
+      label: r.running ? `${r.label}: ${progressOf(r)}` : `${r.label}: ${runSummaryText(r.state)}`,
       icon: r.running ? 'refresh' : summarize(r.state).failed > 0 ? 'x' : 'check',
       action: () => runsStore.open(r),
     })),

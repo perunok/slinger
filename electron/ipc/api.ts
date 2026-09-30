@@ -257,6 +257,7 @@ const runScriptsInput = z.object({
     iteration: z.number().int().min(0),
     iterationCount: z.number().int().min(0),
   }),
+  iterationData: scriptVariables.optional(),
   timeoutMs: z.number().int().min(1).max(60_000).optional(),
   sendRequestTimeoutMs: z.number().int().min(1).max(10 * 60_000).optional(),
   continueOnError: z.boolean().optional(),

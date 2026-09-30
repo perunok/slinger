@@ -207,6 +207,34 @@ describe('pm API (Postman-compatible cases)', () => {
     expect(r.nextRequest).toBe('Login')
   })
 
+  it('pm.iterationData reads the data-driven row; {{column}} and pm.variables resolve it under local, over the environment', async () => {
+    const r = await run(
+      {
+        event: 'test',
+        response: RESPONSE,
+        environment: ENV,
+        variables: { local: 'local-value', user: 'from-local' },
+        iterationData: { customer: 'Acme Ltd', count: 3, user: 'from-data', baseUrl: 'https://data.test' },
+        code: `
+          pm.test('get/has', () => { pm.expect(pm.iterationData.get('customer')).to.equal('Acme Ltd'); pm.expect(pm.iterationData.get('count')).to.equal(3); pm.expect(pm.iterationData.has('nope')).to.be.false })
+          pm.test('toObject and the legacy data global', () => { pm.expect(pm.iterationData.toObject()).to.have.property('customer', 'Acme Ltd'); pm.expect(data.customer).to.equal('Acme Ltd') })
+          pm.test('precedence', () => { pm.expect(pm.variables.get('baseUrl')).to.equal('https://data.test'); pm.expect(pm.variables.get('user')).to.equal('from-local') })
+          pm.test('replaceIn', () => pm.expect(pm.variables.replaceIn('{{customer}} x{{count}}')).to.equal('Acme Ltd x3'))
+          pm.test('toObject merges it', () => pm.expect(pm.variables.toObject()).to.include({ customer: 'Acme Ltd', baseUrl: 'https://data.test', user: 'from-local' }))
+        `,
+      },
+      { readSecret },
+    )
+    expect(r.errors).toEqual([])
+    expect(r.tests.filter((t) => t.status !== 'passed').map((t) => `${t.name}: ${t.error}`)).toEqual([])
+    expect(r.tests).toHaveLength(5)
+  })
+
+  it('pm.iterationData is empty outside data-driven runs', async () => {
+    const { failures } = await check(`pm.expect(pm.iterationData.toObject()).to.eql({}); pm.expect(pm.iterationData.get('x')).to.be.undefined; pm.expect(data).to.eql({})`)
+    expect(failures).toEqual([])
+  })
+
   it('pm.execution.skipRequest is still not supported', async () => {
     const { errors } = await check(`pm.execution.skipRequest()`, { event: 'prerequest' })
     expect(errors[0].message).toMatch(/pm.execution.skipRequest is not supported/)

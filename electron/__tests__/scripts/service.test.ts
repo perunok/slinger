@@ -88,6 +88,15 @@ describe('runScripts: environment writes', () => {
     expect('nextRequest' in (await env.api.runScripts(input('1')))).toBe(false)
   })
 
+  it('iterationData crosses IPC to the scripts (validated like the other scopes)', async () => {
+    const r = await env.api.runScripts(
+      input(`pm.test('row', () => pm.expect(pm.iterationData.get('email')).to.equal('ops@acme.test'))`, { iterationData: { email: 'ops@acme.test' } }),
+    )
+    expect(r.errors).toEqual([])
+    expect(r.tests.map((t) => t.status)).toEqual(['passed'])
+    await expect(env.api.runScripts(input('1', { iterationData: 'nope' as unknown as Record<string, unknown> }))).rejects.toMatchObject({ code: 'invalid_input' })
+  })
+
   it('without an active environment, writes last for the run only and a warning says so', async () => {
     const r = await env.api.runScripts(input(`pm.environment.set('x', '1'); pm.test('same run', () => pm.expect(pm.environment.get('x')).to.equal('1'))`, { environmentId: null }))
     expect(r.environmentChanged).toBe(false)

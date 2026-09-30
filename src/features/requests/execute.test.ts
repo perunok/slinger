@@ -341,3 +341,26 @@ describe('executeDraft with a pinned environment (collection runs)', () => {
     expect(sent).toHaveLength(0)
   })
 })
+
+describe('executeDraft in a data-driven run', () => {
+  it('passes the iteration row to the scripts and resolves {{column}} over the environment, under pm.variables', async () => {
+    const r = getUser()
+    const run = newScriptRun()
+    run.iteration = 1
+    run.iterationCount = 3
+    run.iterationData = { userId: '42', baseUrl: 'https://data.test' }
+    // A script variable still wins over the row.
+    run.variables = { baseUrl: 'https://local.test' }
+    const { draft } = withScripts(pre('pm.iterationData.get("userId")'))
+    await executeDraft(draft, { ...ctx(r), run })
+    expect(calls[0]!.iterationData).toEqual({ userId: '42', baseUrl: 'https://data.test' })
+    expect(calls[0]!.info).toMatchObject({ iteration: 1, iterationCount: 3 })
+    expect(sent.at(-1)!.url.startsWith('https://local.test/json?userId=42')).toBe(true)
+  })
+
+  it('outside data-driven runs no iterationData is sent', async () => {
+    const { r, draft } = withScripts(pre('1'))
+    await executeDraft(draft, ctx(r))
+    expect('iterationData' in calls[0]!).toBe(false)
+  })
+})

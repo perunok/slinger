@@ -28,7 +28,7 @@ afterEach(() => {
 /** A run of the open workspace that is still going (nothing actually runs; `stop` just ends it). */
 function runningRun(label: string): RunSession {
   const s = new RunSession(first, { collectionId: 'c1', folderId: null }, label, null, null)
-  s.state = { phase: 'running', rows: [], completed: 0, startedAt: 0, finishedAt: null, stopped: false } as RunState
+  s.state = { phase: 'running', rows: [], iterations: 1, currentIteration: 0, completed: 0, startedAt: 0, finishedAt: null, stopped: false } as RunState
   s.run = { stop: () => (s.state = { ...s.state, phase: 'done', stopped: true }) } as unknown as RunSession['run']
   return s
 }
