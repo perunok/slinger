@@ -6,8 +6,9 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 ## Layout
 
 - **Menu bar:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
-- **Top bar:** workspace switcher, "Go to request" (Ctrl+K), environment switcher (with a gear to manage environments), the sync chip, Cloud,
-  Right panel, Keyboard shortcuts, Settings, About Slinger (the question-mark icon).
+- **Top bar:** workspace switcher, the sync chip (cloud sync state; click it for Sync now, conflicts and **Cloud…**), "Go to
+  request" (Ctrl+K), environment switcher (with a gear to manage environments), Right panel, Keyboard shortcuts, Settings, About
+  Slinger (the question-mark icon). Each of these has one place on screen; the menus and the command palette reach them too.
 - **Sidebar:** two tabs, **Collections** and **History**.
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
@@ -15,18 +16,13 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 ### Status bar
 
-The thin bar at the bottom of the window shows, from left to right:
+The thin bar at the bottom of the window shows status only (the cloud sync state and the environment are in the top bar):
 
-- **Cloud sync** of the open workspace: *Local only*, *Synced*, *N pending*, *Offline*, *N conflicts*, *Sync error*, *Read-only*,
-  *Signed out* and so on (the same state as the sync chip in the top bar). Click it to open the conflict center when there are
-  conflicts, otherwise the Cloud dialog.
-- **Environment:** the active environment (or *No environment*). Click it to open the Environments dialog.
 - **Activity:** *Running <collection>… 3/10* while a collection run goes on (also in the background), *Run finished:
   <collection>* when one finished in the background; click it to open the run (with several runs, choose one from the list).
   *Sending…* while requests are in flight.
 - On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
   *Not sent* when the last send failed before a response.
-- The **response position** button (same as the button on the divider, see below) and the **right panel** button.
 
 Hide it with **Settings > Layout > Show status bar** or **View > Toggle Status Bar** (also in the command palette,
 `> status bar`).
@@ -34,7 +30,7 @@ Hide it with **Settings > Layout > Show status bar** or **View > Toggle Status B
 ### Right panel
 
 A panel on the right of the main area with more about the active request or example tab. Open or close it with the
-panel icon in the top bar or at the right end of the status bar, **Ctrl+Alt+B** (Cmd+Option+B on macOS), **View > Toggle
+panel icon in the top bar, **Ctrl+Alt+B** (Cmd+Option+B on macOS), **View > Toggle
 Right Panel**, or the command palette (`> right panel`, which can also open it directly on one view). It has four views:
 
 - **Variables:** every `{{variable}}` the request uses (URL, enabled headers, body, authorization) with its current value and
@@ -50,7 +46,7 @@ Right Panel**, or the command palette (`> right panel`, which can also open it d
 With no request tab active (or a collection overview), the views say so. Drag the panel's left edge to resize it (or focus
 the edge and use Left/Right). Whether it is open, the view and the width are remembered. The panel only shows when the request
 editor keeps a usable width next to it (about 500 px, 640 px with the response beside the request); in a narrower window it
-hides until there is room again (the status bar icon turns amber), so widen the window or drag the sidebar narrower.
+hides until there is room again (the top-bar icon turns amber), so widen the window or drag the sidebar narrower.
 
 ### Response below or beside the request
 
@@ -654,7 +650,8 @@ collections keep theirs).
 
 ## Cloud account and sync
 
-The **Cloud** button (and the sync chip next to the workspace switcher) opens the cloud panel.
+The **sync chip** next to the workspace switcher shows the sync state; click it, then **Cloud…** (**Cloud settings…** once linked)
+to open the cloud panel. The chip's menu also has **Sync now**, **Auto sync** and, when there are any, the conflicts.
 
 **Account.** Set the **API base URL** of your Slinger Cloud server (default `https://api.slinger.app`) and a **device name**, then
 **Sign in**: Slinger shows a code and a button to open the verification page in your browser, and completes by itself once you

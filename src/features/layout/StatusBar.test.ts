@@ -1,5 +1,5 @@
 /** Status bar: sync states, environment, activity, the active tab's response summary, and showing/hiding it. */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import App from '../../app/App.svelte'
 import { runMenuCommand } from '../../app/menuCommands'
@@ -30,54 +30,13 @@ afterEach(() => {
   settings.setShowStatusBar(true)
 })
 
-const syncItem = () => screen.getByTestId('status-sync')
-
-describe('status bar: cloud sync', () => {
-  it('shows "Local only" for an unlinked workspace; clicking opens the Cloud dialog', async () => {
+describe('status bar: activity', () => {
+  it('holds status only: the sync chip, environment switcher and layout toggles live elsewhere', () => {
     render(StatusBar)
-    expect(syncItem()).toHaveTextContent('Local only')
-    expect(syncItem().dataset.kind).toBe('unlinked')
-    await fireEvent.click(syncItem())
-    expect(ui.cloudOpen).toBe(true)
-  })
-
-  it('follows synced, pending, offline and conflict states; with conflicts it opens the conflict center', async () => {
-    render(StatusBar)
-    await signInMock(b)
-    await sync.publish(ws)
-    await b.cloud.runCycle(ws)
-    await flush()
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('idle'))
-    expect(syncItem()).toHaveTextContent('Synced')
-    expect(syncItem().getAttribute('aria-label')).toMatch(/^Cloud sync: Synced\. .*Last synced/)
-
-    b.cloud.setOffline(true)
-    await sync.syncNow(ws)
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('offline'))
-    expect(syncItem()).toHaveTextContent('Offline')
-    b.cloud.setOffline(false)
-    await sync.syncNow(ws)
-
-    b.cloud.injectConflict({ workspaceId: ws, kind: 'rejected' })
-    await waitFor(() => expect(syncItem().dataset.kind).toBe('conflicts'))
-    expect(syncItem()).toHaveTextContent('1 conflict')
-    await fireEvent.click(syncItem())
-    expect(ui.conflictsOpen).toBe(true)
-    expect(ui.cloudOpen).toBe(false)
-  })
-})
-
-describe('status bar: environment and activity', () => {
-  it('names the active environment and opens the Environments dialog on it', async () => {
-    render(StatusBar)
-    const env = app.environments.find((e) => e.id === app.activeEnvironmentId)!
-    expect(env).toBeTruthy()
-    expect(screen.getByTestId('status-env')).toHaveTextContent(env.name)
-    await fireEvent.click(screen.getByTestId('status-env'))
-    expect(ui.envEditor).toEqual({ open: true, environmentId: env.id })
-
-    await app.setActiveEnvironment(null)
-    await waitFor(() => expect(screen.getByTestId('status-env')).toHaveTextContent('No environment'))
+    const bar = screen.getByTestId('status-bar')
+    expect(bar.querySelector('[data-testid="status-sync"], [data-testid="status-env"]')).toBeNull()
+    expect(within(bar).queryByRole('button', { name: 'Right panel' })).toBeNull()
+    expect(bar.querySelector('[data-testid="response-position-toggle"]')).toBeNull()
   })
 
   it('reports sends and a running collection', async () => {

@@ -33,7 +33,6 @@
   import EmptyState from './EmptyState.svelte'
   import StatusBar from '../features/layout/StatusBar.svelte'
   import RightPanel from '../features/layout/RightPanel.svelte'
-  import RightPanelButton from '../features/layout/RightPanelButton.svelte'
   import { fitPanelWidth, minMainWidth, rightPanel } from '../features/layout/rightPanelStore.svelte'
   import { scopeStore } from './scope.svelte'
   import { settings } from './settings.svelte'
@@ -139,9 +138,7 @@
       {/snippet}
     </SplitPane>
     {#if settings.showStatusBar}
-      <StatusBar>
-        {#snippet end()}<RightPanelButton variant="bar" />{/snippet}
-      </StatusBar>
+      <StatusBar />
     {/if}
   {/if}
 </div>

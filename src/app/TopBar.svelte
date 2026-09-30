@@ -22,7 +22,6 @@
       Go to request… <kbd class="rounded border border-border px-1 font-mono">Ctrl K</kbd>
     </button>
     <EnvSwitcher />
-    <IconButton icon="cloud" label="Cloud" onclick={() => (ui.cloudOpen = true)} />
     <RightPanelButton />
     <IconButton icon="info" label="Keyboard shortcuts" onclick={() => (ui.shortcutsOpen = true)} />
     <IconButton icon="sun" label="Settings" onclick={() => (ui.settingsOpen = true)} />

@@ -26,9 +26,11 @@ export async function approve(userCode: string): Promise<void> {
   expect(res.status).toBe(200)
 }
 
+/** Opens the Cloud dialog the way a user does: the sync chip in the top bar, then "Cloud…" / "Cloud settings…". */
 export async function openCloud(page: Page): Promise<void> {
   if (!(await page.getByRole('dialog', { name: 'Cloud' }).isVisible().catch(() => false))) {
-    await page.getByRole('button', { name: 'Cloud', exact: true }).click()
+    await page.getByTestId('sync-chip').click()
+    await page.getByTestId('sync-popover').getByRole('button', { name: /^Cloud( settings)?…$/ }).click()
   }
   await page.getByRole('dialog', { name: 'Cloud' }).waitFor()
 }
