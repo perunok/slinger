@@ -5,6 +5,7 @@
   import Button from '../../components/ui/Button.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
+  import InfoTip from '../../components/ui/InfoTip.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import LoadingCharacter from '../../components/ui/LoadingCharacter.svelte'
   import { DataFileError, MAX_DATA_BYTES, parseDataFile, type DataFile } from '../../lib/dataFile'
@@ -304,7 +305,20 @@
         <p class="text-muted">There are no requests to run here.</p>
       {:else}
         <div class="flex items-center justify-between">
-          <span class="text-xs text-muted">{selected.size} of {items.length} selected</span>
+          <span class="flex items-center gap-1 text-xs text-muted">
+            {selected.size} of {items.length} selected
+            <InfoTip label="How collection runs work">
+              <span>
+                Requests run one after another exactly like Send: templates, secrets and auth of the active environment
+                ({app.activeEnvironment?.name ?? 'none'}) apply. The run keeps that environment even if you switch to another one meanwhile.
+              </span>
+              <span>
+                Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets
+                are available to the requests after it, and failed tests fail the request.
+              </span>
+              <span>Run in background to keep working while it runs: the status bar shows the progress and brings you back to the results.</span>
+            </InfoTip>
+          </span>
           <span class="flex gap-1">
             <Button size="sm" onclick={() => (selected = new Set(items.map((i) => i.id)))}>Select all</Button>
             <Button size="sm" onclick={() => (selected = new Set())}>Select none</Button>
@@ -338,10 +352,16 @@
             <input type="checkbox" bind:checked={stopOnFailure} />
             Stop on first failure
           </label>
-          <label class="flex items-center gap-2 pb-1.5 text-sm" title="By default only 2xx passes; a 3xx that redirect-following did not turn into a 2xx fails.">
-            <input type="checkbox" bind:checked={treat3xxAsPass} />
-            Treat 3xx as pass
-          </label>
+          <span class="flex items-center gap-1 pb-1.5">
+            <label class="flex items-center gap-2 text-sm">
+              <input type="checkbox" bind:checked={treat3xxAsPass} />
+              Treat 3xx as pass
+            </label>
+            <InfoTip label="When a request passes">
+              <span>A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</span>
+              <span>Treat 3xx as pass also counts a 3xx that redirect-following did not turn into a 2xx as passed.</span>
+            </InfoTip>
+          </span>
         </div>
         <div class="flex flex-col gap-2 rounded border border-border p-2" data-testid="data-file">
           <div class="flex flex-wrap items-end gap-4">
@@ -359,7 +379,17 @@
               />
             </div>
             <div class="flex min-w-0 flex-1 flex-col gap-1">
-              <span class="text-xs font-medium">Data file</span>
+              <span class="flex items-center gap-1 text-xs font-medium">
+                Data file
+                <InfoTip label="About data files">
+                  <span>Optional. A CSV (the first line names the columns) or a JSON array of objects: one iteration per row.</span>
+                  <span>
+                    In each iteration the row's columns are variables: {'{{customerName}}'} in the URL, headers or body, and
+                    pm.iterationData.get('customerName') in scripts. They override the environment; pm.variables.set still overrides them.
+                  </span>
+                  <span>Up to 10000 rows and 5 MB. Iterations is set to the number of rows.</span>
+                </InfoTip>
+              </span>
               <div class="flex min-w-0 items-center gap-2">
                 {#if dataFile}
                   <span class="min-w-0 truncate font-mono text-xs" title={dataFile.name}>{dataFile.name}</span>
@@ -370,7 +400,6 @@
                   <Button size="sm" onclick={removeData}>Remove</Button>
                 {:else}
                   <Button size="sm" icon="upload" onclick={() => fileInput?.click()}>Choose CSV or JSON…</Button>
-                  <span class="text-xs text-muted">Optional: one iteration per row, columns become {'{{variables}}'}.</span>
                 {/if}
                 <input bind:this={fileInput} type="file" accept=".csv,.json,text/csv,application/json" class="hidden" aria-label="Data file" onchange={chooseData} />
               </div>
@@ -405,13 +434,6 @@
             {#if dataFile.rows.length > 3}<p class="text-xs text-muted">…and {dataFile.rows.length - 3} more row{dataFile.rows.length - 3 === 1 ? '' : 's'}.</p>{/if}
           {/if}
         </div>
-        <p class="text-xs text-muted">A request passes on a 2xx status (redirects are followed first); 3xx, 4xx, 5xx and network errors fail.</p>
-        <p class="text-xs text-muted">
-          Requests run one after another exactly like Send: templates, secrets and auth of the active environment
-          ({app.activeEnvironment?.name ?? 'none'}) apply. The run keeps that environment even if you switch to another one meanwhile.
-        </p>
-        <p class="text-xs text-muted">Run in background to keep working while it runs: the status bar shows the progress and brings you back to the results.</p>
-        <p class="text-xs text-muted">Pre-request and test scripts run for every request (collection, folder, then request scripts); variables a script sets are available to the requests after it, and failed tests fail the request.</p>
       {/if}
     </div>
   {:else}

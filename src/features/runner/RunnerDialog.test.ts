@@ -76,6 +76,19 @@ describe('RunnerDialog', () => {
     expect(summary).toHaveTextContent('1 passed')
   })
 
+  it('keeps the explanations behind (i) buttons until hovered', async () => {
+    await setup([['A', `${H}/json`]])
+    expect(screen.queryByText(/A request passes on a 2xx status/)).toBeNull()
+    for (const name of ['How collection runs work', 'When a request passes', 'About data files']) {
+      const button = screen.getByRole('button', { name })
+      await fireEvent.mouseEnter(button.parentElement!)
+      expect(screen.getByRole('tooltip')).toBeInTheDocument()
+      await fireEvent.mouseLeave(button.parentElement!)
+    }
+    await fireEvent.mouseEnter(screen.getByRole('button', { name: 'When a request passes' }).parentElement!)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('A request passes on a 2xx status')
+  })
+
   it('respects the selection', async () => {
     const mock = await setup([['A', `${H}/json`], ['B', `${H}/text`]])
     await fireEvent.click(screen.getByRole('button', { name: 'Select none' }))
