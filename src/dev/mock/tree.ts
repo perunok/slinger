@@ -9,6 +9,7 @@ import type {
 } from '../../../shared/types'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import {
+  addCollection,
   addFolder,
   addRequest,
   folderSiblings,
@@ -69,6 +70,7 @@ type TreeApi = Pick<
   | 'createFolder'
   | 'renameFolder'
   | 'moveFolder'
+  | 'extractFolderToCollection'
   | 'deleteFolder'
   | 'setFolderScripts'
   | 'setFolderDescription'
@@ -130,6 +132,47 @@ export function createTreeApi(s: MockState): TreeApi {
       const folder = must(s.folders, folderId, 'Folder')
       setDescription(folder, description)
       return touch(folder)
+    },
+
+    /** Same shape as electron/services/extractFolder.ts: fresh subfolders, requests keep their ids, old tree goes. */
+    async extractFolderToCollection(input) {
+      const root = must(s.folders, input.folderId, 'Folder')
+      const source = must(s.collections, root.collectionId, 'Collection')
+      const collection = addCollection(s, root.workspaceId, cleanName(input.name, 'Collection'))
+      collection.scriptsJson = input.scriptsJson === undefined ? (root.scriptsJson ?? null) : cleanScriptsJson(input.scriptsJson)
+      collection.description = root.description ?? null
+      collection.descriptionType = root.descriptionType ?? null
+      const old = descendantFolderIds(s, root.id)
+      const newIdOf = new Map<string, string | null>([[root.id, null]])
+      // Parents before children: repeat until every subfolder found its new parent.
+      const pending = s.folders.filter((f) => f.id !== root.id && old.has(f.id)).sort(bySortOrder)
+      while (pending.length > 0) {
+        const i = pending.findIndex((f) => newIdOf.has(f.parentFolderId!))
+        const f = pending.splice(i, 1)[0]!
+        const copy = addFolder(s, { workspaceId: f.workspaceId, collectionId: collection.id, parentFolderId: newIdOf.get(f.parentFolderId!) ?? null, name: f.name, sortOrder: f.sortOrder })
+        copy.scriptsJson = f.scriptsJson ?? null
+        copy.description = f.description ?? null
+        copy.descriptionType = f.descriptionType ?? null
+        newIdOf.set(f.id, copy.id)
+      }
+      let requestCount = 0
+      for (const r of s.requests) {
+        if (r.folderId && old.has(r.folderId)) {
+          r.collectionId = collection.id
+          r.folderId = newIdOf.get(r.folderId) ?? null
+          touch(r)
+          requestCount++
+        }
+      }
+      s.folders = s.folders.filter((f) => !old.has(f.id))
+      let variableCount = 0
+      if (input.copyCollectionVariables) {
+        for (const v of s.collectionVariables.filter((x) => x.ownerId === source.id)) {
+          s.collectionVariables.push({ ...v, id: crypto.randomUUID(), ownerId: collection.id })
+          variableCount++
+        }
+      }
+      return { collection, sourceCollectionId: source.id, folderCount: newIdOf.size - 1, requestCount, variableCount }
     },
 
     async deleteFolder(folderId) {

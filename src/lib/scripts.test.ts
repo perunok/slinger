@@ -3,6 +3,8 @@ import type { ApiFolder } from '../../shared/types'
 import { newRow } from './kv'
 import { newDraft, parseDocument, serializeDraft } from './request'
 import {
+  mergeScripts,
+  parseScriptsJson,
   applyRequestData,
   countScripts,
   editorCode,
@@ -162,5 +164,27 @@ describe('pm.request.auth view', () => {
     expect(requestDataFromDraft(d).auth).toEqual({ type: 'basic', params: [{ key: 'username', value: 'u' }, { key: 'password', value: '••••••••' }] })
     d.auth.kind = 'none'
     expect(requestDataFromDraft(d).auth).toBeUndefined()
+  })
+})
+
+describe('mergeScripts', () => {
+  const ev = (listen: string, code: string) => ({ listen, script: { type: 'text/javascript', exec: code.split('\n') } })
+  const json = (...events: unknown[]) => JSON.stringify(events)
+
+  it('joins the sources in order per event, each part headed with where it came from', () => {
+    const merged = mergeScripts([
+      { label: 'collection "Big"', scriptsJson: json(ev('prerequest', 'a()'), ev('test', 't1()')) },
+      { label: 'folder "Outer"', scriptsJson: null },
+      { label: 'folder "Drive"', scriptsJson: json(ev('prerequest', 'b()')) },
+    ])
+    expect(runnableCode(parseScriptsJson(merged), 'prerequest')).toBe('// ---- From collection "Big" ----\na()\n\n// ---- From folder "Drive" ----\nb()')
+    // A single source keeps its code as is.
+    expect(runnableCode(parseScriptsJson(merged), 'test')).toBe('t1()')
+  })
+
+  it('no code anywhere is no scripts; disabled entries are left out', () => {
+    expect(mergeScripts([{ label: 'x', scriptsJson: null }, { label: 'y', scriptsJson: '[]' }])).toBeNull()
+    const disabled = json({ ...ev('prerequest', 'off()'), disabled: true })
+    expect(mergeScripts([{ label: 'x', scriptsJson: disabled }])).toBeNull()
   })
 })

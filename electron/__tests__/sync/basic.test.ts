@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FakeCloud } from './fakeCloud'
-import { DOC, liveState, makeDevice, pendingCount, settle, type Device } from './harness'
+import { converge, DOC, liveState, makeDevice, makePair, pendingCount, settle, type Device } from './harness'
 
 let cloud: FakeCloud
 let devices: Device[] = []
@@ -51,5 +51,37 @@ describe('publish and pull', () => {
     const tokenVar = (await b.api.listEnvironmentVariables(env.id)).find((v) => v.key === 'token')!
     expect(tokenVar.secretMissing).toBe(true)
     expect(liveState(a, a.workspace.id)).toEqual(liveState(b, link.workspace.id))
+  })
+})
+
+describe('extract a folder to a new collection', () => {
+  it('syncs as new folders plus request moves and folder deletes; the other device converges without rejections', async () => {
+    const ids: Record<string, string> = {}
+    const p = await makePair(cloud, async (a, ws) => {
+      const col = await a.api.createCollection(ws, 'Big')
+      const drive = await a.api.createFolder({ workspaceId: ws, collectionId: col.id, name: 'Drive' })
+      const sub = await a.api.createFolder({ workspaceId: ws, collectionId: col.id, parentFolderId: drive.id, name: 'Sub' })
+      ids.drive = drive.id
+      ids.create = (await a.api.createRequest({ workspaceId: ws, collectionId: col.id, folderId: drive.id, name: 'Create', method: 'POST', url: 'https://x/c', documentJson: DOC })).id
+      ids.get = (await a.api.createRequest({ workspaceId: ws, collectionId: col.id, folderId: sub.id, name: 'Get', method: 'GET', url: 'https://x/g', documentJson: DOC })).id
+      ids.other = (await a.api.createRequest({ workspaceId: ws, collectionId: col.id, folderId: null, name: 'Other', method: 'GET', url: 'https://x/o', documentJson: DOC })).id
+    })
+    devices.push(p.a, p.b)
+    const r = await p.a.api.extractFolderToCollection({ folderId: ids.drive!, name: 'Drive', copyCollectionVariables: false })
+    await converge(p)
+
+    const a = await settle(p.a, p.wsA)
+    expect(a.pendingChanges).toBe(0)
+    expect(a.openConflicts).toBe(0)
+    expect(a.lastError).toBeNull()
+    expect(liveState(p.a, p.wsA)).toEqual(liveState(p.b, p.wsB))
+    // On B: the moved requests (same ids) are in the new collection, the old folder tree is gone, the rest stays.
+    const bRequests = await p.b.api.listRequests(r.collection.id)
+    expect(bRequests.map((q) => q.id).sort()).toEqual([ids.create, ids.get].sort())
+    const bFolders = await p.b.api.listFolders(r.collection.id)
+    expect(bFolders.map((f) => f.name)).toEqual(['Sub'])
+    expect(bRequests.find((q) => q.id === ids.get)!.folderId).toBe(bFolders[0]!.id)
+    expect((await p.b.api.listFolders(r.sourceCollectionId)).map((f) => f.name)).toEqual([])
+    expect((await p.b.api.listRequests(r.sourceCollectionId)).map((q) => q.id)).toEqual([ids.other])
   })
 })

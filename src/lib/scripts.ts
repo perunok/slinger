@@ -117,6 +117,24 @@ export function scriptsJsonOf(events: unknown[]): string | null {
   return events.length === 0 ? null : JSON.stringify(events)
 }
 
+/**
+ * One script set made of several, run in the given order (e.g. a collection's and its folders' scripts, for a folder that
+ * becomes a collection of its own). Each block is headed with where it came from when more than one source has code
+ * for that event. null: no code at all.
+ */
+export function mergeScripts(sources: ReadonlyArray<{ label: string; scriptsJson: string | null | undefined }>): string | null {
+  let events: unknown[] = []
+  for (const listen of ['prerequest', 'test'] as const) {
+    const parts = sources
+      .map((src) => ({ label: src.label, code: runnableCode(parseScriptsJson(src.scriptsJson), listen) }))
+      .filter((p) => p.code.trim() !== '')
+    if (parts.length === 0) continue
+    const code = parts.length === 1 ? parts[0]!.code : parts.map((p) => `// ---- From ${p.label} ----\n${p.code}`).join('\n\n')
+    events = withScript(events, listen, code)
+  }
+  return scriptsJsonOf(events)
+}
+
 /** Number of pre-request/test entries with code (Postman import preview). */
 export function countScripts(events: unknown): number {
   return eventList(events).filter((e) => isObj(e) && (e.listen === 'prerequest' || e.listen === 'test') && e.disabled !== true && isObj(e.script) && execText(e.script.exec).trim() !== '').length

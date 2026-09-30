@@ -5,6 +5,7 @@ import { invalidInput } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
 import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
+import { extractFolderToCollection } from '../services/extractFolder'
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import { OAUTH2_GRANT_TYPES } from '../../shared/oauth2'
@@ -263,6 +264,12 @@ const runScriptsInput = z.object({
   continueOnError: z.boolean().optional(),
 })
 const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()
+const extractFolderInput = z.object({
+  folderId: uuid,
+  name,
+  scriptsJson: scriptsJson.optional(),
+  copyCollectionVariables: z.boolean(),
+})
 const description = z.string().max(4 * 1024 * 1024).nullable()
 
 /** Parses `args` against a tuple schema and turns zod failures into invalid_input errors. */
@@ -353,6 +360,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       return core.folders.rename(id, n)
     },
     moveFolder: async (...a) => core.folders.move(parseArgs(z.tuple([moveFolderInput]), a)[0]),
+    extractFolderToCollection: async (...a) => extractFolderToCollection(core.db, parseArgs(z.tuple([extractFolderInput]), a)[0]),
     deleteFolder: async (...a) => core.folders.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
     setFolderScripts: async (...a) => {
       const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)

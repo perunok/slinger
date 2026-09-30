@@ -75,10 +75,18 @@ In the **Collections** sidebar:
 
 - **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New folder**,
   **Run collection...**, **Variables...**, **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
-- Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**, **Rename**, **Delete**.
+- Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**,
+  **Extract to new collection...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
 - Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete**.
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
+- **Extract to new collection** turns a folder into a collection of its own, named after it (you can change the name). Its
+  requests move with it, keeping their history, examples and docs, its subfolders come along, and the folder leaves the original
+  collection. The folder's scripts and docs become the new collection's. Two options (on by default) keep the requests working
+  as before: **Copy the collection variables** of the original collection, and **Keep the scripts that ran before this
+  folder's** (the original collection's and parent folders' scripts are placed ahead of the folder's own in the new
+  collection's scripts, each part marked with where it came from). In a workspace synced to the cloud the new collection syncs
+  like any other; read-only (viewer) workspaces do not offer it.
 - In the tree, F2 renames and Delete deletes the selected item. Deleting asks for confirmation and cannot be undone from the UI.
 
 ## Requests
