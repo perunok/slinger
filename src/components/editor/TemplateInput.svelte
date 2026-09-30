@@ -9,7 +9,7 @@
   import { Compartment, EditorState, type Extension } from '@codemirror/state'
   import { EditorView, keymap, placeholder as placeholderExt } from '@codemirror/view'
   import { onMount } from 'svelte'
-  import { scopeStore } from '../../app/scope.svelte'
+  import { scopeStore, variableActions } from '../../app/scope.svelte'
   import type { TemplateScope } from '../../lib/template'
   import { slingerTheme } from './cm/theme'
   import { scopeChanged, templateExtension } from './cm/template'
@@ -87,7 +87,7 @@
     return [
       singleLine,
       slingerTheme,
-      templateExtension({ getScope: currentScope, onCreateVariable: (n, target) => scopeStore.createVariable?.(n, target), suggest: (t) => suggest?.(t) ?? [] }),
+      templateExtension({ getScope: currentScope, ...variableActions(currentScope), suggest: (t) => suggest?.(t) ?? [] }),
       placeholderExt(placeholder),
       EditorView.contentAttributes.of({ 'aria-label': label, 'aria-multiline': 'false', spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),
       EditorView.theme({

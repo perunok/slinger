@@ -18,7 +18,7 @@
     placeholder as placeholderExt,
   } from '@codemirror/view'
   import { onMount } from 'svelte'
-  import { scopeStore } from '../../app/scope.svelte'
+  import { scopeStore, variableActions } from '../../app/scope.svelte'
   import type { TemplateScope } from '../../lib/template'
   import { languageExtension, type EditorLanguage } from './cm/languages'
   import { applyExternalValue } from './cm/sync'
@@ -82,7 +82,7 @@
       numC.of(lineNumbers ? [lineNumbersExt(), highlightActiveLineGutter()] : []),
       foldC.of(fold ? foldGutter() : []),
       readOnly ? [] : closeBrackets(),
-      templates ? templateExtension({ getScope: currentScope, onCreateVariable: (n, target) => scopeStore.createVariable?.(n, target) }) : [],
+      templates ? templateExtension({ getScope: currentScope, ...variableActions(currentScope) }) : [],
       placeholder ? placeholderExt(placeholder) : [],
       extensions,
       EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),

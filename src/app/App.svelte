@@ -13,6 +13,8 @@
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
   import { openCollectionVariables } from '../features/overview/openVariables'
+  import { saveVariableValue } from '../features/environments/editVariable'
+  import { sync } from '../features/sync/syncStore.svelte'
   import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
   import ImportDialog from '../features/importexport/ImportDialog.svelte'
   import QuickOpen from '../features/requests/QuickOpen.svelte'
@@ -51,10 +53,14 @@
       else if (target === 'collection' && collectionId) openCollectionVariables(collectionId, name)
       else ui.envEditor = { open: true, newVariable: name }
     }
+    scopeStore.editVariable = saveVariableValue
+    scopeStore.editBlocked = () => (sync.blocked ? sync.blockedMessage : null)
     void app.init()
     const offMenu = subscribeMenuCommands()
     return () => {
       scopeStore.createVariable = null
+      scopeStore.editVariable = null
+      scopeStore.editBlocked = null
       offMenu()
     }
   })
