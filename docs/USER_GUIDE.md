@@ -161,6 +161,13 @@ globals. A value can itself reference other variables. If anything is unresolved
 and the response pane lists the missing names and the scopes that were checked ("Not defined in the environment "Local", the
 collection "Payments" or the globals").
 
+**Edit from the hover.** The hover of a defined variable has **Edit value** (**Set new value** for a secret). It opens a small
+editor that stays open while you type: the stored value as written (references such as `{{region}}` stay unresolved), or an
+empty password field for a secret, whose current value is never shown. **Enter** or **Save** writes it to the scope the value
+comes from, the one named under it (the active environment, the request's collection or the globals), and every `{{}}` updates
+right away; **Escape**, **Cancel** or clicking elsewhere closes it without saving. Built-in variables and script variables
+(`pm.variables`) cannot be edited, and in a read-only (viewer) synced workspace the button is disabled.
+
 **Scopes and precedence** (as in Postman, the narrowest wins):
 
 | Scope | Where you edit it | Applies to | Secrets |

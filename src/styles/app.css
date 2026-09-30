@@ -151,6 +151,44 @@ input[type='range'] {
   background: var(--accent);
   color: var(--accent-fg);
 }
+.tpl-pop-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tpl-pop-btn:disabled:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.tpl-pop-btn-quiet {
+  border-color: var(--border);
+  background: transparent;
+}
+.tpl-edit {
+  min-width: 18rem;
+}
+.tpl-edit-input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.tpl-edit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tpl-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+.tpl-edit-error {
+  margin-top: 4px;
+}
 .template-input .cm-editor {
   background: transparent;
 }
