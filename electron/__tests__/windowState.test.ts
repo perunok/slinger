@@ -99,6 +99,16 @@ describe('window-state.json', () => {
     }
   })
 
+  it('keeps the title bar preference and overlay colours, dropping invalid ones', () => {
+    const state = { titleBar: 'system' as const, titleBarOverlay: { color: '#ffffff', symbolColor: '#1c2330' } }
+    expect(writeWindowState(file, state)).toBe(true)
+    expect(readWindowState(file)).toEqual(state)
+    writeFileSync(file, JSON.stringify({ titleBar: 'frameless', titleBarOverlay: { color: 'rgb(1, 2, 3)', symbolColor: 'url(x)' } }))
+    expect(readWindowState(file)).toEqual({})
+    writeFileSync(file, JSON.stringify({ titleBar: 'custom', titleBarOverlay: { color: 'rgb(1, 2, 3)', symbolColor: '#FFF' } }))
+    expect(readWindowState(file)).toEqual({ titleBar: 'custom', titleBarOverlay: { color: '#010203', symbolColor: '#ffffff' } })
+  })
+
   it('reports a failed write instead of throwing', () => {
     writeFileSync(join(dir, 'blocker'), 'x')
     expect(writeWindowState(join(dir, 'blocker', WINDOW_STATE_FILE), {})).toBe(false)

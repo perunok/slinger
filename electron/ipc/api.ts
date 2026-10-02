@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { SlingerInvokeApi } from '../../shared/ipc-contract'
-import type { PickFileOptions } from '../../shared/types'
-import { invalidInput } from '../lib/errors'
+import type { PickFileOptions, TitleBarOverlayStyle, TitleBarStyle, UpdateCheckResult, WindowChrome } from '../../shared/types'
+import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
 import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
@@ -292,7 +292,25 @@ export interface PlatformDeps {
   appVersion: string
   /** Paints + remembers the window background (already validated and normalised to `#rrggbb`). Optional: tests omit it. */
   setWindowBackground?(color: string): void
+  /** Latest-release lookup (services/updateCheck.ts); absent when update checks are off (automated runs, tests). */
+  checkForUpdates?(): Promise<UpdateCheckResult>
+  /** The main window's frame (custom title bar). Optional: tests omit it. */
+  window?: WindowControls
 }
+
+export interface WindowControls {
+  chrome(): WindowChrome
+  setTitleBarStyle(style: TitleBarStyle): WindowChrome
+  reopen(): void
+  /** Already validated: colours normalised to `#rrggbb`, height in CSS pixels. */
+  setTitleBarOverlay(style: TitleBarOverlayStyle): void
+  /** CSS pixels within the page. */
+  showAppMenu(x: number, y: number): void
+}
+
+const titleBarStyle = z.enum(['custom', 'system'])
+const titleBarOverlayStyle = z.object({ color: cssColorSchema, symbolColor: cssColorSchema, height: z.number().finite().min(16).max(200) }).strict()
+const pagePoint = z.number().finite().min(0).max(100_000)
 
 /**
  * Builds the full SlingerIpcApi over a Core. This is the validation boundary: electron/ipc/handlers.ts
@@ -508,5 +526,23 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),
     getVersionInfo: async (...a) => (parseArgs(z.tuple([]), a), collectVersionInfo(platform.appVersion)),
     setWindowBackground: async (...a) => platform.setWindowBackground?.(parseArgs(z.tuple([cssColorSchema]), a)[0]),
+    checkForUpdates: async (...a) => {
+      parseArgs(z.tuple([]), a)
+      if (!platform.checkForUpdates) throw ioError('Update checks are off in this run')
+      return platform.checkForUpdates()
+    },
+    getWindowChrome: async (...a) => (parseArgs(z.tuple([]), a), windowControls().chrome()),
+    setTitleBarStyle: async (...a) => windowControls().setTitleBarStyle(parseArgs(z.tuple([titleBarStyle]), a)[0]),
+    reopenWindow: async (...a) => (parseArgs(z.tuple([]), a), windowControls().reopen()),
+    setTitleBarOverlay: async (...a) => platform.window?.setTitleBarOverlay(parseArgs(z.tuple([titleBarOverlayStyle]), a)[0]),
+    showAppMenu: async (...a) => {
+      const [x, y] = parseArgs(z.tuple([pagePoint, pagePoint]), a)
+      platform.window?.showAppMenu(x, y)
+    },
+  }
+
+  function windowControls(): WindowControls {
+    if (!platform.window) throw ioError('No application window')
+    return platform.window
   }
 }

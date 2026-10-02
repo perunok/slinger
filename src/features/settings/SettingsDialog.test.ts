@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../../app/settings.svelte'
-import { createMockBackend } from '../../dev/mockBackend'
+import { windowChrome } from '../../app/windowChrome.svelte'
+import { createMockBackend, type MockControls } from '../../dev/mockBackend'
+import type { SlingerIpcApi } from '../../../shared/ipc-contract'
+import { updates } from '../updates/updates.svelte'
 import { APPEARANCE_KEY } from '../../lib/appearance'
 import { ACCENTS, THEMES } from '../../lib/themes'
 import SettingsDialog from './SettingsDialog.svelte'
@@ -143,5 +146,59 @@ describe('restore tabs on startup', () => {
     expect(settings.restoreTabsOnStartup).toBe(false)
     expect(localStorage.getItem('slinger.restoreTabsOnStartup')).toBe('false')
     expect(localStorage.getItem('slinger.tabs.some-workspace')).toBeNull()
+  })
+})
+
+describe('window and updates', () => {
+  async function open(): Promise<SlingerIpcApi & MockControls> {
+    sessionStorage.clear()
+    const backend = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = backend
+    updates.resetForTests()
+    await windowChrome.init()
+    render(SettingsDialog)
+    return backend
+  }
+
+  it('switches to the system title bar, applied by reopening the window', async () => {
+    const backend = await open()
+    const box = screen.getByRole('checkbox', { name: 'Use the system title bar' })
+    expect(box).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'About the title bar' })).toBeInTheDocument()
+    expect(screen.queryByTestId('titlebar-reopen')).toBeNull()
+    await fireEvent.click(box)
+    await screen.findByTestId('titlebar-reopen')
+    expect(await backend.getWindowChrome()).toMatchObject({ preferredTitleBar: 'system' })
+    const reopen = vi.spyOn(backend, 'reopenWindow').mockResolvedValue(undefined)
+    await fireEvent.click(screen.getByRole('button', { name: 'Reopen window' }))
+    expect(reopen).toHaveBeenCalledTimes(1)
+  })
+
+  it('turns automatic update checks off and checks on demand', async () => {
+    const backend = await open()
+    const auto = screen.getByRole('checkbox', { name: 'Check for new releases automatically' })
+    expect(auto).toBeChecked()
+    await fireEvent.click(auto)
+    expect(updates.auto).toBe(false)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+    expect(await screen.findByText(/^Up to date\. Checked just now\.$/)).toBeInTheDocument()
+
+    backend.failNext('checkForUpdates', { code: 'network_error', message: 'offline' })
+    await fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+    expect(await screen.findByText('Could not check: offline')).toBeInTheDocument()
+
+    // A release found earlier stays offered even if a later check fails.
+    backend.setLatestRelease('3.0.0')
+    await fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+    expect(await screen.findByText('Slinger 3.0.0 is available.')).toBeInTheDocument()
+    const openUrl = vi.spyOn(backend, 'openExternalUrl').mockResolvedValue(undefined)
+    await fireEvent.click(screen.getByRole('button', { name: 'View release' }))
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/perunok/slinger/releases/tag/v3.0.0')
+    backend.failNext('checkForUpdates', { code: 'network_error', message: 'offline' })
+    await fireEvent.click(screen.getByRole('button', { name: 'Check now' }))
+    await screen.findByRole('button', { name: 'Check now' })
+    expect(screen.getByText('Slinger 3.0.0 is available.')).toBeInTheDocument()
+
   })
 })

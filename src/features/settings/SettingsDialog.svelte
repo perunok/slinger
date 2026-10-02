@@ -5,6 +5,11 @@
   import Button from '../../components/ui/Button.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import { api } from '../../lib/ipc'
+  import { windowChrome } from '../../app/windowChrome.svelte'
+  import InfoTip from '../../components/ui/InfoTip.svelte'
+  import { formatAgo } from '../sync/status'
+  import { runsStore } from '../runner/runs.svelte'
+  import { updates } from '../updates/updates.svelte'
   import AccentPicker from './AccentPicker.svelte'
   import LoaderPicker from './LoaderPicker.svelte'
   import ThemeGallery from './ThemeGallery.svelte'
@@ -12,7 +17,12 @@
   let version = $state<string | null>(null)
   onMount(() => {
     api().getAppVersion().then((v) => (version = v), () => (version = null))
+    // "checked 5 min ago" stays current while the dialog is open.
+    const timer = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000)
+    return () => clearInterval(timer)
   })
+  let now = $state(Math.floor(Date.now() / 1000))
+  const runningRuns = $derived(runsStore.sessions.filter((s) => s.running).length)
 </script>
 
 <Dialog title="Settings" onclose={() => (ui.settingsOpen = false)} size="lg">
@@ -54,6 +64,59 @@
       <input type="checkbox" checked={settings.showStatusBar} onchange={(e) => settings.setShowStatusBar(e.currentTarget.checked)} />
       Show status bar
     </label>
+  </section>
+
+  {#if windowChrome.loaded}
+    <section class="mb-5 grid gap-1.5" aria-labelledby="window-heading">
+      <h3 class="text-sm font-semibold" id="window-heading">Window</h3>
+      <div class="flex items-center gap-1.5 text-sm">
+        <label class="flex items-center gap-2">
+          <input type="checkbox" checked={windowChrome.preferred === 'system'} onchange={(e) => void windowChrome.setPreferred(e.currentTarget.checked ? 'system' : 'custom')} />
+          Use the system title bar
+        </label>
+        <InfoTip label="About the title bar">
+          By default Slinger's top bar is the window's title bar: drag any empty part of it to move the window, double-click
+          it to maximise. The window buttons sit at its end{windowChrome.platform === 'darwin' ? '' : ', and the menu button at its start opens the File, Edit, View and Help menus'}.
+          Turn this on for your system's own title bar{windowChrome.platform === 'darwin' ? '' : ' and menu bar'} instead. The change applies when the window reopens.
+        </InfoTip>
+      </div>
+      {#if windowChrome.pendingReopen}
+        <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="titlebar-reopen">
+          <span class="text-muted">
+            Applies when the window reopens{runningRuns > 0 ? `; that stops ${runningRuns === 1 ? 'the collection run' : `${runningRuns} collection runs`} in progress` : ''}.
+          </span>
+          <Button size="sm" onclick={() => void windowChrome.reopen()}>Reopen window</Button>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="mb-5 grid gap-1.5" aria-labelledby="updates-heading">
+    <h3 class="text-sm font-semibold" id="updates-heading">Updates</h3>
+    <div class="flex items-center gap-1.5 text-sm">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" checked={updates.auto} onchange={(e) => updates.setAuto(e.currentTarget.checked)} />
+        Check for new releases automatically
+      </label>
+      <InfoTip label="About update checks">
+        Once a day Slinger asks GitHub which version of Slinger is the latest release (github.com/perunok/slinger) and shows
+        a notification when there is a newer one. The request sends nothing about you or your data. Nothing is downloaded
+        or installed: the notification links to the release page. Help &gt; Check for Updates… checks right away.
+      </InfoTip>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="update-status" aria-live="polite">
+      {#if updates.available}
+        <span class="font-medium text-fg">Slinger {updates.available.version} is available.</span>
+        <Button size="sm" variant="primary" onclick={() => updates.openRelease()}>View release</Button>
+      {:else if updates.error}
+        <span class="text-danger">Could not check: {updates.error}</span>
+      {:else if updates.lastCheckedAt !== null}
+        <span class="text-muted">Up to date. Checked {formatAgo(updates.lastCheckedAt, now)}.</span>
+      {/if}
+      <Button size="sm" loading={updates.checking} disabled={updates.checking} onclick={() => void updates.check('settings').then(() => (now = Math.floor(Date.now() / 1000)))}>
+        {updates.checking ? 'Checking…' : 'Check now'}
+      </Button>
+    </div>
   </section>
 
   <section class="mb-5">

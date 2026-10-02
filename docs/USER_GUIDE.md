@@ -1,11 +1,16 @@
 # Slinger user guide
 
-Slinger is a local-first API client. Everything is stored on your computer; nothing leaves it except the requests you send.
+Slinger is a local-first API client. Everything is stored on your computer; nothing leaves it except the requests you send (plus, unless you turn it off, a
+daily check with GitHub for a new Slinger release, see [Updates](#updates)).
 On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 ## Layout
 
-- **Menu bar:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
+- **Title bar:** by default the top bar is the window's title bar: drag any empty part of it to move the window, double-click
+  it to maximise; the window buttons sit at its end (on macOS the traffic lights at its start). On Windows/Linux the menu button
+  (three lines) at its left opens the File, Edit, View and Help menus. Settings > Window > **Use the system title bar** brings
+  back your system's title bar and menu bar instead (click **Reopen window** to apply it).
+- **Menus:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
 - **Top bar:** workspace switcher, the sync chip (cloud sync state; click it for Sync now, conflicts and **Cloud…**), "Go to
   request" (Ctrl+K), environment switcher (with a gear to manage environments), Right panel, Keyboard shortcuts, Settings, About
   Slinger (the question-mark icon). Each of these has one place on screen; the menus and the command palette reach them too.
@@ -732,6 +737,9 @@ Settings (Ctrl+, or the sun icon):
   [Response below or beside the request](#response-below-or-beside-the-request)), and **Show status bar** (default on).
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
+- **Window:** **Use the system title bar** (off by default; see [Layout](#layout)). The change applies when the window reopens:
+  **Reopen window** does that right away (your open tabs come back; a collection run in progress stops).
+- **Updates:** **Check for new releases automatically** (default on) and **Check now**; see [Updates](#updates).
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
   changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
   and erases what is already stored; response panes are never part of what is saved or restored either way.
@@ -812,6 +820,17 @@ Tokens:
 | Syntax | `--syn-keyword`, `--syn-string`, `--syn-number`, `--syn-bool`, `--syn-comment`, `--syn-property`, `--syn-tag`, `--syn-attr`, `--syn-punct` | code in bodies, responses and scripts |
 | HTTP methods | `--m-get`, `--m-post`, `--m-put`, `--m-patch`, `--m-delete`, `--m-other` | method labels |
 
+## Updates
+
+Once a day Slinger asks GitHub which version is the latest release of Slinger. When there is a newer one than yours, a
+notification says so (once per version) with **View release**, which opens its release page in your web browser; download and
+install it from there as you did the first time. Nothing is downloaded or installed automatically, and the request carries
+nothing about you or your data.
+
+- **Help > Check for Updates…** checks right away and always answers (up to date, a newer version, or why it could not check).
+- Settings > Updates: turn **Check for new releases automatically** off, or **Check now**; it shows the result and when Slinger
+  last checked.
+
 ## About Slinger
 
 The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) opens **About Slinger**:
@@ -827,7 +846,8 @@ The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) ope
 
 ## Menus
 
-Slinger has its own menu bar (on macOS at the top of the screen).
+Slinger has its own menus: on macOS in the menu bar at the top of the screen; on Windows/Linux behind the menu button at
+the left of the title bar (or in the menu bar, with the system title bar).
 
 | Menu | Items |
 | --- | --- |
@@ -836,7 +856,7 @@ Slinger has its own menu bar (on macOS at the top of the screen).
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
 | **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
-| **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Report an Issue, View License; on Windows/Linux also About Slinger |
+| **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Check for Updates…, Report an Issue, View License; on Windows/Linux also About Slinger |
 
 - **Export Collection…** exports the collection of the active tab (a request or a collection/folder overview). With no such tab
   open, Slinger tells you how to pick one; you can also use Export in a collection's menu in the sidebar.

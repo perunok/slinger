@@ -32,7 +32,14 @@ export interface WindowState {
   backgroundColor?: string
   /** Chromium zoom level set from View > Zoom (0 = 100 %). */
   zoomLevel?: number
+  /** Title bar preference (Settings > Window); absent = the custom title bar. */
+  titleBar?: 'custom' | 'system'
+  /** Last colours of the system window buttons over the custom title bar (renderer-reported), so they match on launch. */
+  titleBarOverlay?: { color: string; symbolColor: string }
 }
+
+/** Height of the custom title bar (the top bar, `h-10`) in CSS pixels at the default font size and zoom. */
+export const TITLE_BAR_HEIGHT = 40
 
 const int = z.number().int().min(-100_000).max(100_000)
 const rectSchema = z.object({ x: int, y: int, width: int.min(1), height: int.min(1) })
@@ -108,6 +115,9 @@ export function readWindowState(file: string): WindowState {
   const bg = cssColorSchema.safeParse(o.backgroundColor)
   if (bg.success) out.backgroundColor = bg.data
   if (typeof o.zoomLevel === 'number' && Number.isFinite(o.zoomLevel) && Math.abs(o.zoomLevel) <= 10) out.zoomLevel = o.zoomLevel
+  if (o.titleBar === 'custom' || o.titleBar === 'system') out.titleBar = o.titleBar
+  const overlay = z.object({ color: cssColorSchema, symbolColor: cssColorSchema }).safeParse(o.titleBarOverlay)
+  if (overlay.success) out.titleBarOverlay = overlay.data
   return out
 }
 

@@ -9,6 +9,7 @@ import {
   type CustomTheme,
 } from '../lib/customThemes'
 import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
+import { reportTitleBarOverlay } from '../lib/titleBarOverlay'
 import { reportWindowBackground } from '../lib/windowBackground'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
 import { clearAllPersisted } from '../features/requests/tabsPersistence'
@@ -114,6 +115,7 @@ class Settings {
     else root.setAttribute('data-accent', this.accent)
     root.style.setProperty('--font-size', `${this.fontSize}px`)
     reportWindowBackground()
+    reportTitleBarOverlay()
   }
   #save() {
     const a: Appearance = { theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark, loader: this.loader }

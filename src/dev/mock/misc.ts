@@ -1,4 +1,6 @@
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
+import type { TitleBarStyle } from '../../../shared/types'
+import { compareSemver } from '../../lib/semver'
 import { base64ToBytes, fail, sleep, uuid } from './util'
 
 type MiscApi = Pick<
@@ -15,9 +17,26 @@ type MiscApi = Pick<
   | 'getAppVersion'
   | 'getVersionInfo'
   | 'setWindowBackground'
+  | 'checkForUpdates'
+  | 'getWindowChrome'
+  | 'setTitleBarStyle'
+  | 'reopenWindow'
+  | 'setTitleBarOverlay'
+  | 'showAppMenu'
   | 'pickFile'
   | 'grantedFiles'
-> & { resetSecureStore(): void }
+> & { resetSecureStore(): void; setLatestRelease(version: string | null): void }
+
+const MOCK_VERSION = '0.0.0-dev'
+const TITLE_BAR_KEY = 'slinger.mock.titleBar'
+
+function loadTitleBar(): TitleBarStyle {
+  try {
+    return sessionStorage.getItem(TITLE_BAR_KEY) === 'system' ? 'system' : 'custom'
+  } catch {
+    return 'custom'
+  }
+}
 
 const STORAGE_KEY = 'slinger.mock.secureStore'
 const PICK_NAMES = ['sample-upload.png', 'report.pdf', 'data.csv']
@@ -59,6 +78,11 @@ export function createMiscApi(): MiscApi {
   let pickIndex = 0
   const granted = new Set<string>()
   let exportDir = '/home/user/Downloads'
+  /** The "latest release" checkForUpdates reports; null = none published (no notice in dev and tests by default). */
+  let latestRelease: string | null = null
+  // A page load is a new "window": it shows the preference saved before it (reopenWindow reloads).
+  const windowTitleBar = loadTitleBar()
+  let preferredTitleBar = windowTitleBar
   return {
     async defaultExportPath(fileName) {
       return `${exportDir}/${fileName}`
@@ -102,7 +126,7 @@ export function createMiscApi(): MiscApi {
       return fail('io_error', 'not available in browser mock')
     },
     async getAppVersion() {
-      return '0.0.0-dev'
+      return MOCK_VERSION
     },
     async getVersionInfo() {
       // Browser mode: no Electron/Node runtime; fake but plausible values so "Copy version info" can be tried.
@@ -110,6 +134,38 @@ export function createMiscApi(): MiscApi {
     },
     async setWindowBackground() {
       /* no native window in the browser */
+    },
+    async checkForUpdates() {
+      const checkedAt = Math.floor(Date.now() / 1000)
+      if (!latestRelease) return { currentVersion: MOCK_VERSION, latest: null, updateAvailable: false, checkedAt }
+      return {
+        currentVersion: MOCK_VERSION,
+        latest: { version: latestRelease, url: `https://github.com/perunok/slinger/releases/tag/v${latestRelease}`, publishedAt: checkedAt - 86_400 },
+        updateAvailable: compareSemver(latestRelease, MOCK_VERSION) > 0,
+        checkedAt,
+      }
+    },
+    async getWindowChrome() {
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar }
+    },
+    async setTitleBarStyle(style) {
+      if (style !== 'custom' && style !== 'system') fail('invalid_input', 'style must be custom or system')
+      preferredTitleBar = style
+      try {
+        sessionStorage.setItem(TITLE_BAR_KEY, style)
+      } catch {
+        /* this page only */
+      }
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar }
+    },
+    async reopenWindow() {
+      setTimeout(() => location.reload(), 0)
+    },
+    async setTitleBarOverlay() {
+      /* no system window buttons in the browser */
+    },
+    async showAppMenu() {
+      /* no native menu in the browser */
     },
     async pickFile() {
       const name = PICK_NAMES[pickIndex++ % PICK_NAMES.length]
@@ -120,6 +176,9 @@ export function createMiscApi(): MiscApi {
     // Mirrors the main process: only paths chosen with pickFile in this session count as granted.
     async grantedFiles(paths) {
       return paths.filter((p) => granted.has(p))
+    },
+    setLatestRelease(version) {
+      latestRelease = version
     },
     resetSecureStore() {
       secure = new Map()

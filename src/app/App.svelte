@@ -42,6 +42,8 @@
   import { app } from './state.svelte'
   import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
+  import { updates } from '../features/updates/updates.svelte'
+  import { windowChrome } from './windowChrome.svelte'
   import { ui } from './ui.svelte'
 
   onMount(() => {
@@ -55,8 +57,11 @@
     scopeStore.editVariable = saveVariableValue
     scopeStore.editBlocked = () => (sync.blocked ? sync.blockedMessage : null)
     void app.init()
+    void windowChrome.init()
     const offMenu = subscribeMenuCommands()
+    const stopUpdates = updates.start()
     return () => {
+      stopUpdates()
       scopeStore.createVariable = null
       scopeStore.editVariable = null
       scopeStore.editBlocked = null
