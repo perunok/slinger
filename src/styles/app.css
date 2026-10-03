@@ -54,6 +54,11 @@ textarea {
   border-radius: var(--radius);
   padding: 4px 8px;
 }
+/* The open list of a native <select> follows the theme instead of the platform's default colours. */
+option {
+  background: var(--surface);
+  color: var(--text);
+}
 /* Native placeholders use the faint token like CodeMirror's (.cm-placeholder), so an empty field never reads as filled in. */
 input::placeholder,
 textarea::placeholder {
