@@ -9,6 +9,7 @@ import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { SYNC_EVENT_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
+import type { TitleBarOverlayStyle, TitleBarStyle, WindowChrome } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
@@ -17,18 +18,21 @@ import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
+import { DEFAULT_TITLE_BAR_COLORS, menuPoint, overlayOptions, titleBarWindowOptions } from './lib/titleBar'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
   DEFAULT_SIZE,
   MIN_SIZE,
   readWindowState,
+  TITLE_BAR_HEIGHT,
   WINDOW_STATE_FILE,
   writeWindowState,
   type WindowState,
 } from './lib/windowState'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
+import { checkForUpdate, updateFeedUrl } from './services/updateCheck'
 import { chooseSecretStore, KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
 import { WorkerExecutor } from './scripts/executor'
 
@@ -58,6 +62,12 @@ let core: Core | null = null
 let db: Db | null = null
 let windowState: WindowState = {}
 const windowStateFile = () => join(app.getPath('userData'), WINDOW_STATE_FILE)
+/** The title bar the current main window was created with (the preference may differ until it is reopened). */
+let windowTitleBar: TitleBarStyle = 'custom'
+/** The custom title bar's height in CSS pixels, as last reported by the renderer (it follows the font size). */
+let titleBarCssHeight: number = TITLE_BAR_HEIGHT
+/** Set while the main window is closed to be opened again (reopenMainWindow): the app must not quit in between. */
+let reopeningWindow = false
 /** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
 const automatedWindow = () => !!(process.env.SLINGER_SMOKE_TEST || process.env.SLINGER_HIDE_WINDOW)
 
@@ -70,6 +80,10 @@ const timeMark = (name: string) => {
 
 const isTrustedUrl = (url: string): boolean =>
   url.startsWith(`${APP_ORIGIN}/`) || (devServerUrl !== null && url.startsWith(devServerUrl))
+
+/** Electron's network stack (honours the system proxy) for cloud sync and the update check. */
+const netFetch = ((input: string | URL | Request, init?: RequestInit) =>
+  net.fetch(input instanceof URL ? input.toString() : (input as string | Request), init)) as typeof fetch
 
 function loadKeychain(): KeychainSecretStore {
   try {
@@ -160,8 +174,10 @@ function linuxWindowIcon(): { icon?: string } {
 function createWindow(): BrowserWindow {
   // Remembered geometry, fitted onto the displays that exist now (null: default size, centred).
   const bounds = windowState.bounds ? clampBounds(windowState.bounds, screen.getAllDisplays().map((d) => d.workArea), MIN_SIZE) : null
+  windowTitleBar = windowState.titleBar ?? 'custom'
   const win = new BrowserWindow({
     ...linuxWindowIcon(),
+    ...titleBarWindowOptions(windowTitleBar, process.platform, titleBarColors(), titleBarCssHeight * zoomFactor(windowState.zoomLevel ?? 0)),
     ...(bounds ?? DEFAULT_SIZE),
     minWidth: MIN_SIZE.width,
     minHeight: MIN_SIZE.height,
@@ -197,6 +213,7 @@ function createWindow(): BrowserWindow {
   // View > Zoom level from the last session (Chromium does not persist it across restarts).
   win.webContents.on('did-finish-load', () => {
     if (windowState.zoomLevel) win.webContents.setZoomLevel(windowState.zoomLevel)
+    applyTitleBarOverlay(win)
   })
   if (startupTiming) {
     win.webContents.once('did-finish-load', () => {
@@ -240,6 +257,71 @@ function setWindowBackground(color: string): void {
   writeWindowState(windowStateFile(), windowState)
 }
 
+/** The window-button colours for a custom title bar: the last ones the renderer reported, else the default theme's. */
+function titleBarColors(): { color: string; symbolColor: string } {
+  return windowState.titleBarOverlay ?? DEFAULT_TITLE_BAR_COLORS[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+}
+
+/** Chromium zoom level -> factor (each level is 20 %). */
+const zoomFactor = (level: number) => Math.pow(1.2, level)
+
+/** Repaints the system window buttons over the custom title bar (theme colours, bar height times page zoom). */
+function applyTitleBarOverlay(win: BrowserWindow | null): void {
+  if (!win || win.isDestroyed() || windowTitleBar !== 'custom' || process.platform === 'darwin') return
+  try {
+    win.setTitleBarOverlay(overlayOptions(titleBarColors(), titleBarCssHeight, win.webContents.getZoomFactor()))
+  } catch {
+    /* no overlay on this window (e.g. a platform without Window Controls Overlay) */
+  }
+}
+
+function windowChrome(): WindowChrome {
+  return { platform: process.platform, titleBar: windowTitleBar, preferredTitleBar: windowState.titleBar ?? 'custom' }
+}
+
+function setTitleBarStyle(style: TitleBarStyle): WindowChrome {
+  windowState = { ...windowState, titleBar: style }
+  writeWindowState(windowStateFile(), windowState)
+  return windowChrome()
+}
+
+function setTitleBarOverlay(style: TitleBarOverlayStyle): void {
+  titleBarCssHeight = style.height
+  const colors = { color: style.color, symbolColor: style.symbolColor }
+  const prev = windowState.titleBarOverlay
+  if (prev?.color !== colors.color || prev?.symbolColor !== colors.symbolColor) {
+    windowState = { ...windowState, titleBarOverlay: colors }
+    writeWindowState(windowStateFile(), windowState)
+  }
+  applyTitleBarOverlay(mainWindow)
+}
+
+/** The custom title bar's menu button: the application menu as a popup under it (Windows/Linux have no menu bar then). */
+function showAppMenu(x: number, y: number): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  Menu.getApplicationMenu()?.popup({ window: win, ...menuPoint(x, y, win.webContents.getZoomFactor()) })
+}
+
+/**
+ * Closes the main window and opens it again (a frame change needs a new window). Same process: the database, sync
+ * and settings stay; the renderer saves its open tabs on `pagehide` as on quit. Bounds/maximised carry over via `close`.
+ */
+function reopenMainWindow(): void {
+  const old = mainWindow
+  if (!old || old.isDestroyed()) {
+    openMainWindow()
+    return
+  }
+  reopeningWindow = true
+  old.once('closed', () => {
+    reopeningWindow = false
+    openMainWindow()
+  })
+  // Let the IPC reply reach the page before it goes away.
+  setTimeout(() => old.close(), 0)
+}
+
 /** Forwards an application-menu command to the renderer: only the main window, only while it shows our own UI. */
 function sendMenuCommand(command: MenuCommand): void {
   // macOS keeps the app running without a window: the menu brings one back (the command itself is dropped).
@@ -251,6 +333,7 @@ function zoomMainWindow(direction: ZoomDirection): void {
   if (!win || win.isDestroyed()) return
   const level = nextZoomLevel(win.webContents.getZoomLevel(), direction)
   win.webContents.setZoomLevel(level)
+  applyTitleBarOverlay(win)
   if (automatedWindow() || windowState.zoomLevel === level) return
   windowState = { ...windowState, zoomLevel: level }
   writeWindowState(windowStateFile(), windowState)
@@ -384,11 +467,16 @@ if (!app.requestSingleInstanceLock()) {
         },
         appVersion: app.getVersion(),
         // Electron's network stack honours the system proxy; cloud traffic never goes through request history.
-        fetchImpl: ((input: string | URL | Request, init?: RequestInit) =>
-          net.fetch(input instanceof URL ? input.toString() : (input as string | Request), init)) as typeof fetch,
+        fetchImpl: netFetch,
         defaultDeviceName: hostname(),
       },
     })
+    let feedUrl: string | null = null
+    try {
+      feedUrl = updateFeedUrl(process.env)
+    } catch (err) {
+      console.warn(err instanceof Error ? err.message : String(err))
+    }
     const api = createIpcApi(core, {
       appVersion: app.getVersion(),
       openExternal: (url) => shell.openExternal(url),
@@ -408,6 +496,10 @@ if (!app.requestSingleInstanceLock()) {
         return result.canceled ? null : (result.filePaths[0] ?? null)
       },
       setWindowBackground,
+      checkForUpdates: feedUrl
+        ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
+        : undefined,
+      window: { chrome: windowChrome, setTitleBarStyle, reopen: reopenMainWindow, setTitleBarOverlay, showAppMenu },
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
@@ -425,6 +517,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => {
+    if (reopeningWindow) return
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', () => {

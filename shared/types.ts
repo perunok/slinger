@@ -925,6 +925,47 @@ export class IpcError extends Error {
  * getVersionInfo (About dialog, "Copy version info"). Only version strings and the OS family/kernel release/CPU arch:
  * no host name, user name, paths or environment. `null` where a runtime is not present (e.g. `electron` under plain Node).
  */
+/** A published Slinger release (GitHub "latest release"; drafts and pre-releases are never offered). */
+export interface ReleaseInfo {
+  /** Semantic version without the leading "v", e.g. "0.10.0". */
+  version: string
+  /** The release page on github.com (built from the version, never taken from the response). */
+  url: string
+  /** Unix seconds, or null when the feed did not say. */
+  publishedAt: number | null
+}
+
+/** ADDED (update notice): answer of `checkForUpdates`. */
+export interface UpdateCheckResult {
+  currentVersion: string
+  /** Null when the project has no published release yet. */
+  latest: ReleaseInfo | null
+  /** `latest` is newer than `currentVersion`. */
+  updateAvailable: boolean
+  /** Unix seconds. */
+  checkedAt: number
+}
+
+/** `custom`: the top bar is the title bar (system buttons drawn over it); `system`: the OS title bar. */
+export type TitleBarStyle = 'custom' | 'system'
+
+/** ADDED (custom title bar): how the main window is framed. */
+export interface WindowChrome {
+  /** `process.platform` of the main process ('darwin', 'win32', 'linux', ...); 'browser' in the mock. */
+  platform: string
+  /** What the current window was created with. */
+  titleBar: TitleBarStyle
+  /** The saved preference; differs from `titleBar` until the window is reopened. */
+  preferredTitleBar: TitleBarStyle
+}
+
+/** Colours of the system window buttons drawn over a custom title bar, plus the bar's height in CSS pixels. */
+export interface TitleBarOverlayStyle {
+  color: string
+  symbolColor: string
+  height: number
+}
+
 export interface VersionInfo {
   app: string
   electron: string | null

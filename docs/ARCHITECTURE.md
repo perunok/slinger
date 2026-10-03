@@ -18,9 +18,9 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
                      (collection variables + globals), history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
-                     versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback,
+                     versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
-  lib/               errors, ids, text, csp, permissions, windowState, appMenu (application menu template)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
                      scrubbing) - imported by main AND renderer, no Node/DOM deps
@@ -63,7 +63,7 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 95 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 102 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
@@ -71,7 +71,9 @@ requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
-`revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only), `pickFile`, `grantedFiles`.
+`revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
+`checkForUpdates` (see [Update notice](#update-notice)), the window frame (`getWindowChrome`, `setTitleBarStyle`, `reopenWindow`,
+`setTitleBarOverlay`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -113,7 +115,7 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
   Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Right Panel, Toggle Status
   Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
-  **Help:** User Guide, Keyboard Shortcuts, Release Notes, Report an Issue, View License (GitHub links opened through
+  **Help:** User Guide, Keyboard Shortcuts, Release Notes, Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
   `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggles `toggleResponsePosition`,
@@ -525,6 +527,47 @@ existing environment import, merging into the same-named environment.
 replaced, leading/trailing dots and spaces trimmed, Windows device names suffixed with `_`, the name cut to 150 graphemes and the
 whole file name to 240 UTF-8 bytes. Main's `sanitizeFileName` still reduces any name to a safe basename (below).
 
+## Custom title bar
+
+By default the renderer's top bar is the window's title bar. `electron/lib/titleBar.ts` (pure) builds the window options:
+Windows/Linux get `titleBarStyle: 'hidden'` plus a Window Controls Overlay (`titleBarOverlay: { color, symbolColor, height }`),
+so the OS draws the minimise/maximise/close buttons over the bar's right end; macOS gets `titleBarStyle: 'hidden'` with the
+traffic lights centred in the 40 px bar (`trafficLightPosition`) and `titleBarOverlay: true` for the CSS variables. There is no
+menu bar then (macOS keeps its own at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`, Windows/Linux)
+calls `showAppMenu(x, y)` and main pops up the application menu there (`menuPoint` scales CSS pixels by the page zoom).
+
+- **Page side.** `.app-titlebar` (`src/styles/app.css`) is `-webkit-app-region: drag` with padding from the
+  `titlebar-area-x/width` environment variables (room for the system buttons); buttons, links, inputs and `[tabindex]` inside it
+  are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
+- **Colours.** `settings.apply()` and a `ResizeObserver` on the bar call `reportTitleBarOverlay()` (`src/lib/titleBarOverlay.ts`):
+  the bar's computed background and text colour (non-hex/rgb colours of custom themes converted through a canvas) and its CSS
+  height, sent only when changed. Main validates them (`cssColorSchema`), calls `setTitleBarOverlay` with the height times the
+  page zoom (again on every zoom change and page load), and remembers the colours as `titleBarOverlay` in `window-state.json`
+  for the next launch (default: the light/dark theme's `--surface` / `--text`).
+- **Preference.** `titleBar: 'custom' | 'system'` in `window-state.json` (absent = custom), set by `setTitleBarStyle` from
+  Settings > Window. A frame cannot change on a live window, so it applies to the next window: `reopenWindow` closes the main
+  window and opens a new one in the same process (`reopenMainWindow`; `window-all-closed` does not quit meanwhile). Bounds and
+  maximised carry over through the `close` handler; the renderer saves open tabs on `pagehide` as on quit; running collection
+  runs stop with the old page. `getWindowChrome` returns `{ platform, titleBar (this window), preferredTitleBar }`.
+
+## Update notice
+
+`checkForUpdates` (`electron/services/updateCheck.ts`) makes one GET to `https://api.github.com/repos/perunok/slinger/releases/latest`
+through `net.fetch` (system proxy), 15 s timeout, `User-Agent: Slinger/<version>`. GitHub's "latest" never returns drafts or
+pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`) and `published_at` are
+read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
+from the response. 404 means "no release yet"; other HTTP errors and failures are `network_error`, an unreadable answer
+`io_error`. Nothing is downloaded or installed.
+
+`SLINGER_UPDATE_FEED_URL` (http/https) replaces the GitHub URL (tests, e2e). Automated runs (`SLINGER_SMOKE_TEST`,
+`SLINGER_HIDE_WINDOW`) without it never call out: `checkForUpdates` answers `io_error` there.
+
+Renderer: `src/features/updates/updates.svelte.ts` schedules it (first check 8 s after startup, then an hourly tick that only
+checks when the last successful check is a day old, while the setting is on), via `src/lib/updates.ts` (pure:
+`localStorage['slinger.updates']` = `{ auto, lastCheckedAt, latest, notified }`, `isCheckDue`, `shouldNotify`). A newer
+version shows one persistent info toast per version ("Slinger X is available", **View release** -> `openExternalUrl`).
+Help > Check for Updates… always answers with a toast; Settings > Updates > Check now answers inline.
+
 ## Files, dialogs and the OS
 
 Export writes take a **file name** only (`ExportFiles`): reduced to a basename, control/reserved and bidi characters replaced,
@@ -669,7 +712,8 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 `better-sqlite3` is built for one ABI at a time; `scripts/ensure-native.mjs` records the current target and switches
 between Node (tests) and Electron (app). Env vars used by tooling: `SLINGER_USER_DATA_DIR`, `SLINGER_DEV_SERVER_URL`,
 `SLINGER_VITE_PORT`, `SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW` (off-screen rendering for automation), `SLINGER_DEVTOOLS=1`
-(Reload / Developer Tools menu items in a packaged build).
+(Reload / Developer Tools menu items in a packaged build), `SLINGER_UPDATE_FEED_URL` (stand-in for GitHub's latest-release
+endpoint).
 
 ## Adding an IPC method end to end
 
@@ -691,5 +735,5 @@ Example: `renameFoo(fooId, name)`.
 
 Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
 Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
-cloud sync of collection/folder scripts, collection/folder documentation, collection variables and globals, loading remote images
-in docs, realtime collaboration, plugin system, non-HTTP protocols, code signing and auto-update.
+loading remote images in docs, realtime collaboration, plugin system, non-HTTP protocols, code signing and automatic
+installation of updates (Slinger only notifies about a new release, see [Update notice](#update-notice)).

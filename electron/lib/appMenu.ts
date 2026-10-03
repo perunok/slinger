@@ -144,6 +144,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       command('Keyboard Shortcuts', 'shortcuts', shown('CmdOrCtrl+/')),
       separator,
       link('Release Notes', HELP_URLS.releaseNotes),
+      command('Check for Updates…', 'checkForUpdates'),
       link('Report an Issue', HELP_URLS.reportIssue),
       separator,
       link('View License', HELP_URLS.license),

@@ -4,6 +4,7 @@
  */
 import { parseMenuCommand, type MenuCommand } from '../../shared/menu'
 import { tabsStore } from '../features/requests/tabs.svelte'
+import { updates } from '../features/updates/updates.svelte'
 import { api } from '../lib/ipc'
 import { dialogOpen, ranFromKeyboard, runLayoutCommand } from './shortcuts'
 import { toast } from './toast.svelte'
@@ -21,6 +22,10 @@ export function runMenuCommand(value: unknown): boolean {
       return true
     case 'shortcuts':
       ui.shortcutsOpen = true
+      return true
+    // Answers with a notification only, so it is fine behind a dialog.
+    case 'checkForUpdates':
+      void updates.check('menu')
       return true
   }
   if (dialogOpen()) return false

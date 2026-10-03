@@ -53,7 +53,7 @@ describe('application menu template', () => {
     expect(edit).toEqual(['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'])
     const help = subOf(top(template, 'Help'))
     expect(help.filter((i) => i.label).map((i) => i.label)).toEqual([
-      'User Guide', 'Keyboard Shortcuts', 'Release Notes', 'Report an Issue', 'View License', 'About Slinger',
+      'User Guide', 'Keyboard Shortcuts', 'Release Notes', 'Check for Updates…', 'Report an Issue', 'View License', 'About Slinger',
     ])
   })
 
@@ -123,6 +123,7 @@ describe('application menu template', () => {
       ['Toggle Response Position', 'toggleResponsePosition'],
       ['Toggle Status Bar', 'toggleStatusBar'],
       ['Toggle Right Panel', 'toggleRightPanel'],
+      ['Check for Updates…', 'checkForUpdates'],
     ]
     for (const [label, command] of expected) {
       send.mockClear()

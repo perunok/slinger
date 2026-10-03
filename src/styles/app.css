@@ -218,3 +218,17 @@ input[type='range'] {
   color: var(--var-bad);
   background: var(--var-bad-bg);
 }
+
+/*
+ * Custom title bar (app/TopBar.svelte, electron/lib/titleBar.ts): the top bar drags the window, and leaves room for the
+ * system window buttons drawn over it (Windows/Linux: right end; macOS: traffic lights at the left), which the
+ * titlebar-area-* variables describe. Without them (system title bar, browser) the padding is the normal 0.75rem.
+ */
+.app-titlebar {
+  -webkit-app-region: drag;
+  padding-left: max(0.75rem, env(titlebar-area-x, 0px));
+  padding-right: max(0.75rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 0.5rem));
+}
+.app-titlebar :is(button, a, input, select, textarea, [role='button'], [role='combobox'], [role='menu'], [role='listbox'], [tabindex]) {
+  -webkit-app-region: no-drag;
+}

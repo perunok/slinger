@@ -51,6 +51,10 @@ import type {
   SyncEvent,
   SyncStatus,
   VersionInfo,
+  UpdateCheckResult,
+  WindowChrome,
+  TitleBarStyle,
+  TitleBarOverlayStyle,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
@@ -174,6 +178,21 @@ export interface SlingerIpcApi {
    * remembers it for the next launch (window-state.json), so the native window never flashes a different colour.
    */
   setWindowBackground(color: string): Promise<void>
+  /**
+   * ADDED (update notice): asks GitHub for the latest published Slinger release. Read-only; nothing is downloaded or
+   * installed. Rejects with `network_error` when offline, `io_error` for an unexpected answer.
+   */
+  checkForUpdates(): Promise<UpdateCheckResult>
+  /** ADDED (custom title bar): platform, the current window's title bar and the saved preference. */
+  getWindowChrome(): Promise<WindowChrome>
+  /** Saves the title bar preference (window-state.json); it applies when the window is reopened. */
+  setTitleBarStyle(style: TitleBarStyle): Promise<WindowChrome>
+  /** Closes the main window and opens it again with the saved title bar preference (same process, data and bounds). */
+  reopenWindow(): Promise<void>
+  /** Colours (and CSS height) of the system window buttons over the custom title bar; remembered for the next launch. */
+  setTitleBarOverlay(style: TitleBarOverlayStyle): Promise<void>
+  /** Pops up the application menu at a point in the page (CSS pixels); the custom title bar's menu button. */
+  showAppMenu(x: number, y: number): Promise<void>
 
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
@@ -311,6 +330,12 @@ export const IPC_CHANNELS = [
   'getAppVersion',
   'getVersionInfo',
   'setWindowBackground',
+  'checkForUpdates',
+  'getWindowChrome',
+  'setTitleBarStyle',
+  'reopenWindow',
+  'setTitleBarOverlay',
+  'showAppMenu',
   'pickFile',
   'getCloudConfig',
   'setCloudConfig',

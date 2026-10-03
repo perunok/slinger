@@ -5,9 +5,30 @@
   import IconButton from '../components/ui/IconButton.svelte'
   import SyncChip from '../features/sync/SyncChip.svelte'
   import RightPanelButton from '../features/layout/RightPanelButton.svelte'
+  import { reportTitleBarOverlay } from '../lib/titleBarOverlay'
+  import { windowChrome } from './windowChrome.svelte'
+
+  let header = $state<HTMLElement | null>(null)
+
+  // The system window buttons over a custom title bar follow its height (and settings.apply() reports colours).
+  $effect(() => {
+    if (!header || !windowChrome.custom || typeof ResizeObserver !== 'function') return
+    const observer = new ResizeObserver(() => reportTitleBarOverlay())
+    observer.observe(header)
+    return () => observer.disconnect()
+  })
 </script>
 
-<header class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
+<!-- With the custom title bar (default) this bar is the window's title bar: drag it to move the window. -->
+<header
+  bind:this={header}
+  data-titlebar
+  data-custom-titlebar={windowChrome.custom || undefined}
+  class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface {windowChrome.custom ? 'app-titlebar' : 'px-3'}"
+>
+  {#if windowChrome.menuButton}
+    <IconButton icon="menu" label="Application menu" class="-mr-1" onclick={(e) => windowChrome.showMenu(e.currentTarget)} />
+  {/if}
   <WorkspaceSwitcher />
   <SyncChip />
   {#if window.__slingerMock}

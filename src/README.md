@@ -20,6 +20,7 @@ in-memory mock backend from `src/dev/`.
 main.ts                     boot: install mock if no window.slinger, mount <App/>
 app/                        shell + cross-feature state
   App.svelte TopBar Sidebar EmptyState shortcuts.ts
+  windowChrome.svelte.ts    custom title bar (default) vs system: TopBar is the drag region + menu button; Settings > Window
                             (App: top bar / [sidebar | main tabs | right panel] / status bar; see features/layout)
   bootSkeleton.ts           removes index.html's static launch skeleton once the first workspace loaded (or on error)
   state.svelte.ts           workspaces, collections/folders/requests, collection variables, environments, active env, globals
@@ -49,6 +50,8 @@ features/
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog)
   overview/ (collection/folder overview tab: counts + documentation; a collection's Variables section)
   oauth2/ (OAuth 2.0 settings + token actions in the Authorization tab; oauth2Actions resolves the settings like a send)
+  updates/ (new-release notice: daily check, one toast per version, Help > Check for Updates…, Settings > Updates;
+          pure logic in lib/updates.ts)
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
 lib/                        pure logic, no DOM: template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
@@ -180,7 +183,7 @@ backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff`
 * Read-only workspaces: edit affordances read `sync.blocked` (`features/sync/syncStore.svelte.ts`); the main process still rejects writes with `read_only`.
 * Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
-* Other `localStorage` keys: `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
+* Other `localStorage` keys: `slinger.updates` (JSON `{ auto, lastCheckedAt, latest, notified }`, see lib/updates.ts), `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
   `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below), `slinger.responsePosition` (`below` | `beside`),
   `slinger.statusBar` (`false` hides the status bar), `slinger.rightPanel` (JSON `{ open, panel, width }`, closed by default), and the
   `SplitPane` ratios `slinger.split.sidebar`, `slinger.split.request` / `slinger.split.request.beside`, `slinger.split.example` /
