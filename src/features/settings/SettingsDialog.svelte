@@ -13,9 +13,16 @@
   import AccentPicker from './AccentPicker.svelte'
   import LoaderPicker from './LoaderPicker.svelte'
   import ThemeGallery from './ThemeGallery.svelte'
+  import TitleBarLayoutEditor from './TitleBarLayoutEditor.svelte'
 
   let version = $state<string | null>(null)
+  let windowSection: HTMLElement | undefined = $state()
   onMount(() => {
+    // Opened from the title bar's "Customize title bar…": go straight to it.
+    if (ui.settingsFocus === 'titlebar') {
+      ui.settingsFocus = null
+      requestAnimationFrame(() => windowSection?.scrollIntoView({ block: 'start' }))
+    }
     api().getAppVersion().then((v) => (version = v), () => (version = null))
     // "checked 5 min ago" stays current while the dialog is open.
     const timer = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000)
@@ -61,14 +68,18 @@
     </div>
     <p class="text-xs text-faint">Applies to request and example tabs; each layout remembers its own divider position. Also the button on the divider, or Ctrl+Alt+V.</p>
     <label class="mt-1 flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={settings.showSidebar} onchange={(e) => settings.setShowSidebar(e.currentTarget.checked)} />
+      Show sidebar <span class="text-xs text-faint">(Ctrl+B)</span>
+    </label>
+    <label class="flex items-center gap-2 text-sm">
       <input type="checkbox" checked={settings.showStatusBar} onchange={(e) => settings.setShowStatusBar(e.currentTarget.checked)} />
       Show status bar
     </label>
   </section>
 
-  {#if windowChrome.loaded}
-    <section class="mb-5 grid gap-1.5" aria-labelledby="window-heading">
-      <h3 class="text-sm font-semibold" id="window-heading">Window</h3>
+  <section class="mb-5 grid gap-1.5" aria-labelledby="window-heading" bind:this={windowSection}>
+    <h3 class="text-sm font-semibold" id="window-heading">Window</h3>
+    {#if windowChrome.loaded}
       <div class="flex items-center gap-1.5 text-sm">
         <label class="flex items-center gap-2">
           <input type="checkbox" checked={windowChrome.preferred === 'system'} onchange={(e) => void windowChrome.setPreferred(e.currentTarget.checked ? 'system' : 'custom')} />
@@ -88,8 +99,9 @@
           <Button size="sm" onclick={() => void windowChrome.reopen()}>Reopen window</Button>
         </div>
       {/if}
-    </section>
-  {/if}
+    {/if}
+    <TitleBarLayoutEditor />
+  </section>
 
   <section class="mb-5 grid gap-1.5" aria-labelledby="updates-heading">
     <h3 class="text-sm font-semibold" id="updates-heading">Updates</h3>

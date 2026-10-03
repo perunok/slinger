@@ -115,19 +115,19 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   mnemonics).
 - **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
-  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Right Panel, Toggle Status
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Sidebar, Toggle Response Position, Toggle Right Panel, Toggle Status
   Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
   **Help:** User Guide, Keyboard Shortcuts, Release Notes, Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
-  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggles `toggleResponsePosition`,
-  `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, `checkForUpdates`, and the View layout toggles `toggleSidebar`,
+  `toggleResponsePosition`, `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
   window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
   (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
   button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
   collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
 - **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,`, `/` and the
-  layout toggles Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
+  layout toggles Ctrl/Cmd+B (sidebar), Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
   AltGr produced a character): the
   menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
   macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
@@ -570,6 +570,13 @@ traffic lights centred in the 40 px bar (`trafficLightPosition`) and `titleBarOv
 menu bar then (macOS keeps its own at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`, Windows/Linux)
 calls `showAppMenu(x, y)` and main pops up the application menu there (`menuPoint` scales CSS pixels by the page zoom).
 
+- **Layout.** Which items the bar shows, on which side and in which order is `settings.titleBarLayout`
+  (`src/lib/titleBarLayout.ts`, pure: `{ left, right, hidden }` of `TITLE_BAR_ITEMS`, persisted as `slinger.titleBarLayout`;
+  unknown or repeated names are dropped, items a stored layout does not mention go where the default puts them, Settings is
+  never hidden). `TopBar.svelte` renders the two sides from it; Settings > Window > Title bar items
+  (`features/settings/TitleBarLayoutEditor.svelte`: drag and drop, arrow keys, Reset) edits it, and right-clicking an empty part
+  of the bar opens Settings there (`ui.settingsFocus`). The same layout applies with the system title bar (the top bar is then
+  an ordinary bar).
 - **Page side.** `.app-titlebar` (`src/styles/app.css`) is `-webkit-app-region: drag` with padding from the
   `titlebar-area-x/width` environment variables (room for the system buttons); buttons, links, inputs and `[tabindex]` inside it
   are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
@@ -654,7 +661,8 @@ environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
 
-**Layout** (`src/features/layout`). The request/response split orientation and "Show status bar" are settings; the right
+**Layout** (`src/features/layout`). The request/response split orientation, "Show sidebar" (Ctrl+B; hidden, `App.svelte`
+renders the main area without the sidebar's `SplitPane`, whose stored ratio is kept) and "Show status bar" are settings; the right
 panel's state is its own small store (`rightPanelStore.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
 and shows the right panel only when the main area keeps `minMainWidth` (`fitPanelWidth`), so neither the panel nor the status
 bar can squeeze the request editor below a usable size at the 900x600 minimum window. Right-panel views are registered in

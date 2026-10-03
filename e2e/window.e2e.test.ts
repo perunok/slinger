@@ -116,6 +116,29 @@ describe('window', () => {
     expect(await page.getByText('Slinger 99.0.0 is available').count()).toBe(0)
   })
 
+  it('Ctrl+B and View > Toggle Sidebar hide and show the sidebar', async () => {
+    const { app, page } = ctx
+    const sidebar = page.locator('nav[aria-label="Sidebar"]')
+    await expect(sidebar.count()).resolves.toBe(1)
+    await page.keyboard.press('ControlOrMeta+b')
+    await expect.poll(() => sidebar.count()).toBe(0)
+    await expect(page.getByTestId('sidebar-toggle').getAttribute('aria-pressed')).resolves.toBe('false')
+    // A menu command right after the same keyboard shortcut is dropped as its macOS duplicate (shortcuts.ts): wait that out.
+    await page.waitForTimeout(400)
+    await app.evaluate(({ Menu }) => {
+      type Item = { label: string; submenu?: { items: Item[] } | null; click: () => void }
+      const find = (items: Item[]): Item | undefined => {
+        for (const i of items) {
+          if (i.label === 'Toggle Sidebar') return i
+          const sub = i.submenu && find(i.submenu.items)
+          if (sub) return sub
+        }
+      }
+      find(Menu.getApplicationMenu()!.items as unknown as Item[])!.click()
+    })
+    await expect.poll(() => sidebar.count()).toBe(1)
+  })
+
   it('logged no page errors', () => {
     expect(ctx.problems).toEqual([])
   })

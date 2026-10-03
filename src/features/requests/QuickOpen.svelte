@@ -15,7 +15,7 @@
   import { methodColor } from './method'
   import { sync } from '../sync/syncStore.svelte'
   import { tabsStore } from './tabs.svelte'
-  import { RESPONSE_POSITION_SHORTCUT, RIGHT_PANEL_SHORTCUT, showRightPanel, toggleRightPanel, toggleStatusBar } from '../layout/layoutActions'
+  import { RESPONSE_POSITION_SHORTCUT, RIGHT_PANEL_SHORTCUT, SIDEBAR_SHORTCUT, showRightPanel, toggleRightPanel, toggleSidebar, toggleStatusBar } from '../layout/layoutActions'
   import { SIDE_PANELS } from '../layout/panels'
   import { rightPanel } from '../layout/rightPanelStore.svelte'
 
@@ -26,7 +26,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload' | 'help' | 'layout-rows' | 'layout-columns' | 'panel-right'
+    icon?: 'download' | 'upload' | 'help' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left'
     current: () => boolean
     run: () => void
   }
@@ -83,6 +83,15 @@
       icon: 'layout-columns',
       current: () => settings.responsePosition === 'beside',
       run: () => settings.setResponsePosition('beside'),
+    },
+    {
+      key: 'layout:sidebar',
+      label: 'Layout: Toggle sidebar',
+      hint: SIDEBAR_SHORTCUT,
+      swatch: {},
+      icon: 'panel-left',
+      current: () => settings.showSidebar,
+      run: () => toggleSidebar(),
     },
     {
       key: 'layout:right-panel',

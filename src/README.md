@@ -27,7 +27,8 @@ app/                        shell + cross-feature state
   ui.svelte.ts              which dialogs are open (one place, any feature can open any other)
   scope.svelte.ts           the {{variable}} scope: globals < collection variables < environment (scope = active tab's collection, scopeFor(id))
   settings.svelte.ts        theme + accent + custom themes (lib/customThemes.ts) + sending animation (lib/appearance.ts) / font size / editor wrap /
-                            script time limit + continue-on-error / response position / status bar (localStorage)
+                            script time limit + continue-on-error / response position / sidebar (Ctrl+B) / status bar / title bar
+                            layout (lib/titleBarLayout.ts) (localStorage)
   toast.svelte.ts           toast store
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
@@ -187,7 +188,8 @@ backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff`
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
 * Other `localStorage` keys: `slinger.updates` (JSON `{ auto, lastCheckedAt, latest, notified }`, see lib/updates.ts), `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
   `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below), `slinger.responsePosition` (`below` | `beside`),
-  `slinger.statusBar` (`false` hides the status bar), `slinger.rightPanel` (JSON `{ open, panel, width }`, closed by default), and the
+  `slinger.statusBar` (`false` hides the status bar), `slinger.sidebar` (`false` hides the sidebar), `slinger.titleBarLayout`
+  (JSON `{ v, left, right, hidden }`), `slinger.rightPanel` (JSON `{ open, panel, width }`, closed by default), and the
   `SplitPane` ratios `slinger.split.sidebar`, `slinger.split.request` / `slinger.split.request.beside`, `slinger.split.example` /
   `slinger.split.example.beside` (one per orientation, `features/layout/layoutActions.ts splitKey`).
 * Open request tabs (saved requests, examples, collection/folder overviews, unsaved "scratch" tabs, their order, the active one,

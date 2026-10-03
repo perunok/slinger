@@ -1,5 +1,7 @@
 /** Which dialogs/panels are open. Kept out of feature stores so any feature can open any other. */
 class UiState {
+  /** Settings scrolls to this section when it opens (then clears it). */
+  settingsFocus = $state<'titlebar' | null>(null)
   sidebar = $state<'collections' | 'history' | 'workflows'>('collections')
   settingsOpen = $state(false)
   cloudOpen = $state(false)

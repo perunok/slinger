@@ -111,22 +111,8 @@
 
 <svelte:window onkeydown={handleShortcut} onbeforeunload={() => flushSave()} onpagehide={() => flushSave()} />
 
-<div class="flex h-full flex-col">
-  <TopBar />
-  <SyncBanner />
-  {#if !app.ready}
-    <div class="flex flex-1 items-center justify-center gap-2 text-muted"><Spinner /> Loading…</div>
-  {:else if app.fatalError}
-    <div class="m-auto max-w-md rounded border border-danger bg-danger-soft p-4 text-sm" role="alert">
-      <p class="font-semibold text-danger">Slinger could not start</p>
-      <p class="mt-1">{app.fatalError}</p>
-      <Button class="mt-3" onclick={() => void app.init()}>Retry</Button>
-    </div>
-  {:else}
-    <SplitPane direction="row" storageKey="slinger.split.sidebar" initial={0.24} min={0.14} class="min-h-0">
-      {#snippet first()}<Sidebar />{/snippet}
-      {#snippet second()}
-        <div class="flex h-full min-h-0 min-w-0" bind:clientWidth={areaWidth}>
+{#snippet mainArea()}
+        <div class="flex h-full w-full min-h-0 min-w-0 flex-1" bind:clientWidth={areaWidth}>
         <main class="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
           {#if tabsStore.tabs.length === 0}
             <EmptyState />
@@ -149,8 +135,29 @@
         </main>
         {#if rightPanel.open && fittedPanelWidth !== null}<RightPanel width={fittedPanelWidth} />{/if}
         </div>
-      {/snippet}
-    </SplitPane>
+{/snippet}
+
+<div class="flex h-full flex-col">
+  <TopBar />
+  <SyncBanner />
+  {#if !app.ready}
+    <div class="flex flex-1 items-center justify-center gap-2 text-muted"><Spinner /> Loading…</div>
+  {:else if app.fatalError}
+    <div class="m-auto max-w-md rounded border border-danger bg-danger-soft p-4 text-sm" role="alert">
+      <p class="font-semibold text-danger">Slinger could not start</p>
+      <p class="mt-1">{app.fatalError}</p>
+      <Button class="mt-3" onclick={() => void app.init()}>Retry</Button>
+    </div>
+  {:else}
+    <!-- The sidebar can be hidden (Ctrl+B); its SplitPane width is kept for when it comes back. -->
+    {#if settings.showSidebar}
+      <SplitPane direction="row" storageKey="slinger.split.sidebar" initial={0.24} min={0.14} class="min-h-0">
+        {#snippet first()}<Sidebar />{/snippet}
+        {#snippet second()}{@render mainArea()}{/snippet}
+      </SplitPane>
+    {:else}
+      <div class="flex min-h-0 flex-1">{@render mainArea()}</div>
+    {/if}
     {#if settings.showStatusBar}
       <StatusBar />
     {/if}

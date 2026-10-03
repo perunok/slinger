@@ -11,10 +11,16 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
   (three lines) at its left opens the File, Edit, View and Help menus. Settings > Window > **Use the system title bar** brings
   back your system's title bar and menu bar instead (click **Reopen window** to apply it).
 - **Menus:** File, Edit, View, Help (plus the Slinger and Window menus on macOS); see [Menus](#menus).
-- **Top bar:** workspace switcher, the sync chip (cloud sync state; click it for Sync now, conflicts and **Cloud…**), "Go to
-  request" (Ctrl+K), environment switcher (with a gear to manage environments), Right panel, Keyboard shortcuts, Settings, About
-  Slinger (the question-mark icon). Each of these has one place on screen; the menus and the command palette reach them too.
-- **Sidebar:** three tabs, **Collections**, **History** and **Workflows** (see [Workflows](#workflows)).
+- **Top bar:** by default, at the left the menu button, the Sidebar toggle, the workspace switcher and the sync chip (cloud
+  sync state; click it for Sync now, conflicts and **Cloud…**); at the right "Go to request" (Ctrl+K), the environment switcher
+  (with a gear to manage environments), Right panel, Keyboard shortcuts, Settings and About Slinger (the question-mark icon).
+  Each of these has one place on screen; the menus and the command palette reach them too. **Arrange it** in Settings > Window >
+  **Title bar items** (or right-click an empty part of the bar > **Customize title bar…**): drag an item to the Left or Right
+  list or to Hidden, or focus it and use the arrow keys (up/down: order; left/right: Left, Right, Hidden); **Reset** restores the
+  default. Settings itself can be moved but not hidden.
+- **Sidebar:** three tabs, **Collections**, **History** and **Workflows** (see [Workflows](#workflows)). Hide it for more room
+  and bring it back with **Ctrl+B**, the Sidebar button in the title bar, View > Toggle Sidebar or Settings > Layout > **Show
+  sidebar**; it comes back at the width it had.
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
 - **Right panel** (closed by default): see [Right panel](#right-panel).
@@ -766,11 +772,13 @@ Settings (Ctrl+, or the sun icon):
   they suit every theme. The chosen character runs in its card as a preview. With *reduce motion* turned on in the operating
   system the character stands still (slowly pulsing) instead of running, and nothing moves while the window is hidden.
 - **Layout:** the response **Below the request** (default) or **Beside the request** (see
-  [Response below or beside the request](#response-below-or-beside-the-request)), and **Show status bar** (default on).
+  [Response below or beside the request](#response-below-or-beside-the-request)), **Show sidebar** (default on, Ctrl+B) and
+  **Show status bar** (default on).
 - **Font size** (11-20 px), **Wrap long lines in editors**, and for scripts the **Time limit per script** (default 5000 ms,
   100-60000) and **Send the request even when a pre-request script fails** (off by default). The dialog also shows the app version.
 - **Window:** **Use the system title bar** (off by default; see [Layout](#layout)). The change applies when the window reopens:
-  **Reopen window** does that right away (your open tabs come back; a collection run in progress stops).
+  **Reopen window** does that right away (your open tabs come back; a collection run in progress stops). **Title bar items**:
+  which buttons the top bar shows, left and right, in which order (see [Layout](#layout)); changes apply at once.
 - **Updates:** **Check for new releases automatically** (default on) and **Check now**; see [Updates](#updates).
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
   changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
@@ -886,7 +894,7 @@ the left of the title bar (or in the menu bar, with the system title bar).
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
 | **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
-| **View** | Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
+| **View** | Toggle Sidebar (Ctrl+B), Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |
 | **Help** | User Guide, Keyboard Shortcuts (Ctrl+/), Release Notes, Check for Updates…, Report an Issue, View License; on Windows/Linux also About Slinger |
 
@@ -912,6 +920,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+Alt+V | Show the response below / beside the request |
+| Ctrl+B | Show / hide the sidebar |
 | Ctrl+Alt+B | Show / hide the right panel |
 | Ctrl+, | Settings |
 | Ctrl+/ | Show or hide the shortcut list |

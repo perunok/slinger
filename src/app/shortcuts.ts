@@ -1,5 +1,5 @@
 import type { MenuCommand } from '../../shared/menu'
-import { toggleResponsePosition, toggleRightPanel, toggleStatusBar } from '../features/layout/layoutActions'
+import { toggleResponsePosition, toggleRightPanel, toggleSidebar, toggleStatusBar } from '../features/layout/layoutActions'
 import { tabsStore } from '../features/requests/tabs.svelte'
 import { sync } from '../features/sync/syncStore.svelte'
 import { toast } from './toast.svelte'
@@ -12,7 +12,7 @@ export function dialogOpen(): boolean {
 
 // Keys that also appear in the application menu. The menu only shows them (registerAccelerator: false), but macOS
 // always registers menu key equivalents, so remember what the keyboard just ran and let the menu skip a duplicate.
-const MENU_KEYS: Partial<Record<string, MenuCommand>> = { t: 'newRequest', w: 'closeTab', ',': 'settings', '/': 'shortcuts' }
+const MENU_KEYS: Partial<Record<string, MenuCommand>> = { t: 'newRequest', w: 'closeTab', ',': 'settings', '/': 'shortcuts', b: 'toggleSidebar' }
 // Ctrl/Cmd+Alt+<letter> layout toggles (also View menu items, label-only there): V response position, B right panel.
 const ALT_MENU_KEYS: Partial<Record<string, MenuCommand>> = { v: 'toggleResponsePosition', b: 'toggleRightPanel' }
 const DUPLICATE_WINDOW_MS = 300
@@ -79,6 +79,8 @@ export function handleShortcut(e: KeyboardEvent): boolean {
       return tab ? act(() => tabsStore.requestClose([tab.id])) : false
     case 'k':
       return act(() => (ui.quickOpen = true))
+    case 'b':
+      return e.shiftKey ? false : act(() => toggleSidebar())
     case 'tab':
       return act(() => tabsStore.cycle(e.shiftKey ? -1 : 1))
   }
@@ -107,6 +109,9 @@ export function runLayoutCommand(command: MenuCommand): boolean {
       return true
     case 'toggleRightPanel':
       toggleRightPanel()
+      return true
+    case 'toggleSidebar':
+      toggleSidebar()
       return true
   }
   return false
