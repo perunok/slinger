@@ -54,7 +54,7 @@
   }
 
   /** The last response of the active request tab (not overviews or examples, whose response is a saved one). */
-  const tab = $derived(tabsStore.active && !tabsStore.active.overview && !tabsStore.active.example ? tabsStore.active : null)
+  const tab = $derived(tabsStore.active && !tabsStore.active.overview && !tabsStore.active.example && !tabsStore.active.workflowId ? tabsStore.active : null)
   const response = $derived(tab && !tab.sending ? (tab.response?.data ?? null) : null)
   const failed = $derived(tab && !tab.sending && !tab.response && tab.error ? tab.error.message : null)
   const responseTone = $derived(

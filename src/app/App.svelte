@@ -12,6 +12,7 @@
   import EnvironmentExportDialog from '../features/environments/EnvironmentExportDialog.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
+  import WorkflowView from '../features/workflows/WorkflowView.svelte'
   import { openCollectionVariables } from '../features/overview/openVariables'
   import { saveVariableValue } from '../features/environments/editVariable'
   import { sync } from '../features/sync/syncStore.svelte'
@@ -81,6 +82,12 @@
     rightPanel.room = fittedPanelWidth !== null
   })
 
+  // Workflow tabs whose workflow is gone (deleted, or never there after a restore) close once the list is known.
+  $effect(() => {
+    void app.workflows
+    if (app.workflowsLoaded) tabsStore.syncWorkflowTabs()
+  })
+
   // The launch skeleton (index.html) covers the UI until the first workspace has loaded, or startup failed.
   $effect(() => {
     if (app.ready) dismissBootSkeleton(app.fatalError ? 'error' : 'ready')
@@ -127,7 +134,9 @@
             <RequestTabs />
             {#if tabsStore.active}
               {#key tabsStore.active.id}
-                {#if tabsStore.active.overview}
+                {#if tabsStore.active.workflowId}
+                  <WorkflowView tab={tabsStore.active} />
+                {:else if tabsStore.active.overview}
                   <OverviewView tab={tabsStore.active} />
                 {:else if tabsStore.active.example}
                   <ExampleView tab={tabsStore.active} />

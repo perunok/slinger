@@ -232,3 +232,47 @@ input[type='range'] {
 .app-titlebar :is(button, a, input, select, textarea, [role='button'], [role='combobox'], [role='menu'], [role='listbox'], [tabindex]) {
   -webkit-app-region: no-drag;
 }
+
+/* Workflow canvas (features/workflows): Svelte Flow's palette mapped onto the theme tokens. */
+.wf-canvas .svelte-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--border-strong);
+  --xy-edge-stroke: var(--text-faint);
+  --xy-edge-stroke-selected: var(--accent);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--accent);
+  --xy-handle-background-color: var(--surface);
+  --xy-handle-border-color: var(--text-muted);
+  --xy-node-background-color: transparent;
+  --xy-node-border: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-node-boxshadow-hover: none;
+  --xy-controls-button-background-color: var(--surface-raised);
+  --xy-controls-button-background-color-hover: var(--surface-hover);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--shadow-pop);
+  --xy-selection-background-color: var(--accent-soft);
+  --xy-selection-border: 1px dotted var(--accent);
+  font-family: inherit;
+}
+.wf-canvas .svelte-flow .svelte-flow__node {
+  padding: 0;
+  border-radius: 0.375rem;
+}
+.wf-canvas .svelte-flow .svelte-flow__handle.wf-handle {
+  width: 9px;
+  height: 9px;
+  border-width: 1.5px;
+}
+.wf-canvas .svelte-flow .svelte-flow__handle.wf-handle-error {
+  border-color: var(--danger);
+}
+.wf-canvas .svelte-flow .svelte-flow__edge.wf-edge-error .svelte-flow__edge-path {
+  stroke: var(--danger);
+  stroke-dasharray: 4 3;
+}
+.wf-canvas .svelte-flow .svelte-flow__controls-button svg {
+  fill: currentColor;
+}

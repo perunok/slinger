@@ -4,7 +4,7 @@
   import Dialog from '../../components/ui/Dialog.svelte'
 
   const rows = [
-    ['Ctrl+Enter', 'Send the current request'],
+    ['Ctrl+Enter', 'Send the current request (run, in a workflow)'],
     ['Ctrl+S', 'Save the current request'],
     ['Ctrl+T', 'New request tab'],
     ['Ctrl+W', 'Close the current tab'],

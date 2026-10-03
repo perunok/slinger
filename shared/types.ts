@@ -91,6 +91,36 @@ export interface Environment {
   version: number
 }
 
+/** ADDED (workflows): a visual workflow, without its graph (sidebar list). Local-only, per workspace. */
+export interface WorkflowSummary {
+  id: string
+  workspaceId: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
+export interface Workflow extends WorkflowSummary {
+  /** The renderer's graph document (src/lib/workflow/graph.ts); a JSON object, opaque to the main process. */
+  graphJson: string
+}
+
+export interface CreateWorkflowInput {
+  workspaceId: string
+  name: string
+  /** Defaults to an empty graph. */
+  graphJson?: string
+}
+
+/** Optimistic concurrency like updateRequest: fails with version_conflict unless expectedVersion is current. */
+export interface UpdateWorkflowInput {
+  workflowId: string
+  expectedVersion: number
+  name?: string
+  graphJson?: string
+}
+
 export interface EnvironmentVariable {
   id: string
   environmentId: string

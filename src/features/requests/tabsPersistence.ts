@@ -13,7 +13,7 @@
  * restoring side can toast once about what unsaved text could not be kept. At most `MAX_PERSISTED_TABS`
  * tabs are written, always including whichever was active.
  */
-import type { ApiFolder, ApiRequest, Collection } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, WorkflowSummary } from '../../../shared/types'
 import { draftFingerprint, newDraft, type RequestDraft } from '../../lib/request'
 import { exampleFingerprint, locateExample, parseExample, readExamples, type ExampleLocator, type ExampleResponseDraft, type ParsedExample } from '../../lib/examples'
 import type { ExampleSection, OverviewTarget, RequestSection } from './tabs.svelte'
@@ -81,7 +81,13 @@ interface PersistedScratchTab {
   title?: string
 }
 
-type PersistedTab = PersistedRequestTab | PersistedExampleTab | PersistedOverviewTab | PersistedScratchTab
+/** ADDED (workflows): a workflow tab (the workflow itself is saved as it is edited). */
+interface PersistedWorkflowTab {
+  kind: 'workflow'
+  workflowId: string
+}
+
+type PersistedTab = PersistedRequestTab | PersistedExampleTab | PersistedOverviewTab | PersistedScratchTab | PersistedWorkflowTab
 
 export interface PersistedTabsState {
   v: number
@@ -199,6 +205,7 @@ export interface TabLike {
   exampleSection: ExampleSection
   overview: OverviewTarget | null
   overviewDraft: string | null
+  workflowId?: string | null
   dirty: boolean
   title: string
 }
@@ -220,6 +227,7 @@ export function serializeTabs(tabs: readonly TabLike[], activeId: string | null)
 }
 
 function serializeOne(t: TabLike): PersistedTab {
+  if (t.workflowId) return { kind: 'workflow', workflowId: t.workflowId }
   if (t.overview) return { kind: 'overview', target: t.overview, overviewDraft: t.overviewDraft }
 
   if (t.example) {
@@ -272,6 +280,7 @@ function serializeOne(t: TabLike): PersistedTab {
 export type RestoredTabInit =
   | { kind: 'scratch'; draft: RequestDraft; collectionId: string | null; folderId: string | null; section: RequestSection }
   | { kind: 'overview'; target: OverviewTarget; overviewDraft: string | null }
+  | { kind: 'workflow'; workflowId: string }
   | { kind: 'request'; requestId: string; section: RequestSection; dirty: null | { draft: RequestDraft; savedFingerprint: string; baseVersion: number; serverKey: string } }
   | {
       kind: 'example'
@@ -293,6 +302,8 @@ export interface RestoreDataSource {
   requests: Pick<ApiRequest, 'id' | 'collectionId' | 'folderId' | 'version' | 'method' | 'url' | 'documentJson'>[]
   collections: Pick<Collection, 'id'>[]
   folders: Pick<ApiFolder, 'id' | 'collectionId'>[]
+  /** The workspace's workflows; null/absent while not loaded yet (workflow tabs are kept, checked later). */
+  workflows?: Pick<WorkflowSummary, 'id'>[] | null
 }
 
 export interface RestoreResult {
@@ -311,7 +322,7 @@ export function restoreTabs(state: PersistedTabsState | null, data: RestoreDataS
   const originalIndexOf: number[] = []
 
   state.tabs.forEach((p, originalIndex) => {
-    if (p.kind !== 'overview' && p.draftTooLarge && p.title) lostDraftTitles.push(p.title)
+    if ((p.kind === 'request' || p.kind === 'example' || p.kind === 'scratch') && p.draftTooLarge && p.title) lostDraftTitles.push(p.title)
     const init = restoreOne(p, data)
     if (init) {
       inits.push(init)
@@ -327,6 +338,11 @@ function restoreOne(p: PersistedTab, data: RestoreDataSource): RestoredTabInit |
   switch (p.kind) {
     case 'scratch':
       return { kind: 'scratch', draft: p.draft, collectionId: p.collectionId, folderId: p.folderId, section: p.section }
+
+    case 'workflow':
+      return typeof p.workflowId === 'string' && (!data.workflows || data.workflows.some((w) => w.id === p.workflowId))
+        ? { kind: 'workflow', workflowId: p.workflowId }
+        : null
 
     case 'overview': {
       const exists = p.target.kind === 'collection' ? data.collections.some((c) => c.id === p.target.id) : data.folders.some((f) => f.id === p.target.id)

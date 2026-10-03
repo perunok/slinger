@@ -4,6 +4,7 @@ import { tabsStore } from '../features/requests/tabs.svelte'
 import { sync } from '../features/sync/syncStore.svelte'
 import { toast } from './toast.svelte'
 import { ui } from './ui.svelte'
+import { workflowCommands } from '../features/workflows/commands'
 
 export function dialogOpen(): boolean {
   return !!document.querySelector('[role="dialog"][aria-modal="true"]')
@@ -59,8 +60,17 @@ export function handleShortcut(e: KeyboardEvent): boolean {
 
   switch (key) {
     case 'enter':
+      if (tab?.workflowId) {
+        const id = tab.workflowId
+        return act(() => workflowCommands.run?.(id))
+      }
       return tab ? act(() => void tabsStore.send(tab)) : false
     case 's':
+      // Workflows save as they are edited (local-only, so also in read-only workspaces); Ctrl+S just saves now.
+      if (tab?.workflowId) {
+        const id = tab.workflowId
+        return act(() => workflowCommands.saveNow?.(id))
+      }
       if (sync.blocked) return act(() => toast.info('Read-only workspace', `${sync.blockedMessage} Saving is disabled.`))
       return tab ? act(() => (tab.requestId || tab.overview ? void tabsStore.save(tab) : (ui.saveAsTabId = tab.id))) : act(() => {})
     case 't':

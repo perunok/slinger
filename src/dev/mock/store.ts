@@ -6,6 +6,7 @@ import type {
   CollectionSnapshot,
   Environment,
   HistoryEntry,
+  Workflow,
   Workspace,
 } from '../../../shared/types'
 import { fail, nowSec, uuid } from './util'
@@ -69,6 +70,8 @@ export interface MockState {
   globalVariables: ScopedVarRow[]
   /** OAuth 2.0 tokens by token key (the keychain stand-in). */
   oauth2Tokens: Record<string, MockOAuth2Token>
+  /** ADDED (workflows): live rows only (a delete removes the row). */
+  workflows: Workflow[]
 }
 
 export function emptyState(): MockState {
@@ -84,6 +87,7 @@ export function emptyState(): MockState {
     collectionVariables: [],
     globalVariables: [],
     oauth2Tokens: {},
+    workflows: [],
   }
 }
 
@@ -218,5 +222,6 @@ export function removeWorkspace(s: MockState, workspaceId: string): void {
   for (const e of s.environments.filter((e) => e.workspaceId === workspaceId)) removeEnvironment(s, e.id)
   s.history = s.history.filter((h) => h.workspaceId !== workspaceId)
   s.globalVariables = s.globalVariables.filter((v) => v.ownerId !== workspaceId)
+  s.workflows = s.workflows.filter((w) => w.workspaceId !== workspaceId)
   s.workspaces = s.workspaces.filter((w) => w.id !== workspaceId)
 }

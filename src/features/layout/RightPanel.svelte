@@ -17,7 +17,7 @@
   const current = $derived(resolvePanel(rightPanel.panel))
   const View = $derived(current.component)
   /** Overview tabs are not requests: the views show their empty state. */
-  const tab = $derived(tabsStore.active && !tabsStore.active.overview ? tabsStore.active : null)
+  const tab = $derived(tabsStore.active && !tabsStore.active.overview && !tabsStore.active.workflowId ? tabsStore.active : null)
 
   let dragging = $state(false)
   let startX = 0

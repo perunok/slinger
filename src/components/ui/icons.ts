@@ -48,6 +48,7 @@ export const ICONS: Record<string, string> = {
   clock: 'M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2',
   code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  workflow: 'M3 4h6v6H3zM15 14h6v6h-6zM9 7h3.5a2.5 2.5 0 012.5 2.5V14',
   menu: 'M4 6h16M4 12h16M4 18h16',
   user: 'M12 4a4 4 0 100 8 4 4 0 000-8zM4 20a8 8 0 0116 0',
   lock: 'M6 11h12v9H6zM8 11V8a4 4 0 018 0v3',
