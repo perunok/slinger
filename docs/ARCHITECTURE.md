@@ -75,7 +75,7 @@ requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWo
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
 `revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
 `checkForUpdates` (see [Update notice](#update-notice)), the window frame (`getWindowChrome`, `setTitleBarStyle`, `reopenWindow`,
-`setTitleBarOverlay`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
+`windowControl`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -97,8 +97,9 @@ object** `{ name: 'IpcError', code, message, details? }`. It is not `instanceof 
 `details.code === 'folder_cycle'`), `io_error`, `network_error` (`details.cancelled` / `details.timedOut`), `internal_error`.
 Non-`IpcError` exceptions become `internal_error` with only the message (no stack) and are logged in main.
 
-**Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`) and
-`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)). The preload exposes each as a subscribe function that
+**Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`),
+`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)) and `window:state` (`onWindowState`, see
+[Custom title bar](#custom-title-bar)). The preload exposes each as a subscribe function that
 returns an unsubscribe function; the raw `ipcRenderer` event never reaches the page.
 
 Behavior notes for callers are in `NOTES-FOR-FRONTEND.md` at the repository root.
@@ -564,32 +565,35 @@ whole file name to 240 UTF-8 bytes. Main's `sanitizeFileName` still reduces any 
 ## Custom title bar
 
 By default the renderer's top bar is the window's title bar. `electron/lib/titleBar.ts` (pure) builds the window options:
-Windows/Linux get `titleBarStyle: 'hidden'` plus a Window Controls Overlay (`titleBarOverlay: { color, symbolColor, height }`),
-so the OS draws the minimise/maximise/close buttons over the bar's right end; macOS gets `titleBarStyle: 'hidden'` with the
-traffic lights centred in the 40 px bar (`trafficLightPosition`) and `titleBarOverlay: true` for the CSS variables. There is no
-menu bar then (macOS keeps its own at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`, Windows/Linux)
-calls `showAppMenu(x, y)` and main pops up the application menu there (`menuPoint` scales CSS pixels by the page zoom).
+Windows/Linux get `titleBarStyle: 'hidden'` (no system title bar, no system buttons, no Window Controls Overlay) and Slinger
+draws minimise / maximise-restore / close itself as title bar items, so the user can place them on either side in any order;
+macOS gets `titleBarStyle: 'hidden'` with the traffic lights centred in the 40 px bar (`trafficLightPosition`) and
+`titleBarOverlay: true` for the `titlebar-area-*` CSS variables. There is no menu bar on Windows/Linux then (macOS keeps its own
+at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`) calls `showAppMenu(x, y)` and main pops up the
+application menu there (`menuPoint` scales CSS pixels by the page zoom).
 
+- **Window buttons.** `windowControl('minimize' | 'toggleMaximize' | 'close')` (zod-checked) acts on the main window. Main pushes
+  `{ maximized, fullScreen, focused }` on `window:state` (`onWindowState`, preload passes only the three booleans) on every
+  maximise / unmaximise / full-screen / focus / blur, and `getWindowChrome` includes the current `state`; `windowChrome.svelte.ts`
+  keeps it, so the middle button shows Restore while maximised. The buttons are drawn only with the custom title bar on
+  Windows/Linux and not in full screen (`ownWindowButtons`); neighbouring buttons render as one group without gaps, and one at
+  the very edge of the bar sits flush in the window corner (the bar drops that side's padding).
 - **Layout.** Which items the bar shows, on which side and in which order is `settings.titleBarLayout`
   (`src/lib/titleBarLayout.ts`, pure: `{ left, right, hidden }` of `TITLE_BAR_ITEMS`, persisted as `slinger.titleBarLayout`;
-  unknown or repeated names are dropped, items a stored layout does not mention go where the default puts them, Settings is
-  never hidden). `TopBar.svelte` renders the two sides from it; Settings > Window > Title bar items
-  (`features/settings/TitleBarLayoutEditor.svelte`: drag and drop, arrow keys, Reset) edits it, and right-clicking an empty part
-  of the bar opens Settings there (`ui.settingsFocus`). The same layout applies with the system title bar (the top bar is then
-  an ordinary bar).
+  unknown or repeated names are dropped, items a stored layout does not mention go where the default puts them). Settings and
+  the three window buttons (`ALWAYS_SHOWN`) can move but never be hidden. `TopBar.svelte` renders the two sides from it;
+  Settings > Layout & window > Title bar items (`features/settings/TitleBarLayoutEditor.svelte`: drag and drop, arrow keys,
+  Reset) edits it, and right-clicking an empty part of the bar opens Settings there (`ui.settingsFocus`). The same layout
+  applies with the system title bar (the top bar is then an ordinary bar without window buttons).
 - **Page side.** `.app-titlebar` (`src/styles/app.css`) is `-webkit-app-region: drag` with padding from the
-  `titlebar-area-x/width` environment variables (room for the system buttons); buttons, links, inputs and `[tabindex]` inside it
-  are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
-- **Colours.** `settings.apply()` and a `ResizeObserver` on the bar call `reportTitleBarOverlay()` (`src/lib/titleBarOverlay.ts`):
-  the bar's computed background and text colour (non-hex/rgb colours of custom themes converted through a canvas) and its CSS
-  height, sent only when changed. Main validates them (`cssColorSchema`), calls `setTitleBarOverlay` with the height times the
-  page zoom (again on every zoom change and page load), and remembers the colours as `titleBarOverlay` in `window-state.json`
-  for the next launch (default: the light/dark theme's `--surface` / `--text`).
+  `titlebar-area-x/width` environment variables (macOS: room for the traffic lights); buttons, links, inputs and `[tabindex]`
+  inside it are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
 - **Preference.** `titleBar: 'custom' | 'system'` in `window-state.json` (absent = custom), set by `setTitleBarStyle` from
-  Settings > Window. A frame cannot change on a live window, so it applies to the next window: `reopenWindow` closes the main
-  window and opens a new one in the same process (`reopenMainWindow`; `window-all-closed` does not quit meanwhile). Bounds and
-  maximised carry over through the `close` handler; the renderer saves open tabs on `pagehide` as on quit; running collection
-  runs stop with the old page. `getWindowChrome` returns `{ platform, titleBar (this window), preferredTitleBar }`.
+  Settings. A frame cannot change on a live window, so it applies to the next window: `reopenWindow` closes the main window and
+  opens a new one in the same process (`reopenMainWindow`; `window-all-closed` does not quit meanwhile). Bounds and maximised carry
+  over through the `close` handler; the renderer saves open tabs on `pagehide` as on quit; running collection runs stop with the
+  old page. 0.10.0 drew the system buttons with a Window Controls Overlay in the theme's colours (`titleBarOverlay` in
+  `window-state.json`, now ignored); that is gone, since the overlay's buttons cannot be moved.
 
 ## Update notice
 

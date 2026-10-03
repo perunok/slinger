@@ -58,7 +58,8 @@ import type {
   UpdateCheckResult,
   WindowChrome,
   TitleBarStyle,
-  TitleBarOverlayStyle,
+  WindowAction,
+  WindowState,
   UpdateRequestInput,
   UpsertEnvironmentVariableInput,
   Workspace,
@@ -203,8 +204,8 @@ export interface SlingerIpcApi {
   setTitleBarStyle(style: TitleBarStyle): Promise<WindowChrome>
   /** Closes the main window and opens it again with the saved title bar preference (same process, data and bounds). */
   reopenWindow(): Promise<void>
-  /** Colours (and CSS height) of the system window buttons over the custom title bar; remembered for the next launch. */
-  setTitleBarOverlay(style: TitleBarOverlayStyle): Promise<void>
+  /** The custom title bar's own window buttons (Windows/Linux): minimise, maximise or restore, close. */
+  windowControl(action: WindowAction): Promise<void>
   /** Pops up the application menu at a point in the page (CSS pixels); the custom title bar's menu button. */
   showAppMenu(x: number, y: number): Promise<void>
 
@@ -243,6 +244,8 @@ export interface SlingerIpcApi {
   onSyncEvent(listener: (event: SyncEvent) => void): () => void
   /** Push channel (main -> renderer): application-menu commands (shared/menu.ts). Returns an unsubscribe function. */
   onMenuCommand(listener: (command: MenuCommand) => void): () => void
+  /** Push channel (main -> renderer): the main window was maximised / restored, entered or left full screen, gained or lost focus. */
+  onWindowState(listener: (state: WindowState) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -354,7 +357,7 @@ export const IPC_CHANNELS = [
   'getWindowChrome',
   'setTitleBarStyle',
   'reopenWindow',
-  'setTitleBarOverlay',
+  'windowControl',
   'showAppMenu',
   'pickFile',
   'getCloudConfig',
@@ -398,12 +401,13 @@ export const IPC_CHANNELS = [
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state'] as const
 export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
 export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
+export const WINDOW_STATE_CHANNEL = IPC_EVENT_CHANNELS[2]
 
 /** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand'>
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState'>
 
 declare global {
   interface Window {

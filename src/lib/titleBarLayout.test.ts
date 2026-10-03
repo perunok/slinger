@@ -20,20 +20,25 @@ describe('title bar layout', () => {
   })
 
   it('round-trips and repairs what is stored', () => {
-    const custom: TitleBarLayout = { left: ['search', 'workspace'], right: ['settings', 'environment', 'sidebar'], hidden: ['about', 'shortcuts', 'sync', 'menu', 'rightPanel'] }
+    const custom: TitleBarLayout = { left: ['close', 'minimize', 'maximize', 'search', 'workspace'], right: ['settings', 'environment', 'sidebar'], hidden: ['about', 'shortcuts', 'sync', 'menu', 'rightPanel'] }
     expect(loadTitleBarLayout(serializeTitleBarLayout(custom))).toEqual(custom)
     for (const junk of ['{', '[]', 'null', '42']) expect(loadTitleBarLayout(junk), junk).toEqual(DEFAULT_TITLE_BAR_LAYOUT)
     // Unknown names and repeats go; items not mentioned (new in a later version) go where the default puts them.
     const repaired = sanitizeTitleBarLayout({ left: ['about', 'teleport', 'about'], right: ['about', 'workspace'], hidden: 'x' })
     expect(repaired.left).toEqual(['about', 'menu', 'sidebar', 'sync'])
-    expect(repaired.right).toEqual(['workspace', 'search', 'environment', 'rightPanel', 'shortcuts', 'settings'])
+    expect(repaired.right).toEqual(['workspace', 'search', 'environment', 'rightPanel', 'shortcuts', 'settings', 'minimize', 'maximize', 'close'])
     expect(repaired.hidden).toEqual([])
     expect(all(repaired)).toEqual([...TITLE_BAR_ITEMS].sort())
   })
 
-  it('never hides Settings', () => {
-    expect(sanitizeTitleBarLayout({ left: [], right: [], hidden: ['settings'] }).right).toContain('settings')
-    expect(moveItem(DEFAULT_TITLE_BAR_LAYOUT, 'settings', 'hidden')).toBe(DEFAULT_TITLE_BAR_LAYOUT)
+  it('never hides Settings or the window buttons (they can move, e.g. to the left like macOS)', () => {
+    const l = sanitizeTitleBarLayout({ left: [], right: [], hidden: ['settings', 'close', 'minimize'] })
+    expect(l.right).toEqual(expect.arrayContaining(['settings', 'close', 'minimize']))
+    expect(l.hidden).toEqual([])
+    for (const item of ['settings', 'minimize', 'maximize', 'close'] as const) expect(moveItem(DEFAULT_TITLE_BAR_LAYOUT, item, 'hidden')).toBe(DEFAULT_TITLE_BAR_LAYOUT)
+    const mac = moveItem(moveItem(moveItem(DEFAULT_TITLE_BAR_LAYOUT, 'close', 'left', 0), 'minimize', 'left', 1), 'maximize', 'left', 2)
+    expect(mac.left.slice(0, 3)).toEqual(['close', 'minimize', 'maximize'])
+    expect(mac.right).not.toContain('close')
   })
 
   it('moves items between sides and reorders them', () => {

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import { IPC_CHANNELS, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
 import { parseMenuCommand, type MenuCommand } from '../shared/menu'
-import type { SyncEvent } from '../shared/types'
+import type { SyncEvent, WindowState } from '../shared/types'
 import type { IpcEnvelope } from './ipc/envelope'
 
 // Exposes `window.slinger` exactly as declared by SlingerIpcApi. No Node/Electron objects leak:
@@ -35,6 +35,18 @@ api.onMenuCommand = (listener: (command: MenuCommand) => void): (() => void) => 
   ipcRenderer.on(MENU_COMMAND_CHANNEL, handler)
   return () => {
     ipcRenderer.removeListener(MENU_COMMAND_CHANNEL, handler)
+  }
+}
+
+// Main window state (custom title bar buttons). Only the three booleans pass.
+api.onWindowState = (listener: (state: WindowState) => void): (() => void) => {
+  const handler = (_event: unknown, payload: unknown) => {
+    const p = (payload ?? {}) as Partial<Record<keyof WindowState, unknown>>
+    listener({ maximized: p.maximized === true, fullScreen: p.fullScreen === true, focused: p.focused === true })
+  }
+  ipcRenderer.on(WINDOW_STATE_CHANNEL, handler)
+  return () => {
+    ipcRenderer.removeListener(WINDOW_STATE_CHANNEL, handler)
   }
 }
 

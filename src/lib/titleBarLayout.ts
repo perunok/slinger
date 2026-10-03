@@ -3,7 +3,7 @@
  * `localStorage['slinger.titleBarLayout']`: `{ v: 1, left: [...], right: [...], hidden: [...] }`.
  */
 
-export const TITLE_BAR_ITEMS = ['menu', 'sidebar', 'workspace', 'sync', 'search', 'environment', 'rightPanel', 'shortcuts', 'settings', 'about'] as const
+export const TITLE_BAR_ITEMS = ['menu', 'sidebar', 'workspace', 'sync', 'search', 'environment', 'rightPanel', 'shortcuts', 'settings', 'about', 'minimize', 'maximize', 'close'] as const
 export type TitleBarItem = (typeof TITLE_BAR_ITEMS)[number]
 export type TitleBarSide = 'left' | 'right' | 'hidden'
 
@@ -17,15 +17,21 @@ export const TITLE_BAR_LAYOUT_KEY = 'slinger.titleBarLayout'
 
 export const DEFAULT_TITLE_BAR_LAYOUT: TitleBarLayout = {
   left: ['menu', 'sidebar', 'workspace', 'sync'],
-  right: ['search', 'environment', 'rightPanel', 'shortcuts', 'settings', 'about'],
+  right: ['search', 'environment', 'rightPanel', 'shortcuts', 'settings', 'about', 'minimize', 'maximize', 'close'],
   hidden: [],
 }
 
-/** Settings stays reachable on screen: it is where the layout is changed back. */
-export const ALWAYS_SHOWN: readonly TitleBarItem[] = ['settings']
+/** The window buttons that the custom title bar draws itself on Windows/Linux (nothing on macOS or with the system bar). */
+export const WINDOW_BUTTONS: readonly TitleBarItem[] = ['minimize', 'maximize', 'close']
+
+/**
+ * Items that can move but never be hidden: Settings (where the layout is changed back) and the window buttons (a window
+ * must stay closable).
+ */
+export const ALWAYS_SHOWN: readonly TitleBarItem[] = ['settings', ...WINDOW_BUTTONS]
 
 export const TITLE_BAR_ITEM_LABELS: Record<TitleBarItem, string> = {
-  menu: 'Menu button (Windows/Linux, custom title bar)',
+  menu: 'Menu button',
   sidebar: 'Sidebar toggle',
   workspace: 'Workspace switcher',
   sync: 'Cloud sync status',
@@ -35,6 +41,9 @@ export const TITLE_BAR_ITEM_LABELS: Record<TitleBarItem, string> = {
   shortcuts: 'Keyboard shortcuts',
   settings: 'Settings',
   about: 'About Slinger',
+  minimize: 'Minimise button',
+  maximize: 'Maximise / restore button',
+  close: 'Close button',
 }
 
 const isItem = (v: unknown): v is TitleBarItem => typeof v === 'string' && (TITLE_BAR_ITEMS as readonly string[]).includes(v)

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Settings > Window: which items the title bar shows, on which side, in which order. Drag an item to another place,
+   * Settings > Layout & window: which items the title bar shows, on which side, in which order. Drag an item to another place,
    * or focus it and use the arrow keys (up/down: order; left/right: Left, Right, Hidden). Changes apply at once.
    */
   import { tick } from 'svelte'

@@ -7,9 +7,9 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { SYNC_EVENT_CHANNEL } from '../shared/ipc-contract'
+import { SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
-import type { TitleBarOverlayStyle, TitleBarStyle, WindowChrome } from '../shared/types'
+import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
@@ -18,7 +18,7 @@ import { contentSecurityPolicy } from './lib/csp'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
-import { DEFAULT_TITLE_BAR_COLORS, menuPoint, overlayOptions, titleBarWindowOptions } from './lib/titleBar'
+import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -64,8 +64,6 @@ let windowState: WindowState = {}
 const windowStateFile = () => join(app.getPath('userData'), WINDOW_STATE_FILE)
 /** The title bar the current main window was created with (the preference may differ until it is reopened). */
 let windowTitleBar: TitleBarStyle = 'custom'
-/** The custom title bar's height in CSS pixels, as last reported by the renderer (it follows the font size). */
-let titleBarCssHeight: number = TITLE_BAR_HEIGHT
 /** Set while the main window is closed to be opened again (reopenMainWindow): the app must not quit in between. */
 let reopeningWindow = false
 /** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
@@ -177,7 +175,7 @@ function createWindow(): BrowserWindow {
   windowTitleBar = windowState.titleBar ?? 'custom'
   const win = new BrowserWindow({
     ...linuxWindowIcon(),
-    ...titleBarWindowOptions(windowTitleBar, process.platform, titleBarColors(), titleBarCssHeight * zoomFactor(windowState.zoomLevel ?? 0)),
+    ...titleBarWindowOptions(windowTitleBar, process.platform, TITLE_BAR_HEIGHT * zoomFactor(windowState.zoomLevel ?? 0)),
     ...(bounds ?? DEFAULT_SIZE),
     minWidth: MIN_SIZE.width,
     minHeight: MIN_SIZE.height,
@@ -213,7 +211,6 @@ function createWindow(): BrowserWindow {
   // View > Zoom level from the last session (Chromium does not persist it across restarts).
   win.webContents.on('did-finish-load', () => {
     if (windowState.zoomLevel) win.webContents.setZoomLevel(windowState.zoomLevel)
-    applyTitleBarOverlay(win)
   })
   if (startupTiming) {
     win.webContents.once('did-finish-load', () => {
@@ -257,43 +254,38 @@ function setWindowBackground(color: string): void {
   writeWindowState(windowStateFile(), windowState)
 }
 
-/** The window-button colours for a custom title bar: the last ones the renderer reported, else the default theme's. */
-function titleBarColors(): { color: string; symbolColor: string } {
-  return windowState.titleBarOverlay ?? DEFAULT_TITLE_BAR_COLORS[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
-}
-
 /** Chromium zoom level -> factor (each level is 20 %). */
 const zoomFactor = (level: number) => Math.pow(1.2, level)
 
-/** Repaints the system window buttons over the custom title bar (theme colours, bar height times page zoom). */
-function applyTitleBarOverlay(win: BrowserWindow | null): void {
-  if (!win || win.isDestroyed() || windowTitleBar !== 'custom' || process.platform === 'darwin') return
-  try {
-    win.setTitleBarOverlay(overlayOptions(titleBarColors(), titleBarCssHeight, win.webContents.getZoomFactor()))
-  } catch {
-    /* no overlay on this window (e.g. a platform without Window Controls Overlay) */
-  }
+function windowNow(win: BrowserWindow | null = mainWindow): WindowNowState {
+  if (!win || win.isDestroyed()) return { maximized: false, fullScreen: false, focused: false }
+  return { maximized: win.isMaximized(), fullScreen: win.isFullScreen(), focused: win.isFocused() }
 }
 
 function windowChrome(): WindowChrome {
-  return { platform: process.platform, titleBar: windowTitleBar, preferredTitleBar: windowState.titleBar ?? 'custom' }
+  return { platform: process.platform, titleBar: windowTitleBar, preferredTitleBar: windowState.titleBar ?? 'custom', state: windowNow() }
+}
+
+/** Tells the page about maximise / full screen / focus changes (the custom title bar's window buttons follow them). */
+function pushWindowState(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed() || !isTrustedUrl(win.webContents.getURL())) return
+  win.webContents.send(WINDOW_STATE_CHANNEL, windowNow(win))
+}
+
+/** The custom title bar's own window buttons. */
+function windowControl(action: WindowAction): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  if (action === 'minimize') win.minimize()
+  else if (action === 'close') win.close()
+  else if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
 }
 
 function setTitleBarStyle(style: TitleBarStyle): WindowChrome {
   windowState = { ...windowState, titleBar: style }
   writeWindowState(windowStateFile(), windowState)
   return windowChrome()
-}
-
-function setTitleBarOverlay(style: TitleBarOverlayStyle): void {
-  titleBarCssHeight = style.height
-  const colors = { color: style.color, symbolColor: style.symbolColor }
-  const prev = windowState.titleBarOverlay
-  if (prev?.color !== colors.color || prev?.symbolColor !== colors.symbolColor) {
-    windowState = { ...windowState, titleBarOverlay: colors }
-    writeWindowState(windowStateFile(), windowState)
-  }
-  applyTitleBarOverlay(mainWindow)
 }
 
 /** The custom title bar's menu button: the application menu as a popup under it (Windows/Linux have no menu bar then). */
@@ -333,7 +325,6 @@ function zoomMainWindow(direction: ZoomDirection): void {
   if (!win || win.isDestroyed()) return
   const level = nextZoomLevel(win.webContents.getZoomLevel(), direction)
   win.webContents.setZoomLevel(level)
-  applyTitleBarOverlay(win)
   if (automatedWindow() || windowState.zoomLevel === level) return
   windowState = { ...windowState, zoomLevel: level }
   writeWindowState(windowStateFile(), windowState)
@@ -363,6 +354,9 @@ function openMainWindow(): BrowserWindow {
   // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
   win.on('focus', () => core?.sync.notifyFocus(true))
   win.on('blur', () => core?.sync.notifyFocus(false))
+  for (const event of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'focus', 'blur'] as const) {
+    win.on(event as 'maximize', () => pushWindowState(win))
+  }
   return win
 }
 
@@ -499,7 +493,7 @@ if (!app.requestSingleInstanceLock()) {
       checkForUpdates: feedUrl
         ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
         : undefined,
-      window: { chrome: windowChrome, setTitleBarStyle, reopen: reopenMainWindow, setTitleBarOverlay, showAppMenu },
+      window: { chrome: windowChrome, setTitleBarStyle, reopen: reopenMainWindow, control: windowControl, showAppMenu },
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()

@@ -49,14 +49,18 @@ describe('window', () => {
   it('uses the custom title bar by default, with the application menu behind a button', async () => {
     const { page, app } = ctx
     await expect(page.locator('[data-titlebar]').getAttribute('data-custom-titlebar')).resolves.toBe('true')
-    expect(await page.evaluate(() => window.slinger.getWindowChrome())).toEqual({
+    expect(await page.evaluate(() => window.slinger.getWindowChrome())).toMatchObject({
       platform: process.platform,
       titleBar: 'custom',
       preferredTitleBar: 'custom',
+      state: { maximized: false, fullScreen: false },
     })
     if (process.platform !== 'darwin') {
       await page.getByRole('button', { name: 'Application menu' }).click()
       await page.keyboard.press('Escape')
+      // Slinger's own window buttons (movable title bar items), at the right end by default.
+      const buttons = page.getByRole('group', { name: 'Window' }).getByRole('button')
+      expect(await buttons.evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).toEqual(['Minimise', 'Maximise', 'Close'])
     }
     // The drag region never swallows the controls in the bar.
     const regions = await page.evaluate(() => {
@@ -98,6 +102,7 @@ describe('window', () => {
   it('switches to the system title bar by reopening the window, and keeps it after a restart', async () => {
     let { app, page } = ctx
     await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('tab', { name: 'Layout & window' }).click()
     await page.getByRole('checkbox', { name: 'Use the system title bar' }).check()
     const next = app.waitForEvent('window')
     await page.getByRole('button', { name: 'Reopen window' }).click()
@@ -106,6 +111,7 @@ describe('window', () => {
     expect(await page.evaluate(() => window.slinger.getWindowChrome())).toMatchObject({ titleBar: 'system', preferredTitleBar: 'system' })
     expect(await page.locator('[data-titlebar]').getAttribute('data-custom-titlebar')).toBeNull()
     expect(await page.getByRole('button', { name: 'Application menu' }).count()).toBe(0)
+    expect(await page.getByRole('group', { name: 'Window' }).count()).toBe(0)
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
 
     await app.close()

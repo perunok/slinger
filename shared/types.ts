@@ -987,14 +987,19 @@ export interface WindowChrome {
   titleBar: TitleBarStyle
   /** The saved preference; differs from `titleBar` until the window is reopened. */
   preferredTitleBar: TitleBarStyle
+  /** The window right now (later changes arrive on `onWindowState`). */
+  state: WindowState
 }
 
-/** Colours of the system window buttons drawn over a custom title bar, plus the bar's height in CSS pixels. */
-export interface TitleBarOverlayStyle {
-  color: string
-  symbolColor: string
-  height: number
+/** The main window's state, for the custom title bar's own window buttons (pushed on `window:state`). */
+export interface WindowState {
+  maximized: boolean
+  fullScreen: boolean
+  focused: boolean
 }
+
+/** What the custom title bar's window buttons ask for. */
+export type WindowAction = 'minimize' | 'toggleMaximize' | 'close'
 
 export interface VersionInfo {
   app: string

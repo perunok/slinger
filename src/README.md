@@ -20,7 +20,7 @@ in-memory mock backend from `src/dev/`.
 main.ts                     boot: install mock if no window.slinger, mount <App/>
 app/                        shell + cross-feature state
   App.svelte TopBar Sidebar EmptyState shortcuts.ts
-  windowChrome.svelte.ts    custom title bar (default) vs system: TopBar is the drag region + menu button; Settings > Window
+  windowChrome.svelte.ts    custom title bar (default) vs system: TopBar is the drag region + menu button + own window buttons (Windows/Linux); Settings > Layout & window
                             (App: top bar / [sidebar | main tabs | right panel] / status bar; see features/layout)
   bootSkeleton.ts           removes index.html's static launch skeleton once the first workspace loaded (or on error)
   state.svelte.ts           workspaces, collections/folders/requests, collection variables, environments, active env, globals

@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../../app/settings.svelte'
 import { handleShortcut } from '../../app/shortcuts'
 import { runMenuCommand } from '../../app/menuCommands'
@@ -98,3 +98,46 @@ describe('sidebar toggle', () => {
     expect(button).toHaveAttribute('aria-pressed', 'false')
   })
 })
+
+describe('window buttons', () => {
+  it('are drawn by the custom title bar (Windows/Linux), act on the window, and follow its state', async () => {
+    const backend = window.slinger as ReturnType<typeof createMockBackend>
+    const control = vi.spyOn(backend, 'windowControl')
+    render(TopBar)
+    const group = screen.getByRole('group', { name: 'Window' })
+    expect(within(group).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Minimise', 'Maximise', 'Close'])
+    await fireEvent.click(screen.getByRole('button', { name: 'Minimise' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Maximise' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(control.mock.calls.map((c) => c[0])).toEqual(['minimize', 'toggleMaximize', 'close'])
+    windowChrome.state = { ...windowChrome.state, maximized: true }
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument())
+    windowChrome.state = { ...windowChrome.state, maximized: false }
+    // At the right end they sit in the corner (no padding).
+    expect(document.querySelector('[data-titlebar]')!.classList.contains('!pr-0')).toBe(true)
+  })
+
+  it('can move anywhere, e.g. to the left in macOS order, and sit flush there', async () => {
+    let layout = settings.titleBarLayout
+    const { moveItem } = await import('../../lib/titleBarLayout')
+    layout = moveItem(moveItem(moveItem(layout, 'close', 'left', 0), 'minimize', 'left', 1), 'maximize', 'left', 2)
+    settings.setTitleBarLayout(layout)
+    render(TopBar)
+    expect(sideNames(0).slice(0, 3)).toEqual(['Close', 'Minimise', 'Maximise'])
+    const bar = document.querySelector('[data-titlebar]')!
+    expect(bar.classList.contains('!pl-0')).toBe(true)
+    expect(bar.classList.contains('!pr-0')).toBe(false)
+  })
+
+  it('are not drawn on macOS (traffic lights) or with the system title bar', async () => {
+    windowChrome.platform = 'darwin'
+    render(TopBar)
+    expect(screen.queryByRole('group', { name: 'Window' })).toBeNull()
+    cleanup()
+    windowChrome.platform = 'linux'
+    windowChrome.titleBar = 'system'
+    render(TopBar)
+    expect(screen.queryByRole('group', { name: 'Window' })).toBeNull()
+  })
+})
+

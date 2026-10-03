@@ -9,20 +9,30 @@
   import SyncChip from '../features/sync/SyncChip.svelte'
   import RightPanelButton from '../features/layout/RightPanelButton.svelte'
   import SidebarButton from '../features/layout/SidebarButton.svelte'
-  import type { TitleBarItem } from '../lib/titleBarLayout'
-  import { reportTitleBarOverlay } from '../lib/titleBarOverlay'
+  import Icon from '../components/ui/Icon.svelte'
+  import { WINDOW_BUTTONS, type TitleBarItem } from '../lib/titleBarLayout'
   import { windowChrome } from './windowChrome.svelte'
 
-  let header = $state<HTMLElement | null>(null)
   let menu = $state<{ x: number; y: number } | null>(null)
 
-  // The system window buttons over a custom title bar follow its height (and settings.apply() reports colours).
-  $effect(() => {
-    if (!header || !windowChrome.custom || typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(() => reportTitleBarOverlay())
-    observer.observe(header)
-    return () => observer.disconnect()
-  })
+  const isButton = (id: TitleBarItem) => WINDOW_BUTTONS.includes(id)
+  /** What a side shows: window buttons only where Slinger draws them (Windows/Linux, custom title bar). */
+  const visible = (items: TitleBarItem[]) => items.filter((id) => !isButton(id) || windowChrome.ownWindowButtons)
+  const left = $derived(visible(settings.titleBarLayout.left))
+  const right = $derived(visible(settings.titleBarLayout.right))
+  /** Runs of neighbouring window buttons stay together (no gap), like a system title bar. */
+  function groups(items: TitleBarItem[]): Array<{ buttons: boolean; items: TitleBarItem[] }> {
+    const out: Array<{ buttons: boolean; items: TitleBarItem[] }> = []
+    for (const id of items) {
+      const last = out.at(-1)
+      if (last && last.buttons === isButton(id)) last.items.push(id)
+      else out.push({ buttons: isButton(id), items: [id] })
+    }
+    return out
+  }
+  // A window button at the very edge sits in the window's corner (no padding), as in a system title bar.
+  const flushLeft = $derived(left.length > 0 && isButton(left[0]!))
+  const flushRight = $derived(right.length > 0 && isButton(right.at(-1)!))
 
   /** Right-click on an empty part of the bar: the way to its layout settings. */
   function onContextMenu(e: MouseEvent) {
@@ -35,6 +45,21 @@
     ui.settingsOpen = true
   }
 </script>
+
+{#snippet windowButton(id: TitleBarItem)}
+  {@const maximized = windowChrome.state.maximized}
+  {@const label = id === 'minimize' ? 'Minimise' : id === 'close' ? 'Close' : maximized ? 'Restore' : 'Maximise'}
+  <button
+    type="button"
+    class="flex w-11 items-center justify-center self-stretch text-muted transition-colors hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--focus-ring)] {id === 'close' ? 'hover:bg-danger hover:!text-danger-fg' : 'hover:bg-hover'}"
+    aria-label={label}
+    title={label}
+    data-window-button={id}
+    onclick={() => windowChrome.control(id === 'maximize' ? 'toggleMaximize' : (id as 'minimize' | 'close'))}
+  >
+    <Icon name={id === 'minimize' ? 'win-minimize' : id === 'close' ? 'x' : maximized ? 'win-restore' : 'win-maximize'} size={15} />
+  </button>
+{/snippet}
 
 {#snippet item(id: TitleBarItem)}
   {#if id === 'menu'}
@@ -60,15 +85,23 @@
   {:else if id === 'shortcuts'}
     <IconButton icon="info" label="Keyboard shortcuts" onclick={() => (ui.shortcutsOpen = true)} />
   {:else if id === 'settings'}
-    <IconButton icon="sun" label="Settings" onclick={() => (ui.settingsOpen = true)} />
+    <IconButton icon="gear" label="Settings" onclick={() => (ui.settingsOpen = true)} />
   {:else if id === 'about'}
     <IconButton icon="help" label="About Slinger" onclick={() => (ui.aboutOpen = true)} />
   {/if}
 {/snippet}
 
 {#snippet side(items: TitleBarItem[], cls: string, extra?: Snippet)}
-  <div class="flex items-center gap-1.5 whitespace-nowrap {cls}" data-titlebar-side>
-    {#each items as id (id)}{@render item(id)}{/each}
+  <div class="flex items-center gap-1.5 self-stretch whitespace-nowrap {cls}" data-titlebar-side>
+    {#each groups(items) as group, i (i)}
+      {#if group.buttons}
+        <div class="flex self-stretch" role="group" aria-label="Window">
+          {#each group.items as id (id)}{@render windowButton(id)}{/each}
+        </div>
+      {:else}
+        {#each group.items as id (id)}{@render item(id)}{/each}
+      {/if}
+    {/each}
     {@render extra?.()}
   </div>
 {/snippet}
@@ -80,17 +113,16 @@
 {/snippet}
 
 <!-- With the custom title bar (default) this bar is the window's title bar: drag it to move the window. Which items sit
-     on which side, in which order, is a setting (Settings > Window, or right-click the bar). -->
-<!-- svelte-ignore a11y_no_static_element_interactions (the right-click menu is a mouse shortcut to Settings > Window) -->
+     on which side, in which order, is a setting (Settings > Layout & window, or right-click the bar). -->
+<!-- svelte-ignore a11y_no_static_element_interactions (the right-click menu is a mouse shortcut to Settings > Layout & window) -->
 <header
-  bind:this={header}
   data-titlebar
   data-custom-titlebar={windowChrome.custom || undefined}
-  class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface {windowChrome.custom ? 'app-titlebar' : 'px-3'}"
+  class="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-surface {windowChrome.custom ? 'app-titlebar' : 'px-3'} {flushLeft ? '!pl-0' : ''} {flushRight ? '!pr-0' : ''}"
   oncontextmenu={onContextMenu}
 >
-  {@render side(settings.titleBarLayout.left, 'min-w-0', mockBadge)}
-  {@render side(settings.titleBarLayout.right, 'ml-auto shrink-0')}
+  {@render side(left, 'min-w-0', mockBadge)}
+  {@render side(right, 'ml-auto shrink-0')}
 </header>
 
 {#if menu}
