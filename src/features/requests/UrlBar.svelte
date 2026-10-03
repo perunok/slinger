@@ -44,8 +44,9 @@
     value={tab.draft.method}
     onchange={(e) => (tab.draft.method = e.currentTarget.value)}
   >
-    {#each METHODS as m (m)}<option value={m}>{m}</option>{/each}
-    {#if !(METHODS as readonly string[]).includes(tab.draft.method)}<option value={tab.draft.method}>{tab.draft.method}</option>{/if}
+    <!-- Each option sets its own colour: otherwise the open list inherits the selected method's colour. -->
+    {#each METHODS as m (m)}<option value={m} style="color:{methodColor(m)}">{m}</option>{/each}
+    {#if !(METHODS as readonly string[]).includes(tab.draft.method)}<option value={tab.draft.method} style="color:{methodColor(tab.draft.method)}">{tab.draft.method}</option>{/if}
   </select>
   <div class="flex h-8 min-w-0 flex-1 items-center rounded border border-border bg-surface px-1 focus-within:border-accent">
     <TemplateInput
