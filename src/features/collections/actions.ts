@@ -9,6 +9,7 @@ import { api, errorInfo } from '../../lib/ipc'
 import { newMcpRequestDraft } from '../../lib/mcpRequest'
 import { newDraft, serializeDraft } from '../../lib/request'
 import type { DropPlan } from '../../lib/tree'
+import { mockServers } from '../mockServers/mockServers.svelte'
 import { tabsStore } from '../requests/tabs.svelte'
 
 function ws(): string {
@@ -41,6 +42,8 @@ export async function renameCollection(id: string, name: string) {
 }
 export async function deleteCollection(id: string) {
   await api().deleteCollection(id)
+  // Its mock server (if any) has nothing left to serve.
+  void mockServers.stopIfRunning(id)
   await app.reloadCollections()
   tabsStore.syncWithServer()
 }

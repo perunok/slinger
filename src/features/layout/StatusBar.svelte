@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * The thin bar at the bottom of the window: background activity (collection runs, which it reopens, and sends) on the
-   * left, the active request tab's last response on the right. Only status lives here: every control has its one place
+   * left (and running mock servers, which it opens), the active request tab's last response on the right. Only status lives here: every control has its one place
    * elsewhere (sync chip, environment switcher and right-panel toggle in the top bar, response position on the response
    * divider), since the status bar can be hidden.
    * Hidden with the "Show status bar" setting / View > Toggle Status Bar.
@@ -10,6 +10,9 @@
   import Icon from '../../components/ui/Icon.svelte'
   import { formatBytes, formatDuration, statusTone } from '../../lib/response'
   import { mcp } from '../mcp/mcpStore.svelte'
+  import { app } from '../../app/state.svelte'
+  import { ui } from '../../app/ui.svelte'
+  import { mockServers } from '../mockServers/mockServers.svelte'
   import { tabsStore } from '../requests/tabs.svelte'
   import { summarize } from '../runner/runner'
   import { runsStore, runSummaryText, type RunSession } from '../runner/runs.svelte'
@@ -56,6 +59,23 @@
     runMenu = { x: rect.left, y: rect.top }
   }
 
+  // Running mock servers (every workspace: they hold their port until stopped).
+  const mocks = $derived(mockServers.list)
+  const mockName = (collectionId: string) => app.collections.find((c) => c.id === collectionId)?.name ?? 'a collection in another workspace'
+  const mockText = $derived(mocks.length === 1 ? `Mock ${mocks[0]!.url.replace(/^http:\/\//, '')}` : mocks.length > 1 ? `${mocks.length} mock servers` : '')
+  let mockMenu = $state<{ x: number; y: number } | null>(null)
+  const mockItems = $derived<MenuItem[]>(
+    mocks.map((m) => ({ label: `${mockName(m.collectionId)}: ${m.url.replace(/^http:\/\//, '')}`, icon: 'server', action: () => (ui.mockServerFor = m.collectionId) })),
+  )
+  function openMocks(e: MouseEvent) {
+    if (mocks.length === 1) {
+      ui.mockServerFor = mocks[0]!.collectionId
+      return
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    mockMenu = { x: rect.left, y: rect.top }
+  }
+
   /** The last response of the active request tab (not overviews or examples, whose response is a saved one). */
   const tab = $derived(tabsStore.active && !tabsStore.active.overview && !tabsStore.active.example && !tabsStore.active.workflowId ? tabsStore.active : null)
   const response = $derived(tab && !tab.sending ? (tab.response?.data ?? null) : null)
@@ -86,6 +106,19 @@
         <span class="truncate">{runText}</span>
       </button>
     {/if}
+    {#if mockText}
+      <button
+        type="button"
+        class={item}
+        title={mocks.length === 1 ? `Mock server of ${mockName(mocks[0]!.collectionId)} (click to open it)` : 'Mock servers (click to choose one)'}
+        aria-haspopup={mocks.length > 1 ? 'menu' : 'dialog'}
+        data-testid="status-mocks"
+        onclick={openMocks}
+      >
+        <Icon name="server" size={12} />
+        <span class="truncate">{mockText}</span>
+      </button>
+    {/if}
     <span role="status" class="flex min-w-0 items-center gap-1 px-1.5" data-testid="status-activity">
       {#if activityText}
         <span class="motion-safe:animate-spin"><Icon name="refresh" size={12} /></span>
@@ -109,6 +142,9 @@
   </div>
 </footer>
 
+{#if mockMenu}
+  <ContextMenu x={mockMenu.x} y={mockMenu.y} items={mockItems} onclose={() => (mockMenu = null)} />
+{/if}
 {#if runMenu}
   <ContextMenu x={runMenu.x} y={runMenu.y} items={runItems} onclose={() => (runMenu = null)} />
 {/if}

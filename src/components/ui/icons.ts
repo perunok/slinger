@@ -57,4 +57,5 @@ export const ICONS: Record<string, string> = {
   menu: 'M4 6h16M4 12h16M4 18h16',
   user: 'M12 4a4 4 0 100 8 4 4 0 000-8zM4 20a8 8 0 0116 0',
   lock: 'M6 11h12v9H6zM8 11V8a4 4 0 018 0v3',
+  server: 'M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01',
 }
