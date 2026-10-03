@@ -42,7 +42,8 @@ The thin bar at the bottom of the window shows status only (the cloud sync state
 
 - **Activity:** *Running <collection>… 3/10* while a collection run goes on (also in the background), *Run finished:
   <collection>* when one finished in the background; click it to open the run (with several runs, choose one from the list).
-  *Sending…* while requests are in flight.
+  *Sending…* while requests are in flight. *Mock 127.0.0.1:4010* while a [mock server](#mock-servers) runs; click it to
+  open its dialog (with several, choose one from the list).
 - On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
   *Not sent* when the last send failed before a response.
 
@@ -450,6 +451,31 @@ returns, a fixture to compare against, or a response you want to keep.
   of synced examples. In a workspace linked to cloud sync, the request editor warns right in the tab once a request's saved
   examples and response bodies push it over that 900 KB limit, since an oversized one is skipped by sync instead of blocked -
   remove or shrink examples to bring it back under the cap. Read-only (viewer) workspaces can open examples but not change them.
+
+## Mock servers
+
+A mock server answers HTTP requests with a collection's saved examples, so you (or the app you are building) can call an API
+before it exists. It runs inside Slinger on your computer and listens on `127.0.0.1` only: nothing is published, nothing syncs.
+
+- **Start:** right-click a collection > **Mock server…**, check the port (default 4010; Slinger remembers the last port per
+  collection) and click **Start**. If the port is taken by another program or mock server, the dialog says so; choose another.
+  Ports below 1024 are refused (they need administrator rights).
+- **Use it:** the dialog shows the base URL (`http://127.0.0.1:4010`) with a copy button. Point your requests at it, for example
+  by setting `{{baseUrl}}` in an environment to that URL, or call it from any other program on this computer.
+- **Matching:** a request matches an example by HTTP method and path. The scheme and host of the example's saved URL, a leading
+  variable such as `{{baseUrl}}`, the query string and a trailing slash are ignored. `:id` and `{{id}}` path segments match any
+  value; an exact path wins over such a wildcard (`/users/me` before `/users/:id`). HEAD requests use GET examples.
+- **Several examples for one path** (e.g. *200 OK* and *404 Not found*): the first in the collection answers, unless the request
+  picks one with the header `x-mock-response-name: <example name>` or `x-mock-response-code: 404` (Postman's convention).
+- **Answer:** the example's status, headers and body (binary examples are sent as bytes). An example without a `Content-Type`
+  header gets one from its body type. When nothing matches, the answer is a 404 with a short JSON explanation.
+- **Edits apply live:** saving an example, adding or deleting one, or moving requests updates the running server right away.
+- **Request log:** the dialog lists the latest 200 requests (time, method, path, the example that answered or *no match*, status),
+  newest first. Hover *no match* to see why; click an example to open it. The trash button clears the log.
+- **Stop:** **Stop** in the dialog. The status bar shows running mock servers (click to reopen the dialog). All mock servers stop
+  when Slinger quits, and a collection's server stops when the collection or its workspace is deleted. Switching workspaces
+  keeps them running.
+- Example bodies are sent as stored: `{{variables}}` in them are not resolved.
 
 ## Workflows
 

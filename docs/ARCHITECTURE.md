@@ -19,7 +19,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      (collection variables + globals), workflows, history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
-                     oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
+                     oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
+                     HTTP servers answering with saved examples)
   lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
@@ -27,7 +28,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      message log events, stdio command trust, history), types.ts (McpClientApi contract)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
-                     scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox) - imported by main AND
+                     scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox), mockMatch.ts (mock server
+                     request matching) - imported by main AND
                      renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
@@ -43,7 +45,7 @@ is unit-tested without launching Electron.
 
 | Process | Runs | Capabilities |
 | --- | --- | --- |
-| Main | `electron/**` | SQLite, network (`fetch`), keychain, filesystem, dialogs, loopback listener |
+| Main | `electron/**` | SQLite, network (`fetch`), keychain, filesystem, dialogs, loopback listeners (OAuth redirect, mock servers) |
 | Preload | `electron/preload.ts` | Sandboxed; only `contextBridge.exposeInMainWorld('slinger', ...)` |
 | Renderer | `src/**` | UI only; no Node, no direct network |
 
@@ -83,12 +85,13 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 125 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 131 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
 requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `duplicateWorkflow`, `deleteWorkflow`; see
-[Workflows](#workflows)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
+[Workflows](#workflows)), mock servers (`startMockServer`, `updateMockServer`, `stopMockServer`, `listMockServers`,
+`getMockServerLog`, `clearMockServerLog`; see [Mock servers](#mock-servers)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
@@ -121,8 +124,9 @@ Non-`IpcError` exceptions become `internal_error` with only the message (no stac
 
 **Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`),
 `menu:command` (`onMenuCommand`, see [Application menu](#application-menu)), `window:state` (`onWindowState`, see
-[Custom title bar](#custom-title-bar)), `mcp:call` (tool calls of Slinger's MCP server, see [MCP server](#mcp-server)) and
-`mcp-client:event` (`onMcpClientEvent`, the message log of MCP requests, see [MCP requests](#mcp-requests-mcp-client)). The preload exposes each as a subscribe function that
+[Custom title bar](#custom-title-bar)), `mcp:call` (tool calls of Slinger's MCP server, see [MCP server](#mcp-server)),
+`mcp-client:event` (`onMcpClientEvent`, the message log of MCP requests, see [MCP requests](#mcp-requests-mcp-client)) and
+`mock:event` (`onMockServerEvent`, see [Mock servers](#mock-servers)). The preload exposes each as a subscribe function that
 returns an unsubscribe function; the raw `ipcRenderer` event never reaches the page.
 
 Behavior notes for callers are in `NOTES-FOR-FRONTEND.md` at the repository root.
@@ -501,6 +505,55 @@ triggers, so a viewer of a shared workspace can build workflows on this device; 
   `workflow` in the tab state, never dirty). `WorkflowEditor` uses Svelte Flow (`@xyflow/svelte`, themed through its `--xy-*`
   variables in `app.css`): palette (drag, or click to append after the selected node), canvas, inspector, run log. It saves
   the graph debounced (600 ms) and when it goes away; Ctrl+Enter runs, Ctrl+S saves now (`features/workflows/commands.ts`).
+
+## Mock servers
+
+A collection's saved examples served over HTTP so requests can be pointed at an API that does not exist yet (Postman's mock
+servers, but local). **Local-only and in memory, no migration:** a running server is state of the main process
+(`electron/services/mockServers.ts`, `MockServers` in `core.mockServers`); nothing is written to SQLite or synced, and
+`before-quit` stops all of them. The only persisted bit is the last port per collection, in the renderer's
+`localStorage['slinger.mockServers']`.
+
+- **Who parses the examples: the renderer.** Request documents stay opaque to main. The renderer already owns the example model
+  (`lib/examples.ts`: `originalRequest` or the parent request, header rows, base64 bodies, Postman URL objects), so
+  `lib/mockServers.ts` `collectMockExamples(folders, requests)` resolves every example in sidebar order into a flat
+  `MockExample` (`requestId`, `exampleIndex`, `requestName`, `name`, `method`, `url` with templates unresolved, `code`,
+  `status`, enabled `headers` (plus a `Content-Type` from `_postman_previewlanguage` when missing), `body`, `bodyEncoding`) and
+  sends the list with `startMockServer`. Main zod-validates it (20 000 examples, 12 MB per body, 200 MB of bodies per server).
+  The alternative, main reading `document_json` itself, would have duplicated the example parsing in main and broken the
+  "documents are opaque to main" rule for little gain: the renderer has the whole tree loaded anyway.
+- **Live edits:** `features/mockServers/MockServersHost.svelte` watches the loaded tree; 300 ms after a change it calls
+  `mockServers.refreshExamples()`, which re-sends (`updateMockServer`) only collections whose `mockSourceKey` (ids, versions,
+  places and names of their requests and folders) changed, and only for collections of the open workspace that are loaded (a
+  workspace switch never sends an empty list). Deleting a collection or a workspace in the renderer stops its server; a
+  collection deleted by sync keeps serving its last examples until stopped.
+- **Server:** `node:http` on `127.0.0.1` only (`exclusive: true`, keep-alive 5 s). `start` on the port a collection already uses
+  swaps its examples; on another port the new server is bound first and the old one stopped afterwards, so a busy port keeps the
+  old one. `EADDRINUSE` is `io_error` with `details.reason: 'port_in_use'`, `EACCES` `'port_denied'`. `stop` closes the listener
+  and all open connections. Requests whose `Host` is not a loopback name (`127.0.0.1`, `localhost`, `*.localhost`, `[::1]`) get
+  403, so a DNS-rebinding web page cannot read the examples; no CORS headers are sent. Request bodies are never read.
+- **Matching** (`shared/mockMatch.ts`, shared with the browser mock backend): the example URL is reduced to its path (scheme +
+  host, or a leading `{{var}}`/host part, query and fragment dropped). Segments compare one by one (percent-decoded, empty ones
+  ignored): literal (case-sensitive), wildcard (`:name` or a whole `{{name}}`), or mixed (`v{{n}}.json`, a regex). Candidates are
+  the examples with the request's method (HEAD falls back to GET) and a matching path; `x-mock-response-id`,
+  `x-mock-response-name` (case-insensitive) and `x-mock-response-code` narrow them (nothing left: 404 naming what exists); the most
+  specific path wins (left to right, literal > mixed > wildcard), ties go to collection order. No match: 404 with
+  `{error: 'mockRequestNotFound', message, hint}`.
+- **Response:** the example's status when 200-599 (else 200) and reason phrase, its headers except framing ones
+  (`Content-Length`, `Transfer-Encoding`, `Content-Encoding`, `Connection`, ...; repeated names such as `Set-Cookie` are sent as
+  separate lines; a header Node refuses is skipped), the body as UTF-8 or decoded base64, with an exact `Content-Length`.
+  `{{variables}}` in bodies are not resolved.
+- **Log:** every request becomes a `MockServerLogEntry` (seq, time, method, path+query, status, matched example or the reason),
+  capped at `MOCK_LOG_LIMIT` (200) in main and in the renderer, pushed as `mock:event` `request`; `started` / `stopped` events
+  keep the renderer in step (also after a renderer reload, via `listMockServers` + `getMockServerLog`).
+- **UI:** collection context menu **Mock server…** (also for read-only workspaces: it changes nothing) opens
+  `MockServerDialog` (`ui.mockServerFor`): port field + Start, or base URL + copy + Stop, an InfoTip with the rules, the log
+  (a matched example opens its tab). The status bar shows running servers of every workspace and reopens the dialog.
+- **Tests:** `electron/__tests__/mockMatch.test.ts` (the matcher), `electron/__tests__/mockServers.test.ts` (real servers on
+  ephemeral ports hit with `fetch`: matching, header selection, binary bodies, 404, Host check, busy port, restart/update, stop,
+  stopAll, IPC validation), `src/lib/mockServers.test.ts`, `src/features/mockServers/mockServers.test.ts` (store, dialog,
+  status bar against the browser mock, whose `__slingerMock.mockServers.hit(collectionId, {method, path, headers})` plays
+  requests through the same matcher).
 
 ## Collection versioning
 
@@ -997,7 +1050,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories (incl. workflows), tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService), MCP client (`mcpClient.test.ts`: a real SDK server over Streamable HTTP / SSE / stdio) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories (incl. workflows), mock servers, tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService), MCP client (`mcpClient.test.ts`: a real SDK server over Streamable HTTP / SSE / stdio) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
