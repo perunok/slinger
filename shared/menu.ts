@@ -16,6 +16,7 @@ export const MENU_COMMANDS = [
   'toggleResponsePosition',
   'toggleStatusBar',
   'toggleRightPanel',
+  'toggleSidebar',
   'checkForUpdates',
 ] as const
 

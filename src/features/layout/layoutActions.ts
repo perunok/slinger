@@ -9,6 +9,7 @@ import { rightPanel } from './rightPanelStore.svelte'
 /** Shortcut labels (Windows/Linux spelling; Cmd works as well on macOS). The renderer owns these keys (shortcuts.ts). */
 export const RESPONSE_POSITION_SHORTCUT = 'Ctrl+Alt+V'
 export const RIGHT_PANEL_SHORTCUT = 'Ctrl+Alt+B'
+export const SIDEBAR_SHORTCUT = 'Ctrl+B'
 
 /** What the orientation toggle does from the current position. */
 export function responsePositionLabel(current: ResponsePosition): string {
@@ -36,6 +37,11 @@ export function showRightPanel(id: string): void {
 export function rightPanelLabel(): string {
   if (!rightPanel.open) return 'Show right panel'
   return rightPanel.room ? 'Hide right panel' : 'Hide right panel (not shown: not enough room)'
+}
+
+/** Hides or shows the sidebar (collections, history, workflows); its width is kept for when it comes back. */
+export function toggleSidebar(): void {
+  settings.setShowSidebar(!settings.showSidebar)
 }
 
 export function toggleStatusBar(): void {

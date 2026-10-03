@@ -110,6 +110,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       ...(dev
         ? ([{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, separator] as MenuItemConstructorOptions[])
         : []),
+      command('Toggle Sidebar', 'toggleSidebar', shown('CmdOrCtrl+B')),
       command('Toggle Response Position', 'toggleResponsePosition', shown('CmdOrCtrl+Alt+V')),
       command('Toggle Right Panel', 'toggleRightPanel', shown('CmdOrCtrl+Alt+B')),
       command('Toggle Status Bar', 'toggleStatusBar'),

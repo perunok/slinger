@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { SlingerInvokeApi } from '../../shared/ipc-contract'
-import type { PickFileOptions, TitleBarOverlayStyle, TitleBarStyle, UpdateCheckResult, WindowChrome } from '../../shared/types'
+import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, WindowAction, WindowChrome } from '../../shared/types'
 import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
@@ -308,14 +308,13 @@ export interface WindowControls {
   chrome(): WindowChrome
   setTitleBarStyle(style: TitleBarStyle): WindowChrome
   reopen(): void
-  /** Already validated: colours normalised to `#rrggbb`, height in CSS pixels. */
-  setTitleBarOverlay(style: TitleBarOverlayStyle): void
+  control(action: WindowAction): void
   /** CSS pixels within the page. */
   showAppMenu(x: number, y: number): void
 }
 
 const titleBarStyle = z.enum(['custom', 'system'])
-const titleBarOverlayStyle = z.object({ color: cssColorSchema, symbolColor: cssColorSchema, height: z.number().finite().min(16).max(200) }).strict()
+const windowAction = z.enum(['minimize', 'toggleMaximize', 'close'])
 const pagePoint = z.number().finite().min(0).max(100_000)
 
 /**
@@ -551,7 +550,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     getWindowChrome: async (...a) => (parseArgs(z.tuple([]), a), windowControls().chrome()),
     setTitleBarStyle: async (...a) => windowControls().setTitleBarStyle(parseArgs(z.tuple([titleBarStyle]), a)[0]),
     reopenWindow: async (...a) => (parseArgs(z.tuple([]), a), windowControls().reopen()),
-    setTitleBarOverlay: async (...a) => platform.window?.setTitleBarOverlay(parseArgs(z.tuple([titleBarOverlayStyle]), a)[0]),
+    windowControl: async (...a) => platform.window?.control(parseArgs(z.tuple([windowAction]), a)[0]),
     showAppMenu: async (...a) => {
       const [x, y] = parseArgs(z.tuple([pagePoint, pagePoint]), a)
       platform.window?.showAppMenu(x, y)

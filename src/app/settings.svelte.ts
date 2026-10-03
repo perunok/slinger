@@ -9,10 +9,10 @@ import {
   type CustomTheme,
 } from '../lib/customThemes'
 import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
-import { reportTitleBarOverlay } from '../lib/titleBarOverlay'
 import { reportWindowBackground } from '../lib/windowBackground'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
 import { clearAllPersisted } from '../features/requests/tabsPersistence'
+import { DEFAULT_TITLE_BAR_LAYOUT, TITLE_BAR_LAYOUT_KEY, loadTitleBarLayout, serializeTitleBarLayout, type TitleBarLayout } from '../lib/titleBarLayout'
 
 const K = {
   font: 'slinger.fontSize',
@@ -22,6 +22,8 @@ const K = {
   restoreTabs: 'slinger.restoreTabsOnStartup',
   responsePosition: 'slinger.responsePosition',
   statusBar: 'slinger.statusBar',
+  sidebar: 'slinger.sidebar',
+  titleBarLayout: TITLE_BAR_LAYOUT_KEY,
 }
 
 /** Where the response pane sits relative to the request editor (request and example tabs). */
@@ -86,6 +88,10 @@ class Settings {
   responsePosition = $state<ResponsePosition>(read(K.responsePosition) === 'beside' ? 'beside' : 'below')
   /** The thin status bar at the bottom of the window (default on). */
   showStatusBar = $state<boolean>(read(K.statusBar) !== 'false')
+  /** The sidebar (collections, history, workflows) at the left (default on; Ctrl+B). */
+  showSidebar = $state<boolean>(read(K.sidebar) !== 'false')
+  /** Which items the title bar shows, left and right, in order (lib/titleBarLayout.ts). */
+  titleBarLayout = $state.raw<TitleBarLayout>(loadTitleBarLayout(read(K.titleBarLayout)))
   #mq: MediaQueryList | null = null
 
   /** The palette actually shown (resolves 'system'). */
@@ -115,7 +121,6 @@ class Settings {
     else root.setAttribute('data-accent', this.accent)
     root.style.setProperty('--font-size', `${this.fontSize}px`)
     reportWindowBackground()
-    reportTitleBarOverlay()
   }
   #save() {
     const a: Appearance = { theme: this.theme, accent: this.accent, systemLight: this.systemLight, systemDark: this.systemDark, loader: this.loader }
@@ -224,6 +229,17 @@ class Settings {
   setShowStatusBar(v: boolean) {
     this.showStatusBar = v
     write(K.statusBar, String(v))
+  }
+  setShowSidebar(v: boolean) {
+    this.showSidebar = v
+    write(K.sidebar, String(v))
+  }
+  setTitleBarLayout(layout: TitleBarLayout) {
+    this.titleBarLayout = layout
+    write(K.titleBarLayout, serializeTitleBarLayout(layout))
+  }
+  resetTitleBarLayout() {
+    this.setTitleBarLayout({ left: [...DEFAULT_TITLE_BAR_LAYOUT.left], right: [...DEFAULT_TITLE_BAR_LAYOUT.right], hidden: [] })
   }
   /** Turning this off also erases every workspace's stored tabs (nothing is kept "just in case"). */
   setRestoreTabsOnStartup(v: boolean) {

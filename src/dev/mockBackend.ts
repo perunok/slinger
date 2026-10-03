@@ -85,7 +85,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
   const misc = createMiscApi()
   const sync = createSyncApi(state, options.cloud)
-  const impl: Omit<SlingerIpcApi, 'onMenuCommand'> = {
+  const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
     ...createVersionApi(state),
@@ -150,6 +150,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   for (const channel of IPC_CHANNELS) api[channel] = wrap(channel)
   api.onSyncEvent = impl.onSyncEvent
   const menuListeners = new Set<(command: MenuCommand) => void>()
+  api.onWindowState = () => () => {}
   api.onMenuCommand = (listener: (command: MenuCommand) => void) => {
     menuListeners.add(listener)
     return () => void menuListeners.delete(listener)

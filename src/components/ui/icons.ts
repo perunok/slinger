@@ -33,6 +33,11 @@ export const ICONS: Record<string, string> = {
   'layout-columns': 'M4 5h16v14H4zM12 5v14',
   /** A window with a panel on its right. */
   'panel-right': 'M4 5h16v14H4zM15 5v14',
+  'panel-left': 'M4 5h16v14H4zM9 5v14',
+  gear: 'M9.6 5.0L10.3 2.5L13.7 2.5L14.4 5.0L15.2 5.3L17.5 4.1L19.9 6.5L18.7 8.8L19.0 9.6L21.5 10.3L21.5 13.7L19.0 14.4L18.7 15.2L19.9 17.5L17.5 19.9L15.2 18.7L14.4 19.0L13.7 21.5L10.3 21.5L9.6 19.0L8.8 18.7L6.5 19.9L4.1 17.5L5.3 15.2L5.0 14.4L2.5 13.7L2.5 10.3L5.0 9.6L5.3 8.8L4.1 6.5L6.5 4.1L8.8 5.3zM15 12a3 3 0 10-6 0 3 3 0 106 0z',
+  'win-minimize': 'M6 12h12',
+  'win-maximize': 'M6.5 6.5h11v11h-11z',
+  'win-restore': 'M6.5 9.5h8v8h-8zM9.5 9.5v-3h8v8h-3',
   tag: 'M3 12V4h8l10 10-8 8zM7.5 8h.01',
   wrap: 'M4 6h16M4 12h13a3 3 0 010 6h-4M15 16l-2 2 2 2M4 18h5',
   sun: 'M12 8a4 4 0 100 8 4 4 0 000-8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5',

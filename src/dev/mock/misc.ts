@@ -21,7 +21,7 @@ type MiscApi = Pick<
   | 'getWindowChrome'
   | 'setTitleBarStyle'
   | 'reopenWindow'
-  | 'setTitleBarOverlay'
+  | 'windowControl'
   | 'showAppMenu'
   | 'pickFile'
   | 'grantedFiles'
@@ -146,7 +146,7 @@ export function createMiscApi(): MiscApi {
       }
     },
     async getWindowChrome() {
-      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar }
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, state: { maximized: false, fullScreen: false, focused: true } }
     },
     async setTitleBarStyle(style) {
       if (style !== 'custom' && style !== 'system') fail('invalid_input', 'style must be custom or system')
@@ -156,13 +156,13 @@ export function createMiscApi(): MiscApi {
       } catch {
         /* this page only */
       }
-      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar }
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, state: { maximized: false, fullScreen: false, focused: true } }
     },
     async reopenWindow() {
       setTimeout(() => location.reload(), 0)
     },
-    async setTitleBarOverlay() {
-      /* no system window buttons in the browser */
+    async windowControl() {
+      /* no native window in the browser */
     },
     async showAppMenu() {
       /* no native menu in the browser */

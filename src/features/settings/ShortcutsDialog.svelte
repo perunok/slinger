@@ -11,6 +11,7 @@
     ['Ctrl+K', 'Go to request (type > for commands: theme, accent, layout, export)'],
     ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
     ['Ctrl+Alt+V', 'Show the response below / beside the request'],
+    ['Ctrl+B', 'Show / hide the sidebar (collections, history, workflows)'],
     ['Ctrl+Alt+B', 'Show / hide the right panel (variables, docs, code, info)'],
     ['Ctrl+,', 'Settings'],
     ['Ctrl+/', 'This list'],

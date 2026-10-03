@@ -32,7 +32,3 @@
     </label>
   {/each}
 </div>
-<p class="mt-1.5 text-xs text-faint">
-  Shown while a request is in flight: the character runs back and forth until the response arrives. Random picks one per send; with reduced motion
-  it stands still.
-</p>

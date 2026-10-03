@@ -75,7 +75,7 @@ requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWo
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
 `revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
 `checkForUpdates` (see [Update notice](#update-notice)), the window frame (`getWindowChrome`, `setTitleBarStyle`, `reopenWindow`,
-`setTitleBarOverlay`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
+`windowControl`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -97,8 +97,9 @@ object** `{ name: 'IpcError', code, message, details? }`. It is not `instanceof 
 `details.code === 'folder_cycle'`), `io_error`, `network_error` (`details.cancelled` / `details.timedOut`), `internal_error`.
 Non-`IpcError` exceptions become `internal_error` with only the message (no stack) and are logged in main.
 
-**Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`) and
-`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)). The preload exposes each as a subscribe function that
+**Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`),
+`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)) and `window:state` (`onWindowState`, see
+[Custom title bar](#custom-title-bar)). The preload exposes each as a subscribe function that
 returns an unsubscribe function; the raw `ipcRenderer` event never reaches the page.
 
 Behavior notes for callers are in `NOTES-FOR-FRONTEND.md` at the repository root.
@@ -115,19 +116,19 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   mnemonics).
 - **File:** New Request, Close Tab, Import…, Export Collection…; **Edit:** the standard roles (undo, redo, cut, copy, paste,
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
-  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Response Position, Toggle Right Panel, Toggle Status
+  Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Sidebar, Toggle Response Position, Toggle Right Panel, Toggle Status
   Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
   **Help:** User Guide, Keyboard Shortcuts, Release Notes, Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
-  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, and the View layout toggles `toggleResponsePosition`,
-  `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
+  `import`, `exportCollection`, `settings`, `about`, `shortcuts`, `checkForUpdates`, and the View layout toggles `toggleSidebar`,
+  `toggleResponsePosition`, `toggleRightPanel`, `toggleStatusBar`) over `menu:command`. `deliverMenuCommand` sends only to the main
   window, only while it shows a trusted URL, only a zod-valid name; the preload drops anything else again, and the renderer
   (`src/app/menuCommands.ts`, subscribed in `App.svelte`) validates once more and runs the same action as the keyboard shortcut or
   button, with the same guard (nothing but Settings / Shortcuts acts behind a modal dialog). Export Collection uses the active tab's
   collection and otherwise shows a hint toast. With no window open (macOS), a menu command reopens the window.
 - **Accelerators.** The renderer's shortcut handler (`src/app/shortcuts.ts`) stays the owner of Ctrl/Cmd+T, W, `,`, `/` and the
-  layout toggles Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
+  layout toggles Ctrl/Cmd+B (sidebar), Ctrl/Cmd+Alt+V and Ctrl/Cmd+Alt+B (matched on the physical key with Cmd, since Option changes `key` on macOS, and ignored when
   AltGr produced a character): the
   menu shows those with `registerAccelerator: false` (label only), so on Windows/Linux a key press reaches only the renderer.
   macOS always registers menu key equivalents; Electron lets the page handle the key first and falls back to the menu only when the
@@ -564,25 +565,35 @@ whole file name to 240 UTF-8 bytes. Main's `sanitizeFileName` still reduces any 
 ## Custom title bar
 
 By default the renderer's top bar is the window's title bar. `electron/lib/titleBar.ts` (pure) builds the window options:
-Windows/Linux get `titleBarStyle: 'hidden'` plus a Window Controls Overlay (`titleBarOverlay: { color, symbolColor, height }`),
-so the OS draws the minimise/maximise/close buttons over the bar's right end; macOS gets `titleBarStyle: 'hidden'` with the
-traffic lights centred in the 40 px bar (`trafficLightPosition`) and `titleBarOverlay: true` for the CSS variables. There is no
-menu bar then (macOS keeps its own at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`, Windows/Linux)
-calls `showAppMenu(x, y)` and main pops up the application menu there (`menuPoint` scales CSS pixels by the page zoom).
+Windows/Linux get `titleBarStyle: 'hidden'` (no system title bar, no system buttons, no Window Controls Overlay) and Slinger
+draws minimise / maximise-restore / close itself as title bar items, so the user can place them on either side in any order;
+macOS gets `titleBarStyle: 'hidden'` with the traffic lights centred in the 40 px bar (`trafficLightPosition`) and
+`titleBarOverlay: true` for the `titlebar-area-*` CSS variables. There is no menu bar on Windows/Linux then (macOS keeps its own
+at the top of the screen), so the bar's menu button (`src/app/TopBar.svelte`) calls `showAppMenu(x, y)` and main pops up the
+application menu there (`menuPoint` scales CSS pixels by the page zoom).
 
+- **Window buttons.** `windowControl('minimize' | 'toggleMaximize' | 'close')` (zod-checked) acts on the main window. Main pushes
+  `{ maximized, fullScreen, focused }` on `window:state` (`onWindowState`, preload passes only the three booleans) on every
+  maximise / unmaximise / full-screen / focus / blur, and `getWindowChrome` includes the current `state`; `windowChrome.svelte.ts`
+  keeps it, so the middle button shows Restore while maximised. The buttons are drawn only with the custom title bar on
+  Windows/Linux and not in full screen (`ownWindowButtons`); neighbouring buttons render as one group without gaps, and one at
+  the very edge of the bar sits flush in the window corner (the bar drops that side's padding).
+- **Layout.** Which items the bar shows, on which side and in which order is `settings.titleBarLayout`
+  (`src/lib/titleBarLayout.ts`, pure: `{ left, right, hidden }` of `TITLE_BAR_ITEMS`, persisted as `slinger.titleBarLayout`;
+  unknown or repeated names are dropped, items a stored layout does not mention go where the default puts them). Settings and
+  the three window buttons (`ALWAYS_SHOWN`) can move but never be hidden. `TopBar.svelte` renders the two sides from it;
+  Settings > Layout & window > Title bar items (`features/settings/TitleBarLayoutEditor.svelte`: drag and drop, arrow keys,
+  Reset) edits it, and right-clicking an empty part of the bar opens Settings there (`ui.settingsFocus`). The same layout
+  applies with the system title bar (the top bar is then an ordinary bar without window buttons).
 - **Page side.** `.app-titlebar` (`src/styles/app.css`) is `-webkit-app-region: drag` with padding from the
-  `titlebar-area-x/width` environment variables (room for the system buttons); buttons, links, inputs and `[tabindex]` inside it
-  are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
-- **Colours.** `settings.apply()` and a `ResizeObserver` on the bar call `reportTitleBarOverlay()` (`src/lib/titleBarOverlay.ts`):
-  the bar's computed background and text colour (non-hex/rgb colours of custom themes converted through a canvas) and its CSS
-  height, sent only when changed. Main validates them (`cssColorSchema`), calls `setTitleBarOverlay` with the height times the
-  page zoom (again on every zoom change and page load), and remembers the colours as `titleBarOverlay` in `window-state.json`
-  for the next launch (default: the light/dark theme's `--surface` / `--text`).
+  `titlebar-area-x/width` environment variables (macOS: room for the traffic lights); buttons, links, inputs and `[tabindex]`
+  inside it are `no-drag`, and the dialog backdrop is `no-drag` so a modal is never dragged by its top edge.
 - **Preference.** `titleBar: 'custom' | 'system'` in `window-state.json` (absent = custom), set by `setTitleBarStyle` from
-  Settings > Window. A frame cannot change on a live window, so it applies to the next window: `reopenWindow` closes the main
-  window and opens a new one in the same process (`reopenMainWindow`; `window-all-closed` does not quit meanwhile). Bounds and
-  maximised carry over through the `close` handler; the renderer saves open tabs on `pagehide` as on quit; running collection
-  runs stop with the old page. `getWindowChrome` returns `{ platform, titleBar (this window), preferredTitleBar }`.
+  Settings. A frame cannot change on a live window, so it applies to the next window: `reopenWindow` closes the main window and
+  opens a new one in the same process (`reopenMainWindow`; `window-all-closed` does not quit meanwhile). Bounds and maximised carry
+  over through the `close` handler; the renderer saves open tabs on `pagehide` as on quit; running collection runs stop with the
+  old page. 0.10.0 drew the system buttons with a Window Controls Overlay in the theme's colours (`titleBarOverlay` in
+  `window-state.json`, now ignored); that is gone, since the overlay's buttons cannot be moved.
 
 ## Update notice
 
@@ -654,7 +665,8 @@ environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}
 (open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
 Details: `src/README.md`.
 
-**Layout** (`src/features/layout`). The request/response split orientation and "Show status bar" are settings; the right
+**Layout** (`src/features/layout`). The request/response split orientation, "Show sidebar" (Ctrl+B; hidden, `App.svelte`
+renders the main area without the sidebar's `SplitPane`, whose stored ratio is kept) and "Show status bar" are settings; the right
 panel's state is its own small store (`rightPanelStore.svelte.ts`). The shell (`App.svelte`) measures the area next to the sidebar
 and shows the right panel only when the main area keeps `minMainWidth` (`fitPanelWidth`), so neither the panel nor the status
 bar can squeeze the request editor below a usable size at the 900x600 minimum window. Right-panel views are registered in

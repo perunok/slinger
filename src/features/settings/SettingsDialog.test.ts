@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../../app/settings.svelte'
+import { ui } from '../../app/ui.svelte'
 import { windowChrome } from '../../app/windowChrome.svelte'
 import { createMockBackend, type MockControls } from '../../dev/mockBackend'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
@@ -12,12 +13,17 @@ import SettingsDialog from './SettingsDialog.svelte'
 const html = document.documentElement
 const stored = () => JSON.parse(localStorage.getItem(APPEARANCE_KEY) ?? '{}')
 
-function setup() {
+function setup(section: typeof ui.settingsSection = 'appearance') {
+  ui.settingsSection = section
   window.slinger = createMockBackend({ latencyMs: 0, seed: false })
   render(SettingsDialog)
   return {
-    themes: screen.getByRole('radiogroup', { name: 'Theme' }),
-    accents: screen.getByRole('radiogroup', { name: 'Accent colour' }),
+    get themes() {
+      return screen.getByRole('radiogroup', { name: 'Theme' })
+    },
+    get accents() {
+      return screen.getByRole('radiogroup', { name: 'Accent colour' })
+    },
   }
 }
 
@@ -137,7 +143,7 @@ describe('restore tabs on startup', () => {
 
   it('is on by default, and turning it off persists the choice and erases stored tabs', async () => {
     localStorage.setItem('slinger.tabs.some-workspace', '{"v":1,"activeIndex":null,"tabs":[]}')
-    setup()
+    setup('editor')
     const checkbox = screen.getByRole('checkbox', { name: /Restore open tabs on startup/ })
     expect(checkbox).toBeChecked()
 
@@ -150,7 +156,8 @@ describe('restore tabs on startup', () => {
 })
 
 describe('window and updates', () => {
-  async function open(): Promise<SlingerIpcApi & MockControls> {
+  async function open(section: typeof ui.settingsSection): Promise<SlingerIpcApi & MockControls> {
+    ui.settingsSection = section
     sessionStorage.clear()
     const backend = createMockBackend({ latencyMs: 0, seed: false })
     window.slinger = backend
@@ -161,7 +168,7 @@ describe('window and updates', () => {
   }
 
   it('switches to the system title bar, applied by reopening the window', async () => {
-    const backend = await open()
+    const backend = await open('layout')
     const box = screen.getByRole('checkbox', { name: 'Use the system title bar' })
     expect(box).not.toBeChecked()
     expect(screen.getByRole('button', { name: 'About the title bar' })).toBeInTheDocument()
@@ -175,7 +182,7 @@ describe('window and updates', () => {
   })
 
   it('turns automatic update checks off and checks on demand', async () => {
-    const backend = await open()
+    const backend = await open('updates')
     const auto = screen.getByRole('checkbox', { name: 'Check for new releases automatically' })
     expect(auto).toBeChecked()
     await fireEvent.click(auto)
@@ -202,3 +209,31 @@ describe('window and updates', () => {
 
   })
 })
+
+describe('sections', () => {
+  it('lists the sections at the side; each shows its own settings, and the last one stays selected', async () => {
+    setup()
+    const nav = screen.getByRole('tablist', { name: 'Settings sections' })
+    expect(within(nav).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Appearance', 'Layout & window', 'Editor & tabs', 'Scripts', 'Updates'])
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /Show sidebar/ })).toBeNull()
+    await fireEvent.click(within(nav).getByRole('tab', { name: 'Layout & window' }))
+    expect(screen.getByRole('checkbox', { name: /Show sidebar/ })).toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-layout')).toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Theme' })).toBeNull()
+    expect(ui.settingsSection).toBe('layout')
+    await fireEvent.click(within(nav).getByRole('tab', { name: 'Scripts' }))
+    expect(screen.getByRole('spinbutton', { name: /Time limit per script/ })).toBeInTheDocument()
+  })
+
+  it('"Customize title bar…" opens Layout & window', () => {
+    ui.settingsFocus = 'titlebar'
+    window.slinger = createMockBackend({ latencyMs: 0, seed: false })
+    ui.settingsSection = 'appearance'
+    render(SettingsDialog)
+    expect(ui.settingsSection).toBe('layout')
+    expect(ui.settingsFocus).toBeNull()
+    expect(screen.getByTestId('titlebar-layout')).toBeInTheDocument()
+  })
+})
+
