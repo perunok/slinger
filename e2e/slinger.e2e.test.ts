@@ -873,7 +873,7 @@ describe('import and export', () => {
   })
 
   it('exports a collection as Postman v2.1 JSON to the chosen folder', async () => {
-    await contextMenu(item(/^Col A/), 'Export as Postman JSON…')
+    await contextMenu(item(/^Col A/), 'Export…')
     const dialog = page.getByRole('dialog', { name: 'Export collection' })
     await dialog.getByRole('button', { name: /Choose folder/ }).click()
     await dialog.getByRole('button', { name: 'Copy to clipboard' }).click()
@@ -924,7 +924,7 @@ describe('import and export', () => {
   })
 
   it('exports the imported collection with untouched examples identical to the source file', async () => {
-    await contextMenu(item(/^thub-collection/), 'Export as Postman JSON…')
+    await contextMenu(item(/^thub-collection/), 'Export…')
     const dialog = page.getByRole('dialog', { name: 'Export collection' })
     await dialog.getByRole('button', { name: /Choose folder/ }).click()
     await dialog.getByRole('button', { name: 'Save to file' }).click()

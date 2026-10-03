@@ -5,8 +5,11 @@
   import { toast } from '../../app/toast.svelte'
   import CodeEditor from '../../components/editor/CodeEditor.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import { saveExport } from '../../lib/exportFile'
+  import { errorInfo } from '../../lib/ipc'
   import { prepareRequest } from '../../lib/prepare'
   import { generateSnippet, SNIPPET_LANGS, type SnippetLang } from '../../lib/snippets'
+  import { sanitizeFileStem } from '../importexport/fileName'
   import type { RequestTab } from './tabs.svelte'
 
   /** `idPrefix` keeps element ids unique when the right panel's Code view shows next to the Code section. */
@@ -28,6 +31,17 @@
       toast.error('Could not copy', 'Clipboard access was denied.')
     }
   }
+
+  /** Languages with a file type (.http) can be saved as a file named after the request, into the export folder. */
+  async function save() {
+    if (!info?.fileExtension) return
+    try {
+      const path = await saveExport(`${sanitizeFileStem(tab.draft.name, 'request')}${info.fileExtension}`, snippet)
+      toast.success('Snippet saved', path)
+    } catch (e) {
+      toast.error('Could not save the snippet', errorInfo(e).message)
+    }
+  }
 </script>
 
 <div class="flex h-full min-h-0 flex-col p-3">
@@ -36,7 +50,10 @@
     <select id="{idPrefix}-lang" bind:value={lang} class="min-w-0 max-w-44 flex-1">
       {#each SNIPPET_LANGS as l (l.id)}<option value={l.id}>{l.label}</option>{/each}
     </select>
-    <Button size="sm" icon="copy" onclick={copy} disabled={!prepared.ok} class="ml-auto">Copy</Button>
+    {#if info?.fileExtension}
+      <Button size="sm" icon="download" onclick={save} disabled={!prepared.ok} class="ml-auto" title="Save as a {info.fileExtension} file">Save</Button>
+    {/if}
+    <Button size="sm" icon="copy" onclick={copy} disabled={!prepared.ok} class={info?.fileExtension ? '' : 'ml-auto'}>Copy</Button>
   </div>
   {#if prepared.ok}
     <div class="min-h-32 flex-1 overflow-hidden rounded border border-border">

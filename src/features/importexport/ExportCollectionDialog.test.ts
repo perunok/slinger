@@ -14,7 +14,15 @@ async function setup(versions: string[] = []) {
   const ws = app.workspaceId!
   const col = await mock.createCollection(ws, 'My Demo API')
   const f = await mock.createFolder({ workspaceId: ws, collectionId: col.id, name: 'Users' })
-  await mock.createRequest({ workspaceId: ws, collectionId: col.id, folderId: f.id, name: 'List users', method: 'GET', url: 'https://x.test/users', documentJson: '{}' })
+  await mock.createRequest({
+    workspaceId: ws,
+    collectionId: col.id,
+    folderId: f.id,
+    name: 'List users',
+    method: 'GET',
+    url: '{{baseUrl}}/users',
+    documentJson: JSON.stringify({ url: '{{baseUrl}}/users', auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{apiToken}}' }] } }),
+  })
   await mock.createRequest({ workspaceId: ws, collectionId: col.id, name: 'Health', method: 'GET', url: 'https://x.test/health', documentJson: '{}' })
   for (const version of versions) await mock.createCollectionVersion({ collectionId: col.id, version, notes: `notes ${version}` })
   await app.reloadCollections()
@@ -33,6 +41,7 @@ describe('ExportCollectionDialog', () => {
     const pre = await screen.findByLabelText('Export preview')
     expect(pre.textContent).toContain('"name": "My Demo API"')
     expect(pre.textContent).toContain('collection/v2.1.0')
+    expect(screen.getByLabelText('Format')).toHaveValue('postman')
     expect(screen.getByText(/1 folder, 2 requests/)).toBeInTheDocument()
     expect(screen.getByText(/Unsaved edits in open tabs are not included/)).toBeInTheDocument()
   })
@@ -105,5 +114,64 @@ describe('ExportCollectionDialog', () => {
     await fireEvent.click(button)
     await waitFor(() => expect(writeText).toHaveBeenCalled())
     expect(JSON.parse(writeText.mock.calls[0][0]).info.name).toBe('My Demo API')
+  })
+
+  describe('as a .http file', () => {
+    async function asHttp(versions: string[] = []) {
+      const mock = await setup(versions)
+      await fireEvent.change(await screen.findByLabelText('Format'), { target: { value: 'http' } })
+      return mock
+    }
+
+    it('previews the requests with {{variables}} unresolved and saves only the .http file by default', async () => {
+      const mock = await asHttp(['1.2.0'])
+      const pre = await screen.findByLabelText('Export preview')
+      await waitFor(() => expect(pre.textContent).toContain('### Users / List users\nGET {{baseUrl}}/users\nAuthorization: Bearer {{apiToken}}\n'))
+      expect(pre.textContent).toContain('### Health\nGET https://x.test/health')
+      await waitFor(() => expect(screen.getByTestId('export-file-name')).toHaveTextContent('My Demo API v1.2.0.http'))
+      // The version history does not apply to a .http file.
+      expect(screen.queryByTestId('export-history')).toBeNull()
+      expect(screen.getByRole('button', { name: 'About .http files' })).toBeInTheDocument()
+      const envBox = screen.getByLabelText(/Also save http-client.env.json/)
+      expect(envBox).not.toBeChecked()
+      await fireEvent.click(await saveButton())
+      await waitFor(() => expect(ui.exportCollectionId).toBeNull())
+      const writes = mock.calls.filter((c) => c.method === 'writeExportFile')
+      expect(writes.map((c) => c.args[0])).toEqual(['My Demo API v1.2.0.http'])
+      expect(writes[0].args[1]).toMatch(/^# My Demo API\n/)
+      expect(writes[0].args[1]).toContain('GET {{baseUrl}}/users')
+    })
+
+    it('also saves the env files: non-secret values, secrets by name only', async () => {
+      const mock = await setup()
+      const env = await mock.createEnvironment(app.workspaceId!, 'Staging')
+      await mock.upsertEnvironmentVariable({ environmentId: env.id, key: 'baseUrl', value: 'https://staging.test', isSecret: false })
+      await mock.upsertEnvironmentVariable({ environmentId: env.id, key: 'apiToken', value: 'super-secret-token', isSecret: true })
+      await app.reloadEnvironments()
+      await app.setActiveEnvironment(env.id)
+      await fireEvent.change(await screen.findByLabelText('Format'), { target: { value: 'http' } })
+      await fireEvent.click(await screen.findByLabelText(/Also save http-client.env.json/))
+      await fireEvent.click(await saveButton())
+      await waitFor(() => expect(ui.exportCollectionId).toBeNull())
+      const writes = mock.calls.filter((c) => c.method === 'writeExportFile')
+      expect(writes.map((c) => c.args[0])).toEqual(['My Demo API.http', 'http-client.env.json', 'http-client.private.env.json'])
+      expect(JSON.parse(writes[1].args[1] as string).Staging).toMatchObject({ baseUrl: 'https://staging.test' })
+      expect(JSON.parse(writes[1].args[1] as string).Staging).not.toHaveProperty('apiToken')
+      expect(JSON.parse(writes[2].args[1] as string)).toEqual({ Staging: { apiToken: '' } })
+      for (const w of writes) expect(w.args[1]).not.toContain('super-secret-token')
+      expect(mock.calls.some((c) => c.method === 'revealEnvironmentVariable')).toBe(false)
+      expect(toast.items.some((t) => t.kind === 'success' && t.detail?.includes('http-client.private.env.json'))).toBe(true)
+    })
+
+    it('copies the .http text', async () => {
+      await asHttp()
+      const writeText = vi.fn(async (_text: string) => {})
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      const button = await screen.findByRole('button', { name: 'Copy to clipboard' })
+      await waitFor(() => expect(button).toBeEnabled())
+      await fireEvent.click(button)
+      await waitFor(() => expect(writeText).toHaveBeenCalled())
+      expect(writeText.mock.calls[0][0]).toContain('### Users / List users')
+    })
   })
 })

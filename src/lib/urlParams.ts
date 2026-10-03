@@ -10,7 +10,7 @@ import { ensureTrailingEmpty, isEmptyRow, newRow, type KvRow } from './kv'
 const TOKEN_SPLIT = /(\{\{[^{}]*\}\})/
 
 /** Applies `fn` to the non-template parts only. */
-function mapOutsideTokens(text: string, fn: (part: string) => string): string {
+export function mapOutsideTokens(text: string, fn: (part: string) => string): string {
   return text
     .split(TOKEN_SPLIT)
     .map((part, i) => (i % 2 === 1 ? part : fn(part)))
