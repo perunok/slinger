@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collectionExportFileName,
   environmentExportFileName,
+  HTTP_FILE_EXPORT_EXT,
   IMPORT_FILE_ACCEPT,
   MAX_FILE_NAME_BYTES,
   MAX_STEM_CHARS,
@@ -74,6 +75,11 @@ describe('export file names', () => {
     expect(collectionExportFileName('///', null)).toBe('___.slinger_collection.json')
     expect(collectionExportFileName('  ', null)).toBe('collection.slinger_collection.json')
     expect(collectionExportFileName('NUL', null)).toBe('NUL_.slinger_collection.json')
+  })
+
+  it('collection as a .http file: same name, other extension', () => {
+    expect(collectionExportFileName('My API', '1.2.0', HTTP_FILE_EXPORT_EXT)).toBe('My API v1.2.0.http')
+    expect(collectionExportFileName('a/b', null, HTTP_FILE_EXPORT_EXT)).toBe('a_b.http')
   })
 
   it('environment: name only', () => {

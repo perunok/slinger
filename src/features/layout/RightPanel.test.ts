@@ -190,6 +190,24 @@ describe('the panel', () => {
     await waitFor(() => expect(view.querySelector('.cm-content')?.textContent).toContain('requests'))
   })
 
+  it('Code: the .http language can also be saved as a file named after the request', async () => {
+    tabsStore.openRequest(find('API key in query'))
+    open('code')
+    const view = screen.getByTestId('panel-code')
+    // Save only exists for languages with a file type.
+    expect(within(view).queryByRole('button', { name: 'Save' })).toBeNull()
+    await fireEvent.change(within(view).getByRole('combobox', { name: 'Language' }), { target: { value: 'http' } })
+    await waitFor(() => expect(view.querySelector('.cm-content')?.textContent).toContain('### API key in query'))
+    expect(view.querySelector('.cm-content')?.textContent).toContain('GET https://mock.slinger.local/echo')
+    await fireEvent.click(within(view).getByRole('button', { name: 'Save' }))
+    const mock = window.__slingerMock!
+    await waitFor(() => expect(mock.calls.some((c) => c.method === 'writeExportFile')).toBe(true))
+    const call = mock.calls.find((c) => c.method === 'writeExportFile')!
+    expect(call.args[0]).toBe('API key in query.http')
+    expect(call.args[1]).toMatch(/^### API key in query\nGET https:\/\/mock\.slinger\.local\/echo/)
+    await waitFor(() => expect(toast.items.some((t) => t.kind === 'success' && t.detail?.endsWith('API key in query.http'))).toBe(true))
+  })
+
   it('Info: id, location, method, state, version and sync', async () => {
     const r = find('Get user')
     const tab = tabsStore.openRequest(r)

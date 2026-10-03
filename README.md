@@ -31,7 +31,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 - Request editor with query params, headers, body (none, form-data incl. files, x-www-form-urlencoded, raw with
   JSON/text/XML/HTML/JavaScript, binary), authorization (none, Basic, Bearer, API key in header or query, OAuth 2.0 with authorization code + PKCE via the system
   browser and a loopback redirect, client credentials, password, automatic refresh; tokens only in the OS keychain), per-request timeout,
-  description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell).
+  description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell, `.http` for JetBrains HTTP
+  Client / VS Code REST Client) to copy or save.
 - Multiple request tabs with dirty tracking, conflict detection (optimistic concurrency) and unsaved-changes prompts.
 - Environments with `{{variables}}`, secret variables kept in the OS keychain, and built-in dynamic variables
   (`{{$guid}}`, `{{$timestamp}}`, ...). Collection variables (imported from and exported to Postman's `variable` list, versioned
@@ -55,7 +56,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).
 - Import Postman collections (including collection, folder and request scripts and collection variables), environments and
-  globals (v2.x), export collections as Postman v2.1 JSON.
+  globals (v2.x), export collections as Postman v2.1 JSON or as a `.http` file (variables kept as `{{name}}`, optional
+  `http-client.env.json` without secret values).
 - 31 themes and 18 accent colours plus "follow the OS", your own custom themes (CSS or colour pickers, contrast warnings,
   import/export as `.slinger-theme.json`), adjustable font size, keyboard shortcuts.
 - Cloud panel: device-code sign-in to a Slinger Cloud server, publishing/linking a workspace and collection sync
@@ -117,7 +119,7 @@ Secrets never touch the database or `localStorage`: environment and global secre
 variable, its environment or its workspace removes the keychain entries. Collection versions and exports never contain
 environments, globals or secret values (collection variables are part of the collection and are never secret).
 
-Exports (Postman JSON, saved response bodies) go to the folder you chose in the export dialog, otherwise `~/Downloads`
+Exports (Postman JSON, `.http` files, saved response bodies) go to the folder you chose in the export dialog, otherwise `~/Downloads`
 (falling back to your home directory).
 
 ## Themes

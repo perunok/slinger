@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HttpRequestInput } from '../../shared/types'
-import { SNIPPET_LANGS, generateSnippet, type SnippetLang } from './snippets'
+import { HTTP_FILE_BOUNDARY, SNIPPET_LANGS, generateSnippet, type SnippetLang } from './snippets'
 
 function req(over: Partial<HttpRequestInput> = {}): HttpRequestInput {
   return {
@@ -22,7 +22,7 @@ const raw = (content: string, contentType = 'application/json'): HttpRequestInpu
 
 describe('SNIPPET_LANGS', () => {
   it('lists every language with editor language', () => {
-    expect(ALL).toEqual(['curl', 'fetch', 'axios', 'python', 'go', 'php', 'powershell'])
+    expect(ALL).toEqual(['curl', 'fetch', 'axios', 'python', 'go', 'php', 'powershell', 'http'])
     expect(SNIPPET_LANGS.find((l) => l.id === 'fetch')?.editorLanguage).toBe('javascript')
     expect(SNIPPET_LANGS.find((l) => l.id === 'axios')?.editorLanguage).toBe('javascript')
   })
@@ -394,5 +394,144 @@ describe('OAuth 2.0 auth in snippets', () => {
     const q = generateSnippet('curl', req({ url: 'https://api.example.com/items?a=1#top', auth: oauth('query') }))
     expect(q).toContain('https://api.example.com/items?a=1&access_token=<access token>#top')
     for (const lang of ALL) expect(generateSnippet(lang, req({ auth: oauth('header') }))).not.toContain('a'.repeat(64))
+  })
+})
+
+describe('http (.http file)', () => {
+  const http = (over: Partial<HttpRequestInput> = {}) => generateSnippet('http', req(over))
+
+  it('is listed with its file extension; only it can be saved as a file', () => {
+    expect(SNIPPET_LANGS.find((l) => l.id === 'http')).toMatchObject({ label: 'HTTP file (.http)', fileExtension: '.http' })
+    expect(SNIPPET_LANGS.filter((l) => l.fileExtension).map((l) => l.id)).toEqual(['http'])
+  })
+
+  it('simple GET: request line only, the name as ### line', () => {
+    expect(http()).toBe('GET https://api.example.com/items\n')
+    expect(http({ requestName: 'List items' })).toBe('### List items\nGET https://api.example.com/items\n')
+    expect(http({ requestName: '  ' })).toBe('GET https://api.example.com/items\n')
+  })
+
+  it.each(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])('%s method on the request line', (method) => {
+    expect(http({ method: method.toLowerCase() }).split('\n')[0]).toBe(`${method} https://api.example.com/items`)
+  })
+
+  it('headers as Name: value lines, kept in order with duplicates; newlines cannot break out of a line', () => {
+    const out = http({
+      requestName: 'multi\nline',
+      headers: [
+        { key: 'Accept', value: 'application/json' },
+        { key: 'X-A', value: '1' },
+        { key: 'x-a', value: '2' },
+        { key: 'X-Evil', value: 'a\r\n### b' },
+      ],
+    })
+    expect(out).toBe('### multi line\nGET https://api.example.com/items\nAccept: application/json\nX-A: 1\nx-a: 2\nX-Evil: a ### b\n')
+  })
+
+  it('query params stay in the URL; whitespace in the URL is encoded so it cannot end the request line', () => {
+    expect(http({ url: 'https://a.io/p?q=a b&x=1#frag' })).toBe('GET https://a.io/p?q=a%20b&x=1#frag\n')
+    expect(http({ url: '{{base}}/p?q={{ my var }}' })).toBe('GET {{base}}/p?q={{ my var }}\n')
+  })
+
+  it('raw body after a blank line, verbatim, with its Content-Type', () => {
+    const body = '{\n  "name": "Ünïcode ✓",\n  "q": "it\'s \\"quoted\\"",\n  "v": "{{value}}"\n}'
+    expect(http({ method: 'POST', body: raw(body) })).toBe(`POST https://api.example.com/items\nContent-Type: application/json\n\n${body}\n`)
+  })
+
+  it('urlencoded body as one encoded line, variables kept', () => {
+    const out = http({
+      method: 'POST',
+      body: {
+        mode: 'urlEncoded',
+        urlEncoded: [
+          { key: 'a', value: '1', enabled: true },
+          { key: 'b c', value: 'x&y=z', enabled: true },
+          { key: 'token', value: '{{token}}', enabled: true },
+          { key: 'off', value: '0', enabled: false },
+        ],
+      },
+    })
+    expect(out).toBe('POST https://api.example.com/items\nContent-Type: application/x-www-form-urlencoded\n\na=1&b%20c=x%26y%3Dz&token={{token}}\n')
+  })
+
+  it('form-data as multipart parts with a boundary; files as < path includes', () => {
+    const out = http({
+      method: 'POST',
+      headers: [{ key: 'Content-Type', value: 'multipart/form-data' }],
+      body: {
+        mode: 'formData',
+        formData: [
+          { key: 'name', value: 'Ada', type: 'text', enabled: true },
+          { key: 'a "quoted" field', value: 'line1\nline2', type: 'text', enabled: true },
+          { key: 'file', value: '', filePath: '/home/me/a b.png', type: 'file', enabled: true },
+          { key: 'rel', value: '', filePath: 'data/x.json', type: 'file', enabled: true },
+          { key: 'off', value: 'x', type: 'text', enabled: false },
+        ],
+      },
+    })
+    const b = HTTP_FILE_BOUNDARY
+    expect(out).toBe(
+      [
+        'POST https://api.example.com/items',
+        `Content-Type: multipart/form-data; boundary=${b}`,
+        '',
+        `--${b}`,
+        'Content-Disposition: form-data; name="name"',
+        '',
+        'Ada',
+        `--${b}`,
+        'Content-Disposition: form-data; name="a %22quoted%22 field"',
+        '',
+        'line1\nline2',
+        `--${b}`,
+        'Content-Disposition: form-data; name="file"; filename="a b.png"',
+        '',
+        '< /home/me/a b.png',
+        `--${b}`,
+        'Content-Disposition: form-data; name="rel"; filename="x.json"',
+        '',
+        '< ./data/x.json',
+        `--${b}--`,
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it("form-data keeps the request's own boundary", () => {
+    const out = http({
+      method: 'POST',
+      headers: [{ key: 'content-type', value: 'multipart/form-data; boundary="xyz"' }],
+      body: { mode: 'formData', formData: [{ key: 'a', value: '1', type: 'text', enabled: true }] },
+    })
+    expect(out).toContain('content-type: multipart/form-data; boundary="xyz"\n\n--xyz\n')
+    expect(out).toContain('\n--xyz--\n')
+    expect(out).not.toContain(HTTP_FILE_BOUNDARY)
+  })
+
+  it('binary body as a file include', () => {
+    expect(http({ method: 'PUT', body: { mode: 'binary', binaryFilePath: 'C:\\data\\blob.bin' } })).toBe(
+      'PUT https://api.example.com/items\n\n< C:\\data\\blob.bin\n',
+    )
+  })
+
+  it('auth: basic (base64, or plain when it holds variables), bearer, API key in header or query', () => {
+    expect(http({ auth: { kind: 'basic', basic: { username: 'u', password: 'p' } } })).toContain(`Authorization: Basic ${btoa('u:p')}\n`)
+    expect(http({ auth: { kind: 'basic', basic: { username: 'u', password: '{{password}}' } } })).toContain('Authorization: Basic u {{password}}\n')
+    expect(http({ auth: { kind: 'bearer', bearer: { token: '{{token}}' } } })).toContain('Authorization: Bearer {{token}}\n')
+    expect(http({ auth: { kind: 'apiKey', apiKey: { key: 'X-Api-Key', value: 'k1', addTo: 'header' } } })).toContain('X-Api-Key: k1\n')
+    expect(http({ url: 'https://a.io/p?x=1', auth: { kind: 'apiKey', apiKey: { key: 'api key', value: '{{key}}', addTo: 'query' } } })).toBe(
+      'GET https://a.io/p?x=1&api%20key={{key}}\n',
+    )
+  })
+
+  it('OAuth 2.0: an {{oauth2_access_token}} variable instead of the token, in the header or the query', () => {
+    const oauth = (addTo: 'header' | 'query', headerPrefix = 'Bearer'): HttpRequestInput['auth'] => ({
+      kind: 'oauth2',
+      oauth2: { tokenKey: 'a'.repeat(64), addTo, headerPrefix },
+    })
+    expect(http({ auth: oauth('header') })).toContain('Authorization: Bearer {{oauth2_access_token}}\n')
+    expect(http({ auth: oauth('header', '') })).toContain('Authorization: {{oauth2_access_token}}\n')
+    expect(http({ auth: oauth('query') })).toBe('GET https://api.example.com/items?access_token={{oauth2_access_token}}\n')
+    expect(http({ auth: oauth('header') })).not.toContain('a'.repeat(64))
   })
 })

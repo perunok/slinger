@@ -5,13 +5,21 @@
 
 import type { HttpRequestInput } from '../../shared/types'
 import { textToBase64, type EditorLanguage } from './response'
+import { mapOutsideTokens } from './urlParams'
 
 /** Stands in for an OAuth 2.0 access token in generated code (the real token never leaves the keychain for this). */
 export const OAUTH2_TOKEN_PLACEHOLDER = '<access token>'
 
-export type SnippetLang = 'curl' | 'fetch' | 'axios' | 'python' | 'go' | 'php' | 'powershell'
+/**
+ * The OAuth 2.0 token in `.http` output: a variable rather than OAUTH2_TOKEN_PLACEHOLDER, since `.http` clients resolve
+ * `{{name}}` themselves (e.g. from http-client.private.env.json) and a space would end the request line's URL.
+ */
+export const HTTP_OAUTH2_TOKEN_VARIABLE = 'oauth2_access_token'
 
-export const SNIPPET_LANGS: { id: SnippetLang; label: string; editorLanguage: EditorLanguage }[] = [
+export type SnippetLang = 'curl' | 'fetch' | 'axios' | 'python' | 'go' | 'php' | 'powershell' | 'http'
+
+/** `fileExtension`: the snippet can also be saved as a file of that type. */
+export const SNIPPET_LANGS: { id: SnippetLang; label: string; editorLanguage: EditorLanguage; fileExtension?: string }[] = [
   { id: 'curl', label: 'cURL', editorLanguage: 'text' },
   { id: 'fetch', label: 'JavaScript (fetch)', editorLanguage: 'javascript' },
   { id: 'axios', label: 'JavaScript (axios)', editorLanguage: 'javascript' },
@@ -19,6 +27,7 @@ export const SNIPPET_LANGS: { id: SnippetLang; label: string; editorLanguage: Ed
   { id: 'go', label: 'Go (net/http)', editorLanguage: 'text' },
   { id: 'php', label: 'PHP (cURL)', editorLanguage: 'text' },
   { id: 'powershell', label: 'PowerShell', editorLanguage: 'text' },
+  { id: 'http', label: 'HTTP file (.http)', editorLanguage: 'text', fileExtension: '.http' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -46,15 +55,30 @@ function hasHeader(headers: Pair[], name: string): boolean {
   return headers.some(([k]) => k.toLowerCase() === l)
 }
 
+/** Percent-encodes everything but `{{vars}}`. */
+const encodeKeepingVars = (s: string) => mapOutsideTokens(s, encodeURIComponent)
+
+const hasVariable = (s: string) => /\{\{[^{}]*\}\}/.test(s)
+
 function appendQuery(url: string, key: string, value: string): string {
   const hash = url.indexOf('#')
   const base = hash === -1 ? url : url.slice(0, hash)
   const frag = hash === -1 ? '' : url.slice(hash)
   const sep = base.includes('?') ? (/[?&]$/.test(base) ? '' : '&') : '?'
-  return `${base}${sep}${encodeURIComponent(key)}=${encodeURIComponent(value)}${frag}`
+  return `${base}${sep}${encodeKeepingVars(key)}=${encodeKeepingVars(value)}${frag}`
 }
 
-function prepare(input: HttpRequestInput): Prepared {
+interface PrepareOptions {
+  /** Stands in for the OAuth 2.0 access token (default OAUTH2_TOKEN_PLACEHOLDER). */
+  oauth2Token?: string
+  /**
+   * Basic auth as `Basic <username> <password>` when either part holds a `{{variable}}`: base64 would freeze the
+   * variable's name, while `.http` clients accept this form and encode it after resolving the variables.
+   */
+  plainBasicWithVariables?: boolean
+}
+
+function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
   const method = (input.method || 'GET').trim().toUpperCase() || 'GET'
   let url = input.url ?? ''
   const headers: Pair[] = []
@@ -67,17 +91,22 @@ function prepare(input: HttpRequestInput): Prepared {
   // Auth (an explicit user header of the same name wins).
   const auth = input.auth
   if (auth?.kind === 'basic' && auth.basic && !hasHeader(headers, 'Authorization')) {
-    headers.push(['Authorization', `Basic ${textToBase64(`${auth.basic.username}:${auth.basic.password}`)}`])
+    const { username, password } = auth.basic
+    headers.push([
+      'Authorization',
+      opts.plainBasicWithVariables && hasVariable(username + password) ? `Basic ${username} ${password}` : `Basic ${textToBase64(`${username}:${password}`)}`,
+    ])
   } else if (auth?.kind === 'bearer' && auth.bearer?.token && !hasHeader(headers, 'Authorization')) {
     headers.push(['Authorization', `Bearer ${auth.bearer.token}`])
   } else if (auth?.kind === 'oauth2' && auth.oauth2) {
     // The token stays in the keychain: snippets show a placeholder to paste it into.
     const prefix = auth.oauth2.headerPrefix.trim()
+    const token = opts.oauth2Token ?? OAUTH2_TOKEN_PLACEHOLDER
     if (auth.oauth2.addTo === 'query') {
       const marked = appendQuery(url, 'access_token', '\u0000')
       const at = marked.lastIndexOf('access_token=%00')
-      url = `${marked.slice(0, at)}access_token=${OAUTH2_TOKEN_PLACEHOLDER}${marked.slice(at + 'access_token=%00'.length)}`
-    } else if (!hasHeader(headers, 'Authorization')) headers.push(['Authorization', prefix ? `${prefix} ${OAUTH2_TOKEN_PLACEHOLDER}` : OAUTH2_TOKEN_PLACEHOLDER])
+      url = `${marked.slice(0, at)}access_token=${token}${marked.slice(at + 'access_token=%00'.length)}`
+    } else if (!hasHeader(headers, 'Authorization')) headers.push(['Authorization', prefix ? `${prefix} ${token}` : token])
   } else if (auth?.kind === 'apiKey' && auth.apiKey?.key) {
     if (auth.apiKey.addTo === 'query') url = appendQuery(url, auth.apiKey.key, auth.apiKey.value)
     else if (!hasHeader(headers, auth.apiKey.key)) headers.push([auth.apiKey.key, auth.apiKey.value])
@@ -439,8 +468,56 @@ function powershell(p: Prepared): string {
   return lines.join('\n')
 }
 
+// JetBrains HTTP Client / VS Code REST Client request (one block of a `.http` file).
+
+/** Multipart boundary when the request does not set one (the one the JetBrains HTTP Client's examples use). */
+export const HTTP_FILE_BOUNDARY = 'WebAppBoundary'
+
+/** Request names, header names and values are single lines in a `.http` file. */
+const oneLine = (s: string) => s.replace(/\r\n|[\r\n]/g, ' ')
+
+/** Whitespace would end the request line's URL, so it is percent-encoded (outside `{{vars}}`). */
+const httpUrl = (url: string) => mapOutsideTokens(url, (part) => part.replace(/\s/g, (c) => encodeURIComponent(c)))
+
+/** Quoted Content-Disposition parameter, escaped like browsers do (WHATWG multipart/form-data). */
+const dispositionParam = (s: string) => s.replace(/"/g, '%22').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+
+/** `< path` includes a file; a bare relative path gets `./` so it reads as one. */
+const fileRef = (path: string) => `< ${/^(?:[/\\~.]|[A-Za-z]:)/.test(path) ? path : `./${path}`}`
+
+function httpFile(p: Prepared, name: string): string {
+  const lines: string[] = []
+  const title = oneLine(name).trim()
+  if (title) lines.push(`### ${title}`)
+  lines.push(`${p.method} ${httpUrl(p.url)}`)
+  const headers = [...p.headers]
+  const b = p.body
+  let boundary = HTTP_FILE_BOUNDARY
+  if (b.kind === 'formData') {
+    // prepare() only keeps a multipart Content-Type that names its boundary; the parts below must use it.
+    const ct = headers.find(([k]) => k.toLowerCase() === 'content-type')
+    const m = ct ? /boundary=(?:"([^"]+)"|([^\s;]+))/i.exec(ct[1]) : null
+    if (m) boundary = m[1] ?? m[2]
+    else headers.push(['Content-Type', `multipart/form-data; boundary=${boundary}`])
+  }
+  for (const [k, v] of headers) lines.push(`${oneLine(k)}: ${oneLine(v)}`)
+  if (b.kind === 'raw') lines.push('', b.content)
+  else if (b.kind === 'urlEncoded') lines.push('', b.fields.map(([k, v]) => `${encodeKeepingVars(k)}=${encodeKeepingVars(v)}`).join('&'))
+  else if (b.kind === 'formData') {
+    lines.push('')
+    for (const f of b.fields) {
+      lines.push(`--${boundary}`)
+      if (f.file) {
+        lines.push(`Content-Disposition: form-data; name="${dispositionParam(f.key)}"; filename="${dispositionParam(basename(f.value))}"`, '', fileRef(f.value))
+      } else lines.push(`Content-Disposition: form-data; name="${dispositionParam(f.key)}"`, '', f.value)
+    }
+    lines.push(`--${boundary}--`)
+  } else if (b.kind === 'binary') lines.push('', fileRef(b.path))
+  return lines.join('\n') + '\n'
+}
+
 export function generateSnippet(lang: SnippetLang, input: HttpRequestInput): string {
-  const p = prepare(input)
+  const p = prepare(input, lang === 'http' ? { oauth2Token: `{{${HTTP_OAUTH2_TOKEN_VARIABLE}}}`, plainBasicWithVariables: true } : {})
   switch (lang) {
     case 'curl':
       return curl(p)
@@ -456,5 +533,7 @@ export function generateSnippet(lang: SnippetLang, input: HttpRequestInput): str
       return php(p)
     case 'powershell':
       return powershell(p)
+    case 'http':
+      return httpFile(p, input.requestName ?? '')
   }
 }

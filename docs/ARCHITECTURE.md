@@ -279,7 +279,7 @@ support.
 - **Sending:** see the HTTP pipeline above. History never holds the token (headers are not recorded, the query parameter is
   added in main after the history URL was taken). `pm.request.auth` in scripts is a read-only view of the stored settings
   (templates unresolved, literal credentials masked); `pm.sendRequest` refuses `oauth2` auth. Code snippets print
-  `<access token>`.
+  `<access token>` (`.http` output: `{{oauth2_access_token}}`).
 - **Renderer:** `lib/oauth2.ts` (grant labels, which settings each purpose needs, `resolveOAuth2Config`, status text),
   `features/oauth2/` (`OAuth2Panel.svelte` in the Authorization tab, `oauth2Actions.ts` resolves settings with the send's scope
   and reveals only the secrets a purpose needs; the status lookup needs none unless an identity field uses one).
@@ -508,9 +508,16 @@ record the source id, so the next re-import targets the original. When the file 
 `restoreVersionHistory` in the same transaction (after the safety version), adding the file's versions next to the existing ones
 with the duplicate/clash rules below; the result's `versionHistory` is shown as a toast.
 
+**`.http` export.** The Export dialog's other format (`lib/httpFile.ts`, renderer only, written with `writeExportFile`) is one
+JetBrains HTTP Client / VS Code REST Client file: each saved request (in `buildTree` order) goes through the `.http` snippet
+generator of `lib/snippets.ts`, but from `unresolvedInput(draft)` instead of `prepareRequest`, so `{{variables}}` stay as written
+and nothing is revealed. The optional `http-client.env.json` / `http-client.private.env.json` come from the send scope
+(`scopeStore.scopeFor`), which never holds secret values: secrets appear by name with `""`. It has no `info._slinger` and is not
+importable.
+
 ### Versioned export format (`info._slinger`)
 
-Every collection export (built in the renderer: `lib/postman.ts` + `lib/slingerExport.ts`, types in
+Every Postman collection export (built in the renderer: `lib/postman.ts` + `lib/slingerExport.ts`, types in
 `shared/slingerExport.ts`) is a plain Postman Collection v2.1 file with two additions inside `info`:
 
 - `info.version`: the collection's highest semver (pre-releases count), in the schema's **string** form (`"1.2.0"`,

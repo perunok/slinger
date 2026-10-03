@@ -13,6 +13,8 @@
 
 export const COLLECTION_EXPORT_EXT = '.slinger_collection.json'
 export const ENVIRONMENT_EXPORT_EXT = '.slinger_environment.json'
+/** A collection exported as a JetBrains HTTP Client / VS Code REST Client file. */
+export const HTTP_FILE_EXPORT_EXT = '.http'
 
 /** `accept` for import file pickers: Slinger and Postman exports, and any other .json. */
 export const IMPORT_FILE_ACCEPT = [
@@ -69,11 +71,14 @@ function fit(stem: string, suffix: string): string {
   return trimEnds(chars.join('')) + suffix
 }
 
-/** `<collection name> v<latest version>.slinger_collection.json`, or without the version when there is none. */
-export function collectionExportFileName(name: string, latestVersion: string | null | undefined): string {
+/**
+ * `<collection name> v<latest version>.slinger_collection.json`, or without the version when there is none; `ext`
+ * replaces the extension (`.http`).
+ */
+export function collectionExportFileName(name: string, latestVersion: string | null | undefined, ext = COLLECTION_EXPORT_EXT): string {
   // Semver labels only contain [0-9A-Za-z.-], but sanitise anyway: the label may come from a synced device.
   const version = latestVersion ? sanitizeFileStem(latestVersion, '') : ''
-  return fit(sanitizeFileStem(name, 'collection'), `${version ? ` v${version}` : ''}${COLLECTION_EXPORT_EXT}`)
+  return fit(sanitizeFileStem(name, 'collection'), `${version ? ` v${version}` : ''}${ext}`)
 }
 
 /** `<environment name>.slinger_environment.json`. */

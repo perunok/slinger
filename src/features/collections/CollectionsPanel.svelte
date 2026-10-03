@@ -89,7 +89,7 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Variables…', 'Scripts…', 'Versions…', 'Export as Postman JSON…'])
+    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Variables…', 'Scripts…', 'Versions…', 'Export…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -104,7 +104,7 @@
         { label: 'Variables…', icon: 'list', action: () => openCollectionVariables(row.id) },
         { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'collection', id: row.id }) },
         { label: 'Versions…', icon: 'tag', action: () => (ui.versionsFor = row.id) },
-        { label: 'Export as Postman JSON…', icon: 'download', action: () => (ui.exportCollectionId = row.id) },
+        { label: 'Export…', icon: 'download', action: () => (ui.exportCollectionId = row.id) },
         { separator: true, label: '' },
         { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
         { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },

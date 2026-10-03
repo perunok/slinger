@@ -53,7 +53,7 @@ Right Panel**, or the command palette (`> right panel`, which can also open it d
 - **Docs:** the request's documentation, rendered. **Edit in Docs** switches the request to its Docs section (for an example,
   **Open request** opens the parent request).
 - **Code:** the code snippet for the request (the same generator as the request's Code section), with a language picker and
-  **Copy**.
+  **Copy** (plus **Save** for the `.http` file language).
 - **Info:** name, method, URL, collection/folder, saved or unsaved, ID, created and updated times, version, and the workspace's
   sync state.
 
@@ -84,7 +84,7 @@ delete every workspace, "Personal" is recreated the next time you start the app.
 In the **Collections** sidebar:
 
 - **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New folder**,
-  **Run collection...**, **Variables...**, **Scripts...**, **Versions...**, **Export as Postman JSON...**, **Rename**, **Delete**.
+  **Run collection...**, **Variables...**, **Scripts...**, **Versions...**, **Export...**, **Rename**, **Delete**.
 - Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**,
   **Extract to new collection...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
@@ -120,7 +120,12 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   see [Documentation](#documentation-markdown).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
-  (net/http), PHP (cURL) or PowerShell, with a Copy button. Unresolved variables are left as-is in snippets.
+  (net/http), PHP (cURL), PowerShell or as an **HTTP file (.http)**, with a Copy button. Unresolved variables are left as-is in
+  snippets. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
+  REST Client and similar tools: a `### <request name>` line, `METHOD URL`, the headers, a blank line and the body
+  (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
+  as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
+  export folder (Downloads unless you chose another one in an export dialog).
 
 ### OAuth 2.0
 
@@ -156,7 +161,8 @@ shows the token itself, **Refresh** uses the refresh token, **Clear** deletes th
   refresh token, Slinger refreshes it automatically before sending; if that fails, or there is no token yet, the request is
   not sent and an inline error says to click **Get New Access Token**. Requests with the same settings share one token (for
   example every request of an imported collection whose collection-level auth was OAuth 2.0), per workspace. The collection
-  runner behaves the same. Code snippets show `<access token>` in place of the token.
+  runner behaves the same. Code snippets show `<access token>` in place of the token (`.http` snippets and exports use the
+  variable `{{oauth2_access_token}}` instead, to define in the `.http` tool's environment).
 - **Where tokens live.** Tokens are stored only in your OS keychain (like secret variables), never in the request, history,
   exports, version snapshots or cloud sync; the settings (without any token) are saved with the request like other auth. If
   the keychain is not available, getting a token fails with a message and the rest of the app keeps working.
@@ -665,7 +671,7 @@ collections keep theirs).
   message says how many). A file exported *without* snapshots lists its versions but they cannot be restored (the message says
   so). If the history block is damaged or was made by a newer Slinger, it is ignored with a note and the collection is still
   imported. A Postman collection (no history) imports exactly as before.
-- **Export:** right-click a collection, **Export as Postman JSON...** (or Ctrl+K, `> export collection`), then **Save to file**
+- **Export:** right-click a collection, **Export...** (or Ctrl+K, `> export collection`), then **Save to file**
   (optionally **Choose folder...** first) or **Copy to clipboard**. Only saved requests are exported. The default folder is Downloads (else your home directory). Saved examples are
   exported in each item's `response` list; examples you did not edit are written back exactly as they were imported. Scripts are
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
@@ -673,6 +679,16 @@ collections keep theirs).
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
   collection's `variable` list, in order (`disabled: true` for disabled ones). OAuth 2.0 settings are exported in Postman's
   format without any token. Globals and environments are never part of a collection export.
+- **Export as a .http file:** in the Export dialog, set **Format** to **HTTP file (.http)** to save the collection as one
+  `<collection name>.http` file for the HTTP Client of IntelliJ IDEA and other JetBrains IDEs, VS Code REST Client and other
+  tools that read `.http` files. Every saved request is a `### Folder / Subfolder / Request` block, in sidebar order, written
+  like the `.http` code snippet but with `{{variables}}` **unresolved** (these tools use the same syntax), so no variable value
+  and no secret is written into the file. Scripts, documentation, examples and the version history are not part of it.
+  Tick **Also save http-client.env.json and http-client.private.env.json** to write the variables a send would use (globals,
+  collection variables, the active environment) under the active environment's name (`default` without one):
+  `http-client.env.json` gets the non-secret values, `http-client.private.env.json` only the names of secret variables (and
+  `oauth2_access_token` when a request uses OAuth 2.0) with empty values for you to fill in; secret values never leave the
+  keychain. Both are saved next to the `.http` file and replace files of the same name there.
 - **Versions in the export:** the file is a normal Postman Collection v2.1 file. `info.version` holds the collection's latest
   version (e.g. `1.2.0`) and Slinger's version history is stored alongside it in `info._slinger`, which Postman ignores, so the
   file imports into Postman unchanged. **Include version history snapshots** (on by default, the dialog shows how much it adds)
@@ -683,7 +699,7 @@ collections keep theirs).
   the collection itself still imports into Slinger.
 - **File names:** a collection is saved as `<collection name> v<latest version>.slinger_collection.json` (for example
   `enat uat v1.2.0.slinger_collection.json`), or `<collection name>.slinger_collection.json` when it has no versions; an
-  environment as `<environment name>.slinger_environment.json`. The real name is kept, including spaces, capital letters,
+  environment as `<environment name>.slinger_environment.json`; a `.http` export as `<collection name> v<latest version>.http`. The real name is kept, including spaces, capital letters,
   Amharic and other scripts and emoji. Only characters that Windows, macOS or Linux do not allow in file names (`/ \ : * ? " < > |`
   and control characters) become `_`, leading/trailing dots and spaces are dropped, Windows device names such as `CON` or `NUL`
   get a `_` appended, and very long names are shortened (about 150 characters) without cutting a character in half.

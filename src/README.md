@@ -60,7 +60,7 @@ features/
 lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
                             request (document model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
-                            response, snippets, postman, tree,
+                            response, snippets, httpFile (.http collection export + env files), postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
                             themes (theme/accent registry), appearance (persisted theme settings), customThemes (custom theme model, CSS parser, rules, storage, file format), customThemeAudit (their contrast), loader (sending animation: pick, lap speed, sprite), contrast + themeAudit (WCAG checks)
 dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
