@@ -48,6 +48,7 @@ export function makeEnv(): TestEnv {
     picked,
     cleanup() {
       core.authCallbacks.closeAll()
+      void core.mockServers.stopAll()
       db.close()
       rmSync(exportDir, { recursive: true, force: true })
     },

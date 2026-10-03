@@ -1150,3 +1150,79 @@ export interface VersionInfo {
   v8: string | null
   os: { platform: string; release: string; arch: string }
 }
+
+// ---------------------------------------------------------------------------
+// ADDED (mock servers): a collection's saved examples served over local HTTP by the main process. Local-only: running
+// state lives in main memory, nothing is stored or synced. See docs/ARCHITECTURE.md, "Mock servers".
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved example as the mock server serves it. The renderer resolves these from the request documents (which are
+ * opaque to main) and sends them on start / when they change.
+ */
+export interface MockExample {
+  /** The request the example belongs to and the example's position in its `responses` (to open it from the log). */
+  requestId: string
+  exampleIndex: number
+  requestName: string
+  /** Example name ('Untitled example' when it has none). */
+  name: string
+  /** Method of the example's saved request (its `originalRequest`, else the parent request). */
+  method: string
+  /** URL of the example's saved request, templates unresolved (`{{baseUrl}}/users/:id`); only its path is matched. */
+  url: string
+  /** Status code to answer with (null: 200). */
+  code: number | null
+  /** Reason phrase ('' : the standard one). */
+  status: string
+  /** Response headers in order (enabled rows only). */
+  headers: RequestHeader[]
+  body: string
+  /** 'base64' when `body` holds base64 bytes (binary examples). */
+  bodyEncoding: 'base64' | null
+}
+
+export interface StartMockServerInput {
+  workspaceId: string
+  collectionId: string
+  /** 1-65535; the server binds 127.0.0.1 only. */
+  port: number
+  examples: MockExample[]
+}
+
+export interface MockServerInfo {
+  workspaceId: string
+  collectionId: string
+  port: number
+  /** `http://127.0.0.1:<port>` */
+  url: string
+  /** Unix seconds. */
+  startedAt: number
+  exampleCount: number
+  /** Requests answered since the start. */
+  requestCount: number
+}
+
+export interface MockServerLogEntry {
+  /** Increases per server; the log is capped at MOCK_LOG_LIMIT entries, oldest dropped. */
+  seq: number
+  /** Unix seconds. */
+  at: number
+  method: string
+  /** Path and query as received. */
+  path: string
+  status: number
+  /** The example that answered; null: none matched (or the request was refused). */
+  match: { requestId: string; exampleIndex: number; requestName: string; name: string } | null
+  /** Why nothing matched (shown in the log), null for a match. */
+  reason: string | null
+}
+
+/** Pushed on `mock:event` (onMockServerEvent). */
+export type MockServerEvent =
+  | { type: 'request'; collectionId: string; entry: MockServerLogEntry; requestCount: number }
+  | { type: 'started'; server: MockServerInfo }
+  | { type: 'stopped'; collectionId: string; reason: string | null }
+
+/** Log entries kept per mock server (main and renderer). */
+export const MOCK_LOG_LIMIT = 200

@@ -52,6 +52,28 @@ const pickFileOptions = z
 
 const requestHeader = z.object({ key: z.string().max(8192), value: z.string().max(65_536) })
 
+// ---- Mock servers --------------------------------------------------------------
+
+const mockExample = z
+  .object({
+    requestId: uuid,
+    exampleIndex: z.number().int().min(0).max(100_000),
+    requestName: z.string().max(500),
+    name: z.string().max(500),
+    method: z.string().min(1).max(32),
+    url: z.string().max(100_000),
+    code: z.number().int().min(100).max(999).nullable(),
+    status: z.string().max(500),
+    headers: z.array(requestHeader).max(500),
+    body: z.string().max(12 * 1024 * 1024),
+    bodyEncoding: z.enum(['base64']).nullable(),
+  })
+  .strict()
+const mockExamples = z.array(mockExample).max(20_000)
+const startMockServerInput = z
+  .object({ workspaceId: uuid, collectionId: uuid, port: z.number().int().min(1).max(65_535), examples: mockExamples })
+  .strict()
+
 const httpRequestInput = z.object({
   method: z.string().min(1).max(32),
   url: z.string().max(100_000),
@@ -616,6 +638,17 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       return core.workflows.duplicate(id, n)
     },
     deleteWorkflow: async (...a) => core.workflows.delete(parseArgs(z.tuple([uuid]), a)[0]),
+
+    // Mock servers (services/mockServers.ts; local-only, in memory)
+    startMockServer: async (...a) => core.mockServers.start(parseArgs(z.tuple([startMockServerInput]), a)[0]),
+    updateMockServer: async (...a) => {
+      const [collectionId, examples] = parseArgs(z.tuple([uuid, mockExamples]), a)
+      return core.mockServers.update(collectionId, examples)
+    },
+    stopMockServer: async (...a) => core.mockServers.stop(parseArgs(z.tuple([uuid]), a)[0]),
+    listMockServers: async (...a) => (parseArgs(z.tuple([]), a), core.mockServers.list()),
+    getMockServerLog: async (...a) => core.mockServers.log(parseArgs(z.tuple([uuid]), a)[0]),
+    clearMockServerLog: async (...a) => core.mockServers.clearLog(parseArgs(z.tuple([uuid]), a)[0]),
 
     secureStoreGet: async (...a) => core.secrets.get(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
     secureStoreSet: async (...a) => {

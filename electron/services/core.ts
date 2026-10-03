@@ -11,11 +11,12 @@ import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
+import { MockServers } from './mockServers'
 import { OAuth2Service } from './oauth2'
 import { ScriptService } from './scriptService'
 import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
-import type { SyncEvent } from '../../shared/types'
+import type { MockServerEvent, SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
 import { McpService, type McpServiceDeps } from '../mcp/service'
 import { McpClientService, type McpClientApi, type McpClientDeps } from '../mcpClient/types'
@@ -38,6 +39,8 @@ export interface CoreDeps {
   mcp?: Partial<Omit<McpServiceDeps, 'db' | 'secrets'>>
   /** MCP client wiring (MCP requests; optional: tests get a client whose events go nowhere). */
   mcpClient?: Partial<Omit<McpClientDeps, 'db'>>
+  /** Receives every MockServerEvent (main forwards them to the renderer). */
+  mockServerEvents?: (event: MockServerEvent) => void
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -66,6 +69,8 @@ export interface Core {
   mcp: McpService
   /** ADDED (MCP requests): Slinger's own MCP client sessions (connect to a server, list, call). */
   mcpClient: McpClientApi
+  /** ADDED (mock servers): local HTTP servers answering with a collection's saved examples; in memory only. */
+  mockServers: MockServers
 }
 
 export function createCore(deps: CoreDeps): Core {
@@ -120,6 +125,7 @@ export function createCore(deps: CoreDeps): Core {
       emit: deps.mcpClient?.emit ?? (() => {}),
       appVersion: deps.mcpClient?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
+    mockServers: new MockServers({ emit: deps.mockServerEvents }),
   }
   // First launch: make sure there is always a workspace to work in.
   core.workspaces.ensureDefault()

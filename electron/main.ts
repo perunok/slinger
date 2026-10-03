@@ -7,7 +7,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -594,6 +594,11 @@ if (!app.requestSingleInstanceLock()) {
         },
         appVersion: app.getVersion(),
       },
+      mockServerEvents: (event) => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send(MOCK_EVENT_CHANNEL, event)
+        }
+      },
     })
     let feedUrl: string | null = null
     try {
@@ -665,6 +670,8 @@ if (!app.requestSingleInstanceLock()) {
       core?.sync.stop()
       core?.authCallbacks.closeAll()
       core?.oauth2.cancelAll()
+      // Mock servers live only while the app runs (close() stops listening at once; connections are closed too).
+      void core?.mockServers.stopAll()
       // MCP request sessions: stdio servers are asked to exit (stdin closed, then SIGTERM) so none outlives the app;
       // bounded so a stuck server never blocks quitting.
       const mcpClosed = core?.mcpClient.closeAll() ?? Promise.resolve()

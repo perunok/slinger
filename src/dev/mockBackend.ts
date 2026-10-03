@@ -20,6 +20,7 @@ import { createVersionApi } from './mock/versions'
 import { createVariablesApi } from './mock/variables'
 import { createWorkspaceApi } from './mock/workspaces'
 import { createWorkflowsApi } from './mock/workflows'
+import { createMockServersApi, type MockServerControls } from './mock/mockServers'
 import { clone, sleep } from './mock/util'
 
 export interface MockCall {
@@ -45,6 +46,8 @@ export interface MockControls {
   menuCommand(command: MenuCommand): void
   /** The version checkForUpdates reports as the latest release (null: none published, the default). */
   setLatestRelease(version: string | null): void
+  /** Mock servers: play requests against a running one (`hit`), occupy a port, crash one. */
+  mockServers: MockServerControls
 }
 
 export interface MockOptions {
@@ -93,6 +96,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const sync = createSyncApi(state, options.cloud)
   const mcp = createMcpApi()
   const mcpClient = createMcpClientApi(state)
+  const mockServers = createMockServersApi()
   const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
@@ -100,6 +104,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createHttpApi(state),
     ...createVariablesApi(state),
     ...createWorkflowsApi(state),
+    ...mockServers.api,
     ...createScriptsApi(),
     ...createOAuth2Api(state, () => latency),
     ...misc,
@@ -176,6 +181,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   api.onSyncEvent = impl.onSyncEvent
   api.onMcpCall = impl.onMcpCall
   api.onMcpClientEvent = impl.onMcpClientEvent
+  api.onMockServerEvent = impl.onMockServerEvent
   const menuListeners = new Set<(command: MenuCommand) => void>()
   api.onWindowState = () => () => {}
   api.onMenuCommand = (listener: (command: MenuCommand) => void) => {
@@ -191,6 +197,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
       misc.setLatestRelease(null)
       sync.reset()
       mcpClient.controls.reset()
+      mockServers.controls.reset()
       once.clear()
       always = null
       calls.length = 0
@@ -207,6 +214,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     cloud: sync.controls,
     mcp: mcp.controls,
     mcpClient: mcpClient.controls,
+    mockServers: mockServers.controls,
     calls,
     menuCommand(command) {
       for (const listener of [...menuListeners]) listener(command)
