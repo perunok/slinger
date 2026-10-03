@@ -2,6 +2,7 @@
   import Tabs from '../components/ui/Tabs.svelte'
   import CollectionsPanel from '../features/collections/CollectionsPanel.svelte'
   import HistoryPanel from '../features/history/HistoryPanel.svelte'
+  import WorkflowsPanel from '../features/workflows/WorkflowsPanel.svelte'
   import { ui } from './ui.svelte'
 </script>
 
@@ -10,13 +11,14 @@
     label="Sidebar views"
     idPrefix="side"
     value={ui.sidebar}
-    onchange={(v) => (ui.sidebar = v as 'collections' | 'history')}
+    onchange={(v) => (ui.sidebar = v as 'collections' | 'history' | 'workflows')}
     tabs={[
       { id: 'collections', label: 'Collections' },
       { id: 'history', label: 'History' },
+      { id: 'workflows', label: 'Workflows' },
     ]}
   />
   <div class="min-h-0 flex-1" role="tabpanel" id="side-panel-{ui.sidebar}" aria-labelledby="side-{ui.sidebar}">
-    {#if ui.sidebar === 'collections'}<CollectionsPanel />{:else}<HistoryPanel />{/if}
+    {#if ui.sidebar === 'collections'}<CollectionsPanel />{:else if ui.sidebar === 'history'}<HistoryPanel />{:else}<WorkflowsPanel />{/if}
   </div>
 </nav>

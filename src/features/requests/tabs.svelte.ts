@@ -123,15 +123,21 @@ export class RequestTab {
   overviewSection = $state<'docs' | 'variables'>('docs')
   /** A variable name from the "create variable" action, for the collection variables editor to add. */
   pendingVariable = $state<string | null>(null)
+  /** ADDED (workflows): set for workflow tabs (features/workflows); the workflow saves itself as it is edited. */
+  workflowId = $state<string | null>(null)
 
   dirty = $derived(
-    this.overview
+    this.workflowId
+      ? false
+      : this.overview
       ? this.overviewDraft !== null && this.overviewDraft !== (overviewEntity(this.overview)?.description ?? '')
       : draftFingerprint(this.draft) !== this.savedFingerprint ||
           (this.exampleDraft !== null && exampleFingerprint(this.exampleDraft) !== this.exampleSavedFingerprint),
   )
   title = $derived(
-    this.overview
+    this.workflowId
+      ? (app.workflowById(this.workflowId)?.name ?? 'Deleted workflow')
+      : this.overview
       ? (overviewEntity(this.overview)?.name ?? `Deleted ${this.overview.kind}`)
       : this.exampleDraft
         ? this.exampleDraft.name.trim() || 'Untitled example'
@@ -271,7 +277,12 @@ class TabsStore {
    */
   private restoreFromDisk(workspaceId: string) {
     const persisted = readPersisted(workspaceId)
-    const result = restoreTabsFromState(persisted, { requests: app.requests, collections: app.collections, folders: app.folders })
+    const result = restoreTabsFromState(persisted, {
+      requests: app.requests,
+      collections: app.collections,
+      folders: app.folders,
+      workflows: app.workflowsLoaded ? app.workflows : null,
+    })
     const tabs = result.inits.map((init) => this.buildRestoredTab(init))
     this.tabs = tabs
     this.activeId = (result.activeIndex != null ? tabs[result.activeIndex] : undefined)?.id ?? tabs[0]?.id ?? null
@@ -285,6 +296,11 @@ class TabsStore {
     if (init.kind === 'scratch') {
       const tab = new RequestTab({ draft: init.draft, collectionId: init.collectionId, folderId: init.folderId })
       tab.section = init.section
+      return tab
+    }
+    if (init.kind === 'workflow') {
+      const tab = new RequestTab()
+      tab.workflowId = init.workflowId
       return tab
     }
     if (init.kind === 'overview') {
@@ -358,6 +374,27 @@ class TabsStore {
     this.tabs.push(tab)
     this.activeId = tab.id
     return tab
+  }
+
+  /** Opens (or focuses) the tab of a workflow. */
+  openWorkflow(workflowId: string): RequestTab {
+    const existing = this.tabs.find((t) => t.workflowId === workflowId)
+    if (existing) {
+      this.activeId = existing.id
+      return existing
+    }
+    const tab = new RequestTab()
+    tab.workflowId = workflowId
+    this.tabs.push(tab)
+    this.activeId = tab.id
+    return tab
+  }
+
+  /** Closes tabs of workflows that no longer exist (deleted here or before a restore); nothing unsaved is lost. */
+  syncWorkflowTabs() {
+    if (!app.workflowsLoaded) return
+    const gone = this.tabs.filter((t) => t.workflowId && !app.workflowById(t.workflowId)).map((t) => t.id)
+    if (gone.length) this.closeNow(gone)
   }
 
   /** Opens (or focuses) the overview tab of a collection or folder. */
@@ -495,6 +532,7 @@ class TabsStore {
     const gone: string[] = []
     const goneExamples: string[] = []
     for (const t of this.tabs) {
+      if (t.workflowId) continue
       if (t.overview) {
         // Overview of a collection/folder deleted elsewhere: close it unless it holds unsaved docs.
         if (!overviewEntity(t.overview) && !t.dirty) goneExamples.push(t.id)
@@ -572,6 +610,7 @@ class TabsStore {
 
   /** Saves a tab. Returns true on success. Unsaved new tabs need Save As (caller opens the dialog). */
   async save(tab: RequestTab, opts: { overwrite?: boolean } = {}): Promise<boolean> {
+    if (tab.workflowId) return true
     if (tab.overview) return this.saveOverview(tab)
     if (!tab.requestId) return false
     if (tab.example) return this.saveExample(tab, opts)
@@ -770,7 +809,7 @@ class TabsStore {
   // ---- sending ----------------------------------------------------------
 
   async send(tab: RequestTab): Promise<ExecuteOutcome | null> {
-    if (tab.overview) return null
+    if (tab.overview || tab.workflowId) return null
     if (tab.example) {
       this.tryExample(tab)
       return null

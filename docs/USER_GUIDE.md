@@ -14,7 +14,7 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Top bar:** workspace switcher, the sync chip (cloud sync state; click it for Sync now, conflicts and **Cloud…**), "Go to
   request" (Ctrl+K), environment switcher (with a gear to manage environments), Right panel, Keyboard shortcuts, Settings, About
   Slinger (the question-mark icon). Each of these has one place on screen; the menus and the command palette reach them too.
-- **Sidebar:** two tabs, **Collections** and **History**.
+- **Sidebar:** three tabs, **Collections**, **History** and **Workflows** (see [Workflows](#workflows)).
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
 - **Right panel** (closed by default): see [Right panel](#right-panel).
@@ -271,6 +271,38 @@ returns, a fixture to compare against, or a response you want to keep.
   of synced examples. In a workspace linked to cloud sync, the request editor warns right in the tab once a request's saved
   examples and response bodies push it over that 900 KB limit, since an oversized one is skipped by sync instead of blocked -
   remove or shrink examples to bring it back under the cap. Read-only (viewer) workspaces can open examples but not change them.
+
+## Workflows
+
+A workflow chains saved requests on a canvas: a response can feed the next request, a script, a branch or a loop, and one
+click runs it all. Workflows belong to a workspace and are kept on this device only (they are not synced to Slinger Cloud and
+are not part of collection exports).
+
+- **Create:** Sidebar > **Workflows** > **+** (New workflow). It opens in a tab with a **Start** node. Right-click a workflow
+  (or its **⋯** button) to rename, duplicate or delete it.
+- **Build:** drag a node from the list on the left onto the canvas, or click it: with a node selected, the new node is
+  placed after it and connected from its first output, so a chain builds click by click. Connect an output (right edge of a
+  node) to an input (left edge) by dragging. Select a node to change it on the right; **Delete** or **Backspace** removes the
+  selection. Changes are saved as you make them.
+- **Nodes** (each one's (i) explains it in detail):
+
+  | Node | What it does | Outputs |
+  | --- | --- | --- |
+  | Start | A run begins here, sending its JSON value (or null). | out |
+  | Send request | Sends a saved request exactly like the Send button (scripts, environment, history). If the value arriving is an object, its fields fill `{{field}}` in the request. | response (`{ status, statusText, headers, body, durationMs, size }`, body parsed when JSON), error (could not send) |
+  | Evaluate | JavaScript in the script sandbox; `input` is the value, `return` sends a value on. `pm`, `await` and the built-in libraries (`require('lodash')` ...) work. | out, error |
+  | If | A JavaScript condition on `input`; passes the value on unchanged. | true, false |
+  | For each | Sends every item of a list (an expression, e.g. `input.body.items`) in turn, each one's branch finishing first, then the list. | each item, done |
+  | Delay | Waits, then passes the value on. | out |
+  | Set variable | Stores a value (an expression) as a variable for the rest of the run, in the active environment or in globals, then passes the value on. | out |
+  | Output | Shows what arrives, on the node and in the run log. | |
+
+- **Run** (or Ctrl+Enter) starts at every Start node and follows the connections one step at a time. Each node shows its state
+  (running, done with a ×count when it ran more than once, or failed), selecting a node shows what it received and sent last,
+  and **Run log** lists every step; click an entry to find its node. **Stop** ends a run. A run uses the environment that was
+  active when it started, keeps going if you close the tab, and stops when you switch workspaces.
+- **Errors:** a node that fails sends `{ message }` down its **error** output when that is connected; otherwise the run stops
+  there. A run also stops after 1000 steps, in case a loop (an If feeding back into an earlier node) never ends.
 
 ## Collection runner
 
@@ -873,8 +905,8 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+Enter | Send the current request |
-| Ctrl+S | Save the current request (Save as, if it is not saved yet) |
+| Ctrl+Enter | Send the current request (in a workflow tab: run the workflow) |
+| Ctrl+S | Save the current request (Save as, if it is not saved yet); workflows save themselves as you edit |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
 | Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |

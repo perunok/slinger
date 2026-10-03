@@ -11,19 +11,20 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0009_sync_local_only.sql
+  migrations/        0001_init.sql ... 0010_workflows.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
-                     (collection variables + globals), history, common
+                     (collection variables + globals), workflows, history, common
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
   lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
-                     scrubbing) - imported by main AND renderer, no Node/DOM deps
+                     scrubbing), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox) - imported by main AND
+                     renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
@@ -63,11 +64,12 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 102 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 108 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
-requests, history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
+requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `duplicateWorkflow`, `deleteWorkflow`; see
+[Workflows](#workflows)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
@@ -159,6 +161,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0007_import_source` | nullable `collections.source_postman_id` (the `info._postman_id` a collection was imported or replaced from; local-only, not synced) |
 | `0008_variables` | `collection_variables` (per collection, never secret) and `global_variables` (per workspace, secrets like environment variables): key, value, enabled, description, `sort_order`, unique live key per owner; read-only triggers for viewers |
 | `0009_sync_local_only` | capture triggers for collection/folder `scripts_json` / `description` / `description_type` and for `collection_variables` / `global_variables`; `global_variables.secret_missing`; `cloud_links.sync_features`; the globals read-only trigger lets a viewer set a secret's local value (sync design section 21) |
+| `0010_workflows` | `workflows` (per workspace: name, `graph_json`, soft delete, version); local-only: no capture or read-only triggers |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -443,6 +446,37 @@ assembly, request/response snapshots, scope layering, test counts), `features/re
 `features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog). The browser
 mock's `runScripts` does not execute scripts (it returns the scopes unchanged with a console note).
 
+## Workflows
+
+Visual node graphs that chain saved requests. Local-only (table `workflows`, migration 0010): no sync capture and no read-only
+triggers, so a viewer of a shared workspace can build workflows on this device; not exported or versioned with collections.
+`graph_json` is opaque to main (it must be a JSON object, at most 5 MB); `updateWorkflow` uses `expectedVersion` like requests.
+
+- **Document** (`src/lib/workflow/graph.ts`): `{ v: 1, nodes: [{ id, type, position, title?, config }], edges: [{ id, source,
+  sourcePort, target }], viewport? }`. Node types and their outputs are `NODE_DEFS` (start, request, evaluate, if, forEach,
+  delay, setVariable, output). `parseGraph` is tolerant: unknown types, duplicate ids, edges to missing nodes/ports, into
+  Start or onto the same node are dropped, configs are checked field by field, so a damaged document still opens.
+- **Engine** (`src/lib/workflow/engine.ts`, pure, injected `sendRequest` / `evaluate` / `sleep`): message passing. Start nodes
+  fire in reading order; a value arriving at a node's input runs it; each value goes down every edge of a port in turn, depth
+  first, one step at a time (deterministic order). For each sends each item down `item` (its branch finishes first), then the
+  list down `done`. A failure goes down `error` when connected, otherwise it stops the run at that node. Cycles are allowed;
+  1000 node executions per run stop runaway loops. Events (`node-start`, `node-progress`, `node-end`, `node-error`, `output`)
+  drive the UI.
+- **Abilities** (`src/features/workflows/workflowRuns.svelte.ts`): Send request is `executeDraft` (the same path as Send:
+  scripts, secrets, OAuth 2.0, history), with the input object's fields as the run's iteration data (`{{field}}`,
+  `pm.iterationData`). Evaluate / If / For each / Set variable run through `runScripts` in the QuickJS sandbox, wrapped by
+  `shared/workflowScript.ts`: the input is iteration data `__slinger_input`, the return value comes back as `pm.variables`
+  `__slinger_output` (removed again); `await __slinger_body()` is a SyntaxError as global code, so the sandbox evaluates the text
+  as an async function body: `await` works and async errors are script errors (proven against the real sandbox in
+  `electron/__tests__/scripts/workflowScript.test.ts`). Set variable is generated code (`pm.variables` / `pm.environment` /
+  `pm.globals` `.set`). One `ScriptRunContext` per run (pm.variables shared); the environment active at the start is pinned; a
+  run is independent of its tab and stops on a workspace switch; Stop cancels the request or script in flight
+  (`cancelHttpRequest`).
+- **UI**: sidebar tab Workflows (`WorkflowsPanel`); a workflow opens as a `RequestTab` with `workflowId` (persisted as kind
+  `workflow` in the tab state, never dirty). `WorkflowEditor` uses Svelte Flow (`@xyflow/svelte`, themed through its `--xy-*`
+  variables in `app.css`): palette (drag, or click to append after the selected node), canvas, inspector, run log. It saves
+  the graph debounced (600 ms) and when it goes away; Ctrl+Enter runs, Ctrl+S saves now (`features/workflows/commands.ts`).
+
 ## Collection versioning
 
 Versions are immutable snapshots stored inside the database, not git. `createCollectionVersion` serializes the collection's live
@@ -703,7 +737,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories, tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories (incl. workflows), tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
@@ -735,5 +769,5 @@ Example: `renameFoo(fooId, name)`.
 
 Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
 Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
-loading remote images in docs, realtime collaboration, plugin system, non-HTTP protocols, code signing and automatic
+loading remote images in docs, syncing or exporting workflows, realtime collaboration, plugin system, non-HTTP protocols, code signing and automatic
 installation of updates (Slinger only notifies about a new release, see [Update notice](#update-notice)).

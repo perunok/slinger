@@ -48,6 +48,9 @@ All shots are the real app with a fictional "Acme Store API" collection imported
   through the app's own HTTP engine; scripts have no other network access.
 - Collection runner (sequential, delay, stop on first failure) that runs the scripts, carries variables from one request to the
   next and reports test counts.
+- Workflows: chain saved requests on a visual canvas (Start, Send request, Evaluate, If, For each, Delay, Set variable,
+  Output nodes); a response feeds the next request's `{{variables}}`, a sandboxed script or a branch, and a run shows each
+  node's input and output live. Kept on this device (not synced).
 - Request history per workspace (every attempt is recorded, secrets are not).
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).
@@ -172,7 +175,7 @@ Set `SLINGER_BIN_DIR` to put the `slinger` command elsewhere. Your data is not t
 
 These do not exist in the code today: the OAuth 2.0 implicit grant (deprecated; authorization code with PKCE, client
 credentials and password are supported), other auth types such as Digest, AWS Signature or NTLM, Node modules /
-`postman-collection` in scripts, realtime collaboration and plugins/extensions. Cloud sync covers collection- and folder-level
+`postman-collection` in scripts, syncing or exporting workflows, realtime collaboration and plugins/extensions. Cloud sync covers collection- and folder-level
 scripts and docs, collection variables and globals only with a server that supports them (slinger-admin with the
 `sync_local_only` migration); with an older server they stay on the device.
 Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).

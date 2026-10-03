@@ -266,3 +266,15 @@ describe('restoreTabs', () => {
     }
   })
 })
+
+describe('workflow tabs', () => {
+  it('are kept by workflow id and restored while the workflow exists (or the list is not known yet)', () => {
+    const state = serializeTabs([tab({ id: 'a', workflowId: 'wf-1', title: 'Flow' }), tab({ id: 'b', workflowId: 'wf-gone' })], 'a')
+    expect(state.tabs).toEqual([{ kind: 'workflow', workflowId: 'wf-1' }, { kind: 'workflow', workflowId: 'wf-gone' }])
+    const known = restoreTabs(state, { requests: [], collections: [], folders: [], workflows: [{ id: 'wf-1' }] })
+    expect(known).toEqual({ inits: [{ kind: 'workflow', workflowId: 'wf-1' }], activeIndex: 0, lostDraftTitles: [] })
+    const unknown = restoreTabs(state, { requests: [], collections: [], folders: [], workflows: null })
+    expect(unknown.inits).toHaveLength(2)
+  })
+})
+

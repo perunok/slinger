@@ -6,6 +6,7 @@ import { HistoryRepository } from '../repositories/history'
 import { WorkspaceRepository } from '../repositories/workspaces'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
 import { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
+import { WorkflowRepository } from '../repositories/workflows'
 import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
@@ -42,6 +43,8 @@ export interface Core {
   collections: CollectionRepository
   folders: FolderRepository
   requests: RequestRepository
+  /** ADDED (workflows): local-only visual workflows per workspace. */
+  workflows: WorkflowRepository
   history: HistoryRepository
   /** ADDED (persisted variables): local-only collection variables and workspace globals. */
   collectionVariables: CollectionVariableRepository
@@ -76,6 +79,7 @@ export function createCore(deps: CoreDeps): Core {
     collections: new CollectionRepository(db),
     folders: new FolderRepository(db),
     requests: new RequestRepository(db),
+    workflows: new WorkflowRepository(db),
     history,
     collectionVariables,
     globals,

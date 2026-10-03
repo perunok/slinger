@@ -5,6 +5,7 @@ import { cleanName, nowSeconds } from '../lib/text'
 import { purgeSecretRefs, type SecretStore } from '../services/secrets'
 import { toWorkspace, requireWorkspace, type Db, type WorkspaceRow } from './common'
 import { cascadeWorkspaceVariables } from './variables'
+import { WorkflowRepository } from './workflows'
 
 export class WorkspaceRepository {
   constructor(
@@ -88,6 +89,7 @@ export class WorkspaceRepository {
            WHERE deleted = 0 AND environment_id IN (SELECT id FROM environments WHERE workspace_id = ?)`,
         )
         .run(now, wid)
+      WorkflowRepository.cascadeWorkspace(this.db, wid, now)
       return [...secretRefs, ...cascadeWorkspaceVariables(this.db, wid, now)]
     })()
     purgeSecretRefs(this.secrets, secretRefs)

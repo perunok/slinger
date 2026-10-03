@@ -51,6 +51,10 @@ import type {
   SyncEvent,
   SyncStatus,
   VersionInfo,
+  Workflow,
+  WorkflowSummary,
+  CreateWorkflowInput,
+  UpdateWorkflowInput,
   UpdateCheckResult,
   WindowChrome,
   TitleBarStyle,
@@ -158,6 +162,16 @@ export interface SlingerIpcApi {
   createCollectionVersion(input: CreateCollectionVersionInput): Promise<CollectionVersion>
   restoreCollectionVersion(versionId: string, mode: RestoreCollectionVersionMode): Promise<Collection>
   deleteCollectionVersion(versionId: string): Promise<void>
+
+  // Workflows (ADDED: local-only visual workflows per workspace; graph documents are opaque JSON objects to main)
+  listWorkflows(workspaceId: string): Promise<WorkflowSummary[]> // by name
+  getWorkflow(workflowId: string): Promise<Workflow>
+  createWorkflow(input: CreateWorkflowInput): Promise<Workflow>
+  /** version_conflict (details.currentVersion) unless expectedVersion is current. */
+  updateWorkflow(input: UpdateWorkflowInput): Promise<Workflow>
+  /** A copy in the same workspace ("<name> copy" unless `name` is given). */
+  duplicateWorkflow(workflowId: string, name?: string): Promise<Workflow>
+  deleteWorkflow(workflowId: string): Promise<void>
 
   // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
   secureStoreGet(key: string): Promise<string | null>
@@ -321,6 +335,12 @@ export const IPC_CHANNELS = [
   'createCollectionVersion',
   'restoreCollectionVersion',
   'deleteCollectionVersion',
+  'listWorkflows',
+  'getWorkflow',
+  'createWorkflow',
+  'updateWorkflow',
+  'duplicateWorkflow',
+  'deleteWorkflow',
   'secureStoreGet',
   'secureStoreSet',
   'secureStoreDelete',

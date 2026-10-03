@@ -55,6 +55,7 @@
     "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@lezer/highlight": "^1",
     "@napi-rs/keyring": "^2.1.0",
+    "@xyflow/svelte": "^1.7.0",
     "better-sqlite3": "^12.11.1",
     "dompurify": "^3.4.16",
     "marked": "^18.0.14",

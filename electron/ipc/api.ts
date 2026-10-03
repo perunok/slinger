@@ -24,6 +24,12 @@ const text = z.string().max(1_000_000)
 const nullableUuid = uuid.nullish()
 const index = z.number().int().min(0)
 const postmanFile = z.string().max(50 * 1024 * 1024)
+const workflowName = z.string().min(1).max(200)
+const graphJson = z.string().max(5 * 1024 * 1024)
+const createWorkflowInput = z.object({ workspaceId: uuid, name: workflowName, graphJson: graphJson.optional() }).strict()
+const updateWorkflowInput = z
+  .object({ workflowId: uuid, expectedVersion: z.number().int().min(1), name: workflowName.optional(), graphJson: graphJson.optional() })
+  .strict()
 const postmanImportOptions = z.object({ name: z.string().min(1).max(200).optional() }).strict()
 
 const pickFileOptions = z
@@ -462,6 +468,17 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     deleteCollectionVersion: async (...a) => versions.deleteCollectionVersion(core.db, parseArgs(z.tuple([uuid]), a)[0]),
 
     // Secure storage (generic keychain passthrough; env-var secret namespace is reserved)
+    // Workflows (repositories/workflows.ts; graphJson must be a JSON object)
+    listWorkflows: async (...a) => core.workflows.list(parseArgs(z.tuple([uuid]), a)[0]),
+    getWorkflow: async (...a) => core.workflows.get(parseArgs(z.tuple([uuid]), a)[0]),
+    createWorkflow: async (...a) => core.workflows.create(parseArgs(z.tuple([createWorkflowInput]), a)[0]),
+    updateWorkflow: async (...a) => core.workflows.update(parseArgs(z.tuple([updateWorkflowInput]), a)[0]),
+    duplicateWorkflow: async (...a) => {
+      const [id, n] = parseArgs(z.tuple([uuid, workflowName.optional()]), a)
+      return core.workflows.duplicate(id, n)
+    },
+    deleteWorkflow: async (...a) => core.workflows.delete(parseArgs(z.tuple([uuid]), a)[0]),
+
     secureStoreGet: async (...a) => core.secrets.get(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
     secureStoreSet: async (...a) => {
       const [key, value] = parseArgs(z.tuple([z.string(), z.string().max(1_000_000)]), a)

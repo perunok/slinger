@@ -3,7 +3,7 @@
  * environments, the active environment and globals (which together define the template scope).
  * Every IPC failure is reported through a toast; nothing throws to callers.
  */
-import type { ApiFolder, ApiRequest, Collection, CollectionVariable, Environment, EnvironmentVariable, GlobalVariable, Workspace } from '../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionVariable, Environment, EnvironmentVariable, GlobalVariable, Workspace, WorkflowSummary } from '../../shared/types'
 import { api, errorInfo, isReadOnly } from '../lib/ipc'
 import type { VariableInfo } from '../lib/template'
 import { scopeStore, type CollectionScopeLayer } from './scope.svelte'
@@ -39,6 +39,11 @@ class AppState {
   collections = $state<Collection[]>([])
   folders = $state<ApiFolder[]>([])
   requests = $state<ApiRequest[]>([])
+
+  /** ADDED (workflows): the workspace's workflows, without their graphs (features/workflows). */
+  workflows = $state<WorkflowSummary[]>([])
+  /** The workflow list has loaded for this workspace (tab restore waits for it). */
+  workflowsLoaded = $state(false)
 
   /** Bumped whenever something was executed, so the history panel refreshes. */
   historyTick = $state(0)
@@ -108,7 +113,9 @@ class AppState {
     this.requests = []
     this.collectionVariables = {}
     this.globals = []
-    await Promise.all([this.reloadCollections(), this.reloadEnvironments(), this.reloadGlobals()])
+    this.workflows = []
+    this.workflowsLoaded = false
+    await Promise.all([this.reloadCollections(), this.reloadEnvironments(), this.reloadGlobals(), this.reloadWorkflows()])
   }
 
   async refreshWorkspaces() {
@@ -117,6 +124,37 @@ class AppState {
     } catch (e) {
       toast.error('Could not refresh workspaces', errorInfo(e).message)
     }
+  }
+
+  // ---- workflows --------------------------------------------------------
+
+  async reloadWorkflows(): Promise<void> {
+    const ws = this.workspaceId
+    if (!ws) return
+    try {
+      const list = await api().listWorkflows(ws)
+      if (this.workspaceId !== ws) return
+      this.workflows = list
+    } catch (e) {
+      toast.error('Could not load workflows', errorInfo(e).message)
+    } finally {
+      if (this.workspaceId === ws) this.workflowsLoaded = true
+    }
+  }
+
+  workflowById(id: string | null | undefined): WorkflowSummary | undefined {
+    return id ? this.workflows.find((w) => w.id === id) : undefined
+  }
+
+  /** Keeps the list in step after a create / save / rename (sorted like the main process: by name). */
+  upsertWorkflow(w: WorkflowSummary) {
+    const summary: WorkflowSummary = { id: w.id, workspaceId: w.workspaceId, name: w.name, createdAt: w.createdAt, updatedAt: w.updatedAt, version: w.version }
+    const rest = this.workflows.filter((x) => x.id !== w.id)
+    this.workflows = [...rest, summary].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.createdAt - b.createdAt)
+  }
+
+  removeWorkflowLocal(id: string) {
+    this.workflows = this.workflows.filter((w) => w.id !== id)
   }
 
   // ---- collections ------------------------------------------------------

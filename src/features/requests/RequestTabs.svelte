@@ -56,7 +56,9 @@
           onkeydown={(e) => onkeydown(e, t.id)}
           onauxclick={(e) => e.button === 1 && tabsStore.requestClose([t.id])}
         >
-          {#if t.overview}
+          {#if t.workflowId}
+            <span class="shrink-0 text-muted" title="Workflow"><Icon name="workflow" size={13} /><span class="sr-only">workflow:</span></span>
+          {:else if t.overview}
             <span class="shrink-0 text-muted" title="{t.overview.kind === 'collection' ? 'Collection' : 'Folder'} overview"><Icon name={t.overview.kind === 'collection' ? 'layers' : 'folder'} size={13} /><span class="sr-only">{t.overview.kind} overview:</span></span>
           {:else}
             <span class="shrink-0 text-[10px] font-bold" style="color:{methodColor(t.draft.method)}">{t.draft.method.slice(0, 4)}</span>

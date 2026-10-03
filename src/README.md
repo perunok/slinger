@@ -50,11 +50,13 @@ features/
   scripts/ (script editors, Tests/Console views, collection/folder Scripts dialog)
   overview/ (collection/folder overview tab: counts + documentation; a collection's Variables section)
   oauth2/ (OAuth 2.0 settings + token actions in the Authorization tab; oauth2Actions resolves the settings like a send)
+  workflows/ (visual workflows: WorkflowsPanel in the sidebar, WorkflowView/WorkflowEditor = Svelte Flow canvas + palette +
+          inspector + run log; workflowRuns.svelte.ts runs lib/workflow/engine.ts with executeDraft / runScripts)
   updates/ (new-release notice: daily check, one toast per version, Help > Check for Updates…, Settings > Updates;
           pure logic in lib/updates.ts)
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
-lib/                        pure logic, no DOM: template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
+lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
                             request (document model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
                             response, snippets, postman, tree,

@@ -17,6 +17,7 @@ import { createTreeApi } from './mock/tree'
 import { createVersionApi } from './mock/versions'
 import { createVariablesApi } from './mock/variables'
 import { createWorkspaceApi } from './mock/workspaces'
+import { createWorkflowsApi } from './mock/workflows'
 import { clone, sleep } from './mock/util'
 
 export interface MockCall {
@@ -90,6 +91,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createVersionApi(state),
     ...createHttpApi(state),
     ...createVariablesApi(state),
+    ...createWorkflowsApi(state),
     ...createScriptsApi(),
     ...createOAuth2Api(state, () => latency),
     ...misc,
