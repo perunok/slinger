@@ -779,6 +779,8 @@ export interface RemoteWorkspace {
   name: string
   slug: string
   role: CloudRole
+  /** Who added you (an owner/admin adding you, or approving your join request); null when you created it or the server is older. */
+  addedBy: { id: string; displayName: string } | null
   /** Local workspace on THIS device linked to it, if any. */
   linkedLocalWorkspaceId: string | null
 }

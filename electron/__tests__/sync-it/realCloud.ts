@@ -69,8 +69,14 @@ export class RealCloud {
     return res.json.user.id as string
   }
 
-  /** Owner invites `email`; the invitee accepts. Returns the membership row id. */
+  /**
+   * Owner adds `email` (an existing account joins at once). Servers before direct adds only had token invites, which the
+   * invitee then accepts. Returns the membership row id.
+   */
   async addMember(wsId: string, ownerToken: string, email: string, password: string, role: 'editor' | 'viewer' | 'admin'): Promise<{ memberId: string; userId: string }> {
+    const added = await this.call('POST', `/v1/workspaces/${wsId}/members`, { token: ownerToken, body: { email, role } })
+    if (added.status < 300 && added.json.status === 'added') return this.member(wsId, ownerToken, email)
+    if (added.status !== 404) throw new Error(`add member failed: ${added.text}`)
     const inv = await this.call('POST', `/v1/workspaces/${wsId}/invites`, { token: ownerToken, body: { email, role } })
     if (inv.status >= 300) throw new Error(`invite failed: ${inv.text}`)
     const userToken = await this.login(email, password)

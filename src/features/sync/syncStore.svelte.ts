@@ -23,6 +23,7 @@ import { ui } from '../../app/ui.svelte'
 import { api, errorInfo } from '../../lib/ipc'
 import { collectLegacy, dismissLegacyHint, type LegacyHint } from '../cloud/legacy'
 import { tabsStore } from '../requests/tabs.svelte'
+import { loadDismissed, newShares, saveDismissed, shareKey } from './sharedWorkspaces'
 import { blockMessage, blockReason, deriveChip, type BlockReason } from './status'
 import { affectedDirtyTabs, planNotices } from './tabNotices'
 
@@ -56,6 +57,10 @@ export class SyncStore {
   now = $state(nowSec())
   /** Workspace ids with a user-started action in flight (sync now, discard...). */
   busy = $state<Record<string, string | undefined>>({})
+  /** Shared-workspace notices dismissed on this device (`shareKey`s); replaced, never mutated, so it stays reactive. */
+  dismissedShares = $state<ReadonlySet<string>>(loadDismissed())
+  /** A shared workspace being opened from the banner (its remote id). */
+  openingShare = $state<string | null>(null)
 
   #unsub: (() => void) | null = null
   #ticker: ReturnType<typeof setInterval> | null = null
@@ -75,6 +80,10 @@ export class SyncStore {
   signedIn = $derived(this.session?.status === 'signedIn')
   serverUnsupported = $derived(Object.values(this.statuses).some((s) => s.linked && s.state === 'serverUnsupported'))
   linkedCount = $derived(Object.values(this.statuses).filter((s) => s.linked).length)
+  /** Cloud workspaces shared with you that are not on this device and not dismissed here (the banner shows them). */
+  shares = $derived(
+    this.signedIn && this.session?.user ? newShares(this.remotes, this.dismissedShares, this.session.apiBaseUrl, this.session.user.id) : [],
+  )
 
   statusOf(workspaceId: string | null): SyncStatus | null {
     return workspaceId ? (this.statuses[workspaceId] ?? null) : null
@@ -117,6 +126,8 @@ export class SyncStore {
     this.conflicts = []
     this.legacyLinks = []
     this.busy = {}
+    this.dismissedShares = loadDismissed()
+    this.openingShare = null
     this.#pendingApplied.clear()
     this.#conflictToast = null
   }
@@ -351,6 +362,47 @@ export class SyncStore {
       this.remotesError = errorInfo(e).message
     } finally {
       this.remotesLoading = false
+    }
+  }
+
+  /**
+   * Background refresh of the cloud workspace list so newly shared workspaces show up (startup, sign-in, every few
+   * minutes). Quiet: failures keep the last list and never touch the Cloud dialog's loading/error state.
+   */
+  async checkShares(): Promise<void> {
+    if (!this.signedIn || this.remotesLoading) return
+    try {
+      this.remotes = await api().listRemoteWorkspaces()
+    } catch {
+      /* offline or signed out meanwhile: try again next time */
+    }
+  }
+
+  /** "Not now": these stay in Cloud > Your cloud workspaces, but the banner no longer offers them on this device. */
+  dismissShares(remoteIds: readonly string[]): void {
+    const user = this.session?.user
+    if (!user || !this.session) return
+    const next = new Set(this.dismissedShares)
+    for (const id of remoteIds) next.add(shareKey(this.session.apiBaseUrl, user.id, id))
+    this.dismissedShares = next
+    saveDismissed(next)
+  }
+
+  /** "Open": links the shared workspace into a new local workspace, downloads it and switches to it. */
+  async openShare(remoteId: string): Promise<void> {
+    if (this.openingShare) return
+    this.openingShare = remoteId
+    try {
+      const res = await this.link({ remoteWorkspaceId: remoteId, localWorkspaceId: null })
+      // Linked now: the banner drops it at once (the list reload in link() confirms it).
+      this.remotes = this.remotes.map((r) => (r.id === remoteId ? { ...r, linkedLocalWorkspaceId: res.workspace.id } : r))
+      await app.refreshWorkspaces()
+      if (res.workspace.id !== app.workspaceId) await app.selectWorkspace(res.workspace.id)
+      toast.success('Opened shared workspace', `Downloading into “${res.workspace.name}”…`)
+    } catch (e) {
+      toast.error('Could not open the shared workspace', errorInfo(e).message)
+    } finally {
+      this.openingShare = null
     }
   }
 

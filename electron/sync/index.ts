@@ -143,7 +143,14 @@ export class SyncService {
           (r) => [r.remote_workspace_id, r.workspace_id],
         ),
       )
-      return remote.map((w) => ({ id: w.id, name: w.name, slug: w.slug, role: w.role ?? 'viewer', linkedLocalWorkspaceId: linked.get(w.id) ?? null }))
+      return remote.map((w) => ({
+        id: w.id,
+        name: w.name,
+        slug: w.slug,
+        role: w.role ?? 'viewer',
+        addedBy: w.addedBy ?? null,
+        linkedLocalWorkspaceId: linked.get(w.id) ?? null,
+      }))
     } catch (err) {
       throw toIpcError(err)
     }
