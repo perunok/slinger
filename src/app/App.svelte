@@ -6,6 +6,7 @@
   import Button from '../components/ui/Button.svelte'
   import AboutDialog from '../features/about/AboutDialog.svelte'
   import CloudDialog from '../features/cloud/CloudDialog.svelte'
+  import SharedWorkspaceBanner from '../features/sync/SharedWorkspaceBanner.svelte'
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
@@ -140,6 +141,7 @@
 <div class="flex h-full flex-col">
   <TopBar />
   <SyncBanner />
+  <SharedWorkspaceBanner />
   {#if !app.ready}
     <div class="flex flex-1 items-center justify-center gap-2 text-muted"><Spinner /> Loading…</div>
   {:else if app.fatalError}

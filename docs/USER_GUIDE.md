@@ -731,6 +731,12 @@ read-only for you (viewer), it can only be downloaded into a new, read-only work
 everything on both sides. If publishing says items "already exist in another cloud workspace" (the same workspace was published
 before), **Publish a copy** uploads a fresh-id copy instead.
 
+**Workspaces shared with you.** When someone adds you to a cloud workspace (in the Slinger Cloud dashboard), a banner under
+the top bar says so, for example "Ana added you to the cloud workspace “Team API” as editor", the next time Slinger checks (at
+sign-in, every few minutes and when you switch back to the window). **Open** downloads it into a new workspace on this device,
+keeps it in sync and switches to it; **Not now** hides the banner on this device (it stays under **Your cloud workspaces** in the
+cloud panel, where **Link…** opens it later). When several arrive at once, **Show** opens that list.
+
 **What syncs.** Collections, folders and requests (with their scripts, docs and saved examples), collection- and folder-level scripts
 and documentation, collection variables, environments and their variables, globals, and collection versions. Secret values
 (secret environment variables and secret globals) never leave the device: the cloud and other devices only learn the name, and a

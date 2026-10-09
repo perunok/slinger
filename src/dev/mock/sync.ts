@@ -97,6 +97,8 @@ interface RemoteWs {
   name: string
   slug: string
   role: CloudRole
+  /** Display name of who added you (null: you created it). */
+  addedBy: string | null
   entities: Map<string, RemoteEntity>
   tombstones: Set<string>
   revoked: boolean
@@ -154,6 +156,8 @@ export interface MockCloudControls {
   setServerProtocol(version: number): void
   setRole(remoteId: string, role: CloudRole): void
   revokeAccess(remoteId: string): void
+  /** Someone adds you to a new cloud workspace (with one collection); returns its id. */
+  shareWorkspace(name: string, role: CloudRole, addedBy: string): string
   deleteRemote(remoteId: string): void
   findRemote(name: string): string | null
   remoteAdd(remoteId: string, type: SyncEntityType, payload: Wire, id?: string): string
@@ -857,8 +861,8 @@ export function createSyncApi(
 
   // ---- remote seed ---------------------------------------------------------------
 
-  function newRemote(name: string, role: CloudRole): RemoteWs {
-    const r: RemoteWs = { id: uuid(), name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), role, entities: new Map(), tombstones: new Set(), revoked: false, deleted: false }
+  function newRemote(name: string, role: CloudRole, addedBy: string | null = role === 'owner' ? null : 'Sam Lee'): RemoteWs {
+    const r: RemoteWs = { id: uuid(), name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), role, addedBy, entities: new Map(), tombstones: new Set(), revoked: false, deleted: false }
     remotes.set(r.id, r)
     return r
   }
@@ -1095,7 +1099,14 @@ export function createSyncApi(
       requireSignedIn()
       return [...remotes.values()]
         .filter((r) => !r.deleted && !r.revoked)
-        .map<RemoteWorkspace>((r) => ({ id: r.id, name: r.name, slug: r.slug, role: r.role, linkedLocalWorkspaceId: remoteLinkedTo(r.id) }))
+        .map<RemoteWorkspace>((r) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          role: r.role,
+          addedBy: r.addedBy ? { id: `user-${r.addedBy.toLowerCase().replace(/\W+/g, '-')}`, displayName: r.addedBy } : null,
+          linkedLocalWorkspaceId: remoteLinkedTo(r.id),
+        }))
     },
     async previewRemoteWorkspace(remoteWorkspaceId) {
       requireOnline()
@@ -1271,6 +1282,12 @@ export function createSyncApi(
     },
     revokeAccess(remoteId) {
       remote(remoteId).revoked = true
+    },
+    shareWorkspace(name, role, addedBy) {
+      const r = newRemote(name, role, addedBy)
+      const c = rAdd(r, 'collection', { name })
+      rAdd(r, 'request', { collection_id: c, folder_id: null, name: 'Health', method: 'GET', url: 'https://api.example.test/health', document_json: doc('Health', 'GET', 'https://api.example.test/health'), sort_order: 0 })
+      return r.id
     },
     deleteRemote(remoteId) {
       remote(remoteId).deleted = true

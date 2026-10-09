@@ -683,8 +683,13 @@ buttons and Settings.
 
 **Cloud sync in the renderer** (`src/features/sync`, `src/features/cloud`). `sync/syncStore.svelte.ts` is one reactive wrapper over
 the account/sync IPC methods plus a single `onSyncEvent` subscription (`status`, `applied`, `conflicts`, `auth`, `signInResult`);
-nothing polls the main process (the only timer refreshes "synced 2 min ago" labels, and the pending count is re-read once,
-debounced, after the user's own writes). Status/gating logic is pure (`sync/status.ts`: chip priority
+nothing polls the main process for sync state (one timer refreshes "synced 2 min ago" labels, and the pending count is re-read
+once, debounced, after the user's own writes). The only periodic call is the shared-workspace check: while signed in, `SyncHost`
+re-reads the cloud workspace list on sign-in/startup, every 5 minutes and on window focus (at most once a minute), quietly
+(`sync.checkShares`). `sync.shares` (pure: `sync/sharedWorkspaces.ts`) is every unlinked workspace you do not own that was not
+dismissed on this device (localStorage, per server + account); `SharedWorkspaceBanner` shows it under the top bar with **Open**
+(link into a new local workspace, download, switch) or **Show** (several: the Cloud dialog) and **Not now**. `RemoteWorkspace.addedBy`
+comes from the server's `added_by` (null on servers that do not send it). Status/gating logic is pure (`sync/status.ts`: chip priority
 accessRevoked > serverUnsupported > signedOut > conflicts > error > offline > syncing > readOnly > idle; `blockReason`), as are the
 conflict view model (`conflictDiff.ts`, reusing `lib/versionDiff.ts` renderings; `conflictUi.ts`) and the open-tab rules
 (`tabNotices.ts`). An `applied` event refetches collections/environments of the open workspace; a dirty open tab whose request

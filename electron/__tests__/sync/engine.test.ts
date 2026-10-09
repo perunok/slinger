@@ -147,6 +147,19 @@ describe('idempotency and lost responses', () => {
   })
 })
 
+describe('remote workspace list', () => {
+  it('reports who added you; null for workspaces you created', async () => {
+    const owner = cloud.createUser('owner@example.com', 'Olu Owner')
+    const ana = cloud.createUser('ana@example.com')
+    const shared = cloud.createWorkspace('Team API', owner.id)
+    cloud.setRole(shared.id, ana.id, 'editor', owner.id)
+    const mine = cloud.createWorkspace('Mine', ana.id)
+    const list = await dev(ana.id).api.listRemoteWorkspaces()
+    expect(list.find((w) => w.id === shared.id)).toMatchObject({ role: 'editor', addedBy: { id: owner.id, displayName: 'Olu Owner' }, linkedLocalWorkspaceId: null })
+    expect(list.find((w) => w.id === mine.id)).toMatchObject({ role: 'owner', addedBy: null })
+  })
+})
+
 describe('authentication', () => {
   it('refreshes once on 401 even for concurrent calls, persisting the rotated pair before use', async () => {
     const user = cloud.createUser('a@x.com')

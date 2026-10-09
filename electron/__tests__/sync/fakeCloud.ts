@@ -62,6 +62,8 @@ interface Workspace {
   checkpoint: number
   log: LogOp[]
   members: Map<string, Role>
+  /** member user id -> who added them (like the server's `memberships.addedByUserId`). */
+  addedBy: Map<string, string>
   seen: Map<string, LogOp> // operation_id -> log entry (idempotency)
 }
 interface User {
@@ -183,14 +185,17 @@ export class FakeCloud {
     return { accessToken: this.newAccess(userId), refreshToken: this.newRefresh(userId) }
   }
   createWorkspace(name: string, ownerId: string): Workspace {
-    const w: Workspace = { id: randomUUID(), name, slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${this.workspaces.size}`, checkpoint: 0, log: [], members: new Map([[ownerId, 'owner']]), seen: new Map() }
+    const w: Workspace = { id: randomUUID(), name, slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${this.workspaces.size}`, checkpoint: 0, log: [], members: new Map([[ownerId, 'owner']]), addedBy: new Map(), seen: new Map() }
     this.workspaces.set(w.id, w)
     return w
   }
-  setRole(wsId: string, userId: string, role: Role | null): void {
+  /** `addedById`: the member who added them (reported to them as `added_by` in their workspace list). */
+  setRole(wsId: string, userId: string, role: Role | null, addedById?: string): void {
     const w = this.workspaces.get(wsId)!
     if (role) w.members.set(userId, role)
     else w.members.delete(userId)
+    if (role && addedById) w.addedBy.set(userId, addedById)
+    if (!role) w.addedBy.delete(userId)
   }
   deleteWorkspace(wsId: string): void {
     this.workspaces.delete(wsId)
@@ -351,7 +356,10 @@ export class FakeCloud {
       return { status: 201, body: { client: { client_id: id, registered_at: new Date().toISOString() }, protocol_version: this.protocolVersion, features: this.serverFeatures() } }
     }
     if (method === 'GET' && path === '/v1/workspaces') {
-      const items = [...this.workspaces.values()].filter((w) => w.members.has(userId)).map((w) => this.wsDto(w, userId))
+      const items = [...this.workspaces.values()].filter((w) => w.members.has(userId)).map((w) => {
+        const by = this.users.get(w.addedBy.get(userId) ?? '')
+        return { ...this.wsDto(w, userId), added_by: by ? { id: by.id, display_name: by.displayName } : null }
+      })
       return { body: { items, page: { next_cursor: null, has_more: false } } }
     }
     if (method === 'POST' && path === '/v1/workspaces/publish') {

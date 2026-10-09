@@ -11,6 +11,8 @@ export interface RemoteWorkspaceInfo {
   name: string
   slug: string
   role: CloudRole | null
+  /** Only from the workspace list, and only from servers that report it (`added_by`). */
+  addedBy?: { id: string; displayName: string } | null
 }
 export interface RegisterResult {
   clientId: string
@@ -40,6 +42,7 @@ interface WorkspaceWire {
   name: string
   slug: string
   role?: CloudRole
+  added_by?: { id: string; display_name: string } | null
 }
 
 export class CloudApi implements CloudGateway {
@@ -74,7 +77,10 @@ export class CloudApi implements CloudGateway {
       const res = await this.call<{ items: WorkspaceWire[]; page?: { next_cursor: string | null; has_more: boolean } }>('GET', '/v1/workspaces', {
         query: { limit: 100, cursor },
       })
-      for (const w of res.items ?? []) out.push({ id: w.id, name: w.name, slug: w.slug, role: w.role ?? null })
+      for (const w of res.items ?? []) {
+        const by = w.added_by
+        out.push({ id: w.id, name: w.name, slug: w.slug, role: w.role ?? null, addedBy: by ? { id: by.id, displayName: by.display_name } : null })
+      }
       if (!res.page?.has_more || !res.page.next_cursor) break
       cursor = res.page.next_cursor
     }
