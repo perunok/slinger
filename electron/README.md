@@ -22,6 +22,8 @@ electron/
   cloud/             cloud HTTP client (http.ts), device-flow sign-in + token refresh (auth.ts), typed API (api.ts)
   sync/              collection sync engine: index.ts (SyncService, IPC methods), engine (cycle, status, backoff),
                      outbox (push side), apply (pull side), merge, mapping, conflicts, linking, scheduler, store
+  mcp/               local MCP server for LLM clients: HTTP endpoint on 127.0.0.1, tool calls forwarded to the renderer,
+                     settings + token, stdio bridge (see docs/ARCHITECTURE.md "MCP server")
   lib/               errors, ids (UUID), text helpers, csp
   __tests__/         vitest suites (run under plain Node, in-memory SQLite); sync/ uses an in-process fake
                      cloud server, sync-it/ the real slinger-admin server (opt-in)

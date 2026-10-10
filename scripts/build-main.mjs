@@ -35,6 +35,14 @@ await build({
   outExtension: { '.js': '.cjs' },
   plugins: [rawPlugin, sandboxLibsEsbuildPlugin],
 })
+// MCP stdio bridge: run by the app's own executable in Node mode (ELECTRON_RUN_AS_NODE=1) for clients that only start
+// local commands. Plain Node, no Electron.
+await build({
+  ...common,
+  entryPoints: { 'mcp-stdio': 'electron/mcp/stdioMain.ts' },
+  outdir: 'dist-electron',
+  outExtension: { '.js': '.cjs' },
+})
 await build({
   ...common,
   entryPoints: { preload: 'electron/preload.ts' },

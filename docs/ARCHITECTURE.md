@@ -21,14 +21,16 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
   lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template)
+  mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
+                     stdioBridge.ts + stdioMain.ts (dist-electron/mcp-stdio.cjs for stdio-only clients)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
-                     scrubbing), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox) - imported by main AND
+                     scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox) - imported by main AND
                      renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
-scripts/             build-main.mjs (main, preload and script-worker bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs
+scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs
 test/                renderer test setup
 ```
 
@@ -602,6 +604,38 @@ application menu there (`menuPoint` scales CSS pixels by the page zoom).
   old page. 0.10.0 drew the system buttons with a Window Controls Overlay in the theme's colours (`titleBarOverlay` in
   `window-state.json`, now ignored); that is gone, since the overlay's buttons cannot be moved.
 
+## MCP server
+
+A local [Model Context Protocol](https://modelcontextprotocol.io) endpoint so LLM clients (Claude Code, Claude Desktop, Cursor, ...)
+can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
+
+- **Tools** are declared once in `shared/mcp.ts` (`MCP_TOOLS`: name, description, zod input schema, read-only / destructive /
+  open-world hints, timeout): reading (`list_workspaces`, `get_tree`, `search_requests`, `get_request`, `list_environments`,
+  `list_history`), editing (`create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`, `rename`,
+  `delete`, `create_environment`, `set_variable`, `delete_variable`, `set_active_environment`, `import_postman`, `open_in_app`) and
+  sending (`send_request`, `run_collection`).
+- **Main** (`electron/mcp`): `McpHttpServer` serves Streamable HTTP on `127.0.0.1:<port>/mcp` (default 7354), stateless with JSON
+  responses: a fresh SDK `Server` (`@modelcontextprotocol/sdk`, bundled into main.cjs; a devDependency so its dependency tree never
+  ships) per POST. Every request needs `Authorization: Bearer <token>`; Host must be a loopback name with the right port and any
+  `Origin` is refused (browsers / DNS rebinding); bodies are capped at 60 MB. `tools/list` advertises JSON Schema generated with
+  `z.toJSONSchema`; `tools/call` validates the arguments and hands them to `McpBridge`, which sends `mcp:call` `{id, tool, args}` to
+  the main window and waits for `mcpRespond(id, result)` (per-tool timeout; "window is not open" when there is none).
+  `McpService` keeps `{enabled, port}` in `app_settings['mcp']` and the token (`slg_` + 32 random bytes) in the secret store
+  (`mcp.token`, created on first use); a port in use is reported in `getMcpStatus().error`, not thrown.
+- **Renderer** (`src/features/mcp`): `McpHost` (mounted by App) runs each call with `runTool` (`tools.ts`), which validates again
+  and works like the UI: requests are edited through `RequestDraft` (`parseDocument`/`serializeDraft`, URL and query kept in sync,
+  scripts via `withScript`), `send_request` goes through `executeDraft` (scripts, `{{variable}}` resolution, OAuth, history) and
+  `run_collection` through `runsStore.start` (with an environment override and its `finished` promise). Writes reload the affected
+  collection, which reconciles open tabs (clean ones follow, dirty ones keep their edits). Sending and runs need the request's
+  workspace to be the open one (the template scope belongs to it); `open_in_app` switches. Results are JSON; secret variable values
+  never appear (the renderer only has `maskedValue`), literal credentials in requests are masked, response bodies are cut at
+  100 000 characters. `mcpStore` feeds Settings and the status bar ("AI assistant: <tool>…").
+- **stdio bridge** for clients that only start commands (Claude Desktop): `dist-electron/mcp-stdio.cjs` (unpacked from the asar,
+  `electron-builder.yml`), started as `ELECTRON_RUN_AS_NODE=1 <Slinger executable> <script>` with `SLINGER_MCP_TOKEN` (and
+  `SLINGER_MCP_URL`); it POSTs each stdin JSON-RPC line to the endpoint and writes the answers to stdout (`getMcpStatus().stdio`
+  has the exact command; Settings builds the client configs in `snippets.ts`).
+- Mock backend: `src/dev/mock/mcp.ts`; `window.__slingerMock.mcp.call(tool, args)` plays the client in browser dev mode.
+
 ## Update notice
 
 `checkForUpdates` (`electron/services/updateCheck.ts`) makes one GET to `https://api.github.com/repos/perunok/slinger/releases/latest`
@@ -793,5 +827,6 @@ Example: `renameFoo(fooId, name)`.
 
 Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
 Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
-loading remote images in docs, syncing or exporting workflows, realtime collaboration, plugin system, non-HTTP protocols, code signing and automatic
+loading remote images in docs, syncing or exporting workflows, realtime collaboration, MCP resources/prompts (the MCP server has
+tools only) and editing OAuth 2.0 settings over MCP, plugin system, non-HTTP protocols, code signing and automatic
 installation of updates (Slinger only notifies about a new release, see [Update notice](#update-notice)).

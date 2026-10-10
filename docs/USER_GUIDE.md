@@ -776,7 +776,7 @@ Server setup is documented in the separate `slinger-admin` repository.
 ## Themes and settings
 
 Settings (Ctrl+, or the gear icon) lists its sections at the left: **Appearance**, **Layout & window**, **Editor & tabs**,
-**Scripts** and **Updates** (it reopens on the section you used last). Explanations are behind the (i) icons.
+**Scripts**, **Updates** and **AI assistants (MCP)** (it reopens on the section you used last). Explanations are behind the (i) icons.
 
 **Appearance**
 
@@ -901,6 +901,29 @@ Tokens:
 | | `--var-secret`, `--var-secret-bg` | a secret variable |
 | Syntax | `--syn-keyword`, `--syn-string`, `--syn-number`, `--syn-bool`, `--syn-comment`, `--syn-property`, `--syn-tag`, `--syn-attr`, `--syn-punct` | code in bodies, responses and scripts |
 | HTTP methods | `--m-get`, `--m-post`, `--m-put`, `--m-patch`, `--m-delete`, `--m-other` | method labels |
+
+## AI assistants (MCP)
+
+AI assistants that support the Model Context Protocol (Claude Code, Claude Desktop, Cursor, VS Code and others) can work in
+Slinger for you: find and read requests, create and edit requests, folders, collections and environments, send requests, run a
+collection and look at history, just as if you clicked yourself. Changes show up in the window right away, and the status bar says
+"AI assistant: …" while one works.
+
+1. Settings > **AI assistants (MCP)** > turn on **Let AI assistants work in Slinger**. It listens only on this computer
+   (`http://127.0.0.1:7354/mcp`; change the **Port** if that one is taken) and only while Slinger is open.
+2. Pick your assistant under **Connect an assistant** and click **Copy setup**: Claude Code gets a `claude mcp add ...`
+   command to run once; Cursor, VS Code and others get an `mcp.json` entry; Claude Desktop gets a `claude_desktop_config.json`
+   entry that starts Slinger's small built-in bridge (restart Claude Desktop afterwards).
+3. Ask the assistant, for example "add a POST /orders request to my Shop collection and send it".
+
+The copied setup contains the **token** that protects the server; keep it private. **New token** replaces it (assistants set up
+with the old one stop working until you give them the new one). Turning the switch off stops the server at once.
+
+What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
+change their values, and requests they send use them inside Slinger, but a secret value is never shown to them; credentials typed
+literally into a request's authorization are hidden too (use `{{variables}}`). Sends and runs work in the workspace that is open in
+the window (an assistant can open another one with "Show in Slinger"). An assistant's deletes are the same as yours, so keep an
+eye on what it does to important collections (a collection version is a good backup before big changes).
 
 ## Updates
 

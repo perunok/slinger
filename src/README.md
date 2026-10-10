@@ -55,6 +55,8 @@ features/
           inspector + run log; workflowRuns.svelte.ts runs lib/workflow/engine.ts with executeDraft / runScripts)
   updates/ (new-release notice: daily check, one toast per version, Help > Check for Updates…, Settings > Updates;
           pure logic in lib/updates.ts)
+  mcp/ (MCP tool implementations run for LLM clients: tools.ts; McpHost answers main's calls; Settings > AI assistants;
+          client setup snippets)
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
 lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,

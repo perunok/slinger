@@ -9,12 +9,15 @@
   import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import { formatBytes, formatDuration, statusTone } from '../../lib/response'
+  import { mcp } from '../mcp/mcpStore.svelte'
   import { tabsStore } from '../requests/tabs.svelte'
   import { summarize } from '../runner/runner'
   import { runsStore, runSummaryText, type RunSession } from '../runner/runs.svelte'
 
   const sending = $derived(tabsStore.tabs.filter((t) => t.sending).length)
-  const activityText = $derived(sending > 1 ? `Sending ${sending} requests…` : sending === 1 ? 'Sending…' : '')
+  const sendingText = $derived(sending > 1 ? `Sending ${sending} requests…` : sending === 1 ? 'Sending…' : '')
+  // An AI assistant (MCP client) is running a tool: say which, so edits appearing in the window are explained.
+  const activityText = $derived(mcp.active > 0 ? `AI assistant: ${mcp.lastTool ?? 'working'}…` : sendingText)
 
   // Collection runs going on, and finished ones whose results were not opened yet (they ran in the background).
   const runs = $derived(runsStore.attention)

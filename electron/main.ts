@@ -7,7 +7,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -167,6 +167,12 @@ function linuxWindowIcon(): { icon?: string } {
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'build', 'icons', '512x512.png')
   return existsSync(icon) ? { icon } : {}
+}
+
+/** The stdio bridge (dist-electron/mcp-stdio.cjs); unpacked from the asar in a packaged app so Node mode can run it. */
+function mcpStdioScript(): string {
+  const dir = app.isPackaged ? app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked') : app.getAppPath()
+  return join(dir, 'dist-electron', 'mcp-stdio.cjs')
 }
 
 function createWindow(): BrowserWindow {
@@ -464,6 +470,17 @@ if (!app.requestSingleInstanceLock()) {
         fetchImpl: netFetch,
         defaultDeviceName: hostname(),
       },
+      mcp: {
+        // Tool calls run in the renderer (request model, {{variable}} resolution, send pipeline).
+        emit: (call) => {
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false
+          mainWindow.webContents.send(MCP_CALL_CHANNEL, call)
+          return true
+        },
+        appVersion: app.getVersion(),
+        // Clients that only start commands (Claude Desktop) run this executable in Node mode with the bundled bridge.
+        stdioCommand: { command: process.execPath, args: [mcpStdioScript()] },
+      },
     })
     let feedUrl: string | null = null
     try {
@@ -501,7 +518,10 @@ if (!app.requestSingleInstanceLock()) {
     installAppMenu()
     const win = openMainWindow()
     powerMonitor.on('resume', () => core?.sync.notifyResume())
-    if (!process.env.SLINGER_SMOKE_TEST) core.sync.start()
+    if (!process.env.SLINGER_SMOKE_TEST) {
+      core.sync.start()
+      void core.mcp.init()
+    }
     if (process.env.SLINGER_SMOKE_TEST) {
       win.webContents.once('did-finish-load', () => void runSmokeTest(win))
     }
@@ -515,6 +535,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', () => {
+    void core?.mcp.stop()
     core?.sync.stop()
     core?.authCallbacks.closeAll()
     core?.oauth2.cancelAll()

@@ -214,7 +214,7 @@ describe('sections', () => {
   it('lists the sections at the side; each shows its own settings, and the last one stays selected', async () => {
     setup()
     const nav = screen.getByRole('tablist', { name: 'Settings sections' })
-    expect(within(nav).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Appearance', 'Layout & window', 'Editor & tabs', 'Scripts', 'Updates'])
+    expect(within(nav).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Appearance', 'Layout & window', 'Editor & tabs', 'Scripts', 'Updates', 'AI assistants (MCP)'])
     expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /Show sidebar/ })).toBeNull()
     await fireEvent.click(within(nav).getByRole('tab', { name: 'Layout & window' }))
