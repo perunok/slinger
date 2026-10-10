@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import { IPC_CHANNELS, MCP_CALL_CHANNEL, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import type { McpCall } from '../shared/mcp'
 import { parseMenuCommand, type MenuCommand } from '../shared/menu'
 import type { SyncEvent, WindowState } from '../shared/types'
 import type { IpcEnvelope } from './ipc/envelope'
@@ -47,6 +48,18 @@ api.onWindowState = (listener: (state: WindowState) => void): (() => void) => {
   ipcRenderer.on(WINDOW_STATE_CHANNEL, handler)
   return () => {
     ipcRenderer.removeListener(WINDOW_STATE_CHANNEL, handler)
+  }
+}
+
+// MCP tool calls (main -> renderer). Only the three fields pass; the renderer validates the arguments itself.
+api.onMcpCall = (listener: (call: McpCall) => void): (() => void) => {
+  const handler = (_event: unknown, payload: unknown) => {
+    const p = (payload ?? {}) as Partial<Record<keyof McpCall, unknown>>
+    if (typeof p.id === 'string' && typeof p.tool === 'string') listener({ id: p.id, tool: p.tool as McpCall['tool'], args: p.args })
+  }
+  ipcRenderer.on(MCP_CALL_CHANNEL, handler)
+  return () => {
+    ipcRenderer.removeListener(MCP_CALL_CHANNEL, handler)
   }
 }
 

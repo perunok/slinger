@@ -17,6 +17,7 @@ import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
 import type { SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
+import { McpService, type McpServiceDeps } from '../mcp/service'
 
 export interface CoreDeps {
   db: Db
@@ -32,6 +33,8 @@ export interface CoreDeps {
     emit?: (event: SyncEvent) => void
     appVersion?: string
   } & Partial<Omit<SyncServiceDeps, 'db' | 'secrets' | 'emit' | 'appVersion'>>
+  /** MCP server wiring (optional: tests get a server with no window to run tools in). */
+  mcp?: Partial<Omit<McpServiceDeps, 'db' | 'secrets'>>
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -56,6 +59,8 @@ export interface Core {
   exportFiles: ExportFiles
   fileGrants: FileGrants
   sync: SyncService
+  /** Local MCP endpoint for LLM clients (off until enabled in Settings). */
+  mcp: McpService
 }
 
 export function createCore(deps: CoreDeps): Core {
@@ -95,6 +100,13 @@ export function createCore(deps: CoreDeps): Core {
       emit: deps.sync?.emit ?? (() => {}),
       appVersion: deps.sync?.appVersion ?? '0.0.0',
       ...deps.sync,
+    }),
+    mcp: new McpService({
+      ...deps.mcp,
+      db,
+      secrets,
+      emit: deps.mcp?.emit ?? (() => false),
+      appVersion: deps.mcp?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
   }
   // First launch: make sure there is always a workspace to work in.

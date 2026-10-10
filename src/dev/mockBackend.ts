@@ -2,6 +2,7 @@
  * In-memory implementation of the whole SlingerIpcApi for running the renderer in a plain browser.
  * `installMockBackend()` sets `window.slinger` (when undefined) and `window.__slingerMock`.
  */
+import { createMcpApi, type MockMcpControls } from './mock/mcp'
 import { createSyncApi, type CloudOptions, type MockCloudControls } from './mock/sync'
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import type { MenuCommand } from '../../shared/menu'
@@ -34,6 +35,8 @@ export interface MockControls {
   failAlways(method: keyof SlingerIpcApi | null, error?: Partial<IpcErrorPayload>): void
   /** Scripts the cloud side: sign-in approval, remote edits, roles, offline, auth expiry, conflicts. */
   cloud: MockCloudControls
+  /** Plays an MCP client (Settings > AI assistants): `__slingerMock.mcp.call('get_tree', {})`. */
+  mcp: MockMcpControls
   calls: MockCall[]
   /** Delivers an application-menu command, as the native menu does in Electron. */
   menuCommand(command: MenuCommand): void
@@ -85,6 +88,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
   const misc = createMiscApi()
   const sync = createSyncApi(state, options.cloud)
+  const mcp = createMcpApi()
   const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
@@ -96,6 +100,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createOAuth2Api(state, () => latency),
     ...misc,
     ...sync.api,
+    ...mcp.api,
     async listHistory(workspaceId, limit) {
       const rows = state.history.filter((h) => h.workspaceId === workspaceId).sort((a, b) => b.createdAt - a.createdAt)
       return limit && limit > 0 ? rows.slice(0, limit) : rows
@@ -149,6 +154,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const api = {} as Record<string, unknown>
   for (const channel of IPC_CHANNELS) api[channel] = wrap(channel)
   api.onSyncEvent = impl.onSyncEvent
+  api.onMcpCall = impl.onMcpCall
   const menuListeners = new Set<(command: MenuCommand) => void>()
   api.onWindowState = () => () => {}
   api.onMenuCommand = (listener: (command: MenuCommand) => void) => {
@@ -177,6 +183,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
       always = method ? { method, error } : null
     },
     cloud: sync.controls,
+    mcp: mcp.controls,
     calls,
     menuCommand(command) {
       for (const listener of [...menuListeners]) listener(command)

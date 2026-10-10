@@ -2,12 +2,12 @@ import { app, BrowserWindow, dialog, Menu, nativeTheme, net, powerMonitor, proto
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -30,6 +30,7 @@ import {
   writeWindowState,
   type WindowState,
 } from './lib/windowState'
+import { defaultClientsEnv } from './mcp/clients'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { checkForUpdate, updateFeedUrl } from './services/updateCheck'
@@ -350,7 +351,10 @@ function openMainWindow(): BrowserWindow {
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
+    core?.mcp.hostGone()
   })
+  // MCP tool calls wait until the (re)loaded renderer subscribed again (mcpHostReady).
+  win.webContents.on('did-start-loading', () => core?.mcp.hostGone())
   // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
   win.on('focus', () => core?.sync.notifyFocus(true))
   win.on('blur', () => core?.sync.notifyFocus(false))
@@ -464,6 +468,28 @@ if (!app.requestSingleInstanceLock()) {
         fetchImpl: netFetch,
         defaultDeviceName: hostname(),
       },
+      mcp: {
+        // Tool calls run in the renderer (request model, {{variable}} resolution, send pipeline).
+        emit: (call) => {
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return false
+          mainWindow.webContents.send(MCP_CALL_CHANNEL, call)
+          return true
+        },
+        appVersion: app.getVersion(),
+        // Assistants run this executable in Node mode with the bridge copied to <userData>/mcp (an AppImage's own files
+        // move on every launch, so the bridge and the command must not point into them).
+        userDataDir: app.getPath('userData'),
+        bridgeSource: join(app.getAppPath(), 'dist-electron', 'mcp-stdio.cjs'),
+        executable: process.env.APPIMAGE || process.execPath,
+        launchArgs: app.isPackaged ? [] : [app.getAppPath()],
+        launchEnv: Object.fromEntries(
+          (['SLINGER_USER_DATA_DIR', 'SLINGER_INSECURE_TEST_KEYCHAIN'] as const).flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
+        ),
+        // SLINGER_MCP_CLIENTS_HOME (tests): look for assistants' configs under this folder instead of the real home.
+        clientsEnv: process.env.SLINGER_MCP_CLIENTS_HOME
+          ? defaultClientsEnv(process.env.SLINGER_MCP_CLIENTS_HOME, process.platform, join(process.env.SLINGER_MCP_CLIENTS_HOME, 'AppData'), '')
+          : defaultClientsEnv(homedir(), process.platform, app.getPath('appData')),
+      },
     })
     let feedUrl: string | null = null
     try {
@@ -501,7 +527,10 @@ if (!app.requestSingleInstanceLock()) {
     installAppMenu()
     const win = openMainWindow()
     powerMonitor.on('resume', () => core?.sync.notifyResume())
-    if (!process.env.SLINGER_SMOKE_TEST) core.sync.start()
+    if (!process.env.SLINGER_SMOKE_TEST) {
+      core.sync.start()
+      void core.mcp.init()
+    }
     if (process.env.SLINGER_SMOKE_TEST) {
       win.webContents.once('did-finish-load', () => void runSmokeTest(win))
     }
@@ -515,6 +544,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', () => {
+    void core?.mcp.stop()
     core?.sync.stop()
     core?.authCallbacks.closeAll()
     core?.oauth2.cancelAll()

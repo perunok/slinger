@@ -10,6 +10,7 @@
  * Do not rename a channel or change a signature here without updating both
  * the main-process handler and the renderer client in the same change.
  */
+import type { McpCall, McpCallResult, McpClientId, McpClientStatus, McpSettings, McpStatus } from './mcp'
 import type {
   ApiFolder,
   ApiRequest,
@@ -246,6 +247,27 @@ export interface SlingerIpcApi {
   onMenuCommand(listener: (command: MenuCommand) => void): () => void
   /** Push channel (main -> renderer): the main window was maximised / restored, entered or left full screen, gained or lost focus. */
   onWindowState(listener: (state: WindowState) => void): () => void
+
+  // --- MCP server (shared/mcp.ts): a local endpoint LLM clients use to work in Slinger. ---
+  getMcpStatus(): Promise<McpStatus>
+  /** Turns the endpoint on/off or moves it; a start failure (port in use) is reported in the returned status. */
+  setMcpSettings(settings: McpSettings): Promise<McpStatus>
+  /** The bearer token clients need (created on first use, kept in the OS keychain). */
+  revealMcpToken(): Promise<string>
+  /** Replaces the token; connected clients must be given the new one. */
+  regenerateMcpToken(): Promise<McpStatus>
+  /** The renderer's answer to an onMcpCall request. */
+  mcpRespond(callId: string, result: McpCallResult): Promise<void>
+  /** The renderer subscribed to onMcpCall (tool calls wait for this after a start or reload). */
+  mcpHostReady(): Promise<void>
+  /** Assistants found on this computer and whether Slinger is in their MCP configuration. */
+  listMcpClients(): Promise<McpClientStatus[]>
+  /** Adds Slinger to that assistant's configuration (turning the server on first). */
+  connectMcpClient(clientId: McpClientId): Promise<McpClientStatus[]>
+  /** Removes Slinger's entry from that assistant's configuration. */
+  disconnectMcpClient(clientId: McpClientId): Promise<McpClientStatus[]>
+  /** Push channel (main -> renderer): an LLM client called a tool; run it and answer with mcpRespond. */
+  onMcpCall(listener: (call: McpCall) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -396,18 +418,28 @@ export const IPC_CHANNELS = [
   'getOAuth2TokenStatus',
   'deleteOAuth2Token',
   'revealOAuth2Token',
+  'getMcpStatus',
+  'setMcpSettings',
+  'revealMcpToken',
+  'regenerateMcpToken',
+  'mcpRespond',
+  'mcpHostReady',
+  'listMcpClients',
+  'connectMcpClient',
+  'disconnectMcpClient',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call'] as const
 export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
 export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
 export const WINDOW_STATE_CHANNEL = IPC_EVENT_CHANNELS[2]
+export const MCP_CALL_CHANNEL = IPC_EVENT_CHANNELS[3]
 
 /** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState'>
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall'>
 
 declare global {
   interface Window {

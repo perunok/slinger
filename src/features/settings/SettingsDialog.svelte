@@ -15,6 +15,7 @@
   import LoaderPicker from './LoaderPicker.svelte'
   import ThemeGallery from './ThemeGallery.svelte'
   import TitleBarLayoutEditor from './TitleBarLayoutEditor.svelte'
+  import McpSettings from '../mcp/McpSettings.svelte'
 
   const SECTIONS = [
     { id: 'appearance', label: 'Appearance' },
@@ -22,6 +23,7 @@
     { id: 'editor', label: 'Editor & tabs' },
     { id: 'scripts', label: 'Scripts' },
     { id: 'updates', label: 'Updates' },
+    { id: 'mcp', label: 'AI assistants (MCP)' },
   ] as const
 
   let version = $state<string | null>(null)
@@ -174,6 +176,8 @@
             Send the request even when a pre-request script fails
           </label>
         </section>
+      {:else if ui.settingsSection === 'mcp'}
+        <McpSettings {now} />
       {:else}
         <section class="grid gap-2" aria-labelledby="updates-heading">
           <h3 class="sr-only" id="updates-heading">Updates</h3>

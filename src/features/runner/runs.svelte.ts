@@ -54,6 +54,8 @@ export class RunSession {
   ) {}
 
   run!: CollectionRun
+  /** Resolves when the run has ended (finished, stopped or failed). */
+  finished: Promise<void> = Promise.resolve()
 
   get running(): boolean {
     return this.state.phase === 'running'
@@ -81,12 +83,22 @@ class RunsStore {
   }
 
   /** Starts a run of `items` for `target` (a running one for the same target is returned as is). */
-  start(input: { workspaceId: string; target: RunTarget; label: string; items: RunItem[]; options: RunOptions; dataFile?: DataFile | null }): RunSession {
+  /** `environment`: run with this one instead of the active environment (null: none). */
+  start(input: {
+    workspaceId: string
+    target: RunTarget
+    label: string
+    items: RunItem[]
+    options: RunOptions
+    dataFile?: DataFile | null
+    environment?: { id: string; name: string } | null
+  }): RunSession {
     const existing = this.forTarget(input.target)
     if (existing?.running) return existing
     const { workspaceId } = input
     const active = app.activeEnvironment
-    const environment = active && active.workspaceId === workspaceId ? { id: active.id, name: active.name } : null
+    const environment =
+      input.environment !== undefined ? input.environment : active && active.workspaceId === workspaceId ? { id: active.id, name: active.name } : null
     const kind = pickLoader(settings.loader)
     const loader = kind === 'classic' || prefersReducedMotion() ? null : { kind, startedAt: Date.now() }
     const dataFile = input.dataFile ?? null
@@ -117,7 +129,7 @@ class RunsStore {
     })
     session.state = session.run.state
     this.sessions = [...this.sessions.filter((s) => s !== existing), session]
-    void session.run.start().then(() => this.#finished(session))
+    session.finished = session.run.start().then(() => this.#finished(session))
     return session
   }
 

@@ -60,6 +60,10 @@ All shots are the real app with a fictional "Acme Store API" collection imported
   `http-client.env.json` without secret values).
 - 31 themes and 18 accent colours plus "follow the OS", your own custom themes (CSS or colour pickers, contrast warnings,
   import/export as `.slinger-theme.json`), adjustable font size, keyboard shortcuts.
+- AI assistants: a local MCP server lets Claude Code, Claude Desktop, Cursor, VS Code, Windsurf and other MCP clients browse,
+  create and edit requests, collections and environments, send requests and run collections. One **Connect** click per
+  assistant sets it up (no token to copy; Slinger starts by itself when an assistant needs it); secret values are never shown to
+  them.
 - Cloud panel: device-code sign-in to a Slinger Cloud server, publishing/linking a workspace and collection sync
   ([docs/SYNC_DESIGN.md](docs/SYNC_DESIGN.md)).
 

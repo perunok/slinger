@@ -9,6 +9,7 @@
   import SharedWorkspaceBanner from '../features/sync/SharedWorkspaceBanner.svelte'
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
+  import McpHost from '../features/mcp/McpHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
   import EnvironmentExportDialog from '../features/environments/EnvironmentExportDialog.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
@@ -173,6 +174,7 @@
 {#if ui.aboutOpen}<AboutDialog />{/if}
 <CloudDialog />
 <SyncHost />
+<McpHost />
 <EnvironmentEditor />
 <VersionsDialog />
 <RunnerDialog />

@@ -3,7 +3,7 @@ class UiState {
   /** Settings scrolls to this section when it opens (then clears it). */
   settingsFocus = $state<'titlebar' | null>(null)
   /** The Settings section shown (kept while the app runs). */
-  settingsSection = $state<'appearance' | 'layout' | 'editor' | 'scripts' | 'updates'>('appearance')
+  settingsSection = $state<'appearance' | 'layout' | 'editor' | 'scripts' | 'updates' | 'mcp'>('appearance')
   sidebar = $state<'collections' | 'history' | 'workflows'>('collections')
   settingsOpen = $state(false)
   cloudOpen = $state(false)

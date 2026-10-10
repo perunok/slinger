@@ -313,6 +313,13 @@ export interface WindowControls {
   showAppMenu(x: number, y: number): void
 }
 
+const mcpClientId = z.enum(['claude-desktop', 'claude-code', 'cursor', 'vscode', 'windsurf'])
+const mcpSettings = z.object({ enabled: z.boolean(), port: z.number().int().min(1024).max(65535) }).strict()
+const mcpCallResult = z.union([
+  z.object({ ok: z.literal(true), text: z.string().max(20_000_000), data: z.record(z.string(), z.unknown()).optional() }).strict(),
+  z.object({ ok: z.literal(false), error: z.string().max(100_000) }).strict(),
+])
+
 const titleBarStyle = z.enum(['custom', 'system'])
 const windowAction = z.enum(['minimize', 'toggleMaximize', 'close'])
 const pagePoint = z.number().finite().min(0).max(100_000)
@@ -537,6 +544,20 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),
+
+    // MCP server (electron/mcp)
+    getMcpStatus: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.status()),
+    setMcpSettings: async (...a) => core.mcp.update(parseArgs(z.tuple([mcpSettings]), a)[0]),
+    revealMcpToken: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.revealToken()),
+    regenerateMcpToken: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.regenerateToken()),
+    mcpRespond: async (...a) => {
+      const [callId, result] = parseArgs(z.tuple([uuid, mcpCallResult]), a)
+      core.mcp.respond(callId, result)
+    },
+    mcpHostReady: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.hostReady()),
+    listMcpClients: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.clients()),
+    connectMcpClient: async (...a) => core.mcp.connect(parseArgs(z.tuple([mcpClientId]), a)[0]),
+    disconnectMcpClient: async (...a) => core.mcp.disconnect(parseArgs(z.tuple([mcpClientId]), a)[0]),
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),
