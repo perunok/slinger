@@ -7,7 +7,8 @@
  * `maskedValue` is available to the renderer anyway, and literal credentials inside requests are masked.
  */
 import { MCP_BODY_LIMIT, MCP_TOOLS, type McpCallResult, type McpToolArgs, type McpToolName } from '../../../shared/mcp'
-import type { ApiFolder, ApiRequest, Collection, HttpResponseData } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionVersion, HttpResponseData } from '../../../shared/types'
+import { expandedStore } from '../../app/expanded.svelte'
 import { app } from '../../app/state.svelte'
 import { api, errorInfo } from '../../lib/ipc'
 import {
@@ -24,11 +25,14 @@ import {
 import { dataRows, newRow, type KvRow } from '../../lib/kv'
 import { emptyBody, newDraft, parseDocument, serializeDraft, type RawLanguage, type RequestDraft } from '../../lib/request'
 import { editorCode, withScript } from '../../lib/scripts'
+import { compareSemver, parseSemver, sortVersionsDesc, suggestBumps, validateVersion } from '../../lib/semver'
+import { diffSnapshots, folderPath as snapshotFolderPath, snapshotFromCollection } from '../../lib/versionDiff'
 import { buildUrlFromParams, mergeParamsFromUrl } from '../../lib/urlParams'
 import { executeDraft } from '../requests/execute'
 import { tabsStore } from '../requests/tabs.svelte'
 import { collectRunItems, summarize } from '../runner/runner'
 import { runsStore } from '../runner/runs.svelte'
+import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
 
 type Data = Record<string, unknown>
 
@@ -341,6 +345,25 @@ function editedExample(stored: unknown, parent: ApiRequest, f: ExampleFields): u
   return serializeExample(stored, baseline, { response, request })
 }
 
+// ---- collection versions ----------------------------------------------------------------------------------------
+
+const versionsOf = async (c: Collection) => sortVersionsDesc(await api().listCollectionVersions(c.id))
+
+function pickVersion(list: CollectionVersion[], c: Collection, text: string): CollectionVersion {
+  const wanted = parseSemver(text.trim().replace(/^v/i, ''))
+  const hit = wanted ? list.find((v) => { const p = parseSemver(v.version); return p !== null && compareSemver(p, wanted) === 0 }) : undefined
+  return hit ?? fail(`${q(c.name)} has no version ${text}. list_versions shows its versions.`)
+}
+
+const versionLine = (v: CollectionVersion) => ({
+  id: v.id,
+  version: v.version,
+  notes: v.notes,
+  folders: v.folderCount,
+  requests: v.requestCount,
+  created: new Date(v.createdAt * 1000).toISOString(),
+})
+
 // ---- trees ------------------------------------------------------------------------------------------------------
 
 const bySort = <T extends { sortOrder: number }>(a: T, b: T) => a.sortOrder - b.sortOrder
@@ -593,6 +616,75 @@ const tools: Impls = {
     })
     await logEdit(r.workspaceId, `Deleted example ${q(name)} of ${q(r.name)}`, updated)
     return done({ deleted: { request_id: r.id, index, name }, saved_examples: exampleList(updated) })
+  },
+
+  async list_versions(a) {
+    const c = await findCollection(a.collection_id)
+    const list = await versionsOf(c)
+    return done({ collection_id: c.id, collection: c.name, versions: list.map(versionLine), next: suggestBumps(list.map((v) => v.version)) })
+  },
+
+  async create_version(a) {
+    const c = await findCollection(a.collection_id)
+    if (a.version !== undefined && a.bump !== undefined) fail('Give version or bump, not both.')
+    const existing = (await versionsOf(c)).map((v) => v.version)
+    const version = a.version ?? suggestBumps(existing)[a.bump ?? 'patch']
+    const check = validateVersion(version, existing)
+    if (!check.ok) fail(check.reason)
+    const created = await api().createCollectionVersion({ collectionId: c.id, version, notes: a.notes?.trim() ? a.notes : null })
+    await logEdit(c.workspaceId, `Saved version ${created.version} of ${q(c.name)}`)
+    return done({ created: versionLine(created) })
+  },
+
+  async get_version(a) {
+    const c = await findCollection(a.collection_id)
+    const v = pickVersion(await versionsOf(c), c, a.version)
+    const { snapshot } = await api().getCollectionVersion(v.id)
+    const t = await treeOf(c.workspaceId)
+    const live = snapshotFromCollection(c, t.folders.filter((f) => f.collectionId === c.id), t.requests.filter((r) => r.collectionId === c.id))
+    const diff = diffSnapshots(snapshot, live)
+    const shown = snapshot.requests.slice(0, 2000)
+    return done({
+      ...versionLine(v),
+      collection_id: c.id,
+      collection_name_then: snapshot.collectionName,
+      folders: snapshot.folders.map((f) => snapshotFolderPath(snapshot.folders, f.id)),
+      requests: shown.map((r) => ({ name: r.name, method: r.method, url: r.url, folder: snapshotFolderPath(snapshot.folders, r.folderId) || null })),
+      ...(snapshot.requests.length > shown.length ? { requests_note: `only the first ${shown.length} of ${snapshot.requests.length} are listed` } : {}),
+      changes_since: diff.identical
+        ? 'none: the live collection matches this version'
+        : {
+            summary: diff.summary,
+            requests: diff.requests.slice(0, 500).map((r) => ({ path: r.path, status: r.status, ...(r.changes.length ? { changed: r.changes.map((x) => x.field) } : {}) })),
+            folders_added: diff.foldersAdded,
+            folders_removed: diff.foldersRemoved,
+            folders_renamed: diff.foldersRenamed,
+          },
+    })
+  },
+
+  async restore_version(a) {
+    const c = await findCollection(a.collection_id)
+    const v = pickVersion(await versionsOf(c), c, a.version)
+    const inWindow = c.workspaceId === app.workspaceId
+    // A replace gives every folder/request a new id: remember the layout and the clean open tabs to carry them over.
+    const before = { folders: app.foldersOf(c.id).slice(), requests: app.requestsOf(c.id).slice() }
+    const openIds = inWindow ? tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId)).map((t) => t.requestId!) : []
+    const result = await api().restoreCollectionVersion(v.id, a.mode)
+    await refresh(c.workspaceId)
+    if (inWindow && a.mode === 'replace') {
+      const map = mapRestored(before, { folders: app.foldersOf(c.id), requests: app.requestsOf(c.id) })
+      expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
+      for (const oldId of openIds) {
+        const req = app.requestById(map.requests.get(oldId))
+        if (req) tabsStore.openRequest(req)
+      }
+    }
+    await logEdit(
+      c.workspaceId,
+      a.mode === 'copy' ? `Restored version ${v.version} of ${q(c.name)} as ${q(result.name)}` : `Replaced ${q(c.name)} with version ${v.version}`,
+    )
+    return done({ restored: { version: v.version, mode: a.mode, collection_id: result.id, collection: result.name } })
   },
 
   async list_environments(a) {

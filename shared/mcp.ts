@@ -187,6 +187,42 @@ export const MCP_TOOLS = {
     input: z.object({ request_id: id, example: exampleSelector }),
     destructive: true,
   },
+  list_versions: {
+    title: 'Collection versions',
+    description:
+      'Saved versions (immutable snapshots, semantic version numbers) of a collection, newest first, with the next patch / ' +
+      'minor / major number to use.',
+    input: z.object({ collection_id: id }),
+    readOnly: true,
+  },
+  create_version: {
+    title: 'Save a collection version',
+    description:
+      'Saves the collection as it is now as a new version (like Versions > Create). Give version (e.g. "1.4.0" or ' +
+      '"2.0.0-beta.1") or bump (default patch, from the latest release).',
+    input: z.object({
+      collection_id: id,
+      version: z.string().min(1).max(128).optional().describe('Semantic version, no leading "v"; must be new for this collection.'),
+      bump: z.enum(['patch', 'minor', 'major']).optional().describe('Instead of version: the next number of this kind.'),
+      notes: z.string().max(10_000).optional().describe('What changed (release notes).'),
+    }),
+  },
+  get_version: {
+    title: 'Read a collection version',
+    description:
+      'What a saved version contains (folders and requests) and how the live collection differs from it (added, removed, ' +
+      'changed requests).',
+    input: z.object({ collection_id: id, version: z.string().min(1).max(128).describe('The version number, e.g. "1.4.0".') }),
+    readOnly: true,
+  },
+  restore_version: {
+    title: 'Restore a collection version',
+    description:
+      'Restores a saved version: mode "copy" makes a new collection "<name> (v<version>)" and leaves the live one alone; ' +
+      'mode "replace" overwrites the live collection\'s folders and requests (save a version first to keep the current state).',
+    input: z.object({ collection_id: id, version: z.string().min(1).max(128), mode: z.enum(['copy', 'replace']) }),
+    destructive: true,
+  },
   list_environments: {
     title: 'Environments',
     description: 'Environments with their variables; the active one is marked. Secret values are never shown, only that they are set.',

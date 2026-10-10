@@ -178,6 +178,61 @@ describe('saved examples', () => {
   })
 })
 
+describe('collection versions', () => {
+  it('saves versions (by bump or number), reads one with what changed since, and restores as a copy or in place', async () => {
+    const { created: col } = await call('create_collection', { name: 'Shop' })
+    const demo = app.collections.find((c) => c.id === col.id)!
+    const { created: folder } = await call('create_folder', { collection_id: demo.id, name: 'Orders' })
+    await call('create_request', { collection_id: demo.id, folder_id: folder.id, name: 'JSON sample', method: 'GET', url: 'https://mock.slinger.local/json' })
+    await call('create_request', { collection_id: demo.id, name: 'Health', method: 'GET', url: 'https://mock.slinger.local/text' })
+    const empty = await call('list_versions', { collection_id: demo.id })
+    expect(empty.next).toEqual({ patch: '0.0.1', minor: '0.1.0', major: '1.0.0' })
+    const first = (await call('create_version', { collection_id: demo.id, version: '1.0.0', notes: 'First cut' })).created
+    expect(first).toMatchObject({ version: '1.0.0', notes: 'First cut' })
+    expect(first.requests).toBeGreaterThan(0)
+    expect((await call('create_version', { collection_id: demo.id, bump: 'minor' })).created.version).toBe('1.1.0')
+    expect((await call('create_version', { collection_id: demo.id })).created.version).toBe('1.1.1') // default: patch
+    expect(await failure('create_version', { collection_id: demo.id, version: '1.0.0' })).toContain('already exists')
+    expect(await failure('create_version', { collection_id: demo.id, version: 'v2' })).toContain('prefix')
+    expect(await failure('create_version', { collection_id: demo.id, version: '2.0.0', bump: 'major' })).toContain('not both')
+    const listed = await call('list_versions', { collection_id: demo.id })
+    expect(listed.versions.map((v: any) => v.version)).toEqual(['1.1.1', '1.1.0', '1.0.0'])
+    expect(listed.next).toMatchObject({ patch: '1.1.2', minor: '1.2.0', major: '2.0.0' })
+
+    // change the live collection, then compare
+    const json = app.requests.find((r) => r.collectionId === demo.id && r.name === 'JSON sample')!
+    await call('update_request', { request_id: json.id, method: 'PUT' })
+    const { created: added } = await call('create_request', { collection_id: demo.id, name: 'Brand new', method: 'GET', url: 'https://x.test' })
+    const v1 = await call('get_version', { collection_id: demo.id, version: 'v1.0.0' })
+    expect(v1).toMatchObject({ version: '1.0.0', collection_name_then: 'Shop', folders: ['Orders'] })
+    expect(v1.requests).toEqual(expect.arrayContaining([{ name: 'JSON sample', method: 'GET', url: 'https://mock.slinger.local/json', folder: 'Orders' }]))
+    expect(v1.requests.some((r: any) => r.name === 'JSON sample' && r.method === 'GET')).toBe(true)
+    expect(v1.changes_since.summary).toMatchObject({ added: 1, changed: 1 })
+    expect(v1.changes_since.requests).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: 'Brand new', status: 'added' }), expect.objectContaining({ status: 'changed', changed: expect.arrayContaining(['method']) })]),
+    )
+    expect(await failure('get_version', { collection_id: demo.id, version: '9.9.9' })).toContain('has no version 9.9.9')
+
+    // copy: a new collection, the live one untouched
+    const copy = (await call('restore_version', { collection_id: demo.id, version: '1.0.0', mode: 'copy' })).restored
+    expect(copy).toMatchObject({ mode: 'copy', collection: 'Shop (v1.0.0)' })
+    expect(app.collections.some((c) => c.id === copy.collection_id)).toBe(true)
+    expect(app.requestById(added.id)).toBeDefined()
+
+    // replace: back to 1.0.0; an open tab follows the restored request
+    tabsStore.openRequest(app.requestById(json.id)!)
+    await call('restore_version', { collection_id: demo.id, version: '1.0.0', mode: 'replace' })
+    const restored = app.requestsOf(demo.id)
+    expect(restored.some((r) => r.name === 'Brand new')).toBe(false)
+    const back = restored.find((r) => r.name === 'JSON sample')!
+    expect(back.method).toBe('GET')
+    await waitFor(() => expect(tabsStore.tabs.some((t) => t.requestId === back.id)).toBe(true))
+
+    const { history } = await call('list_history', { limit: 3 })
+    expect(history.map((h: any) => h.detail)).toEqual(['Replaced “Shop” with version 1.0.0', 'Restored version 1.0.0 of “Shop” as “Shop (v1.0.0)”', expect.stringContaining('Created request')])
+  })
+})
+
 describe('history', () => {
   it('records what an assistant changed and sent, flagged; the History panel shows it', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!
