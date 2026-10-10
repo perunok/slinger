@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, nativeTheme, net, powerMonitor, protocol, screen, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
@@ -19,6 +19,7 @@ import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
+import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -67,6 +68,17 @@ const windowStateFile = () => join(app.getPath('userData'), WINDOW_STATE_FILE)
 let windowTitleBar: TitleBarStyle = 'custom'
 /** Set while the main window is closed to be opened again (reopenMainWindow): the app must not quit in between. */
 let reopeningWindow = false
+/** The tray icon while closing to the tray is on (Settings > Layout & window). */
+let tray: Tray | null = null
+/** The main window is hidden in the tray (closed by the user, page still running). */
+let hiddenToTray = false
+/** A quit has begun: the window closes for real instead of hiding to the tray. */
+let quitting = false
+/** Quit in two passes: 'draining' lets assistant calls in progress finish (the window must stay alive), then 'done'. */
+let shutdown: 'running' | 'draining' | 'done' = 'running'
+/** Windows is logging off or shutting down: not the user quitting Slinger. */
+let sessionEnding = false
+const closeToTray = () => windowState.closeToTray !== false
 /** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
 const automatedWindow = () => !!(process.env.SLINGER_SMOKE_TEST || process.env.SLINGER_HIDE_WINDOW)
 
@@ -204,10 +216,18 @@ function createWindow(): BrowserWindow {
     if (windowState.maximized) win.maximize()
     win.show()
   })
-  win.on('close', () => {
-    if (automatedWindow()) return
-    windowState = { ...windowState, bounds: win.getNormalBounds(), maximized: win.isMaximized() }
-    writeWindowState(windowStateFile(), windowState)
+  win.on('close', (event) => {
+    if (!automatedWindow()) {
+      windowState = { ...windowState, bounds: win.getNormalBounds(), maximized: win.isMaximized() }
+      writeWindowState(windowStateFile(), windowState)
+    }
+    if (hidesOnClose({ closeToTray: closeToTray(), quitting, reopening: reopeningWindow, sessionEnding })) {
+      event.preventDefault()
+      hideToTray(win)
+    }
+  })
+  win.on('session-end', () => {
+    sessionEnding = true
   })
   // View > Zoom level from the last session (Chromium does not persist it across restarts).
   win.webContents.on('did-finish-load', () => {
@@ -264,7 +284,7 @@ function windowNow(win: BrowserWindow | null = mainWindow): WindowNowState {
 }
 
 function windowChrome(): WindowChrome {
-  return { platform: process.platform, titleBar: windowTitleBar, preferredTitleBar: windowState.titleBar ?? 'custom', state: windowNow() }
+  return { platform: process.platform, titleBar: windowTitleBar, preferredTitleBar: windowState.titleBar ?? 'custom', closeToTray: closeToTray(), state: windowNow() }
 }
 
 /** Tells the page about maximise / full screen / focus changes (the custom title bar's window buttons follow them). */
@@ -315,8 +335,78 @@ function reopenMainWindow(): void {
   setTimeout(() => old.close(), 0)
 }
 
+function trayImage(): Electron.NativeImage {
+  const dir = app.isPackaged ? join(process.resourcesPath, 'tray') : join(app.getAppPath(), 'build', 'tray')
+  const { file, hiDpi } = trayIconFiles(process.platform)
+  const image = nativeImage.createFromPath(join(dir, file))
+  if (hiDpi && existsSync(join(dir, hiDpi))) image.addRepresentation({ scaleFactor: 2, buffer: readFileSync(join(dir, hiDpi)) })
+  return image
+}
+
+/** Shows the tray icon (closing to the tray on) or removes it (off, or quitting). */
+function syncTray(): void {
+  const wanted = closeToTray() && !quitting && !process.env.SLINGER_SMOKE_TEST
+  if (!wanted) {
+    tray?.destroy()
+    tray = null
+    return
+  }
+  if (tray) return
+  tray = new Tray(trayImage())
+  tray.setToolTip(APP_NAME)
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({ open: showMainWindow, quit: quitByUser })))
+  // A click on the icon brings the window back (Windows, KDE and other StatusNotifier hosts); the menu is on right-click.
+  tray.on('click', showMainWindow)
+}
+
+/** Hides the window to the tray. The page keeps running (MCP calls, collection runs, sync), at full speed. */
+function hideToTray(win: BrowserWindow): void {
+  syncTray()
+  // macOS: a full-screen window cannot just hide (it would leave an empty Space).
+  if (win.isFullScreen()) {
+    win.once('leave-full-screen', () => hideToTray(win))
+    win.setFullScreen(false)
+    return
+  }
+  // Otherwise Chromium throttles the hidden page's timers, and an assistant's tool call would crawl.
+  win.webContents.setBackgroundThrottling(false)
+  win.hide()
+  hiddenToTray = true
+}
+
+/** The window back from the tray (or a new one when there is none). */
+function showMainWindow(): void {
+  if (quitting) return
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : openMainWindow()
+  if (hiddenToTray) {
+    hiddenToTray = false
+    // Automated runs keep their off-screen window unthrottled (createWindow).
+    if (!automatedWindow()) {
+      win.webContents.setBackgroundThrottling(true)
+      win.show()
+    }
+  }
+  if (win.isMinimized()) win.restore()
+  win.focus()
+}
+
+/** Quit chosen by the user (tray or menu): connected assistants must not start Slinger again until it is opened. */
+function quitByUser(): void {
+  if (!quitting) core?.mcp.markQuit()
+  app.quit()
+}
+
+function setCloseToTray(enabled: boolean): WindowChrome {
+  windowState = { ...windowState, closeToTray: enabled }
+  writeWindowState(windowStateFile(), windowState)
+  syncTray()
+  return windowChrome()
+}
+
 /** Forwards an application-menu command to the renderer: only the main window, only while it shows our own UI. */
 function sendMenuCommand(command: MenuCommand): void {
+  // A command for a window hidden in the tray (macOS menu bar): show it first.
+  if (hiddenToTray) showMainWindow()
   // macOS keeps the app running without a window: the menu brings one back (the command itself is dropped).
   if (!deliverMenuCommand(mainWindow, command, isTrustedUrl) && BrowserWindow.getAllWindows().length === 0) openMainWindow()
 }
@@ -340,6 +430,7 @@ function installAppMenu(): void {
     // Same allow-list as the renderer's openExternalUrl (http/https/mailto only).
     openExternal: (url) => void shell.openExternal(assertExternalUrl(url)),
     zoom: zoomMainWindow,
+    quit: quitByUser,
   })
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
   // Fallback for the native macOS About panel (the menu opens our own About dialog instead).
@@ -350,7 +441,10 @@ function openMainWindow(): BrowserWindow {
   const win = createWindow()
   mainWindow = win
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (mainWindow === win) {
+      mainWindow = null
+      hiddenToTray = false
+    }
     core?.mcp.hostGone()
   })
   // MCP tool calls wait until the (re)loaded renderer subscribed again (mcpHostReady).
@@ -440,11 +534,9 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // Starting Slinger again brings the window back, also from the tray (the only way when the desktop shows no tray).
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
+    if (mainWindow) showMainWindow()
   })
 
   void app.whenReady().then(() => {
@@ -519,13 +611,14 @@ if (!app.requestSingleInstanceLock()) {
       checkForUpdates: feedUrl
         ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
         : undefined,
-      window: { chrome: windowChrome, setTitleBarStyle, reopen: reopenMainWindow, control: windowControl, showAppMenu },
+      window: { chrome: windowChrome, setTitleBarStyle, setCloseToTray, reopen: reopenMainWindow, control: windowControl, showAppMenu },
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
     hardenSession()
     installAppMenu()
     const win = openMainWindow()
+    syncTray()
     powerMonitor.on('resume', () => core?.sync.notifyResume())
     if (!process.env.SLINGER_SMOKE_TEST) {
       core.sync.start()
@@ -534,20 +627,38 @@ if (!app.requestSingleInstanceLock()) {
     if (process.env.SLINGER_SMOKE_TEST) {
       win.webContents.once('did-finish-load', () => void runSmokeTest(win))
     }
+    // macOS: the Dock icon brings the window back (also from the menu bar).
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) openMainWindow()
+      if (hiddenToTray || BrowserWindow.getAllWindows().length === 0) showMainWindow()
     })
   })
 
   app.on('window-all-closed', () => {
     if (reopeningWindow) return
-    if (process.platform !== 'darwin') app.quit()
+    if (process.platform === 'darwin') return
+    // Closing to the tray is off: closing the window is the user quitting.
+    if (!quitting && !sessionEnding) core?.mcp.markQuit()
+    app.quit()
   })
-  app.on('before-quit', () => {
-    void core?.mcp.stop()
-    core?.sync.stop()
-    core?.authCallbacks.closeAll()
-    core?.oauth2.cancelAll()
+  app.on('before-quit', (event) => {
+    quitting = true
+    if (shutdown === 'done') return
+    event.preventDefault()
+    if (shutdown === 'draining') return
+    shutdown = 'draining'
+    syncTray()
+    // Gone from the screen at once; the page stays alive until assistant calls in progress are answered.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
+    void (core?.mcp.stop() ?? Promise.resolve()).finally(() => {
+      core?.sync.stop()
+      core?.authCallbacks.closeAll()
+      core?.oauth2.cancelAll()
+      shutdown = 'done'
+      app.quit()
+    })
+  })
+  // After the windows closed (their pages save open tabs on the way out).
+  app.on('will-quit', () => {
     db?.close()
     db = null
   })

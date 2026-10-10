@@ -38,6 +38,8 @@ export interface AppMenuOptions {
   send(command: MenuCommand): void
   openExternal(url: string): void
   zoom(direction: ZoomDirection): void
+  /** Quit chosen by the user (not a logout or an update): main tells connected assistants not to start Slinger again. */
+  quit(): void
 }
 
 const separator: MenuItemConstructorOptions = { type: 'separator' }
@@ -58,6 +60,12 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
 
   const settings = command('Settings…', 'settings', shown('CmdOrCtrl+,'))
   const about = command(`About ${APP_NAME}`, 'about')
+  // Not `role: 'quit'`: main must know the user chose it. Same labels and keys as the role (Windows: Exit, no key).
+  const quit: MenuItemConstructorOptions = {
+    label: mac ? `Quit ${APP_NAME}` : o.platform === 'win32' ? 'E&xit' : '&Quit',
+    ...(o.platform === 'win32' ? {} : { accelerator: 'CmdOrCtrl+Q' }),
+    click: () => o.quit(),
+  }
 
   const appMenu: MenuItemConstructorOptions = {
     label: APP_NAME,
@@ -72,7 +80,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       { role: 'hideOthers' },
       { role: 'unhide' },
       separator,
-      { role: 'quit' },
+      quit,
     ],
   }
 
@@ -84,7 +92,7 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       separator,
       command('Import…', 'import'),
       command('Export Collection…', 'exportCollection'),
-      ...(mac ? [] : [separator, settings, separator, { role: 'quit' } as MenuItemConstructorOptions]),
+      ...(mac ? [] : [separator, settings, separator, quit]),
     ],
   }
 

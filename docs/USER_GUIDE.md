@@ -27,6 +27,13 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
 - **Right panel** (closed by default): see [Right panel](#right-panel).
+- **Closing the window** keeps Slinger running in the system tray (macOS: the menu bar), so AI assistants, collection runs and
+  sync go on. Click the tray icon (on desktops that support it; otherwise open its menu and choose **Open Slinger**) to bring
+  the window back; starting
+  Slinger again (or, on macOS, clicking its Dock icon) does the same. **Quit Slinger** in the tray menu, File > Quit (Exit on
+  Windows, Ctrl+Q on Linux) or Slinger > Quit Slinger (Cmd+Q) closes it completely: an assistant's request in progress gets up
+  to 10 seconds to finish, then the MCP server stops, and connected assistants do not start Slinger again until you open it
+  yourself. Turn this off in Settings > Layout & window (for example when your desktop shows no tray icons).
 
 ### Status bar
 
@@ -808,6 +815,8 @@ Settings (Ctrl+, or the gear icon) lists its sections at the left: **Appearance*
 - The response **Below the request** (default) or **Beside the request** (see
   [Response below or beside the request](#response-below-or-beside-the-request)), **Show sidebar** (default on, Ctrl+B) and
   **Show status bar** (default on).
+- **Keep running in the system tray when the window is closed** (on by default; macOS: menu bar; see [Layout](#layout)).
+  Applies at once. Off: closing the window quits Slinger (macOS: Slinger stays in the Dock, as macOS apps do).
 - **Use the system title bar** (off by default; see [Layout](#layout)). The change applies when the window reopens: **Reopen
   window** does that right away (your open tabs come back; a collection run in progress stops).
 - **Title bar items:** which buttons the top bar shows, left and right, in which order, including the window's minimise,
@@ -918,7 +927,8 @@ collection and look at history, just as if you clicked yourself. Changes show up
 
 Connect writes one entry named `slinger` into that assistant's own settings file (the previous file is kept next to it as
 `.slinger-backup`; Claude Code is set up through its `claude mcp` command). The entry holds no password or port: it starts a
-small helper from Slinger's data folder that finds them, and **if Slinger is not running, it starts Slinger** and waits for it.
+small helper from Slinger's data folder that finds them, and **if Slinger is not running, it starts Slinger** and waits for it
+(unless you quit Slinger yourself: then it stays closed, and assistants are told to open it).
 So nothing breaks when the port changes or you make a **New token**. **Disconnect** removes the entry again; **Update** appears
 when an entry points to another Slinger installation. Slinger only touches these files when you click.
 
@@ -970,7 +980,7 @@ the left of the title bar (or in the menu bar, with the system title bar).
 | Menu | Items |
 | --- | --- |
 | **Slinger** (macOS only) | About Slinger, Settings… (Cmd+,), Services, Hide Slinger, Hide Others, Show All, Quit Slinger |
-| **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit |
+| **File** | New Request (Ctrl+T), Close Tab (Ctrl+W), Import…, Export Collection…; on Windows/Linux also Settings… (Ctrl+,) and Exit/Quit (Ctrl+Q on Linux) |
 | **Edit** | Undo, Redo, Cut, Copy, Paste (macOS: Paste and Match Style), Delete, Select All |
 | **View** | Toggle Sidebar (Ctrl+B), Toggle Response Position (Ctrl+Alt+V), Toggle Right Panel (Ctrl+Alt+B), Toggle Status Bar, Actual Size (Ctrl+0), Zoom In (Ctrl+=), Zoom Out (Ctrl+-), Toggle Full Screen |
 | **Window** (macOS only) | Minimize, Zoom, Close Window (Shift+Cmd+W), Bring All to Front |

@@ -20,7 +20,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
-  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
@@ -34,7 +34,7 @@ scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio 
 test/                renderer test setup
 ```
 
-Only `main.ts`, `preload.ts` and `ipc/handlers.ts` import `electron` at runtime (`lib/appMenu.ts` imports its types only); everything else is plain Node so the whole business layer
+Only `main.ts`, `preload.ts` and `ipc/handlers.ts` import `electron` at runtime (`lib/appMenu.ts` and `lib/tray.ts` import its types only); everything else is plain Node so the whole business layer
 is unit-tested without launching Electron.
 
 ## Process model and isolation
@@ -46,7 +46,21 @@ is unit-tested without launching Electron.
 | Renderer | `src/**` | UI only; no Node, no direct network |
 
 Window preferences: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`,
-`allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch.
+`allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch (also bringing it
+back from the tray).
+
+**Tray and quitting** (`electron/lib/tray.ts` + `main.ts`). With `closeToTray` on (`window-state.json`, absent = on; IPC
+`setCloseToTray`, Settings > Layout & window), closing the main window (`close` event, any source: title bar button, Alt+F4,
+Close Window) is cancelled and the window hidden (`hidesOnClose`: not while quitting, reopening for a title bar change or during
+a Windows `session-end`). The page keeps running with `setBackgroundThrottling(false)` while hidden, so MCP tool calls, runs and
+sync stay at full speed. A `Tray` (icons in `build/tray`, shipped as `resources/tray`: 16/32 px PNG on Windows, 32 px on Linux,
+a `trayTemplate` image on macOS) has Open Slinger / Quit Slinger; a click on the icon opens too where the host supports it (Windows, KDE). The tray, a second launch, the
+macOS Dock (`activate`) and a menu command bring the window back. **Quit** runs in two passes: `before-quit` sets `quitting`,
+cancels the first quit, removes the tray, hides the window and awaits `McpService.stop()`; then sync, OAuth and auth callbacks
+stop and `app.quit()` runs again for real; the database closes in `will-quit` (after the pages saved their tabs). Quit chosen by
+the user (tray, File/Slinger menu: our own item, not `role: 'quit'`; or closing the window with `closeToTray` off on
+Windows/Linux) also calls `McpService.markQuit()`, so the stdio bridge does not start Slinger again; a logout, an update or
+Playwright's `app.quit()` does not.
 
 **Renderer origin.** Production loads `app://slinger/index.html`. The `app` scheme is registered as privileged
 (standard, secure, fetch-capable). Its handler serves files only from `dist/` (path traversal returns 403, missing files 404)
@@ -137,7 +151,7 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   page did not `preventDefault`, and as a belt-and-braces guard the renderer drops a menu command that arrives within 300 ms of the
   same command run from the keyboard. **Ctrl/Cmd+W is never bound to closing the window**: it is File > Close Tab (the request
   tab); macOS Window > Close Window uses Shift+Cmd+W. The menu's other accelerators (zoom Ctrl/Cmd+0 / = / -, full screen, the
-  Edit roles, Quit, dev-only Reload Ctrl/Cmd+R and DevTools) do not overlap renderer shortcuts.
+  Edit roles, Quit (our own item with the role's labels and keys, so main knows the user chose it), dev-only Reload Ctrl/Cmd+R and DevTools) do not overlap renderer shortcuts.
 - **Zoom** uses Chromium zoom levels in 0.5 steps (about 40 % to 250 %) and is remembered as `zoomLevel` in `window-state.json`,
   re-applied on every page load.
 - `app.setName('Slinger')` fixes the role labels (About/Hide/Quit Slinger); `setAboutPanelOptions` is a fallback for the native
@@ -639,12 +653,18 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
 - **What assistants run** (`McpStatus.stdio`, the same for every client, no secrets): `ELECTRON_RUN_AS_NODE=1 <executable>
   <userData>/mcp/bridge.cjs`, where the executable is `$APPIMAGE` for an AppImage (its own files move on every launch) and
   `process.execPath` otherwise. `files.ts` keeps `<userData>/mcp/`: `bridge.cjs` (copied from `dist-electron/mcp-stdio.cjs` on
-  every start), `launch.json` (how to start Slinger + whether the server is on) and, while it runs, `endpoint.json` (URL + token,
-  mode 0600). The bridge (`stdioBridge.ts`, plain Node) POSTs each stdin JSON-RPC line to the endpoint it reads there; when
-  nothing listens it spawns Slinger from `launch.json` (detached, without `ELECTRON_RUN_AS_NODE`) and waits up to 60 s; "turned
-  off" never starts it. `SLINGER_MCP_URL` + `SLINGER_MCP_TOKEN` override the files. A port in use falls back to the next ten
+  every start), `launch.json` (how to start Slinger, whether the server is on, and `quit: true` after the user quit Slinger;
+  rewritten without it on every start) and, while it runs, `endpoint.json` (URL + token, mode 0600). The bridge
+  (`stdioBridge.ts`, plain Node) POSTs each stdin JSON-RPC line to the endpoint it reads there; when nothing listens it spawns
+  Slinger from `launch.json` (detached, without `ELECTRON_RUN_AS_NODE`) and waits up to 60 s; "turned off" and "quit" never start
+  it. `SLINGER_MCP_URL` + `SLINGER_MCP_TOKEN` override the files. A port in use falls back to the next ten
   (`McpStatus.portNote`). Tool calls wait up to 30 s for the window (`mcpHostReady`, reset on reload/close), so a call to a
   just-started Slinger is not lost.
+- **Quitting** (`McpService.stop`, `McpHttpServer.drain`): `endpoint.json` goes at once, the listener stops accepting
+  connections, and a request on a still-open connection gets 503 "Slinger is quitting." Requests in progress (counted per HTTP
+  request) get `QUIT_GRACE_MS` (10 s) to finish, the window staying alive; then the bridge's waiting calls (and calls still
+  waiting for a window) are answered with "Slinger is quitting." and get 1 s to be sent before the connections are cut. Without
+  a ready window there is no grace period.
 - **Connect** (`clients.ts`, IPC `listMcpClients` / `connectMcpClient` / `disconnectMcpClient`): Claude Desktop
   (`claude_desktop_config.json` in `~/Library/Application Support/Claude`, `%APPDATA%\Claude`, `~/.config/Claude`), Cursor
   (`~/.cursor/mcp.json`), VS Code (`<config>/Code/User/mcp.json`, key `servers`, `type: "stdio"`), Windsurf

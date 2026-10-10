@@ -18,6 +18,8 @@ const SETTINGS_KEY = 'mcp'
 export const MCP_TOKEN_KEY = 'mcp.token'
 /** A taken port falls back to one of the next ones. */
 const PORT_TRIES = 10
+/** Quitting: how long assistant calls in progress get to finish before they are answered with an error. */
+export const QUIT_GRACE_MS = 10_000
 
 export interface McpServiceDeps {
   db: Db
@@ -50,7 +52,8 @@ export class McpService {
   #lastCallAt: number | null = null
   #calls = 0
   #hostReady = false
-  #hostWaiters: Array<() => void> = []
+  #hostWaiters: Array<(ready: boolean) => void> = []
+  #stopping = false
 
   constructor(private readonly deps: McpServiceDeps) {
     this.bridge = new McpBridge(deps.emit)
@@ -108,8 +111,9 @@ export class McpService {
   }
 
   async update(next: McpSettings): Promise<McpStatus> {
+    this.#stopping = false
     setSetting(this.deps.db, SETTINGS_KEY, JSON.stringify({ enabled: next.enabled, port: next.port }))
-    this.#files?.setEnabled(this.#launch())
+    this.#files?.writeLaunch(this.#launch())
     await this.#apply()
     return this.status()
   }
@@ -132,7 +136,7 @@ export class McpService {
   /** The window's MCP host subscribed: calls can run. */
   hostReady(): void {
     this.#hostReady = true
-    for (const w of this.#hostWaiters.splice(0)) w()
+    for (const w of this.#hostWaiters.splice(0)) w(true)
   }
 
   /** The window is (re)loading or gone. */
@@ -168,20 +172,42 @@ export class McpService {
     return this.clients()
   }
 
-  async stop(): Promise<void> {
-    this.bridge.failAll('Slinger is shutting down.')
-    await this.#server.stop()
+  /**
+   * Slinger is quitting. Assistants stop finding the endpoint at once, new calls are refused, and calls in progress get
+   * up to `graceMs` to finish (they run in the window, which stays alive meanwhile) before they are answered with an
+   * error. Never throws.
+   */
+  async stop(graceMs = QUIT_GRACE_MS): Promise<void> {
+    this.#stopping = true
+    this.#files?.removeEndpoint()
+    const failAll = () => {
+      for (const w of this.#hostWaiters.splice(0)) w(false)
+      this.bridge.failAll('Slinger is quitting.')
+    }
+    // Without a window nothing in progress can finish.
+    if (!this.#hostReady) failAll()
+    await this.#server.drain(this.#hostReady ? graceMs : 0, failAll).catch(() => this.#server.stop())
+  }
+
+  /**
+   * The user quit Slinger (Quit in the tray or the menu, not a logout): connected assistants must not start it again
+   * until it is opened by hand. launch.json is rewritten on every start, which clears this.
+   */
+  markQuit(): void {
+    this.#files?.writeLaunch({ ...this.#launch(), quit: true })
   }
 
   async #run(tool: McpToolName, args: unknown, timeoutMs: number): Promise<McpCallResult> {
+    if (this.#stopping) return { ok: false, error: 'Slinger is quitting.' }
     if (!this.#hostReady) {
       const ready = await new Promise<boolean>((resolve) => {
         const t = setTimeout(() => resolve(false), this.deps.hostReadyTimeoutMs ?? 30_000)
-        this.#hostWaiters.push(() => {
+        this.#hostWaiters.push((r) => {
           clearTimeout(t)
-          resolve(true)
+          resolve(r)
         })
       })
+      if (this.#stopping) return { ok: false, error: 'Slinger is quitting.' }
       if (!ready) return { ok: false, error: 'The Slinger window is not open (or still starting), so the tool cannot run. Open Slinger and try again.' }
     }
     return this.bridge.call(tool, args, timeoutMs)

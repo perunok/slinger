@@ -215,6 +215,70 @@ describe('MCP endpoint', () => {
   })
 })
 
+describe('quitting', () => {
+  const toolCall = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'list_workspaces', arguments: {} } })
+  const auth = (token: string) => ({ authorization: `Bearer ${token}` })
+
+  it('lets a call in progress finish, refuses new ones, then stops and removes endpoint.json', async () => {
+    const { url, token } = await enable()
+    answer = null // the window is still working on it
+    const inProgress = post(url, auth(token), toolCall(1))
+    await expect.poll(() => calls.length).toBe(1)
+    const stopped = mcp.stop()
+    expect(existsSync(join(userData, 'mcp', 'endpoint.json'))).toBe(false)
+    expect(mcp.status().running).toBe(false)
+    // A new request meanwhile is turned away (503 on an open connection, refused otherwise) and never reaches the window.
+    const late = await post(url, auth(token), toolCall(2)).then((r) => r.status, () => 'refused')
+    expect([503, 'refused']).toContain(late)
+    expect(calls).toHaveLength(1)
+    setTimeout(() => mcp.respond(calls[0]!.id, { ok: true, text: 'finished' }), 30)
+    const res = await inProgress
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(await res.json())).toContain('finished')
+    await stopped
+    await expect(post(url, auth(token), toolCall(2))).rejects.toThrow() // nothing listens any more
+  })
+
+  it('answers a call that does not finish in time with an error instead of cutting the connection', async () => {
+    const { url, token } = await enable()
+    answer = null
+    const inProgress = post(url, auth(token), toolCall(1))
+    await expect.poll(() => calls.length).toBe(1)
+    await mcp.stop(30)
+    const body = JSON.stringify(await (await inProgress).json())
+    expect(body).toContain('Slinger is quitting.')
+    expect(body).toContain('"isError":true')
+  })
+
+  it('does not wait when there is no window to finish anything', async () => {
+    const { url, token } = await enable()
+    mcp.hostGone()
+    const waiting = post(url, auth(token), toolCall(1)) // waits for a window that never comes
+    await new Promise((r) => setTimeout(r, 10))
+    const started = Date.now()
+    await mcp.stop(10_000)
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(JSON.stringify(await (await waiting).json())).toContain('Slinger is quitting.')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('quit by the user: assistants do not start Slinger again until it is opened', async () => {
+    await enable()
+    mcp.markQuit()
+    await mcp.stop()
+    const dir = join(userData, 'mcp')
+    expect(JSON.parse(readFileSync(join(dir, 'launch.json'), 'utf8'))).toMatchObject({ enabled: true, quit: true })
+    const out: string[] = []
+    let spawned = 0
+    await relay(JSON.stringify(toolCall(3)), { dir, spawnImpl: () => void spawned++ }, (l) => out.push(l), {})
+    expect(spawned).toBe(0)
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 3, error: { message: expect.stringContaining('Slinger was quit') } })
+    // Opening Slinger again clears it.
+    await makeService().init()
+    expect(JSON.parse(readFileSync(join(dir, 'launch.json'), 'utf8')).quit).toBeUndefined()
+  })
+})
+
 describe('bridge', () => {
   it('times out a call the window never answers, and ignores late answers', async () => {
     const sent: McpCall[] = []
@@ -250,7 +314,7 @@ describe('stdio bridge', () => {
   it('starts Slinger when it is not running, then forwards', async () => {
     await enable()
     const { url } = mcp.status()
-    await mcp.stop() // "Slinger quit": endpoint.json stays, nothing listens
+    await mcp.stop() // Slinger quit, but not by the user (logout, update): nothing listens
     const spawned: Array<{ command: string; args: string[] }> = []
     const out: string[] = []
     await relay(

@@ -108,6 +108,26 @@
             Show status bar
           </label>
         </section>
+        {#if windowChrome.loaded}
+          {@const mac = windowChrome.platform === 'darwin'}
+          {@const where = mac ? 'menu bar' : 'system tray'}
+          <section class="mb-6 grid gap-2" aria-labelledby="closing-heading">
+            <h3 class="text-sm font-semibold" id="closing-heading">Closing the window</h3>
+            <div class="flex items-center gap-1.5 text-sm">
+              <label class="flex items-center gap-2">
+                <input type="checkbox" checked={windowChrome.closeToTray} onchange={(e) => void windowChrome.setCloseToTray(e.currentTarget.checked)} />
+                Keep running in the {where} when the window is closed
+              </label>
+              <InfoTip label="About closing to the {where}">
+                Closing the window hides it; Slinger keeps running in the {where}, so AI assistants (MCP), collection runs and sync go
+                on. Click the {where} icon{mac ? ' or the Dock icon' : ''} (or start Slinger again) to bring the window back, and choose
+                Quit there or in the {mac ? 'Slinger' : 'File'} menu to close Slinger completely. Quitting lets assistant calls in
+                progress finish first, then stops the MCP server; assistants do not start Slinger again until you open it.
+                {mac ? '' : `Turn this off if your desktop shows no ${where} icons: closing the window then quits.`}
+              </InfoTip>
+            </div>
+          </section>
+        {/if}
         <section class="grid gap-2" aria-labelledby="window-heading">
           <h3 class="text-sm font-semibold" id="window-heading">Title bar</h3>
           {#if windowChrome.loaded}

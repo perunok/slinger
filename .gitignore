@@ -4,6 +4,7 @@ node_modules/
 !/build/icon.png
 !/build/entitlements.mac.plist
 !/build/icons/
+!/build/tray/
 *.log
 .env
 .DS_Store

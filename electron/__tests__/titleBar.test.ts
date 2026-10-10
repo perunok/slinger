@@ -37,11 +37,16 @@ describe('window chrome (IPC)', () => {
   function withWindow() {
     const calls: unknown[][] = []
     let preferred: TitleBarStyle = 'custom'
-    const chrome = (): WindowChrome => ({ platform: 'linux', titleBar: 'custom', preferredTitleBar: preferred, state: { maximized: false, fullScreen: false, focused: true } })
+    let closeToTray = true
+    const chrome = (): WindowChrome => ({ platform: 'linux', titleBar: 'custom', preferredTitleBar: preferred, closeToTray, state: { maximized: false, fullScreen: false, focused: true } })
     const window: WindowControls = {
       chrome,
       setTitleBarStyle: (s) => {
         preferred = s
+        return chrome()
+      },
+      setCloseToTray: (on) => {
+        closeToTray = on
         return chrome()
       },
       reopen: () => void calls.push(['reopen']),
@@ -55,11 +60,21 @@ describe('window chrome (IPC)', () => {
 
   it('reads and saves the title bar preference, with the window state', async () => {
     const { api } = withWindow()
-    expect(await api.getWindowChrome()).toEqual({ platform: 'linux', titleBar: 'custom', preferredTitleBar: 'custom', state: { maximized: false, fullScreen: false, focused: true } })
+    expect(await api.getWindowChrome()).toEqual({ platform: 'linux', titleBar: 'custom', preferredTitleBar: 'custom', closeToTray: true, state: { maximized: false, fullScreen: false, focused: true } })
     expect(await api.setTitleBarStyle('system')).toMatchObject({ preferredTitleBar: 'system' })
     for (const bad of [['frameless'], [], ['custom', 'x'], [true]]) {
       await expect(call(api.setTitleBarStyle, ...bad), JSON.stringify(bad)).rejects.toMatchObject({ code: 'invalid_input' })
     }
+  })
+
+  it('saves the close-to-tray preference (a boolean only)', async () => {
+    const { api } = withWindow()
+    expect(await api.setCloseToTray(false)).toMatchObject({ closeToTray: false })
+    expect(await api.getWindowChrome()).toMatchObject({ closeToTray: false })
+    for (const bad of [['false'], [], [true, true], [1]]) {
+      await expect(call(api.setCloseToTray, ...bad), JSON.stringify(bad)).rejects.toMatchObject({ code: 'invalid_input' })
+    }
+    expect(await api.getWindowChrome()).toMatchObject({ closeToTray: false })
   })
 
   it('validates window actions and menu points before main sees them', async () => {
@@ -80,6 +95,7 @@ describe('window chrome (IPC)', () => {
   it('without a window: reading/saving fails with io_error, window actions are no-ops', async () => {
     await expect(env.api.getWindowChrome()).rejects.toMatchObject({ code: 'io_error' })
     await expect(env.api.setTitleBarStyle('system')).rejects.toMatchObject({ code: 'io_error' })
+    await expect(env.api.setCloseToTray(false)).rejects.toMatchObject({ code: 'io_error' })
     await expect(env.api.windowControl('close')).resolves.toBeUndefined()
     await expect(env.api.showAppMenu(0, 0)).resolves.toBeUndefined()
   })

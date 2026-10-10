@@ -1,7 +1,7 @@
 /**
  * Remembered window state (`<userData>/window-state.json`): the last theme background colour, so the native
  * window is painted in the right colour before the renderer's first frame (no white/dark flash), and the
- * window's size/position/maximised state. Pure Node (no `electron` import) so it is unit-testable.
+ * window's size/position/maximised state, and the window preferences (title bar, closing to the tray). Pure Node (no `electron` import) so it is unit-testable.
  *
  * The file is advisory: anything unreadable or invalid is ignored field by field, never fatal.
  */
@@ -34,6 +34,8 @@ export interface WindowState {
   zoomLevel?: number
   /** Title bar preference (Settings > Layout & window); absent = the custom title bar. */
   titleBar?: 'custom' | 'system'
+  /** Closing the window hides it to the tray (Settings > Layout & window); absent = on. */
+  closeToTray?: boolean
 }
 
 /** Height of the custom title bar (the top bar, `h-10`) in CSS pixels at the default font size and zoom. */
@@ -114,6 +116,7 @@ export function readWindowState(file: string): WindowState {
   if (bg.success) out.backgroundColor = bg.data
   if (typeof o.zoomLevel === 'number' && Number.isFinite(o.zoomLevel) && Math.abs(o.zoomLevel) <= 10) out.zoomLevel = o.zoomLevel
   if (o.titleBar === 'custom' || o.titleBar === 'system') out.titleBar = o.titleBar
+  if (typeof o.closeToTray === 'boolean') out.closeToTray = o.closeToTray
   return out
 }
 

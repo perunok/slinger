@@ -1008,6 +1008,8 @@ export interface WindowChrome {
   titleBar: TitleBarStyle
   /** The saved preference; differs from `titleBar` until the window is reopened. */
   preferredTitleBar: TitleBarStyle
+  /** ADDED (tray): closing the window hides it to the system tray (macOS: menu bar); only Quit ends Slinger. Applies at once. */
+  closeToTray: boolean
   /** The window right now (later changes arrive on `onWindowState`). */
   state: WindowState
 }

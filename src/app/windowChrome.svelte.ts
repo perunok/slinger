@@ -12,6 +12,8 @@ class WindowChromeStore {
   /** What this window was created with. Until known, render as the system title bar (no drag region, no padding). */
   titleBar = $state<TitleBarStyle>('system')
   preferred = $state<TitleBarStyle>('system')
+  /** Closing the window hides it to the tray (main's preference, applies at once). */
+  closeToTray = $state(true)
   loaded = $state(false)
   /** Maximised / full screen / focused (pushed by main on every change). */
   state = $state<WindowState>({ maximized: false, fullScreen: false, focused: true })
@@ -39,6 +41,7 @@ class WindowChromeStore {
       this.platform = c.platform
       this.titleBar = c.titleBar
       this.preferred = c.preferredTitleBar
+      this.closeToTray = c.closeToTray
       this.state = c.state
       this.loaded = true
       this.#off?.()
@@ -56,6 +59,17 @@ class WindowChromeStore {
     } catch (e) {
       this.preferred = before
       toast.error('Could not save the title bar setting', errorInfo(e).message)
+    }
+  }
+
+  async setCloseToTray(enabled: boolean) {
+    const before = this.closeToTray
+    this.closeToTray = enabled
+    try {
+      this.closeToTray = (await api().setCloseToTray(enabled)).closeToTray
+    } catch (e) {
+      this.closeToTray = before
+      toast.error('Could not save the setting', errorInfo(e).message)
     }
   }
 
