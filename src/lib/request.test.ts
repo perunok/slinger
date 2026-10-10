@@ -3,6 +3,7 @@ import { dataRows, newRow } from './kv'
 import { makeScope } from './template'
 import { prepareRequest, secretsNeeded } from './prepare'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft } from './request'
+import { newMcpRequestDraft } from './mcpRequest'
 
 const base = { name: 'R', method: 'POST', url: 'http://x/y?a=1' }
 
@@ -122,6 +123,31 @@ describe('document edge cases', () => {
     d.params = d.params.filter((p) => p.key !== 'off')
     const again = parseDocument({ ...base, documentJson: serializeDraft(d).documentJson })
     expect(dataRows(again.params)).toHaveLength(0)
+  })
+})
+
+describe('MCP requests (mcpRequest.ts) next to HTTP ones', () => {
+  it('an HTTP draft serializes exactly as before MCP requests existed', () => {
+    const d = newDraft({ ...base, headers: [newRow({ key: 'A', value: '1' }), newRow()] })
+    d.timeoutMs = 100
+    expect(serializeDraft(d)).toEqual({
+      name: 'R',
+      method: 'POST',
+      url: 'http://x/y?a=1',
+      documentJson:
+        '{"name":"R","method":"POST","url":"http://x/y?a=1","description":null,"headers":[{"key":"A","value":"1","type":"text"}],' +
+        '"body":null,"auth":null,"params":[],"settings":{"timeoutMs":100}}',
+    })
+  })
+
+  it('secretsNeeded covers the MCP fields of an MCP draft', () => {
+    const scope = makeScope('Dev', [
+      { key: 'key', value: null, secret: true, id: 'v1' },
+      { key: 'unused', value: null, secret: true, id: 'v2' },
+    ])
+    const d = newMcpRequestDraft()
+    d.mcp = { ...d.mcp!, transport: 'stdio', command: 'srv', env: [newRow({ key: 'K', value: '{{key}}' })], uri: '{{unused}}' }
+    expect(secretsNeeded(d, scope).map((v) => v.key)).toEqual(['key'])
   })
 })
 

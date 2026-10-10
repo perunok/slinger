@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ApiFolder, ApiRequest } from '../../shared/types'
 import { buildHttpClientEnv, exportHttpFile, unresolvedInput } from './httpFile'
 import { newRow } from './kv'
+import { newMcpRequestDraft } from './mcpRequest'
 import { emptyAuth, emptyBody, newDraft, serializeDraft, type RequestDraft } from './request'
 import { HTTP_FILE_BOUNDARY } from './snippets'
 import { layeredScope, makeScope } from './template'
@@ -164,5 +165,28 @@ describe('buildHttpClientEnv', () => {
     expect(JSON.parse(out.env)).toEqual({ default: JSON.parse('{"__proto__": "x"}') })
     expect(JSON.parse(out.privateEnv)).toEqual({ default: { oauth2_access_token: '' } })
     expect(out.secrets).toBe(0)
+  })
+})
+
+describe('exportHttpFile with MCP requests', () => {
+  it('skips MCP requests, counts them and says so in the header', () => {
+    const mcp = (id: string, sortOrder: number): ApiRequest => {
+      seq++
+      const s = serializeDraft({ ...newMcpRequestDraft(id), url: 'https://mcp.example.com/mcp' })
+      return { id, workspaceId: 'w', collectionId: 'c1', folderId: null, sortOrder, createdAt: seq, updatedAt: seq, version: 1, ...s }
+    }
+    const out = exportHttpFile({ collectionName: 'C', folders: [], requests: [request('Health', null, 0, { url: 'https://x/health' }), mcp('Tools', 1), mcp('More', 2)] })
+    expect(out.skippedMcp).toBe(2)
+    expect(out.text).toContain('# 2 MCP requests are not included (.http files hold HTTP requests only).')
+    expect(out.text).toContain('### Health')
+    expect(out.text).not.toContain('Tools')
+    expect(out.text).not.toContain('mcp.example.com')
+    expect(exportHttpFile({ collectionName: 'C', folders: [], requests: [mcp('One', 0)] }).text).toContain('# 1 MCP request is not included')
+  })
+
+  it('reports zero and keeps the header unchanged without MCP requests', () => {
+    const out = exportHttpFile({ collectionName: 'C', folders: [], requests: [request('Health', null, 0, { url: 'https://x/health' })] })
+    expect(out.skippedMcp).toBe(0)
+    expect(out.text).not.toContain('MCP')
   })
 })

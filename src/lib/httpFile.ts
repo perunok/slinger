@@ -89,15 +89,19 @@ export interface HttpFileExport {
   text: string
   /** True when a request uses OAuth 2.0, i.e. the file references `{{oauth2_access_token}}`. */
   usesOAuth2: boolean
+  /** MCP requests left out: `.http` files can only describe HTTP requests. */
+  skippedMcp: number
 }
 
 /**
  * One `.http` file with every request in sidebar order, each a `### Folder / Sub folder / Request` block (the folder
- * path keeps names unique for "run by name" and shows where the request lives).
+ * path keeps names unique for "run by name" and shows where the request lives). MCP requests are skipped and counted
+ * (the file's header says how many).
  */
 export function exportHttpFile({ collectionName, folders, requests }: HttpFileExportInput): HttpFileExport {
   const blocks: string[] = []
   let usesOAuth2 = false
+  let skippedMcp = 0
   const walk = (nodes: TreeNode[], path: string[]) => {
     for (const n of nodes) {
       if (n.kind === 'folder') {
@@ -105,6 +109,10 @@ export function exportHttpFile({ collectionName, folders, requests }: HttpFileEx
         continue
       }
       const draft = parseDocument(n.request)
+      if (draft.mcp) {
+        skippedMcp++
+        continue
+      }
       if (draft.auth.kind === 'oauth2') usesOAuth2 = true
       const name = [...path, n.request.name].map((s) => s.trim()).filter(Boolean).join(' / ') || 'Untitled request'
       blocks.push(generateSnippet('http', unresolvedInput(draft, name)))
@@ -112,8 +120,9 @@ export function exportHttpFile({ collectionName, folders, requests }: HttpFileEx
   }
   walk(buildTree(folders, requests), [])
   const title = collectionName.replace(/[\r\n]+/g, ' ').trim()
-  const header = `# ${title || 'Collection'}\n# Exported by Slinger. Variables stay as {{name}}: define them in ${HTTP_CLIENT_ENV_FILE}.\n`
-  return { text: [header, ...blocks].join('\n'), usesOAuth2 }
+  let header = `# ${title || 'Collection'}\n# Exported by Slinger. Variables stay as {{name}}: define them in ${HTTP_CLIENT_ENV_FILE}.\n`
+  if (skippedMcp > 0) header += `# ${skippedMcp} MCP request${skippedMcp === 1 ? ' is' : 's are'} not included (.http files hold HTTP requests only).\n`
+  return { text: [header, ...blocks].join('\n'), usesOAuth2, skippedMcp }
 }
 
 export interface HttpClientEnvFiles {

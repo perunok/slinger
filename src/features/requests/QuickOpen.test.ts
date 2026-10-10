@@ -1,9 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { settings } from '../../app/settings.svelte'
+import { app } from '../../app/state.svelte'
 import { ui } from '../../app/ui.svelte'
+import { createMockBackend } from '../../dev/mockBackend'
+import { newMcpRequestDraft } from '../../lib/mcpRequest'
+import { serializeDraft } from '../../lib/request'
 import { THEMES } from '../../lib/themes'
 import QuickOpen from './QuickOpen.svelte'
+import { tabsStore } from './tabs.svelte'
 
 const html = document.documentElement
 // jsdom has no layout; the list scrolls the active option into view.
@@ -73,5 +78,30 @@ describe('quick open commands', () => {
     await type('> loading pebble')
     await fireEvent.keyDown(input, { key: 'Enter' })
     expect(settings.loader).toBe('pebble')
+  })
+})
+
+describe('quick open requests', () => {
+  it('finds MCP requests by method and opens them in the MCP editor', async () => {
+    const backend = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = backend
+    window.__slingerMock = backend
+    tabsStore.tabs = []
+    tabsStore.activeId = null
+    await app.init()
+    const ws = app.workspaceId!
+    const col = await backend.createCollection(ws, 'Tools')
+    const s = serializeDraft({ ...newMcpRequestDraft('Weather'), url: 'https://mcp.test/mcp' })
+    await backend.createRequest({ workspaceId: ws, collectionId: col.id, folderId: null, name: s.name, method: s.method, url: s.url, documentJson: s.documentJson })
+    await backend.createRequest({ workspaceId: ws, collectionId: col.id, folderId: null, name: 'Plain', method: 'GET', url: 'https://x.test', documentJson: '{}' })
+    await app.reloadCollections()
+    const { input, type, options } = setup()
+    await type('mcp')
+    expect(options()[0]).toMatch(/^MCP Weather/)
+    expect(options().some((o) => o?.includes('Plain'))).toBe(false)
+    expect(screen.getAllByRole('option')[0].querySelector('span')).toHaveStyle({ color: 'var(--m-other)' })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(tabsStore.active?.draft.mcp).toMatchObject({ transport: 'http' })
+    expect(tabsStore.active?.title).toBe('Weather')
   })
 })

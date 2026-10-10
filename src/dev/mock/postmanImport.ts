@@ -5,6 +5,7 @@ import { addCollection, addFolder, addRequest, must, removeCollectionContents, t
 import { fail } from './util'
 import { addVersion } from './versions'
 import { countScripts } from '../../lib/scripts'
+import { MCP_METHOD } from '../../lib/mcpRequest'
 import { columnsFromPostman } from '../../lib/description'
 import { postmanUrlToString } from '../../../shared/postmanUrl'
 import { restoreVersionHistoryMock } from './versionHistory'
@@ -23,19 +24,26 @@ function trimmedOr(value: unknown, fallback: string): string {
 /** Same URL rules as the main-process importer. */
 export { postmanUrlToString }
 
+/** A Slinger MCP request's configuration (item key `_slinger_mcp`, see lib/postman.ts), or null. */
+const mcpOf = (item: Json): Json | null => (isObj(item._slinger_mcp) ? item._slinger_mcp : null)
+
 function requestDocument(item: Json, request: Json, name: string, method: string, url: string): Json {
-  return {
+  const { _slinger_mcp: _mcp, ...sourceItem } = item
+  const mcp = mcpOf(item)
+  const doc: Json = {
     name,
     method,
     url,
     description: request.description ?? null,
     headers: request.header ?? [],
-    body: request.body ?? null,
+    body: mcp ? null : (request.body ?? null),
     auth: stripOAuth2Tokens(request.auth ?? null),
     scripts: item.event ?? [],
     responses: item.response ?? [],
-    source: stripOAuth2TokensFromItem(item),
+    source: stripOAuth2TokensFromItem(sourceItem),
   }
+  if (mcp) Object.assign(doc, { params: [], mcp })
+  return doc
 }
 
 interface Parsed {
@@ -130,7 +138,7 @@ function walk(s: MockState, workspaceId: string, collectionId: string, items: un
     if (!isObj(raw.request)) continue
     const request = raw.request
     const name = trimmedOr(raw.name, 'Untitled Request')
-    const method = trimmedOr(request.method, 'GET').toUpperCase()
+    const method = mcpOf(raw) ? MCP_METHOD : trimmedOr(request.method, 'GET').toUpperCase()
     const url = postmanUrlToString(request.url)
     addRequest(s, {
       workspaceId,

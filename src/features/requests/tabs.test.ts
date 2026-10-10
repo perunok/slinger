@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { app } from '../../app/state.svelte'
 import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
+import { newMcpDraft, newMcpRequestDraft } from '../../lib/mcpRequest'
 import { draftFingerprint, newDraft, parseDocument } from '../../lib/request'
+import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { RequestTab, serverKeyOf, tabsStore } from './tabs.svelte'
 import { storageKey, TABS_STORAGE_VERSION, type PersistedTabsState } from './tabsPersistence'
 
@@ -147,6 +149,50 @@ describe('request tabs', () => {
     expect(tab.sending).toBe(false)
     expect(tab.lastOutcome).toBe('success') // the loading animation's finish
     expect(tab.sendStartedAt).toBeGreaterThan(0)
+  })
+
+  it('an MCP tab sends on its own connection (tab:<id>), the one its Connect button opens', async () => {
+    const tab = new RequestTab({ draft: { ...newMcpRequestDraft('Echo'), url: 'https://demo.mcp.test/mcp' } })
+    tab.draft.mcp = newMcpDraft({ tool: 'echo', arguments: '{"text":"hi"}' })
+    tabsStore.tabs.push(tab)
+    const out = await tabsStore.send(tab)
+    expect(out?.ok).toBe(true)
+    expect(tab.response?.data.mcp).toMatchObject({ ok: true, operation: 'tools/call', name: 'echo' })
+    expect(tab.lastOutcome).toBe('success')
+    expect(mcpConnections.isConnected(`tab:${tab.id}`)).toBe(true)
+    await mcpConnections.disconnect(`tab:${tab.id}`)
+  })
+
+  it('closing an inactive MCP tab (or leaving the workspace) closes its connection', async () => {
+    const disconnect = vi.spyOn(backend, 'mcpClientDisconnect')
+    const open = async () => {
+      const tab = new RequestTab({ draft: { ...newMcpRequestDraft('Echo'), url: 'https://demo.mcp.test/mcp' } })
+      tab.draft.mcp = newMcpDraft({ tool: 'echo', arguments: '{"text":"hi"}' })
+      tabsStore.tabs.push(tab)
+      await tabsStore.send(tab)
+      return { tab, sessionId: mcpConnections.sessionId(`tab:${tab.id}`)! }
+    }
+    const a = await open()
+    const active = tabsStore.openRequest(find('Get user'))
+    expect(tabsStore.activeId).toBe(active.id)
+    tabsStore.closeNow([a.tab.id])
+    expect(disconnect).toHaveBeenCalledWith(a.sessionId)
+    expect(mcpConnections.isConnected(`tab:${a.tab.id}`)).toBe(false)
+
+    const b = await open()
+    tabsStore.switchWorkspace((await backend.createWorkspace('Other')).id)
+    expect(disconnect).toHaveBeenCalledWith(b.sessionId)
+    expect(mcpConnections.isConnected(`tab:${b.tab.id}`)).toBe(false)
+  })
+
+  it('an MCP run that fails keeps the JSON-RPC error on the tab', async () => {
+    const tab = new RequestTab({ draft: { ...newMcpRequestDraft('Nope'), url: 'https://demo.mcp.test/mcp' } })
+    tab.draft.mcp = newMcpDraft({ operation: 'resources/read', uri: 'demo://nope' })
+    tabsStore.tabs.push(tab)
+    const out = await tabsStore.send(tab)
+    expect(out).toMatchObject({ ok: false, kind: 'failed' })
+    expect(tab.error).toMatchObject({ message: 'Resource demo://nope not found', mcp: { code: -32602, message: 'Resource demo://nope not found' } })
+    await mcpConnections.disconnect(`tab:${tab.id}`)
   })
 
   it('a 4xx / 5xx response ends the loading animation as an error', async () => {

@@ -6,7 +6,7 @@
  * part, `exampleDraft` its response part, and saving writes the example back into the parent
  * request's document (`responses`), leaving every other example and the request itself as stored.
  */
-import type { ApiFolder, ApiRequest, Collection, HttpResponseData } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, HttpResponseData, McpCallOutcome, McpTrustCommandInput } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import {
@@ -29,6 +29,7 @@ import { draftFingerprint, newDraft, parseDocument, serializeDraft, type Request
 import type { ScriptOutput } from '../../lib/scripts'
 import { settings } from '../../app/settings.svelte'
 import type { TabNotice } from '../sync/tabNotices'
+import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { cancelRun, executeDraft, type ExecuteOutcome } from './execute'
 import { readPersisted, restoreTabs as restoreTabsFromState, type RestoredTabInit } from './tabsPersistence'
 
@@ -94,9 +95,17 @@ export class RequestTab {
   runId = $state<string | null>(null)
   cancelled = false
   response = $state.raw<ResponseView | null>(null)
-  /** Inline error from the last send (unresolved variables, network failure...). */
-  error = $state<{ message: string; unresolved: string[] } | null>(null)
+  /**
+   * Inline error from the last send (unresolved variables, network failure...). `mcp` (MCP requests): the error the call
+   * ended with, with its JSON-RPC code and data when the server answered with one.
+   */
+  error = $state<{ message: string; unresolved: string[]; mcp?: NonNullable<McpCallOutcome['error']> } | null>(null)
   warnings = $state<string[]>([])
+  /**
+   * ADDED (MCP requests): a stdio command main refused because it was not allowed on this device yet (set by a send,
+   * from any trigger such as the global Ctrl+Enter); the MCP editor shows the Allow dialog for it and clears it.
+   */
+  untrustedCommand = $state.raw<McpTrustCommandInput | null>(null)
   /** Test results and console output of the last send (in memory only; never persisted). */
   scriptOutput = $state.raw<ScriptOutput | null>(null)
   saving = $state(false)
@@ -249,6 +258,8 @@ class TabsStore {
     if (this.currentWorkspaceId) {
       this.stash.set(this.currentWorkspaceId, { tabs: this.tabs, activeId: this.activeId })
     }
+    // The outgoing tabs' MCP connections close (a tab connects again on its next Connect or Run).
+    for (const t of this.tabs) if (t.draft.mcp) void mcpConnections.disconnect(mcpTabKey(t.id))
     this.currentWorkspaceId = workspaceId
     this.pendingClose = null
     const cached = this.stash.get(workspaceId)
@@ -445,6 +456,8 @@ class TabsStore {
     for (const id of ids) {
       const t = this.find(id)
       if (t?.runId) void cancelRun(t.runId)
+      // Only the active tab's view is mounted, so its connection cannot be left to the view to close.
+      if (t?.draft.mcp) void mcpConnections.disconnect(mcpTabKey(t.id))
     }
     const set = new Set(ids)
     const index = this.tabs.findIndex((t) => t.id === this.activeId)
@@ -821,6 +834,7 @@ class TabsStore {
     tab.cancelled = false
     tab.error = null
     tab.warnings = []
+    tab.untrustedCommand = null
     tab.scriptOutput = null
     const outcome = await executeDraft($state.snapshot(tab.draft) as RequestDraft, {
       workspaceId: app.workspaceId,
@@ -829,6 +843,8 @@ class TabsStore {
       folderId: tab.folderId,
       onRunId: (id) => (tab.runId = id),
       wasCancelled: () => tab.cancelled,
+      // An MCP tab runs on its own connection (the one its Connect button opens), not a shared one.
+      ...(tab.draft.mcp ? { mcpSessionKey: mcpTabKey(tab.id) } : {}),
     })
     tab.lastOutcome = outcome.ok ? (outcome.response.status < 400 ? 'success' : 'error') : outcome.kind === 'cancelled' ? 'cancelled' : 'error'
     tab.sending = false
@@ -839,7 +855,12 @@ class TabsStore {
       tab.response = { data: outcome.response, elapsedMs: outcome.elapsedMs, receivedAt: Date.now() }
       tab.warnings = outcome.warnings
     } else if (outcome.kind !== 'cancelled') {
-      tab.error = { message: outcome.error, unresolved: outcome.kind === 'unresolved' ? outcome.unresolved : [] }
+      tab.error = {
+        message: outcome.error,
+        unresolved: outcome.kind === 'unresolved' ? outcome.unresolved : [],
+        ...(outcome.kind === 'failed' && outcome.mcpError ? { mcp: outcome.mcpError } : {}),
+      }
+      if (outcome.kind === 'failed' && outcome.untrustedCommand) tab.untrustedCommand = outcome.untrustedCommand
     } else {
       tab.error = { message: 'Request cancelled.', unresolved: [] }
     }
@@ -852,6 +873,9 @@ class TabsStore {
     await cancelRun(tab.runId)
   }
 }
+
+/** The connection registry key of an MCP request tab's own connection. */
+export const mcpTabKey = (tabId: string): string => `tab:${tabId}`
 
 export const tabsStore = new TabsStore()
 app.onRequestsReloaded = () => tabsStore.syncWithServer()

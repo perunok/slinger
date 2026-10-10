@@ -156,6 +156,48 @@ describe('HistoryPanel', () => {
     expect(await screen.findByText(/No history yet/)).toBeInTheDocument()
   })
 
+  it('MCP rows: badge, operation detail and an OK / error chip instead of an HTTP status', async () => {
+    await setup([
+      entry('m1', { method: 'MCP', url: 'https://mcp.test/mcp', statusCode: null, detail: 'tools/call get_weather' }),
+      entry('m2', { method: 'MCP', url: 'npx -y demo-server', statusCode: null, ok: false, errorMessage: 'The tool returned an error', detail: 'tools/call fail' }),
+    ])
+    const ok = (await screen.findByText('https://mcp.test/mcp')).closest('[data-entry-id]') as HTMLElement
+    expect(within(ok).getByText('MCP')).toHaveStyle({ color: 'var(--m-other)' })
+    expect(within(ok).getByTestId('history-mcp-detail')).toHaveTextContent('tools/call get_weather')
+    expect(within(ok).getByText('OK')).toBeInTheDocument()
+    const failed = screen.getByText('npx -y demo-server').closest('[data-entry-id]') as HTMLElement
+    expect(within(failed).getByText('The tool returned an error')).toBeInTheDocument()
+    expect(within(failed).queryByText('OK')).toBeNull()
+    // The detail is searchable.
+    await fireEvent.input(screen.getByLabelText('Filter history'), { target: { value: 'get_weather' } })
+    expect(screen.queryByText('npx -y demo-server')).toBeNull()
+    expect(screen.getByText('https://mcp.test/mcp')).toBeInTheDocument()
+  })
+
+  it('MCP rows reopen the saved request, or a new MCP draft with the server and operation', async () => {
+    await setup([])
+    const ws = app.workspaceId!
+    const col = await backend.createCollection(ws, 'C')
+    const doc = JSON.stringify({ name: 'Weather', request: { method: 'MCP', url: 'https://mcp.test/mcp' }, mcp: { v: 1, transport: 'http', operation: 'tools/call', tool: 'get_weather' } })
+    const saved = await backend.createRequest({ workspaceId: ws, collectionId: col.id, name: 'Weather', method: 'MCP', url: 'https://mcp.test/mcp', documentJson: doc })
+    await app.reloadCollections()
+    rows = [
+      entry('h1', { method: 'MCP', requestId: saved.id, url: 'https://mcp.test/mcp', statusCode: null, detail: 'tools/call get_weather' }),
+      entry('h2', { method: 'MCP', requestId: 'gone', url: 'node server.mjs --demo', requestName: 'Local demo', statusCode: null, detail: 'prompts/get greet' }),
+    ]
+    app.historyTick++
+    await fireEvent.click(await screen.findByText('https://mcp.test/mcp'))
+    expect(tabsStore.active?.requestId).toBe(saved.id)
+    expect(tabsStore.active?.draft.mcp?.tool).toBe('get_weather')
+    await fireEvent.click(screen.getByText('node server.mjs --demo'))
+    expect(tabsStore.tabs).toHaveLength(2)
+    const tab = tabsStore.active!
+    expect(tab.requestId).toBeNull()
+    expect(tab.title).toBe('Local demo')
+    expect(tab.draft.method).toBe('MCP')
+    expect(tab.draft.mcp).toMatchObject({ transport: 'stdio', command: 'node', args: ['server.mjs', '--demo'], operation: 'prompts/get', prompt: 'greet' })
+  })
+
   it('reloads when historyTick changes', async () => {
     await setup([entry('a')])
     await screen.findByText('https://api.test/a')

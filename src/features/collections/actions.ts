@@ -6,6 +6,7 @@ import type { ApiRequest } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import { api, errorInfo } from '../../lib/ipc'
+import { newMcpRequestDraft } from '../../lib/mcpRequest'
 import { newDraft, serializeDraft } from '../../lib/request'
 import type { DropPlan } from '../../lib/tree'
 import { tabsStore } from '../requests/tabs.svelte'
@@ -58,8 +59,9 @@ export async function deleteFolder(folderId: string, collectionId: string) {
   await refresh([collectionId])
 }
 
-export async function createRequest(collectionId: string, folderId: string | null, name: string): Promise<ApiRequest> {
-  const s = serializeDraft(newDraft({ name }))
+/** Creates an empty request; `kind: 'mcp'` makes an MCP request (Streamable HTTP, tools/call) instead of an HTTP one. */
+export async function createRequest(collectionId: string, folderId: string | null, name: string, kind: 'http' | 'mcp' = 'http'): Promise<ApiRequest> {
+  const s = serializeDraft(kind === 'mcp' ? newMcpRequestDraft(name) : newDraft({ name }))
   const r = await api().createRequest({ workspaceId: ws(), collectionId, folderId, name: s.name, method: s.method, url: s.url, documentJson: s.documentJson })
   app.upsertRequest(r)
   return r

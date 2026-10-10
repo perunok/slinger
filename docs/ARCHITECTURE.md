@@ -23,6 +23,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
+  mcpClient/         MCP client for MCP requests: service.ts (McpClientService: sessions over Streamable HTTP / SSE / stdio,
+                     message log events, stdio command trust, history), types.ts (McpClientApi contract)
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
                      scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox) - imported by main AND
@@ -57,8 +59,9 @@ sync stay at full speed. A `Tray` (icons in `build/tray`, shipped as `resources/
 a `trayTemplate` image on macOS) has Open Slinger / Quit Slinger; a click on the icon opens too where the host supports it (Windows, KDE). The tray, a second launch, the
 macOS Dock (`activate`) and a menu command bring the window back. **Quit** runs in two passes: `before-quit` sets `quitting`,
 cancels the first quit, removes the tray, hides the window and awaits `McpService.stop()`; then sync, OAuth and auth callbacks
-stop and `app.quit()` runs again for real; the database closes in `will-quit` (after the pages saved their tabs). Quit chosen by
-the user (tray, File/Slinger menu: our own item, not `role: 'quit'`; or closing the window with `closeToTray` off on
+stop, MCP request sessions close (`core.mcpClient.closeAll()`, awaited for at most `MCP_CLIENT_QUIT_MS` = 5 s so stdio servers
+get stdin EOF and then SIGTERM instead of outliving the app) and `app.quit()` runs again for real; the database closes in
+`will-quit` (after the pages saved their tabs). Quit chosen by the user (tray, File/Slinger menu: our own item, not `role: 'quit'`; or closing the window with `closeToTray` off on
 Windows/Linux) also calls `McpService.markQuit()`, so the stdio bridge does not start Slinger again; a logout, an update or
 Playwright's `app.quit()` does not.
 
@@ -80,7 +83,7 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 108 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 125 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
@@ -91,7 +94,10 @@ requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWo
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
 `revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
 `checkForUpdates` (see [Update notice](#update-notice)), the window frame (`getWindowChrome`, `setTitleBarStyle`, `reopenWindow`,
-`windowControl`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`.
+`windowControl`, `showAppMenu`; see [Custom title bar](#custom-title-bar)), `pickFile`, `grantedFiles`, Slinger's MCP server
+(`getMcpStatus`, `listMcpClients`, `connectMcpClient`, ...; see [MCP server](#mcp-server)) and the MCP client of MCP requests
+(`mcpClientConnect`, `mcpClientList`, `mcpClientCall`, `mcpClientCancel`, `mcpClientDisconnect`, `mcpClientTrustCommand`; see
+[MCP requests](#mcp-requests-mcp-client)).
 Types live in `shared/types.ts`; timestamps are Unix seconds; ids are UUID strings.
 
 Call path:
@@ -114,8 +120,9 @@ object** `{ name: 'IpcError', code, message, details? }`. It is not `instanceof 
 Non-`IpcError` exceptions become `internal_error` with only the message (no stack) and are logged in main.
 
 **Push channels** (main -> renderer, `webContents.send`, listed in `IPC_EVENT_CHANNELS`): `sync:event` (`onSyncEvent`),
-`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)) and `window:state` (`onWindowState`, see
-[Custom title bar](#custom-title-bar)). The preload exposes each as a subscribe function that
+`menu:command` (`onMenuCommand`, see [Application menu](#application-menu)), `window:state` (`onWindowState`, see
+[Custom title bar](#custom-title-bar)), `mcp:call` (tool calls of Slinger's MCP server, see [MCP server](#mcp-server)) and
+`mcp-client:event` (`onMcpClientEvent`, the message log of MCP requests, see [MCP requests](#mcp-requests-mcp-client)). The preload exposes each as a subscribe function that
 returns an unsubscribe function; the raw `ipcRenderer` event never reaches the page.
 
 Behavior notes for callers are in `NOTES-FOR-FRONTEND.md` at the repository root.
@@ -228,7 +235,8 @@ array under the key `scripts` (the key the importer has always used, so existing
    script changed), and `pm.variables` is layered on top of the template scope (local > environment > collection > globals).
    See [Scripts sandbox](#scripts-sandbox).
 1. **Renderer, template resolution.** `src/lib/prepare.ts` `prepareRequest(draft, ctx)` is the *only* place `{{variable}}`
-   substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`). It
+   substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`;
+   MCP requests use its sibling `prepareMcp`, see [MCP requests](#mcp-requests-mcp-client)). It
    resolves against `scopeStore.scopeFor(collectionId)` of the request's own collection (globals < collection variables <
    environment, `app/scope.svelte.ts`; disabled variables do not resolve), fails early on unresolved names (the message names the
    scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
@@ -674,6 +682,162 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   (`snippets.ts`: command or URL + token) sit under "Other assistants and advanced".
 - Mock backend: `src/dev/mock/mcp.ts`; `window.__slingerMock.mcp.call(tool, args)` plays the client in browser dev mode.
 
+## MCP requests (MCP client)
+
+The other direction: Slinger as an MCP *client*. An MCP request is a saved request that connects to any MCP server and runs one
+operation (`tools/call`, `resources/read` or `prompts/get`), with an Inspector-like editor (browse tools / resources /
+templates / prompts, a form from the tool's JSON Schema, result, JSON-RPC message log, server info). Client SDK:
+`@modelcontextprotocol/sdk` (`Client` plus `StreamableHTTPClientTransport`, `SSEClientTransport`, `StdioClientTransport`),
+bundled into main like the server side. User-facing behaviour: [USER_GUIDE.md](USER_GUIDE.md#mcp-requests).
+
+- **Storage (no migration).** A row in `requests` like any request: `method = 'MCP'` (passes `cleanMethod` and the cloud
+  server's HTTP-token check), `url` = the server URL template (http/sse) or the command line `command arg1 arg2` (stdio, cut to
+  8192 characters). `document_json` keeps the Postman item shape (`headers` and `auth` are the HTTP transport's; `body` and
+  `params` are written empty) plus a top-level `mcp` object, wire format version 1:
+  `{ v: 1, transport: 'http'|'sse'|'stdio', command, args: string[], env: [{key, value, disabled}], cwd, operation, tool,
+  arguments (JSON text, may hold {{vars}}), uri, prompt, promptArguments: [{key, value, disabled}], timeoutMs (null = 60 s) }`.
+  Unknown keys of `mcp` are kept verbatim. Since it is an ordinary request document, sync, collection versions, duplicate,
+  move and delete need nothing new; `versionDiff.ts` / `conflictDiff.ts` render an `mcp` field (transport, command, args, env
+  rows, cwd, operation, tool, arguments, URI, prompt, prompt arguments, timeout, unknown keys). Postman export
+  (`lib/postman.ts`) writes `request.method: 'MCP'` and the item-level `_slinger_mcp` (= `document.mcp`; a stdio URL as `{raw}`
+  only); both importers (`electron/services/postmanImport.ts`, `src/dev/mock/postmanImport.ts`) lift it back to `document.mcp`
+  and drop it from the stored `source`. `.http` export skips MCP requests (`HttpFileExport.skippedMcp`). The snippet for MCP
+  requests is an MCP Inspector CLI command (`snippets.ts` `prepareMcpSnippet` + `mcpInspectorSnippet`; `CodePanel` hides the
+  HTTP languages).
+- **Renderer model** (`src/lib/mcpRequest.ts`). `RequestDraft.mcp?: McpDraft` (undefined = HTTP): `parseMcp` (tolerant,
+  defaults for anything missing), `serializeMcp`, `newMcpRequestDraft`, `mcpDisplayUrl` (the `url` column), `mcpTemplateTexts`.
+  `request.ts` reads `doc.mcp` when it is an object or `method === 'MCP'`, writes it back (`'mcp'` is in `OWN_KEYS`), and
+  `templateTexts` / `secretsNeeded` cover only what the transport and the operation use (stdio: command, args, enabled env
+  values, cwd; http/sse: URL, enabled headers, auth; plus the arguments, URI or enabled prompt argument values), so an unused
+  `{{variable}}` never blocks a send. HTTP drafts serialize byte-identically to before.
+- **IPC** (`shared/types.ts`, `shared/ipc-contract.ts`). `mcpClientConnect(McpConnectInput) -> McpSessionInfo` (server info,
+  negotiated protocol version, capabilities, instructions, connect time), `mcpClientList(sessionId, kind) -> McpListResult`
+  (`tools` / `resources` / `resourceTemplates` / `prompts`, every page, at most 1000 items, `truncated`),
+  `mcpClientCall(McpCallInput) -> McpCallOutcome` (never rejects for tool or protocol errors: `ok: false` with `error` or
+  `isError`; rejects only for invalid input or an unknown session, `not_found`), `mcpClientCancel(requestRunId)`,
+  `mcpClientDisconnect(sessionId)` (unknown: no-op), `mcpClientTrustCommand({command, args, cwd, env})`, and the push channel
+  `mcp-client:event` (`MCP_CLIENT_EVENT_CHANNEL`, `onMcpClientEvent`): `McpClientEvent {sessionId, at (ms), type, payload}` with
+  `send` / `receive` (the JSON-RPC message), `notification` (`{method, params}`), `stderr` (`{text}`), `closed` / `error`
+  (`{message}`). Inputs arrive **fully resolved**: `api.ts` zod-validates them (http(s) URL for http/sse, a command for stdio,
+  sizes, origin `user | runner | workflow | mcp`, timeouts up to 600 000 ms, string prompt arguments) and rejects any `{{ }}`
+  left in the URL, header names and values, command, args, cwd, env names and values, tool/prompt name, URI, and every key and
+  string inside the arguments (`invalid_input` with `details.location`). `historyUrl` and `historyDetail` are exempt: they
+  are unresolved display strings by design and are never sent.
+- **McpClientService** (`electron/mcpClient/service.ts`, `core.mcpClient`; deps `{db, emit, fetchImpl?, spawnEnv?, now?,
+  appVersion?, redact?}`; contract in `types.ts`; `core.ts` wires `redact` to `ScriptService.redact`):
+  - *Sessions* in a map keyed by a random UUID. The client is `new Client({name: 'slinger', version}, {capabilities: {}})`: no
+    sampling, elicitation or roots. At most `MAX_SESSIONS` (20): a new one closes the least recently used; a 1-minute sweep
+    (unref'd timer) closes sessions idle for `IDLE_MS` (15 min) unless a call or list is running; `closeAll` on quit. Exactly
+    one `closed` event per session, carrying the reason ("Disconnected", "Closed after 15 minutes without use", "Slinger is
+    quitting", or "The server process exited" / "The server closed the connection" when it went away); a failed connect emits
+    none. Connect failures are `network_error` ("Could not connect to the MCP server: ...", or `details.timedOut` after the
+    connect timeout, default 30 s); a stdio child of a failed connect is closed.
+  - *Transports.* Streamable HTTP and SSE: http/https only, headers through `requestInit.headers`, Node fetch (or `fetchImpl`);
+    disconnecting a Streamable HTTP session sends the session DELETE (best effort, 2 s). stdio: `StdioClientTransport` with the
+    SDK's `getDefaultEnvironment()` (only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, or the Windows equivalents) plus
+    the request's env, `cwd || homedir()`, stderr piped; closing sends stdin EOF, then SIGTERM / SIGKILL (the SDK's timing).
+  - *Command trust (security).* A stdio connect is allowed only when `commandFingerprint(command, args, cwd, env)` =
+    `sha256(JSON.stringify([command, args, cwd, envPairs]))` (`envPairs`: the extra environment as the child gets it, a later
+    row winning over an earlier one of the same name, sorted by name) is in `app_settings['mcp-client.trusted']` (array of
+    `{fingerprint, at}`, at most 500, local, never synced or exported; no command line is stored, since a resolved argument
+    may hold a secret). The environment is part of it because variables such as `NODE_OPTIONS`, `LD_PRELOAD` or `PATH` change
+    what runs. Otherwise `invalid_input` "This command has not been allowed on this device yet." with
+    `details {reason: 'untrusted_command', command, args, cwd, env}`, for every origin. Collections can be synced, imported or
+    written by AI assistants, so the check lives in main and only `mcpClientTrustCommand`, called from the window's confirm
+    dialog after the user saw the resolved command and environment, adds to the list.
+  - *Message log.* A `LoggedTransport` wraps the SDK transport: every outgoing message (including `notifications/initialized`
+    and `notifications/cancelled`) is a `send` event, responses and server requests are `receive`, incoming notifications
+    (logging, progress, `*/list_changed`) only `notification`. Messages over 1 MB are logged as a stub (`_slinger: 'Message
+    of N characters not shown in the log'`; the call still returns the whole result). It also records the negotiated protocol
+    version. stderr lines become `stderr` events up to 64 KB per session, then one notice. Header values never appear (they
+    are not part of JSON-RPC). `emit` failures never break a session; `main.ts` forwards events to the main window only while
+    its URL is trusted.
+  - *call / list.* `callTool` / `readResource` / `getPrompt` with the call timeout (default 60 s, clamped to 600 s), an
+    `AbortController` per `requestRunId` (`mcpClientCancel`) and `onprogress` (so requests carry a progress token). Errors
+    become outcomes: cancel `{code: null, message: 'Request cancelled', data: {cancelled: true}}`, timeout `{code: -32001,
+    data: {timedOut: true}}`, JSON-RPC errors with their code, message (the SDK's "MCP error N: " prefixes removed) and data. A
+    tool result with `isError` is `ok: false, isError: true` with the result. `list` follows `nextCursor` (guarding against a
+    repeated cursor) and answers an empty list without asking when the server lacks the capability, and when it answers
+    "Method not found" (a server may declare `resources` without implementing `resources/templates/list`).
+  - *History.* Each call is recorded through `HistoryRepository`: `kind 'send'`, `method 'MCP'`, `url` = `historyUrl` (cut to
+    2000), `statusCode null`, `ok`, `errorMessage` (the error message, or "The tool returned an error"), `durationMs`,
+    `source` from `historySource`, `detail` = the renderer's `historyDetail` (`"tools/call echo"` /
+    `"resources/read demo://users/{{id}}"` / `"prompts/get greet"`; without it the operation and tool or prompt name, never
+    the resolved URI), `requestId` only when it is a UUID. Like HttpService, `url`, `detail` and `errorMessage` go through
+    `redact(scriptSessionId, ...)`, so a secret a script copied into a plain variable is recorded as `{{name}}`. An unknown
+    workspace records nothing. Connect and list are not recorded.
+- **Sending** (`src/lib/prepare.ts`, `src/features/requests/execute.ts`). `prepareMcp(draft, ctx)` resolves the connect input
+  (http/sse: normalized URL, enabled headers, auth turned into headers exactly as main applies it to HTTP sends: Basic, Bearer,
+  API key header or query, OAuth 2.0 returned as `oauth2 {config, addTo, headerPrefix}`; stdio: command, args, enabled env,
+  cwd) and the call input; `historyUrl`, `call.historyDetail` and `target` (the tool or prompt name, or the URI) keep secrets
+  as `{{name}}`, and the call timeout is capped at 600 000 ms. Tool arguments go through `resolveJsonTemplates`: inside
+  a JSON string literal a value is JSON-escaped, elsewhere inserted raw (so the bare `{{n}}` the form writes for number and
+  boolean fields becomes a number), then `JSON.parse` (must be an object). `executeDraft` dispatches on `draft.mcp`:
+  pre-request scripts run as usual (`pm.request` edits ignored), secrets are revealed, then `sendMcp`: `prepareMcp`; for OAuth
+  2.0 `refreshOAuth2Token({ifExpiring})` and `revealOAuth2Token` plus `withMcpOAuth2Token` (an HTTP send passes only the token
+  key and main adds the token; the MCP connect input needs it as a header, so the renderer holds it in memory for that connect
+  only, never in the call input or History; a missing token points to the Connection section); `mcpConnections.getSession`;
+  `mcpClientCall` with the run id and the run's `scriptSessionId` (one reconnect when
+  main answers `not_found` for a session that closed meanwhile); test scripts. The outcome is a synthetic `HttpResponseData`
+  (`mcpResponse`): status 200 "OK" or 500 "Tool error", `bodyText` = the result as pretty JSON, `Content-Type:
+  application/json`, `bodyByteLength`, and `mcp` = the outcome + operation + name (`target`), so the runner,
+  workflows (`responseValue`), `send_request` and `pm.response.json()` work unchanged. Protocol and transport errors are the
+  `failed` outcome with `mcpError` (code, message, data; `tabsStore.send` keeps it as `tab.error.mcp` for the result pane); an
+  untrusted command is `failed` with `UNTRUSTED_COMMAND_MESSAGE` and `untrustedCommand` (the tab keeps it in
+  `RequestTab.untrustedCommand` so the editor can ask). `cancelRun` calls both `cancelHttpRequest` and `mcpClientCancel`.
+  `ExecuteContext.mcpSessionKey` / `mcpOrigin` choose the session and the origin (default `mcp` for assistants, `runner` within
+  a run, else `user`).
+- **Connection registry** (`src/features/mcpRequests/connections.svelte.ts`, `mcpConnections`). Maps a key to an open session:
+  `tab:<tabId>` for a request tab (`tabsStore.send` passes it; the editor's Connect uses it too), `fp:<fingerprint>` for every
+  other send (`getSession(null, ...)`: runner, workflows, assistants share one session per server; every `getSession` is
+  matched by a `release`, and the session closes `MCP_SHARED_IDLE_MS` = 2 min after the last send in flight released it). A
+  key's session is reused only while the sha256 of the resolved connect input (workspace, transport, URL, headers, command,
+  args, env, cwd; not origin or timeout) is unchanged; otherwise it is closed and a new one opened, and concurrent callers
+  share one connect. Each connect attempt has a number: one that finishes after a newer attempt for its key started, or
+  after the key was disconnected, is closed instead of kept. `tabsStore.closeNow` and `switchWorkspace` disconnect the
+  `tab:` sessions of the tabs they drop (only the active tab's view is mounted, so the view cannot be relied on). It subscribes once to `onMcpClientEvent`, keeps the
+  last 500 events per session for the last 50 sessions (`events(sessionId)`, reactive through `revision`; `clearEvents`), and
+  drops a session on its `closed` event.
+- **UI** (`src/features/mcpRequests/`). `App.svelte` routes tabs whose draft has `mcp` to `McpRequestView` (before
+  `RequestView`): `McpBar` (transport, URL or command + shell-like argument text, status dot, Connect/Disconnect, Run, Save),
+  sections Call (`McpCallPanel`: lists, search, operation, `SchemaForm` with a JSON toggle, URI template fields, prompt
+  argument rows), Connection (`McpConnectionPanel`: headers + the HTTP `AuthPanel`, or env + cwd; timeout), Server
+  (`McpServerPanel`), Scripts and Docs (the HTTP panels), and `McpResultPane` (`McpContentBlocks`, `McpMessagesLog`; images
+  as `data:` URLs, which the CSP's `img-src` allows; audio only as a download, since the CSP has no `media-src`). MCP sections
+  and result views reuse the tab's `section` / `responseView` slots (call = `params`, connection = `headers`, server =
+  `settings`; result = `pretty`, json = `raw`, messages = `headers`, logs = `cookies`, tests = `tests`, console = `console`).
+  The result pane gets the tab's error (which wins over an earlier response), its JSON-RPC detail, unresolved variables
+  (Create buttons), warnings and script output (Tests and Console views, the HTTP `TestsView` / `ConsoleView`). Lists load
+  per new session for the declared capabilities (each on its own: one that fails is reported without hiding the others) and
+  a `notifications/<kind>/list_changed` reloads that list. Connect resolves the connect input like a
+  send (no scripts) with a stand-in call so an unfinished call does not block it. An `untrusted_command` (Connect or Run) opens
+  `McpTrustDialog` (Cancel focused; command, arguments, cwd and environment, values from secret variables masked); Allow calls
+  `mcpClientTrustCommand` and retries. Selecting another tool keeps the arguments text (empty becomes `{}`). Closing the tab disconnects its session.
+  `SchemaForm` (`src/components/ui/SchemaForm.svelte`) is generic: the pure `src/lib/jsonSchemaForm.ts` turns an object schema
+  (local `$ref`, `allOf`, `const`, "X or null") into fields and falls back to a JSON field for unions, maps, arrays of objects
+  and deep or recursive schemas; edits keep key order and unknown keys. The tree's collection/folder menus have **New MCP
+  request** (`actions.createRequest(..., 'mcp')`), History rows with method MCP show `detail` and OK / the error
+  (`history/mcpEntry.ts` rebuilds a draft for a deleted request), `method.ts` colours `MCP` with `--m-other`.
+- **AI assistants** (`src/features/mcp/tools.ts`, `shared/mcp.ts`): tree, search and history lines carry `type: 'http'|'mcp'`;
+  `get_request` returns the MCP configuration (env names only, never values; credentials masked); `send_request` sends an MCP
+  request as saved through `executeDraft` (`source` and `mcpOrigin` `mcp`; overrides and `save_as_example` refused);
+  `update_request`, `create_example` / `update_example` and any tool setting method `MCP` refuse. An assistant cannot trust a
+  command: it gets the untrusted-command message and can `open_in_app` the request for the user.
+- **Mock backend** (`src/dev/mock/mcpClient.ts`, registered in `mockBackend.ts`): an in-memory "Demo MCP server" for every
+  URL or command (tools `echo`, `add` (structuredContent), `get_weather`, `create_user` (every SchemaForm field kind),
+  `content_types` (one block of each type), `fail` (isError), `slow {ms}` (cancellable); resources `demo://readme`,
+  `demo://logo.png`, template `demo://users/{id}`; prompt `greet`), the same events, error shapes, stdio trust and history
+  rows as main. A host under `.invalid` fails to connect. `window.__slingerMock.mcpClient` has `reset`, `trusted`,
+  `clearTrusted`, `sessions`, `notify(method, params?, sessionId?)` (e.g. a `list_changed`) and `dropSession`.
+- **Tests.** Main: `electron/__tests__/mcpClient.test.ts` (a real SDK `McpServer` over Streamable HTTP and SSE on
+  127.0.0.1:0, a paginated low-level server, and the stdio fixture `fixtures/mcp-stdio-server.mjs`: connect info, every list,
+  tool ok / isError / protocol error, resources, prompts, cancel, timeout, trust, stderr, history, session cap, idle close,
+  closeAll), `mcpClientIpc.test.ts` (validation and `{{` rejection), `postmanMcp.test.ts` (import round trip). Renderer:
+  `lib/mcpRequest.test.ts`, `lib/request.test.ts`, `lib/prepare.test.ts`, `lib/jsonSchemaForm.test.ts`,
+  `components/ui/SchemaForm.test.ts`, `features/mcpRequests/*.test.ts` (registry, editor against the mock Demo server, result
+  pane, content blocks, message log), `features/requests/execute.test.ts`, `features/history/mcpEntry.test.ts`,
+  `features/mcp/mcp.test.ts`, `dev/mock/mcpClient.test.ts`, plus the export, diff and snippet tests in `lib/`.
+
 ## Update notice
 
 `checkForUpdates` (`electron/services/updateCheck.ts`) makes one GET to `https://api.github.com/repos/perunok/slinger/releases/latest`
@@ -833,7 +997,7 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 
 | Layer | Tooling | Scope |
 | --- | --- | --- |
-| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories (incl. workflows), tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService) |
+| Main (`npm run test:main`) | Vitest, Node, in-memory SQLite, `MemorySecretStore`, real loopback HTTP servers | migrations, repositories (incl. workflows), tree ordering, validation, HTTP executor, OAuth 2.0 (`oauth2.test.ts`: a local fake authorization server, simulated browser), Postman import, versions/semver, versioned export/import round trip, Postman compatibility (official v2.1 schema + `postman-collection` SDK), secrets, export files, auth callback, script sandbox (`__tests__/scripts`: limits, isolation, pm API table, built-in libraries, the esbuild-bundled worker, ScriptService), MCP client (`mcpClient.test.ts`: a real SDK server over Streamable HTTP / SSE / stdio) |
 | Renderer (`npm run test:renderer`) | Vitest + jsdom + Testing Library, `createMockBackend({ latencyMs: 0 })` as `window.slinger` | pure `lib/*`, stores, dialogs and panels |
 | Types | `tsc` (main, e2e), `svelte-check` (renderer) | `npm run typecheck` |
 | End to end (`npm run test:e2e`) | Playwright (`playwright-core`) drives the built Electron app with an isolated `SLINGER_USER_DATA_DIR` and local target servers | full flows incl. runner and error paths; `screenshots.e2e.test.ts` captures screenshots |
@@ -866,5 +1030,9 @@ Example: `renameFoo(fooId, name)`.
 Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
 Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
 loading remote images in docs, syncing or exporting workflows, realtime collaboration, MCP resources/prompts (the MCP server has
-tools only) and editing OAuth 2.0 settings over MCP, plugin system, non-HTTP protocols, code signing and automatic
-installation of updates (Slinger only notifies about a new release, see [Update notice](#update-notice)).
+tools only) and editing OAuth 2.0 settings over MCP, plugin system, protocols other than HTTP and MCP (no WebSocket, GraphQL or
+gRPC), code signing and automatic installation of updates (Slinger only notifies about a new release, see
+[Update notice](#update-notice)). For MCP requests (the client): MCP's OAuth discovery and dynamic client registration, sampling,
+elicitation, roots, resource subscriptions, completions, saved examples, creating or editing MCP requests through Slinger's MCP
+server, a way to remove allowed stdio commands, and resolving the login shell's `PATH` for stdio commands (a desktop-started app
+on macOS gets a short one).

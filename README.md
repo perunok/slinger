@@ -33,6 +33,10 @@ All shots are the real app with a fictional "Acme Store API" collection imported
   browser and a loopback redirect, client credentials, password, automatic refresh; tokens only in the OS keychain), per-request timeout,
   description, and generated code snippets (cURL, fetch, axios, Python, Go, PHP, PowerShell, `.http` for JetBrains HTTP
   Client / VS Code REST Client) to copy or save.
+- MCP requests: connect to any Model Context Protocol server (Streamable HTTP, SSE or a local stdio command), browse its tools,
+  resources and prompts, call a tool through a form made from its input schema, and see the result, the JSON-RPC message log and
+  server logs; saved, synced, in History and runnable by the runner, workflows and assistants. A local command runs only after
+  you allowed it once.
 - Multiple request tabs with dirty tracking, conflict detection (optimistic concurrency) and unsaved-changes prompts.
 - Environments with `{{variables}}`, secret variables kept in the OS keychain, and built-in dynamic variables
   (`{{$guid}}`, `{{$timestamp}}`, ...). Collection variables (imported from and exported to Postman's `variable` list, versioned
@@ -184,7 +188,7 @@ credentials and password are supported), other auth types such as Digest, AWS Si
 `postman-collection` in scripts, syncing or exporting workflows, realtime collaboration and plugins/extensions. Cloud sync covers collection- and folder-level
 scripts and docs, collection variables and globals only with a server that supports them (slinger-admin with the
 `sync_local_only` migration); with an older server they stay on the device.
-Only HTTP/HTTPS requests are supported (no WebSocket, GraphQL or gRPC clients).
+Only HTTP/HTTPS and MCP requests are supported (no WebSocket, GraphQL or gRPC clients).
 
 ## Manifesto
 

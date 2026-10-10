@@ -13,6 +13,7 @@
   import { errorInfo } from '../../lib/ipc'
   import { formatDuration, statusTone } from '../../lib/response'
   import { sanitizeFileStem } from '../importexport/fileName'
+  import { methodColor } from '../requests/method'
   import { templateValue, testCounts } from '../../lib/scripts'
   import { collectRunItems, MAX_ITERATIONS, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
   import { runsStore, type RunSession } from './runs.svelte'
@@ -171,10 +172,6 @@
     failed: 'Failed',
     cancelled: 'Cancelled',
     skipped: 'Skipped',
-  }
-  const methodColor = (m: string) => {
-    const k = m.toLowerCase()
-    return `var(--m-${['get', 'post', 'put', 'patch', 'delete'].includes(k) ? k : 'other'})`
   }
   const rowsToShow = $derived<RunRow[]>(view?.rows ?? [])
 

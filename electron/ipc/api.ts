@@ -4,6 +4,7 @@ import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, WindowAction, W
 import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
+import { hasUnresolvedPlaceholder } from '../services/httpExecutor'
 import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
 import { extractFolderToCollection } from '../services/extractFolder'
 import * as versions from '../services/collectionVersions'
@@ -332,6 +333,121 @@ const mcpCallResult = z.union([
   z.object({ ok: z.literal(false), error: z.string().max(100_000) }).strict(),
 ])
 
+// ---- MCP client (MCP requests) -------------------------------------------------
+// Inputs are fully resolved by the renderer; any `{{variable}}` left in what reaches the server or the command line is
+// rejected (like the HTTP path), so a template never runs or goes on the wire.
+
+const MCP_MAX_TIMEOUT_MS = 600_000
+const mcpSessionId = z.string().min(1).max(128)
+const mcpRunId = z.string().min(1).max(128)
+const mcpKv = z.object({ key: z.string().max(8192), value: z.string().max(65_536) }).strict()
+const mcpCommand = z.string().min(1).max(4096)
+const mcpArgs = z.array(z.string().max(32_768)).max(1000)
+const mcpCwd = z.string().max(4096)
+/** stdio: the command's extra environment (a key is required). */
+const mcpEnv = z.array(mcpKv.extend({ key: z.string().min(1).max(1024) })).max(500)
+const httpUrl = z
+  .string()
+  .min(1)
+  .max(100_000)
+  .refine(
+    (u) => {
+      try {
+        const p = new URL(u).protocol
+        return p === 'http:' || p === 'https:'
+      } catch {
+        return false
+      }
+    },
+    { message: 'must be an http(s) URL' },
+  )
+const mcpConnectInput = z
+  .object({
+    workspaceId: uuid,
+    transport: z.enum(['http', 'sse', 'stdio']),
+    url: z.string().max(100_000).optional(),
+    headers: z.array(mcpKv).max(500).optional(),
+    command: z.string().max(4096).optional(),
+    args: mcpArgs.optional(),
+    env: mcpEnv.optional(),
+    cwd: mcpCwd.optional(),
+    origin: z.enum(['user', 'runner', 'workflow', 'mcp']),
+    timeoutMs: z.number().int().min(1).max(MCP_MAX_TIMEOUT_MS).optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.transport === 'stdio') {
+      if (!mcpCommand.safeParse(v.command).success) ctx.addIssue({ code: 'custom', path: ['command'], message: 'a command is required for stdio' })
+    } else if (!httpUrl.safeParse(v.url).success) {
+      ctx.addIssue({ code: 'custom', path: ['url'], message: 'must be an http(s) URL' })
+    }
+  })
+/** JSON values (tool arguments), capped by their serialized size. */
+const mcpArguments = z
+  .record(z.string().max(8192), z.unknown())
+  .refine((v) => JSON.stringify(v).length <= 10 * 1024 * 1024, { message: 'arguments are too large' })
+const mcpCallInput = z
+  .object({
+    sessionId: mcpSessionId,
+    operation: z.enum(['tools/call', 'resources/read', 'prompts/get']),
+    name: z.string().max(1000).optional(),
+    uri: z.string().max(100_000).optional(),
+    arguments: mcpArguments.optional(),
+    requestRunId: mcpRunId,
+    timeoutMs: z.number().int().min(1).max(MCP_MAX_TIMEOUT_MS).optional(),
+    workspaceId: uuid,
+    requestId: z.string().max(128).nullish(),
+    requestName: z.string().max(500).nullish(),
+    historySource: z.literal('mcp').nullish(),
+    historyUrl: z.string().max(100_000),
+    historyDetail: z.string().max(100_000).optional(),
+    scriptSessionId: z.string().max(128).nullish(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.operation === 'resources/read') {
+      if (!v.uri) ctx.addIssue({ code: 'custom', path: ['uri'], message: 'a resource URI is required' })
+    } else if (!v.name) {
+      ctx.addIssue({ code: 'custom', path: ['name'], message: `a ${v.operation === 'tools/call' ? 'tool' : 'prompt'} name is required` })
+    }
+    if (v.operation === 'prompts/get' && v.arguments && Object.values(v.arguments).some((x) => typeof x !== 'string')) {
+      ctx.addIssue({ code: 'custom', path: ['arguments'], message: 'prompt arguments must be strings' })
+    }
+  })
+const mcpTrustInput = z.object({ command: mcpCommand, args: mcpArgs, cwd: mcpCwd, env: mcpEnv.default([]) }).strict()
+const mcpListKind = z.enum(['tools', 'resources', 'resourceTemplates', 'prompts'])
+
+/** Throws invalid_input when any of these labelled strings still holds an unresolved `{{variable}}`. */
+function assertResolved(parts: Array<[string, string | undefined]>): void {
+  for (const [where, value] of parts) {
+    if (hasUnresolvedPlaceholder(value)) {
+      throw invalidInput(`Unresolved variable in ${where}: define it in the active environment`, { location: where })
+    }
+  }
+}
+
+/** Every key and string inside a JSON value, labelled with its path (`arguments.a.b`). */
+function jsonStrings(value: unknown, path: string, out: Array<[string, string]> = []): Array<[string, string]> {
+  if (typeof value === 'string') out.push([path, value])
+  else if (Array.isArray(value)) value.forEach((v, i) => jsonStrings(v, `${path}[${i}]`, out))
+  else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      out.push([`${path} key "${k}"`, k])
+      jsonStrings(v, `${path}.${k}`, out)
+    }
+  }
+  return out
+}
+
+function commandParts(c: { command?: string; args?: string[]; cwd?: string; env?: Array<{ key: string; value: string }> }): Array<[string, string | undefined]> {
+  return [
+    ['command', c.command],
+    ...(c.args ?? []).map((a, i): [string, string] => [`argument ${i + 1}`, a]),
+    ['working directory', c.cwd],
+    ...(c.env ?? []).flatMap((e): Array<[string, string]> => [[`environment variable "${e.key}" name`, e.key], [`environment variable "${e.key}"`, e.value]]),
+  ]
+}
+
 const titleBarStyle = z.enum(['custom', 'system'])
 const windowAction = z.enum(['minimize', 'toggleMaximize', 'close'])
 const pagePoint = z.number().finite().min(0).max(100_000)
@@ -574,6 +690,34 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     listMcpClients: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.clients()),
     connectMcpClient: async (...a) => core.mcp.connect(parseArgs(z.tuple([mcpClientId]), a)[0]),
     disconnectMcpClient: async (...a) => core.mcp.disconnect(parseArgs(z.tuple([mcpClientId]), a)[0]),
+
+    // MCP client (electron/mcpClient): MCP requests
+    mcpClientConnect: async (...a) => {
+      const [input] = parseArgs(z.tuple([mcpConnectInput]), a)
+      assertResolved([
+        ['URL', input.url],
+        ...(input.headers ?? []).flatMap((h): Array<[string, string]> => [[`header "${h.key}" name`, h.key], [`header "${h.key}"`, h.value]]),
+        ...commandParts(input),
+      ])
+      return core.mcpClient.connect(input)
+    },
+    mcpClientList: async (...a) => {
+      const [sessionId, kind] = parseArgs(z.tuple([mcpSessionId, mcpListKind]), a)
+      return core.mcpClient.list(sessionId, kind)
+    },
+    mcpClientCall: async (...a) => {
+      const [input] = parseArgs(z.tuple([mcpCallInput]), a)
+      // historyUrl and historyDetail are unresolved display strings (templates by design) and requestName is a label: none is sent.
+      assertResolved([['name', input.name], ['URI', input.uri], ...jsonStrings(input.arguments, 'arguments')])
+      return core.mcpClient.call(input)
+    },
+    mcpClientCancel: async (...a) => core.mcpClient.cancel(parseArgs(z.tuple([mcpRunId]), a)[0]),
+    mcpClientDisconnect: async (...a) => core.mcpClient.disconnect(parseArgs(z.tuple([mcpSessionId]), a)[0]),
+    mcpClientTrustCommand: async (...a) => {
+      const [input] = parseArgs(z.tuple([mcpTrustInput]), a)
+      assertResolved(commandParts(input))
+      return core.mcpClient.trustCommand(input)
+    },
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),

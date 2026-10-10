@@ -148,3 +148,49 @@ describe('diffSnapshots', () => {
     expect(d.identical).toBe(false)
   })
 })
+
+describe('MCP requests', () => {
+  const mcpDoc = (mcp: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ method: 'MCP', url: 'https://m/mcp', body: null, params: [], mcp, ...extra })
+  const base = { v: 1, transport: 'http', operation: 'tools/call', tool: 'echo', arguments: '{"text":"hi"}' }
+
+  it('shows configuration changes in an "mcp" field instead of "unchanged"', () => {
+    const before = snap([r('1', 'M', null, mcpDoc(base))])
+    const after = snap([r('1', 'M', null, mcpDoc({ ...base, tool: 'add', arguments: '{"a":1,"b":2}', timeoutMs: 5000 }))])
+    const d = diffSnapshots(before, after)
+    expect(d.summary.changed).toBe(1)
+    const changes = d.requests[0].changes
+    expect(changes.map((c) => c.field)).toEqual(['mcp'])
+    expect(changes[0].before).toBe('transport: http\noperation: tools/call\ntool: echo\narguments:\n{"text":"hi"}')
+    expect(changes[0].after).toBe('transport: http\noperation: tools/call\ntool: add\narguments:\n{"a":1,"b":2}\ntimeout: 5000ms')
+  })
+
+  it('renders a stdio configuration (command, args, env rows, cwd) and prompt arguments', () => {
+    const stdio = {
+      v: 1, transport: 'stdio', command: 'node', args: ['s.mjs', '--x'], cwd: '/srv',
+      env: [{ key: 'B', value: '2', disabled: true }, { key: 'A', value: '{{a}}', disabled: false }],
+      operation: 'prompts/get', prompt: 'greet', promptArguments: [{ key: 'name', value: 'Ada', disabled: false }], future: { x: 1 },
+    }
+    const d = diffSnapshots(snap([r('1', 'M', null, mcpDoc(base))]), snap([r('1', 'M', null, mcpDoc(stdio, { url: 'node s.mjs --x' }))]))
+    const byField = Object.fromEntries(d.requests[0].changes.map((c) => [c.field, c]))
+    expect(byField.mcp.after).toBe(
+      'transport: stdio\ncommand: node\nargs: ["s.mjs","--x"]\nenv:\nA: {{a}}\n[off] B: 2\ncwd: /srv\noperation: prompts/get\nprompt: greet\nprompt arguments:\nname: Ada\nother: {"future":{"x":1}}',
+    )
+    // The stdio URL column is the command line, not a server URL: the server change shows in the MCP field.
+    expect(byField.url).toMatchObject({ before: 'https://m/mcp', after: '' })
+  })
+
+  it('finds identical MCP requests unchanged and shows no body for them', () => {
+    const s = snap([r('1', 'M', null, mcpDoc(base))])
+    expect(diffSnapshots(s, s).identical).toBe(true)
+    const toHttp = diffSnapshots(s, snap([r('1', 'M', null, { method: 'POST', url: 'https://m/mcp', body: { mode: 'raw', raw: 'x' } })]))
+    const byField = Object.fromEntries(toHttp.requests[0].changes.map((c) => [c.field, c]))
+    expect(byField.method).toMatchObject({ before: 'MCP', after: 'POST' })
+    expect(byField.body.before).toBe('')
+    expect(byField.mcp).toMatchObject({ after: '' })
+  })
+
+  it('leaves HTTP requests without an "mcp" field', () => {
+    const d = diffSnapshots(snap([r('1', 'A', null)]), snap([r('1', 'A', null, { url: 'https://other' })]))
+    expect(d.requests[0].changes.map((c) => c.field)).toEqual(['url'])
+  })
+})

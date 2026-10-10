@@ -5,6 +5,9 @@
  *
  * Results are JSON (as text for the LLM, and as structured content). Secret variable values are never read: only
  * `maskedValue` is available to the renderer anyway, and literal credentials inside requests are masked.
+ *
+ * MCP requests (`draft.mcp`) can be read, sent (as saved), run, renamed, moved and deleted, but not edited here, and
+ * they have no saved examples: tools that would change their document refuse them.
  */
 import { MCP_BODY_LIMIT, MCP_TOOLS, type McpCallResult, type McpToolArgs, type McpToolName } from '../../../shared/mcp'
 import type { ApiFolder, ApiRequest, Collection, HttpResponseData } from '../../../shared/types'
@@ -22,10 +25,11 @@ import {
   updateExamples,
 } from '../../lib/examples'
 import { dataRows, newRow, type KvRow } from '../../lib/kv'
+import { MCP_METHOD } from '../../lib/mcpRequest'
 import { emptyBody, newDraft, parseDocument, serializeDraft, type RawLanguage, type RequestDraft } from '../../lib/request'
 import { editorCode, withScript } from '../../lib/scripts'
 import { buildUrlFromParams, mergeParamsFromUrl } from '../../lib/urlParams'
-import { executeDraft } from '../requests/execute'
+import { executeDraft, type ExecuteContext } from '../requests/execute'
 import { tabsStore } from '../requests/tabs.svelte'
 import { collectRunItems, summarize } from '../runner/runner'
 import { runsStore } from '../runner/runs.svelte'
@@ -105,6 +109,8 @@ async function logEdit(workspaceId: string, detail: string, request?: Pick<ApiRe
 }
 
 const q = (name: string) => `“${name}”`
+/** Ends a message with a full stop unless it already ends a sentence. */
+const sentence = (s: string) => (/[.!?]$/.test(s) ? s : `${s}.`)
 /** "url, headers and body" from the tool arguments that were given. */
 function changedParts(a: Record<string, unknown>, skip: string[]): string {
   const parts = Object.keys(a).filter((k) => !skip.includes(k) && a[k] !== undefined).map((k) => k.replace(/_/g, ' '))
@@ -125,6 +131,18 @@ function requireOpen(workspaceId: string, what: string): void {
     fail(`${what} only works in the workspace open in the Slinger window, and this one is in "${name}". Call open_in_app for it first.`)
   }
 }
+
+/** Cheap for tree lines: the method column, else a document that really holds an MCP config. */
+const isMcpRequest = (r: ApiRequest) =>
+  r.method.toUpperCase() === MCP_METHOD || (/"mcp"/i.test(r.documentJson) && parseDocument(r).mcp !== undefined)
+const requestType = (r: ApiRequest) => (isMcpRequest(r) ? 'mcp' : 'http')
+
+/** Tools that change a request's document refuse MCP requests (editing them here is not supported). */
+function refuseMcp(r: ApiRequest, why: string): void {
+  if (isMcpRequest(r)) fail(`${q(r.name)} is an MCP request: ${why}`)
+}
+const MCP_EDIT_HINT =
+  'assistants cannot edit MCP requests (rename, move_request and delete work). The user changes it in the Slinger window; open_in_app shows it there.'
 
 // ---- request <-> tool shapes ------------------------------------------------------------------------------------
 
@@ -185,6 +203,7 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
     collection_id: r.collectionId,
     folder_id: r.folderId,
     name: d.name,
+    type: 'http',
     method: d.method,
     url: d.url,
     query: rowsOut(d.params),
@@ -199,12 +218,52 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
   }
 }
 
+/** get_request of an MCP request: what it connects to and runs. Environment values of a command are never shown. */
+function mcpRequestOut(r: ApiRequest, d: RequestDraft): Data {
+  const m = d.mcp!
+  const server: Data =
+    m.transport === 'stdio'
+      ? { command: m.command, args: [...m.args], env_keys: dataRows(m.env).filter((e) => e.enabled).map((e) => e.key), cwd: m.cwd }
+      : { url: d.url, headers: rowsOut(d.headers), auth: authOut(d) }
+  const operation: Data =
+    m.operation === 'tools/call'
+      ? { tool: m.tool, arguments: m.arguments }
+      : m.operation === 'resources/read'
+        ? { uri: m.uri }
+        : { prompt: m.prompt, prompt_arguments: rowsOut(m.promptArguments) }
+  return {
+    id: r.id,
+    workspace_id: r.workspaceId,
+    collection_id: r.collectionId,
+    folder_id: r.folderId,
+    name: d.name,
+    type: 'mcp',
+    method: MCP_METHOD,
+    transport: m.transport,
+    ...server,
+    operation: m.operation,
+    ...operation,
+    timeout_ms: m.timeoutMs,
+    pre_request_script: editorCode(d.extras.scripts, 'prerequest'),
+    test_script: editorCode(d.extras.scripts, 'test'),
+    description: d.description,
+    version: r.version,
+  }
+}
+
+const requestOutAny = (r: ApiRequest, d: RequestDraft) => (d.mcp ? mcpRequestOut(r, d) : requestOut(r, d))
+
 type RequestFields = Partial<McpToolArgs<'update_request'>>
+/** The request fields a tool can give (name, method, url, headers, ...). */
+const REQUEST_FIELD_KEYS = Object.keys(MCP_TOOLS.update_request.input.shape).filter((k) => k !== 'request_id')
 
 /** Applies the given tool fields to a draft (what is not given stays). */
 function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
   if (f.name !== undefined) d.name = f.name
-  if (f.method !== undefined) d.method = f.method.trim().toUpperCase()
+  if (f.method !== undefined) {
+    d.method = f.method.trim().toUpperCase()
+    if (d.method === MCP_METHOD) fail('The method MCP is for MCP requests, which are made in the Slinger window.')
+  }
   if (f.url !== undefined) {
     d.url = f.url
     d.params = mergeParamsFromUrl(f.url, d.params)
@@ -344,7 +403,7 @@ function editedExample(stored: unknown, parent: ApiRequest, f: ExampleFields): u
 // ---- trees ------------------------------------------------------------------------------------------------------
 
 const bySort = <T extends { sortOrder: number }>(a: T, b: T) => a.sortOrder - b.sortOrder
-const requestLine = (r: ApiRequest) => ({ id: r.id, name: r.name, method: r.method, url: r.url })
+const requestLine = (r: ApiRequest) => ({ id: r.id, name: r.name, type: requestType(r), method: r.method, url: r.url })
 
 function collectionTree(c: Collection, t: Tree): Data {
   const folders = t.folders.filter((f) => f.collectionId === c.id)
@@ -392,6 +451,7 @@ function responseOut(res: HttpResponseData): Data {
     headers: res.headers.map((h) => ({ key: h.key, value: h.value })),
     body,
     ...(truncated ? { body_truncated: `only the first ${MCP_BODY_LIMIT} characters are shown` } : {}),
+    ...(res.mcp ? { mcp: { operation: res.mcp.operation, name: res.mcp.name, is_error: res.mcp.isError } } : {}),
   }
 }
 
@@ -431,7 +491,7 @@ const tools: Impls = {
 
   async get_request(a) {
     const r = await findRequest(a.request_id)
-    return done(requestOut(r, parseDocument(r)))
+    return done(requestOutAny(r, parseDocument(r)))
   },
 
   async create_collection(a) {
@@ -466,6 +526,7 @@ const tools: Impls = {
 
   async update_request(a) {
     const r = await findRequest(a.request_id)
+    refuseMcp(r, MCP_EDIT_HINT)
     const s = serializeDraft(applyFields(parseDocument(r), a))
     const updated = await api().updateRequest({ requestId: r.id, ...s, expectedVersion: r.version })
     await refresh(r.workspaceId, r.collectionId)
@@ -561,6 +622,7 @@ const tools: Impls = {
 
   async create_example(a) {
     const r = await findRequest(a.request_id)
+    refuseMcp(r, 'MCP requests have no saved examples.')
     const example = editedExample(blankExample(a.name, parseDocument(r)), r, { ...a, name: undefined })
     let index = -1
     const updated = await writeExamples(r, (list) => {
@@ -573,6 +635,7 @@ const tools: Impls = {
 
   async update_example(a) {
     const r = await findRequest(a.request_id)
+    refuseMcp(r, 'MCP requests have no saved examples.')
     const index = pickExample(readExamples(r.documentJson), a.example)
     const before = exampleName(readExamples(r.documentJson)[index])
     const updated = await writeExamples(r, (list) => {
@@ -649,12 +712,17 @@ const tools: Impls = {
 
   async send_request(a) {
     let draft: RequestDraft
-    let ctx: Parameters<typeof executeDraft>[1]
+    let ctx: ExecuteContext
     if (a.save_as_example && !a.request_id) fail('save_as_example needs request_id: examples belong to a saved request.')
     if (a.request_id) {
       const r = await findRequest(a.request_id)
       requireOpen(r.workspaceId, 'Sending')
-      draft = applyFields(parseDocument(r), a)
+      draft = parseDocument(r)
+      if (draft.mcp) {
+        const given = REQUEST_FIELD_KEYS.filter((k) => (a as Record<string, unknown>)[k] !== undefined)
+        if (given.length) fail(`${q(r.name)} is an MCP request: it is sent as saved, so ${given.join(', ')} cannot be given.`)
+        if (a.save_as_example) fail(`${q(r.name)} is an MCP request: MCP requests have no saved examples.`)
+      } else draft = applyFields(draft, a)
       ctx = { workspaceId: r.workspaceId, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId }
     } else {
       if (!a.url) fail('Give request_id, or method and url for an ad-hoc request.')
@@ -665,6 +733,8 @@ const tools: Impls = {
     const environment = await environmentArg(a.environment_id, ctx.workspaceId)
     if (environment !== undefined) ctx.environment = environment
     ctx.source = 'mcp'
+    // An MCP request opens its connection as the assistant: main never runs a command the user has not allowed.
+    if (draft.mcp) ctx.mcpOrigin = 'mcp'
     const outcome = await executeDraft(draft, ctx)
     app.historyTick++
     const tests = outcome.scripts.tests.map((t) => ({ name: t.name, result: t.status, ...(t.error ? { error: t.error } : {}) }))
@@ -675,7 +745,8 @@ const tools: Impls = {
     }
     if (!outcome.ok) {
       const unresolved = outcome.kind === 'unresolved' ? ` Unresolved variables: ${outcome.unresolved.join(', ')}.` : ''
-      return { ok: false, error: `Not sent (${outcome.kind}): ${outcome.error}.${unresolved}${Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ''}` }
+      const allow = outcome.kind === 'failed' && outcome.untrustedCommand ? ' The user has to do that: open_in_app shows the request in the window.' : ''
+      return { ok: false, error: `Not sent (${outcome.kind}): ${sentence(outcome.error)}${unresolved}${allow}${Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ''}` }
     }
     let saved: Data = {}
     if (a.save_as_example && ctx.requestId) {
@@ -747,7 +818,7 @@ const tools: Impls = {
         time_ms: h.durationMs,
         request_id: h.requestId,
         request_name: h.requestName,
-        ...(h.kind === 'edit' ? { kind: 'edit', detail: h.detail } : {}),
+        ...(h.kind === 'edit' ? { kind: 'edit', detail: h.detail } : h.method === MCP_METHOD ? { type: 'mcp', detail: h.detail ?? null } : {}),
         ...(h.source === 'mcp' ? { by: 'AI assistant' } : {}),
       })),
     })

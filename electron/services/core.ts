@@ -18,6 +18,7 @@ import type { SecretStore } from './secrets'
 import type { SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
 import { McpService, type McpServiceDeps } from '../mcp/service'
+import { McpClientService, type McpClientApi, type McpClientDeps } from '../mcpClient/types'
 
 export interface CoreDeps {
   db: Db
@@ -35,6 +36,8 @@ export interface CoreDeps {
   } & Partial<Omit<SyncServiceDeps, 'db' | 'secrets' | 'emit' | 'appVersion'>>
   /** MCP server wiring (optional: tests get a server with no window to run tools in). */
   mcp?: Partial<Omit<McpServiceDeps, 'db' | 'secrets'>>
+  /** MCP client wiring (MCP requests; optional: tests get a client whose events go nowhere). */
+  mcpClient?: Partial<Omit<McpClientDeps, 'db'>>
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -61,6 +64,8 @@ export interface Core {
   sync: SyncService
   /** Local MCP endpoint for LLM clients (off until enabled in Settings). */
   mcp: McpService
+  /** ADDED (MCP requests): Slinger's own MCP client sessions (connect to a server, list, call). */
+  mcpClient: McpClientApi
 }
 
 export function createCore(deps: CoreDeps): Core {
@@ -107,6 +112,13 @@ export function createCore(deps: CoreDeps): Core {
       secrets,
       emit: deps.mcp?.emit ?? (() => false),
       appVersion: deps.mcp?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
+    }),
+    mcpClient: new McpClientService({
+      redact: (sessionId, text) => scripts.redact(sessionId, text),
+      ...deps.mcpClient,
+      db,
+      emit: deps.mcpClient?.emit ?? (() => {}),
+      appVersion: deps.mcpClient?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
   }
   // First launch: make sure there is always a workspace to work in.

@@ -10,6 +10,7 @@ import { stripOAuth2TokensFromItem } from '../../shared/oauth2'
 import { dataRows, ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { writeDescription } from './description'
 import { mergeParamsFromUrl } from './urlParams'
+import { MCP_METHOD, mcpDisplayUrl, mcpTemplateTexts, parseMcp, serializeMcp, type McpDraft } from './mcpRequest'
 
 export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
@@ -82,6 +83,12 @@ export interface RequestDraft {
   timeoutMs: number | null
   /** Unedited document keys carried through save (scripts, responses, source, ...). */
   extras: Record<string, unknown>
+  /**
+   * ADDED (MCP requests): set for an MCP request (`method: 'MCP'`, document key `mcp`; see mcpRequest.ts), undefined for
+   * HTTP. `url` is then the server URL template (http/sse; '' for stdio), headers and auth belong to the HTTP transport,
+   * and body / params are unused.
+   */
+  mcp?: McpDraft
 }
 
 export const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
@@ -331,7 +338,7 @@ export function parseAuth(auth: unknown): AuthDraft {
   }
 }
 
-const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params'])
+const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'mcp'])
 
 function seedParams(doc: Json, url: string): KvRow[] {
   let prev: KvRow[] = rowsFromList(doc.params)
@@ -366,9 +373,10 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
   // The raw Postman item kept by the importer must not carry an OAuth 2.0 token either (older imports did).
   if (isObj(extras.source)) extras.source = stripOAuth2TokensFromItem(extras.source)
   const settings = isObj(doc.settings) ? doc.settings : {}
-  return {
+  const method = (str(doc.method) || request.method || 'GET').toUpperCase()
+  const draft: RequestDraft = {
     name: request.name,
-    method: (str(doc.method) || request.method || 'GET').toUpperCase(),
+    method,
     url,
     description: descriptionText(doc.description),
     descriptionSource: doc.description,
@@ -378,6 +386,17 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     auth: parseAuth(doc.auth),
     timeoutMs: typeof settings.timeoutMs === 'number' ? settings.timeoutMs : null,
     extras,
+  }
+  if (!isObj(doc.mcp) && method !== MCP_METHOD) return draft
+  // MCP request: the url column of a stdio request is its command line, not a server URL; body and params are unused.
+  const mcp = parseMcp(doc.mcp)
+  return {
+    ...draft,
+    method: MCP_METHOD,
+    url: mcp.transport === 'stdio' ? '' : url,
+    params: ensureTrailingEmpty([]),
+    body: emptyBody(),
+    mcp,
   }
 }
 
@@ -494,6 +513,11 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   else delete settings.timeoutMs
   if (Object.keys(settings).length > 0) doc.settings = settings
   else delete doc.settings
+  if (d.mcp) {
+    const url = mcpDisplayUrl(d)
+    Object.assign(doc, { method: MCP_METHOD, url, body: null, params: [], mcp: serializeMcp(d.mcp) })
+    return { name, method: MCP_METHOD, url, documentJson: JSON.stringify(doc) }
+  }
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
 }
 
@@ -505,18 +529,34 @@ export function draftFingerprint(d: RequestDraft): string {
 
 /** Every string that may contain `{{templates}}`, for unresolved-variable checks. */
 export function templateTexts(d: RequestDraft): string[] {
+  if (d.mcp) return mcpRequestTemplateTexts(d, d.mcp)
   const out: string[] = [d.url]
   for (const h of dataRows(d.headers)) if (h.enabled) out.push(h.key, h.value)
   const b = d.body
   if (b.kind === 'raw') out.push(b.raw)
   if (b.kind === 'urlEncoded') for (const r of dataRows(b.urlEncoded)) if (r.enabled) out.push(r.key, r.value)
   if (b.kind === 'formData') for (const r of dataRows(b.formData)) if (r.enabled) out.push(r.key, r.kind === 'file' ? '' : r.value)
-  const a = d.auth
-  if (a.kind === 'basic') out.push(a.basic.username, a.basic.password)
-  if (a.kind === 'bearer') out.push(a.bearer.token)
-  if (a.kind === 'apiKey') out.push(a.apiKey.key, a.apiKey.value)
-  if (a.kind === 'oauth2') out.push(...oauth2TemplateTexts(a.oauth2))
+  out.push(...authTemplateTexts(d.auth))
   return out
+}
+
+function authTemplateTexts(a: AuthDraft): string[] {
+  if (a.kind === 'basic') return [a.basic.username, a.basic.password]
+  if (a.kind === 'bearer') return [a.bearer.token]
+  if (a.kind === 'apiKey') return [a.apiKey.key, a.apiKey.value]
+  if (a.kind === 'oauth2') return oauth2TemplateTexts(a.oauth2)
+  return []
+}
+
+/** MCP: the transport's URL, headers and auth (http/sse only), then the MCP fields the transport and operation use. */
+function mcpRequestTemplateTexts(d: RequestDraft, m: McpDraft): string[] {
+  const out: string[] = []
+  if (m.transport !== 'stdio') {
+    out.push(d.url)
+    for (const h of dataRows(d.headers)) if (h.enabled) out.push(h.key, h.value)
+    out.push(...authTemplateTexts(d.auth))
+  }
+  return [...out, ...mcpTemplateTexts(m)]
 }
 
 /**

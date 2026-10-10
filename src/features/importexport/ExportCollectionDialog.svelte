@@ -168,6 +168,11 @@
         {/if}
       </div>
       <p class="text-xs text-muted">Only saved requests are exported. Unsaved edits in open tabs are not included.</p>
+      {#if http && http.skippedMcp > 0}
+        <p class="text-xs text-muted" data-testid="export-skipped-mcp">
+          {plural(http.skippedMcp, 'MCP request')} left out: a .http file holds HTTP requests only.
+        </p>
+      {/if}
       <InlineError message={loadError ?? error} />
       {#if !versions && !loadError}
         <p class="flex items-center gap-2 text-xs text-muted"><Spinner /> Loading version history…</p>

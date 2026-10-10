@@ -124,3 +124,26 @@ describe('buildGroupDiffs', () => {
     expect(displayValue('x', '(gone)')).toBe('x')
   })
 })
+
+describe('MCP request conflicts', () => {
+  const mcpContent = (tool: string, transport = 'http') =>
+    JSON.stringify({
+      name: 'M', method: 'MCP', url: 'https://m/mcp',
+      document_json: doc({ name: 'M', method: 'MCP', url: 'https://m/mcp', body: null, params: [], mcp: { v: 1, transport, operation: 'tools/call', tool } }),
+    })
+
+  it('compares the MCP configuration as its own row', () => {
+    const [g] = buildGroupDiffs({ entityType: 'request', groups: [group({ local: mcpContent('echo'), remote: mcpContent('add', 'sse') })] })
+    const mcp = g.rows.find((x) => x.key === 'mcp')!
+    expect(mcp).toMatchObject({ label: 'MCP', changed: true })
+    expect(mcp.local).toBe('transport: http\noperation: tools/call\ntool: echo')
+    expect(mcp.remoteLines?.filter((l) => l.op === 'add').map((l) => l.text)).toEqual(['transport: sse', 'tool: add'])
+    expect(g.rows.find((x) => x.key === 'body')).toBeUndefined()
+  })
+
+  it('keeps an equal MCP configuration for context', () => {
+    const [g] = buildGroupDiffs({ entityType: 'request', groups: [group({ local: mcpContent('echo'), remote: mcpContent('echo').replace('"name":"M"', '"name":"N"') })] })
+    expect(g.rows.find((x) => x.key === 'mcp')).toMatchObject({ changed: false })
+    expect(g.rows.find((x) => x.key === 'name')).toMatchObject({ changed: true })
+  })
+})

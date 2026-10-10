@@ -157,6 +157,8 @@ export function workflowDeps(session: WorkflowRunSession, scriptRun: ScriptRunCo
           environment,
           onRunId: c.onRunId,
           wasCancelled: () => signal.aborted,
+          // An MCP request node connects as the workflow (main never trusts a stdio command for it either).
+          mcpOrigin: 'workflow',
         })
         logConsole(node, outcome.scripts.console)
         app.historyTick++

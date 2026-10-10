@@ -23,6 +23,7 @@
   import QuickOpen from '../features/requests/QuickOpen.svelte'
   import RequestTabs from '../features/requests/RequestTabs.svelte'
   import RequestView from '../features/requests/RequestView.svelte'
+  import McpRequestView from '../features/mcpRequests/McpRequestView.svelte'
   import SaveAsDialog from '../features/requests/SaveAsDialog.svelte'
   import { tabsStore } from '../features/requests/tabs.svelte'
   import { cancelScheduledSave, flushSave, scheduleSave, serializeTabs } from '../features/requests/tabsPersistence'
@@ -128,6 +129,8 @@
                   <OverviewView tab={tabsStore.active} />
                 {:else if tabsStore.active.example}
                   <ExampleView tab={tabsStore.active} />
+                {:else if tabsStore.active.draft.mcp}
+                  <McpRequestView tab={tabsStore.active} />
                 {:else}
                   <RequestView tab={tabsStore.active} />
                 {/if}
