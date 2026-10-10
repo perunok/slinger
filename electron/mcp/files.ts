@@ -3,7 +3,7 @@
  *
  *   bridge.cjs     the stdio bridge (copied from dist-electron/mcp-stdio.cjs on every start, so it follows app updates
  *                  and works for AppImages, whose own files move on every launch)
- *   launch.json    how to start Slinger, and whether the server is on (no secrets)
+ *   launch.json    how to start Slinger, whether the server is on and whether the user quit it (no secrets)
  *   endpoint.json  URL + token of the running server; only while it is on; readable by the user only (0600)
  */
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -43,7 +43,7 @@ export class McpFiles {
     }
   }
 
-  setEnabled(launch: Launch): void {
+  writeLaunch(launch: Launch): void {
     try {
       mkdirSync(this.dir, { recursive: true })
       this.#write(LAUNCH_FILE, `${JSON.stringify(launch, null, 2)}\n`, 0o644)

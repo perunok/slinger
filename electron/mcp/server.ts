@@ -15,6 +15,8 @@ import { MCP_TOOLS, type McpCallResult, type McpToolName, type McpToolSpec } fro
 
 const MAX_BODY = 60 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 60_000
+/** After the grace period: how long failed calls get to write their answers before the connections are cut. */
+const FLUSH_MS = 1_000
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 export interface McpServerDeps {
@@ -130,6 +132,11 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 export class McpHttpServer {
   #http: HttpServer | null = null
   #port = 0
+  /** Requests being answered (a tool call can take a while: it runs in the window). */
+  #inFlight = 0
+  #idleWaiters: Array<() => void> = []
+  /** Quitting: new requests are refused, the ones in progress finish. */
+  #draining = false
 
   constructor(private readonly deps: McpServerDeps) {}
 
@@ -156,19 +163,65 @@ export class McpHttpServer {
     return this.#port
   }
 
+  get inFlight(): number {
+    return this.#inFlight
+  }
+
   async stop(): Promise<void> {
     const http = this.#http
     this.#http = null
+    this.#draining = false
     if (!http) return
     http.closeAllConnections()
     await new Promise<void>((resolve) => http.close(() => resolve()))
   }
 
+  /**
+   * Graceful stop (Slinger quitting): refuses new requests and connections at once, gives the calls in progress up to
+   * `graceMs` to finish, then `failRemaining()` (which must make them answer) and a moment to send those answers.
+   * An assistant never sees a cut connection for a call it made, only a result or an error message.
+   */
+  async drain(graceMs: number, failRemaining: () => void): Promise<void> {
+    const http = this.#http
+    if (!http) return
+    this.#draining = true
+    http.close() // no new connections; the open ones may still be answering
+    http.closeIdleConnections()
+    if (!(await this.#idle(graceMs))) {
+      failRemaining()
+      await this.#idle(FLUSH_MS)
+    }
+    await this.stop()
+  }
+
+  /** Resolves true once no request is in progress, false after `ms`. */
+  #idle(ms: number): Promise<boolean> {
+    if (this.#inFlight === 0) return Promise.resolve(true)
+    return new Promise<boolean>((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        this.#idleWaiters = this.#idleWaiters.filter((w) => w !== done)
+        resolve(false)
+      }, ms)
+      this.#idleWaiters.push(done)
+    })
+  }
+
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.#inFlight++
+    res.once('close', () => {
+      this.#inFlight--
+      if (this.#inFlight === 0) for (const w of this.#idleWaiters.splice(0)) w()
+    })
     try {
       const path = (req.url ?? '').split('?')[0]
       if (path !== '/mcp') return reply(res, 404, 'Not found. The MCP endpoint is /mcp.')
       if (rejectRequest(req, res, this.#port, this.deps.token())) return
+      // Keep-alive connections can still send requests after close(): answer them, but do not start new work.
+      if (this.#draining) return reply(res, 503, 'Slinger is quitting.', { connection: 'close' })
       if (req.method !== 'POST') return reply(res, 405, 'Method not allowed (stateless server: POST only).', { allow: 'POST' })
       const body = await readJson(req)
       const server = createMcpProtocolServer(this.deps)

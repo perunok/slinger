@@ -5,7 +5,8 @@
  *   ELECTRON_RUN_AS_NODE=1 <Slinger executable> <userData>/mcp/bridge.cjs
  *
  * It needs no token or port in the assistant's config: it reads them from endpoint.json next to itself (written by the app
- * while the server is on, readable only by the user). When Slinger is not running it starts it (launch.json) and waits.
+ * while the server is on, readable only by the user). When Slinger is not running it starts it (launch.json) and waits,
+ * unless the user quit it.
  * SLINGER_MCP_URL + SLINGER_MCP_TOKEN override the files (manual setups, tests). Every JSON-RPC line read from stdin is
  * POSTed to the endpoint and the replies are written to stdout, one per line. Diagnostics go to stderr only.
  * Plain Node: no Electron, no SDK, no dependencies.
@@ -26,9 +27,13 @@ export interface Endpoint {
   token: string
 }
 
-/** How to start Slinger (written by the app on every start). `enabled` false: the user turned the server off. */
+/**
+ * How to start Slinger (written by the app on every start). `enabled` false: the user turned the server off. `quit`:
+ * the user quit Slinger (tray or menu), so it stays closed until they open it again.
+ */
 export interface Launch {
   enabled: boolean
+  quit?: boolean
   command: string
   args: string[]
   env?: Record<string, string>
@@ -54,6 +59,7 @@ export interface BridgeState {
 
 const OFF = 'The MCP server is turned off in Slinger. Turn it on in Slinger > Settings > AI assistants (MCP).'
 const NOT_RUNNING = 'Slinger is not running, or its MCP server is off (Slinger > Settings > AI assistants (MCP)).'
+const QUIT = 'Slinger was quit, so its MCP server is stopped. Open Slinger to use it again.'
 
 class BridgeError extends Error {}
 
@@ -109,6 +115,7 @@ function ensureStarted(opts: BridgeOptions, state: BridgeState): Promise<void> {
     const launch = readJson<Launch>(join(opts.dir!, LAUNCH_FILE))
     if (!launch || typeof launch.command !== 'string') throw new BridgeError(NOT_RUNNING)
     if (!launch.enabled) throw new BridgeError(OFF)
+    if (launch.quit) throw new BridgeError(QUIT)
     const env: NodeJS.ProcessEnv = { ...process.env, ...(launch.env ?? {}) }
     delete env.ELECTRON_RUN_AS_NODE // the app itself must start as Electron, not as Node
     const spawnImpl =

@@ -308,6 +308,7 @@ export interface PlatformDeps {
 export interface WindowControls {
   chrome(): WindowChrome
   setTitleBarStyle(style: TitleBarStyle): WindowChrome
+  setCloseToTray(enabled: boolean): WindowChrome
   reopen(): void
   control(action: WindowAction): void
   /** CSS pixels within the page. */
@@ -585,6 +586,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     getWindowChrome: async (...a) => (parseArgs(z.tuple([]), a), windowControls().chrome()),
     setTitleBarStyle: async (...a) => windowControls().setTitleBarStyle(parseArgs(z.tuple([titleBarStyle]), a)[0]),
+    setCloseToTray: async (...a) => windowControls().setCloseToTray(parseArgs(z.tuple([z.boolean()]), a)[0]),
     reopenWindow: async (...a) => (parseArgs(z.tuple([]), a), windowControls().reopen()),
     windowControl: async (...a) => platform.window?.control(parseArgs(z.tuple([windowAction]), a)[0]),
     showAppMenu: async (...a) => {

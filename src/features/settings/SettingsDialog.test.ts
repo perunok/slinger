@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settings } from '../../app/settings.svelte'
 import { ui } from '../../app/ui.svelte'
@@ -179,6 +179,21 @@ describe('window and updates', () => {
     const reopen = vi.spyOn(backend, 'reopenWindow').mockResolvedValue(undefined)
     await fireEvent.click(screen.getByRole('button', { name: 'Reopen window' }))
     expect(reopen).toHaveBeenCalledTimes(1)
+  })
+
+  it('turns closing to the tray off and on (on by default, applies at once)', async () => {
+    const backend = await open('layout')
+    const box = screen.getByRole('checkbox', { name: 'Keep running in the system tray when the window is closed' })
+    expect(box).toBeChecked()
+    expect(screen.getByRole('button', { name: 'About closing to the system tray' })).toBeInTheDocument()
+    await fireEvent.click(box)
+    await waitFor(() => expect(box).not.toBeChecked())
+    expect(await backend.getWindowChrome()).toMatchObject({ closeToTray: false })
+    expect(screen.queryByTestId('titlebar-reopen')).toBeNull()
+    backend.failNext('setCloseToTray', { code: 'io_error', message: 'disk full' })
+    await fireEvent.click(box)
+    await waitFor(() => expect(box).not.toBeChecked())
+    expect(await backend.getWindowChrome()).toMatchObject({ closeToTray: false })
   })
 
   it('turns automatic update checks off and checks on demand', async () => {

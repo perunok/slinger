@@ -10,8 +10,9 @@ function build(platform: NodeJS.Platform, extra: Partial<AppMenuOptions> = {}) {
   const send = vi.fn<(c: MenuCommand) => void>()
   const openExternal = vi.fn<(u: string) => void>()
   const zoom = vi.fn()
-  const template = buildAppMenuTemplate({ platform, isPackaged: true, send, openExternal, zoom, ...extra })
-  return { template, send, openExternal, zoom }
+  const quit = vi.fn()
+  const template = buildAppMenuTemplate({ platform, isPackaged: true, send, openExternal, zoom, quit, ...extra })
+  return { template, send, openExternal, zoom, quit }
 }
 
 const plain = (label?: string) => (label ?? '').replace(/&/g, '')
@@ -31,13 +32,13 @@ describe('application menu template', () => {
     expect(template.map((i) => plain(i.label))).toEqual(['Slinger', 'File', 'Edit', 'View', 'Window', 'Help'])
     const app = subOf(top(template, 'Slinger'))
     expect(app.map((i) => i.label ?? i.role ?? i.type)).toEqual([
-      'About Slinger', 'separator', 'Settings…', 'separator', 'services', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit',
+      'About Slinger', 'separator', 'Settings…', 'separator', 'services', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'Quit Slinger',
     ])
     expect(find(app, 'Settings…')?.accelerator).toBe('CmdOrCtrl+,')
     const edit = subOf(top(template, 'Edit')).map((i) => i.role).filter(Boolean)
     expect(edit).toEqual(['undo', 'redo', 'cut', 'copy', 'paste', 'pasteAndMatchStyle', 'delete', 'selectAll'])
     // Settings and Quit live in the app menu on macOS, not in File; About is not repeated under Help.
-    expect(all(subOf(top(template, 'File'))).some((i) => i.role === 'quit' || i.label === 'Settings…')).toBe(false)
+    expect(all(subOf(top(template, 'File'))).some((i) => /Quit|Exit/.test(i.label ?? '') || i.label === 'Settings…')).toBe(false)
     expect(find(subOf(top(template, 'Help')), 'About Slinger')).toBeUndefined()
   })
 
@@ -47,7 +48,7 @@ describe('application menu template', () => {
     expect(template.every((i) => i.label?.startsWith('&'))).toBe(true) // Alt mnemonics
     const file = subOf(top(template, 'File'))
     expect(file.map((i) => i.label ?? i.role ?? i.type)).toEqual([
-      'New Request', 'Close Tab', 'separator', 'Import…', 'Export Collection…', 'separator', 'Settings…', 'separator', 'quit',
+      'New Request', 'Close Tab', 'separator', 'Import…', 'Export Collection…', 'separator', 'Settings…', 'separator', platform === 'win32' ? 'E&xit' : '&Quit',
     ])
     const edit = subOf(top(template, 'Edit')).map((i) => i.role).filter(Boolean)
     expect(edit).toEqual(['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'])
@@ -55,6 +56,16 @@ describe('application menu template', () => {
     expect(help.filter((i) => i.label).map((i) => i.label)).toEqual([
       'User Guide', 'Keyboard Shortcuts', 'Release Notes', 'Check for Updates…', 'Report an Issue', 'View License', 'About Slinger',
     ])
+  })
+
+  it.each(PLATFORMS)('%s: Quit is our own item (main records that the user quit), with the usual key', (platform) => {
+    const { template, quit } = build(platform)
+    const items = all(template)
+    expect(items.some((i) => i.role === 'quit')).toBe(false)
+    const item = items.find((i) => /^(Quit|Exit)/.test(plain(i.label)))!
+    expect(item.accelerator).toBe(platform === 'win32' ? undefined : 'CmdOrCtrl+Q')
+    click(item)
+    expect(quit).toHaveBeenCalledTimes(1)
   })
 
   it.each(PLATFORMS)('%s: View has zoom and full screen; Reload and DevTools only in development', (platform) => {

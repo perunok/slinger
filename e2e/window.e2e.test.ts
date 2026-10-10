@@ -2,7 +2,7 @@
  * The window around the app: the custom title bar (default) and switching to the system one, and the new-release
  * notice against a local stand-in for GitHub's latest-release endpoint (SLINGER_UPDATE_FEED_URL). Steps run in order.
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -143,6 +143,31 @@ describe('window', () => {
       find(Menu.getApplicationMenu()!.items as unknown as Item[])!.click()
     })
     await expect.poll(() => sidebar.count()).toBe(1)
+  })
+
+  it('closing the window keeps Slinger running in the tray; Quit ends it and assistants do not start it again', async () => {
+    const { app, page } = ctx
+    expect(await page.evaluate(() => window.slinger.getWindowChrome())).toMatchObject({ closeToTray: true })
+    await page.evaluate(() => window.slinger.windowControl('close')) // the title bar's close button
+    await page.waitForTimeout(500)
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
+    // The page keeps running while hidden (MCP calls, runs, sync).
+    expect(await page.evaluate(() => window.slinger.listWorkspaces().then((w) => w.length))).toBeGreaterThan(0)
+
+    const closed = app.waitForEvent('close')
+    await app.evaluate(({ Menu }) => {
+      type Item = { label: string; submenu?: { items: Item[] } | null; click: () => void }
+      const find = (items: Item[]): Item | undefined => {
+        for (const i of items) {
+          if (['Quit', 'Exit', 'Quit Slinger'].includes(i.label.replace(/&/g, ''))) return i
+          const sub = i.submenu && find(i.submenu.items)
+          if (sub) return sub
+        }
+      }
+      find(Menu.getApplicationMenu()!.items as unknown as Item[])!.click()
+    })
+    await closed
+    expect(JSON.parse(readFileSync(join(tmp, 'profile', 'mcp', 'launch.json'), 'utf8'))).toMatchObject({ quit: true })
   })
 
   it('logged no page errors', () => {

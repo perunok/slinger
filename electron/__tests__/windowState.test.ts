@@ -106,6 +106,15 @@ describe('window-state.json', () => {
     expect(readWindowState(file)).toEqual({})
   })
 
+  it('keeps the close-to-tray preference only as a boolean', () => {
+    expect(writeWindowState(file, { closeToTray: false })).toBe(true)
+    expect(readWindowState(file)).toEqual({ closeToTray: false })
+    for (const closeToTray of ['false', 0, null]) {
+      writeFileSync(file, JSON.stringify({ closeToTray }))
+      expect(readWindowState(file), String(closeToTray)).toEqual({})
+    }
+  })
+
   it('reports a failed write instead of throwing', () => {
     writeFileSync(join(dir, 'blocker'), 'x')
     expect(writeWindowState(join(dir, 'blocker', WINDOW_STATE_FILE), {})).toBe(false)

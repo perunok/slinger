@@ -20,6 +20,7 @@ type MiscApi = Pick<
   | 'checkForUpdates'
   | 'getWindowChrome'
   | 'setTitleBarStyle'
+  | 'setCloseToTray'
   | 'reopenWindow'
   | 'windowControl'
   | 'showAppMenu'
@@ -83,6 +84,7 @@ export function createMiscApi(): MiscApi {
   // A page load is a new "window": it shows the preference saved before it (reopenWindow reloads).
   const windowTitleBar = loadTitleBar()
   let preferredTitleBar = windowTitleBar
+  let closeToTray = true
   return {
     async defaultExportPath(fileName) {
       return `${exportDir}/${fileName}`
@@ -146,7 +148,7 @@ export function createMiscApi(): MiscApi {
       }
     },
     async getWindowChrome() {
-      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, state: { maximized: false, fullScreen: false, focused: true } }
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, closeToTray, state: { maximized: false, fullScreen: false, focused: true } }
     },
     async setTitleBarStyle(style) {
       if (style !== 'custom' && style !== 'system') fail('invalid_input', 'style must be custom or system')
@@ -156,7 +158,12 @@ export function createMiscApi(): MiscApi {
       } catch {
         /* this page only */
       }
-      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, state: { maximized: false, fullScreen: false, focused: true } }
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, closeToTray, state: { maximized: false, fullScreen: false, focused: true } }
+    },
+    async setCloseToTray(enabled) {
+      if (typeof enabled !== 'boolean') fail('invalid_input', 'enabled must be a boolean')
+      closeToTray = enabled
+      return { platform: 'browser', titleBar: windowTitleBar, preferredTitleBar, closeToTray, state: { maximized: false, fullScreen: false, focused: true } }
     },
     async reopenWindow() {
       setTimeout(() => location.reload(), 0)

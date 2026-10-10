@@ -206,6 +206,8 @@ export interface SlingerIpcApi {
   getWindowChrome(): Promise<WindowChrome>
   /** Saves the title bar preference (window-state.json); it applies when the window is reopened. */
   setTitleBarStyle(style: TitleBarStyle): Promise<WindowChrome>
+  /** ADDED (tray): saves whether closing the window hides it to the tray (window-state.json); applies at once. */
+  setCloseToTray(enabled: boolean): Promise<WindowChrome>
   /** Closes the main window and opens it again with the saved title bar preference (same process, data and bounds). */
   reopenWindow(): Promise<void>
   /** The custom title bar's own window buttons (Windows/Linux): minimise, maximise or restore, close. */
@@ -381,6 +383,7 @@ export const IPC_CHANNELS = [
   'checkForUpdates',
   'getWindowChrome',
   'setTitleBarStyle',
+  'setCloseToTray',
   'reopenWindow',
   'windowControl',
   'showAppMenu',
