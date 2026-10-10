@@ -121,6 +121,9 @@ function record(s: MockState, input: HttpRequestInput, result: { status: number 
     errorMessage: result.error,
     durationMs: result.ms,
     createdAt: nowSec(),
+    kind: 'send',
+    source: input.historySource === 'mcp' ? 'mcp' : null,
+    detail: null,
   })
   if (s.history.length > HISTORY_CAP) s.history.length = HISTORY_CAP
 }

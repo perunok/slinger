@@ -101,6 +101,21 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...misc,
     ...sync.api,
     ...mcp.api,
+    async recordAssistantEdit(input) {
+      const entry = {
+        id: crypto.randomUUID(),
+        ...input,
+        statusCode: null,
+        ok: true,
+        errorMessage: null,
+        durationMs: 0,
+        createdAt: Math.floor(Date.now() / 1000),
+        kind: 'edit' as const,
+        source: 'mcp' as const,
+      }
+      state.history.unshift(entry)
+      return entry
+    },
     async listHistory(workspaceId, limit) {
       const rows = state.history.filter((h) => h.workspaceId === workspaceId).sort((a, b) => b.createdAt - a.createdAt)
       return limit && limit > 0 ? rows.slice(0, limit) : rows

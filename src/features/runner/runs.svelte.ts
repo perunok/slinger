@@ -92,6 +92,8 @@ class RunsStore {
     options: RunOptions
     dataFile?: DataFile | null
     environment?: { id: string; name: string } | null
+    /** 'mcp': started by an AI assistant (its sends are flagged in History). */
+    source?: 'mcp'
   }): RunSession {
     const existing = this.forTarget(input.target)
     if (existing?.running) return existing
@@ -121,6 +123,7 @@ class RunsStore {
           environment,
           onRunId: hooks.onRunId,
           wasCancelled: hooks.wasCancelled,
+          ...(input.source ? { source: input.source } : {}),
         })
       },
       cancel: cancelRun,

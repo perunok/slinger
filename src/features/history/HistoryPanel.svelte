@@ -27,7 +27,11 @@
   const shown = $derived.by(() => {
     const q = filter.trim().toLowerCase()
     if (!q) return entries
-    return entries.filter((e) => `${e.method} ${e.url} ${e.requestName ?? ''} ${e.statusCode ?? ''} ${e.errorMessage ?? ''}`.toLowerCase().includes(q))
+    return entries.filter((e) =>
+      `${e.method} ${e.url} ${e.requestName ?? ''} ${e.statusCode ?? ''} ${e.errorMessage ?? ''} ${e.detail ?? ''} ${e.source === 'mcp' ? 'ai assistant mcp' : ''}`
+        .toLowerCase()
+        .includes(q),
+    )
   })
   const groups = $derived(groupByDay(shown, new Date()))
   const flat = $derived(groups.flatMap((g) => g.entries))
@@ -69,7 +73,8 @@
   function open(entry: HistoryEntry) {
     const req: ApiRequest | undefined = app.requestById(entry.requestId)
     if (req) tabsStore.openRequest(req)
-    else tabsStore.newTab({ draft: newDraft({ method: entry.method, url: entry.url, name: entry.requestName ?? entry.url }) })
+    // An edit of something that is not a request (a collection, an environment...): nothing to open.
+    else if (entry.kind !== 'edit') tabsStore.newTab({ draft: newDraft({ method: entry.method, url: entry.url, name: entry.requestName ?? entry.url }) })
   }
 
   async function remove(entry: HistoryEntry) {
@@ -181,7 +186,7 @@
         <Button size="sm" icon="refresh" onclick={() => load()}>Retry</Button>
       </div>
     {:else if entries.length === 0}
-      <p class="p-4 text-center text-xs text-muted">No history yet. Sent requests will appear here.</p>
+      <p class="p-4 text-center text-xs text-muted">No history yet. Sent requests (and changes AI assistants make) will appear here.</p>
     {:else if flat.length === 0}
       <p class="p-4 text-center text-xs text-muted">No history matches "{filter}".</p>
     {:else}
@@ -195,25 +200,37 @@
                   role="button"
                   tabindex={rovingId === entry.id ? 0 : -1}
                   data-entry-id={entry.id}
-                  title="{entry.method} {entry.url}"
+                  title={entry.kind === 'edit' ? (entry.detail ?? 'Edit') : `${entry.method} ${entry.url}`}
                   class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 pr-9 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
                   onclick={() => open(entry)}
                   onfocus={() => (focusId = entry.id)}
                   onkeydown={(e) => e.target === e.currentTarget && onRowKey(e, entry)}
                 >
-                  <div class="flex items-center gap-2">
-                    <span class="w-12 shrink-0 text-xs font-semibold" style="color: {methodColor(entry.method)}">{entry.method}</span>
-                    <span class="min-w-0 flex-1 truncate text-xs">{entry.url}</span>
-                  </div>
-                  <div class="flex items-center gap-2 pl-14 text-[11px] text-muted">
-                    {#if entry.statusCode !== null}
-                      <span class="rounded px-1 font-medium {TONE[statusTone(entry.statusCode)]}">{entry.statusCode}</span>
-                    {:else}
-                      <span class="truncate rounded bg-danger-soft px-1 text-danger" title={entry.errorMessage ?? 'Failed'}>{entry.errorMessage ?? 'Failed'}</span>
-                    {/if}
-                    <span>{formatDuration(entry.durationMs)}</span>
-                    <span class="ml-auto">{time(entry.createdAt)}</span>
-                  </div>
+                  {#if entry.kind === 'edit'}
+                    <div class="flex items-center gap-2" data-testid="history-edit">
+                      <span class="flex w-12 shrink-0 justify-center text-muted"><Icon name="edit" size={13} /></span>
+                      <span class="min-w-0 flex-1 truncate text-xs">{entry.detail ?? 'Edit'}</span>
+                    </div>
+                    <div class="flex items-center gap-2 pl-14 text-[11px] text-muted">
+                      {#if entry.source === 'mcp'}<span class="rounded bg-accent-soft px-1 font-medium text-accent-text">AI assistant</span>{/if}
+                      <span class="ml-auto">{time(entry.createdAt)}</span>
+                    </div>
+                  {:else}
+                    <div class="flex items-center gap-2">
+                      <span class="w-12 shrink-0 text-xs font-semibold" style="color: {methodColor(entry.method)}">{entry.method}</span>
+                      <span class="min-w-0 flex-1 truncate text-xs">{entry.url}</span>
+                    </div>
+                    <div class="flex items-center gap-2 pl-14 text-[11px] text-muted">
+                      {#if entry.statusCode !== null}
+                        <span class="rounded px-1 font-medium {TONE[statusTone(entry.statusCode)]}">{entry.statusCode}</span>
+                      {:else}
+                        <span class="truncate rounded bg-danger-soft px-1 text-danger" title={entry.errorMessage ?? 'Failed'}>{entry.errorMessage ?? 'Failed'}</span>
+                      {/if}
+                      <span>{formatDuration(entry.durationMs)}</span>
+                      {#if entry.source === 'mcp'}<span class="rounded bg-accent-soft px-1 font-medium text-accent-text">AI assistant</span>{/if}
+                      <span class="ml-auto">{time(entry.createdAt)}</span>
+                    </div>
+                  {/if}
                 </div>
                 <span class="absolute right-1 top-1.5 hidden group-focus-within:block group-hover:block">
                   <IconButton icon="trash" size={13} label="Delete history entry" tabindex={-1} onclick={() => remove(entry)} />

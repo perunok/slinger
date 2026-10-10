@@ -337,6 +337,22 @@ describe('history', () => {
     expect(JSON.stringify(await env.api.listHistory(wsId))).not.toContain('SUPERSECRET')
   })
 
+  it('flags sends by an AI assistant, and records its edits (kind edit, source mcp)', async () => {
+    await run({})
+    await run({ historySource: 'mcp' })
+    const collection = await env.api.createCollection(wsId, 'C')
+    const saved = await env.api.createRequest({ workspaceId: wsId, collectionId: collection.id, name: 'Saved', method: 'POST', url: 'x', documentJson: '{}' })
+    const edit = await env.api.recordAssistantEdit({ workspaceId: wsId, requestId: saved.id, requestName: 'Saved', method: 'POST', url: 'x', detail: 'Edited request "Saved": url' })
+    expect(edit).toMatchObject({ kind: 'edit', source: 'mcp', detail: 'Edited request "Saved": url', requestId: saved.id, statusCode: null, ok: true })
+    const [e, mcpSend, userSend] = await env.api.listHistory(wsId)
+    expect(e!.kind).toBe('edit')
+    expect(mcpSend).toMatchObject({ kind: 'send', source: 'mcp', detail: null })
+    expect(userSend).toMatchObject({ kind: 'send', source: null })
+    // only the MCP flag can be set from outside; the detail is required
+    await expect(env.api.executeHttpRequest(baseHttp(wsId, { url: `${server.baseUrl}/echo`, historySource: 'user' as never }))).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(env.api.recordAssistantEdit({ workspaceId: wsId, requestId: null, requestName: null, method: '', url: '', detail: '' })).rejects.toMatchObject({ code: 'invalid_input' })
+  })
+
   it('still returns the HTTP outcome if the request id is unknown', async () => {
     const res = await run({ requestId: '00000000-0000-4000-8000-000000000001', requestName: 'ghost' })
     expect(res.status).toBe(200)

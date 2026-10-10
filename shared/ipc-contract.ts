@@ -13,6 +13,7 @@
 import type { McpCall, McpCallResult, McpClientId, McpClientStatus, McpSettings, McpStatus } from './mcp'
 import type {
   ApiFolder,
+  AssistantEditInput,
   ApiRequest,
   CloudFetchInput,
   Collection,
@@ -124,6 +125,8 @@ export interface SlingerIpcApi {
 
   // History
   listHistory(workspaceId: string, limit?: number): Promise<HistoryEntry[]>
+  /** ADDED (MCP): records an edit an AI assistant made through the MCP server (kind 'edit', source 'mcp'). */
+  recordAssistantEdit(input: AssistantEditInput): Promise<HistoryEntry>
   clearHistory(workspaceId: string): Promise<void>
   deleteHistoryEntry(historyId: string): Promise<void>
 
@@ -423,6 +426,7 @@ export const IPC_CHANNELS = [
   'revealMcpToken',
   'regenerateMcpToken',
   'mcpRespond',
+  'recordAssistantEdit',
   'mcpHostReady',
   'listMcpClients',
   'connectMcpClient',

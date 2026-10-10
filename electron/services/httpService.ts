@@ -95,6 +95,7 @@ export class HttpService {
         url: this.redact(input.scriptSessionId, normalizeUrl(input.historyUrl ?? input.url ?? '')).slice(0, 8192),
         ...result,
         errorMessage: result.errorMessage === null ? null : this.redact(input.scriptSessionId, result.errorMessage),
+        source: input.historySource === 'mcp' ? 'mcp' : null,
       })
     } catch (err) {
       // A history failure (e.g. workspace deleted mid-request) must never hide the HTTP outcome.

@@ -93,6 +93,7 @@ const httpRequestInput = z.object({
   workspaceId: uuid,
   requestRunId: z.string().max(128).nullish(),
   historyUrl: z.string().max(100_000).nullish(),
+  historySource: z.literal('mcp').nullish(),
   scriptSessionId: z.string().max(128).nullish(),
 })
 
@@ -313,6 +314,16 @@ export interface WindowControls {
   showAppMenu(x: number, y: number): void
 }
 
+const assistantEdit = z
+  .object({
+    workspaceId: uuid,
+    requestId: uuid.nullable(),
+    requestName: z.string().max(500).nullable(),
+    method: z.string().max(32),
+    url: z.string().max(8192),
+    detail: z.string().min(1).max(1000),
+  })
+  .strict()
 const mcpClientId = z.enum(['claude-desktop', 'claude-code', 'cursor', 'vscode', 'windsurf'])
 const mcpSettings = z.object({ enabled: z.boolean(), port: z.number().int().min(1024).max(65535) }).strict()
 const mcpCallResult = z.union([
@@ -419,6 +430,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     clearHistory: async (...a) => core.history.clear(parseArgs(z.tuple([uuid]), a)[0]),
     deleteHistoryEntry: async (...a) => core.history.deleteEntry(parseArgs(z.tuple([uuid]), a)[0]),
+    recordAssistantEdit: async (...a) => {
+      const [e] = parseArgs(z.tuple([assistantEdit]), a)
+      return core.history.record({ ...e, statusCode: null, ok: true, errorMessage: null, durationMs: 0, kind: 'edit', source: 'mcp' })
+    },
 
     // HTTP execution
     executeHttpRequest: async (...a) => core.http.execute(parseArgs(z.tuple([httpRequestInput]), a)[0]),

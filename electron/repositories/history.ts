@@ -15,6 +15,9 @@ interface HistoryRow {
   error_message: string | null
   duration_ms: number
   created_at: number
+  kind: 'send' | 'edit'
+  source: 'mcp' | null
+  detail: string | null
 }
 
 const toEntry = (r: HistoryRow): HistoryEntry => ({
@@ -29,6 +32,9 @@ const toEntry = (r: HistoryRow): HistoryEntry => ({
   errorMessage: r.error_message,
   durationMs: r.duration_ms,
   createdAt: r.created_at,
+  kind: r.kind,
+  source: r.source,
+  detail: r.detail,
 })
 
 export interface NewHistoryEntry {
@@ -41,6 +47,11 @@ export interface NewHistoryEntry {
   ok: boolean
   errorMessage: string | null
   durationMs: number
+  /** Default 'send'. */
+  kind?: 'send' | 'edit'
+  /** 'mcp': done by an AI assistant. */
+  source?: 'mcp' | null
+  detail?: string | null
 }
 
 /** Retention cap per workspace; oldest rows are pruned on insert. */
@@ -69,11 +80,12 @@ export class HistoryRepository {
       this.db
         .prepare(
           `INSERT INTO history (id, workspace_id, request_id, request_name, method, url, status_code, ok,
-             error_message, duration_ms, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             error_message, duration_ms, created_at, kind, source, detail)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(id, workspaceId, requestId, entry.requestName, entry.method, entry.url, entry.statusCode,
-          entry.ok ? 1 : 0, entry.errorMessage, Math.max(0, Math.round(entry.durationMs)), nowSeconds())
+          entry.ok ? 1 : 0, entry.errorMessage, Math.max(0, Math.round(entry.durationMs)), nowSeconds(),
+          entry.kind ?? 'send', entry.source ?? null, entry.detail ?? null)
       this.db
         .prepare(
           `DELETE FROM history WHERE workspace_id = ? AND id NOT IN (
