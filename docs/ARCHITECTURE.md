@@ -611,11 +611,13 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
 
 - **Tools** are declared once in `shared/mcp.ts` (`MCP_TOOLS`: name, description, zod input schema, read-only / destructive /
   open-world hints, timeout): reading (`list_workspaces`, `get_tree`, `search_requests`, `get_request`, `list_environments`,
-  `list_history`, `get_example`), editing (`create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`,
+  `list_history`, `get_example`, `list_versions`, `get_version`), editing (`create_version`, `restore_version`, `create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`,
   `rename`, `delete`, `create_example`, `update_example`, `delete_example`, `create_environment`, `set_variable`, `delete_variable`,
   `set_active_environment`, `import_postman`, `open_in_app`) and sending (`send_request`, optionally `save_as_example`;
   `run_collection`). Examples are addressed by index or exact name and edited through `parseExample` / `serializeExample`
-  (unedited fields stay byte-identical), in any workspace.
+  (unedited fields stay byte-identical), in any workspace. Versions: `create_version` takes a number or a bump
+  (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`;
+  `restore_version` replace carries expanded folders and clean open tabs over (`mapRestored`), like the Versions panel.
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
   (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel

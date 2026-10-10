@@ -929,7 +929,8 @@ assistants and advanced**: copy a ready-made command setup (works with any assis
 (keep that one private), and change the port or token.
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
-send. Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
+send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a
+version, and restore one as a copy or in place (assistants that ask before destructive actions ask you first). Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
 edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
