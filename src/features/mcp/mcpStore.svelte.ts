@@ -1,5 +1,5 @@
 /** MCP server state for Settings and the status bar; tool calls themselves run in McpHost. */
-import type { McpSettings, McpStatus, McpToolName } from '../../../shared/mcp'
+import type { McpClientId, McpClientStatus, McpSettings, McpStatus, McpToolName } from '../../../shared/mcp'
 import { MCP_TOOLS } from '../../../shared/mcp'
 import { api, errorInfo } from '../../lib/ipc'
 
@@ -10,6 +10,35 @@ class McpStore {
   /** Title of the tool that ran last (status bar tooltip). */
   lastTool = $state<string | null>(null)
   error = $state<string | null>(null)
+  /** Assistants found on this computer (Settings). */
+  clients = $state<McpClientStatus[] | null>(null)
+  /** The assistant being connected / disconnected. */
+  busyClient = $state<McpClientId | null>(null)
+  clientError = $state<{ id: McpClientId; message: string } | null>(null)
+
+  async loadClients(): Promise<void> {
+    try {
+      this.clients = await api().listMcpClients()
+    } catch (e) {
+      this.error = errorInfo(e).message
+    }
+  }
+
+  /** Connect (adds Slinger to the assistant's configuration; turns the server on) or Disconnect. */
+  async setConnected(id: McpClientId, connected: boolean): Promise<boolean> {
+    this.busyClient = id
+    this.clientError = null
+    try {
+      this.clients = connected ? await api().connectMcpClient(id) : await api().disconnectMcpClient(id)
+      await this.load()
+      return true
+    } catch (e) {
+      this.clientError = { id, message: errorInfo(e).message }
+      return false
+    } finally {
+      this.busyClient = null
+    }
+  }
 
   async load(): Promise<void> {
     try {

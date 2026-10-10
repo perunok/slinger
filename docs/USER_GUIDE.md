@@ -909,15 +909,22 @@ Slinger for you: find and read requests, create and edit requests, folders, coll
 collection and look at history, just as if you clicked yourself. Changes show up in the window right away, and the status bar says
 "AI assistant: …" while one works.
 
-1. Settings > **AI assistants (MCP)** > turn on **Let AI assistants work in Slinger**. It listens only on this computer
-   (`http://127.0.0.1:7354/mcp`; change the **Port** if that one is taken) and only while Slinger is open.
-2. Pick your assistant under **Connect an assistant** and click **Copy setup**: Claude Code gets a `claude mcp add ...`
-   command to run once; Cursor, VS Code and others get an `mcp.json` entry; Claude Desktop gets a `claude_desktop_config.json`
-   entry that starts Slinger's small built-in bridge (restart Claude Desktop afterwards).
+1. Settings > **AI assistants (MCP)**. Under **Your assistants**, Slinger lists the ones it finds on this computer (Claude
+   Desktop, Claude Code, Cursor, VS Code, Windsurf). Click **Connect** next to yours. That also turns the server on.
+2. Do what the line under it says (for example quit and reopen Claude Desktop, or start a new Claude Code session).
 3. Ask the assistant, for example "add a POST /orders request to my Shop collection and send it".
 
-The copied setup contains the **token** that protects the server; keep it private. **New token** replaces it (assistants set up
-with the old one stop working until you give them the new one). Turning the switch off stops the server at once.
+Connect writes one entry named `slinger` into that assistant's own settings file (the previous file is kept next to it as
+`.slinger-backup`; Claude Code is set up through its `claude mcp add` command). The entry holds no password or port: it starts a
+small helper from Slinger's data folder that finds them, and **if Slinger is not running, it starts Slinger** and waits for it.
+So nothing breaks when the port changes or you make a **New token**. **Disconnect** removes the entry again; **Update** appears
+when an entry points to another Slinger installation. Slinger only touches these files when you click.
+
+The server listens only on this computer (port 7354, or one of the next ten when that one is taken) and needs a token that only
+connected assistants and you can read. Turning **Let AI assistants work in Slinger** off stops it at once (connected assistants
+then get a "turned off" message instead of starting Slinger). For assistants Slinger cannot connect by itself, open **Other
+assistants and advanced**: copy a ready-made command setup (works with any assistant that runs a command) or a URL + token setup
+(keep that one private), and change the port or token.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
 change their values, and requests they send use them inside Slinger, but a secret value is never shown to them; credentials typed

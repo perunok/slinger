@@ -102,12 +102,11 @@ export function createCore(deps: CoreDeps): Core {
       ...deps.sync,
     }),
     mcp: new McpService({
+      ...deps.mcp,
       db,
       secrets,
       emit: deps.mcp?.emit ?? (() => false),
       appVersion: deps.mcp?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
-      stdioCommand: deps.mcp?.stdioCommand ?? { command: 'slinger', args: ['mcp-stdio.cjs'] },
-      now: deps.mcp?.now,
     }),
   }
   // First launch: make sure there is always a workspace to work in.

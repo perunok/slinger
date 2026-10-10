@@ -15,6 +15,11 @@ import { runTool } from './tools'
 let b: Backend
 beforeEach(async () => {
   b = await setupSync()
+  // the store is a singleton: start every test from scratch
+  mcp.status = null
+  mcp.clients = null
+  mcp.clientError = null
+  mcp.active = 0
 })
 afterEach(() => {
   cleanup()
@@ -191,16 +196,43 @@ describe('host and settings', () => {
     expect(mcp.lastTool).toBe('List workspaces')
   })
 
-  it('Settings turns it on, shows where it runs, copies setups with the real token, and replaces the token', async () => {
-    const ev = userEvent.setup() // installs a working clipboard
+  it('Settings: one Connect per assistant found; connecting turns the server on and says what to do next', async () => {
+    const ev = userEvent.setup()
     render(McpSettings, { props: { now: Math.floor(Date.now() / 1000) } })
-    await ev.click(await screen.findByRole('checkbox', { name: /Let AI assistants work in Slinger/ }))
-    await waitFor(() => expect(screen.getByTestId('mcp-status')).toHaveTextContent('Running at http://127.0.0.1:7354/mcp'))
-    expect(screen.getByTestId('mcp-snippet')).toHaveTextContent('Authorization: Bearer <token>')
-    await ev.click(screen.getByRole('button', { name: 'Copy setup' }))
-    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe(mcpSnippet('claude-code', mcp.status!, await b.revealMcpToken())))
-    await ev.click(screen.getByRole('radio', { name: 'Claude Desktop' }))
+    const desktop = await screen.findByTestId('mcp-client-claude-desktop')
+    expect(screen.getByTestId('mcp-status')).toHaveTextContent('Off. Connecting an assistant turns it on.')
+    expect(screen.getByTestId('mcp-client-cursor')).toHaveTextContent('Connected')
+    expect(screen.queryByTestId('mcp-client-vscode')).toBeNull()
+    expect(screen.getByText('Not found on this computer: VS Code, Windsurf.')).toBeInTheDocument()
+
+    await ev.click(within(desktop).getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(within(desktop).getByText('Connected')).toBeInTheDocument())
+    expect(await within(desktop).findByText('Quit Claude Desktop completely and open it again.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('mcp-status')).toHaveTextContent('On.'))
+
+    await ev.click(within(desktop).getByRole('button', { name: 'Disconnect' }))
+    await waitFor(() => expect(within(desktop).getByRole('button', { name: 'Connect' })).toBeInTheDocument())
+  })
+
+  it('Settings: a failed Connect explains itself on that row', async () => {
+    b.mcp.failNextConnect('claude_desktop_config.json is not plain JSON (it may contain comments), so Slinger leaves it alone.')
+    render(McpSettings, { props: { now: 0 } })
+    const desktop = await screen.findByTestId('mcp-client-claude-desktop')
+    await userEvent.setup().click(within(desktop).getByRole('button', { name: 'Connect' }))
+    expect(await within(desktop).findByRole('alert')).toHaveTextContent('not plain JSON')
+  })
+
+  it('Settings: other assistants get a token-free command, or a URL setup that copies the real token; a new token can be made', async () => {
+    const ev = userEvent.setup() // installs a working clipboard
+    await b.setMcpSettings({ enabled: true, port: 7354 })
+    render(McpSettings, { props: { now: 0 } })
+    await ev.click(await screen.findByText('Other assistants and advanced'))
     expect(screen.getByTestId('mcp-snippet')).toHaveTextContent('ELECTRON_RUN_AS_NODE')
+    expect(screen.getByTestId('mcp-snippet')).not.toHaveTextContent('token')
+    await ev.click(screen.getByRole('radio', { name: 'URL + token' }))
+    expect(screen.getByTestId('mcp-snippet')).toHaveTextContent('Bearer <token>')
+    await ev.click(screen.getByRole('button', { name: 'Copy setup' }))
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe(mcpSnippet('http', mcp.status!, await b.revealMcpToken())))
 
     const before = await b.revealMcpToken()
     await ev.click(screen.getByRole('button', { name: 'New token' }))
@@ -208,7 +240,7 @@ describe('host and settings', () => {
     await waitFor(async () => expect(await b.revealMcpToken()).not.toBe(before))
   })
 
-  it('shows a port in use', async () => {
+  it('shows a server that cannot start', async () => {
     b.mcp.failNextStart()
     render(McpSettings, { props: { now: 0 } })
     await userEvent.setup().click(await screen.findByRole('checkbox', { name: /Let AI assistants/ }))
@@ -217,14 +249,9 @@ describe('host and settings', () => {
 })
 
 describe('snippets', () => {
-  const status = { url: 'http://127.0.0.1:7354/mcp', stdio: { command: '/opt/Slinger/slinger', args: ['/x/mcp-stdio.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', SLINGER_MCP_URL: 'http://127.0.0.1:7354/mcp', SLINGER_MCP_TOKEN: '<token>' } } }
-  it('builds a Claude Code command, an HTTP config and a Claude Desktop stdio config', () => {
-    expect(mcpSnippet('claude-code', status, 'slg_t')).toBe("claude mcp add --scope user --transport http slinger http://127.0.0.1:7354/mcp --header 'Authorization: Bearer slg_t'")
-    expect(JSON.parse(mcpSnippet('json-http', status, 'slg_t'))).toEqual({ mcpServers: { slinger: { type: 'http', url: status.url, headers: { Authorization: 'Bearer slg_t' } } } })
-    expect(JSON.parse(mcpSnippet('claude-desktop', status, 'slg_t')).mcpServers.slinger).toEqual({
-      command: '/opt/Slinger/slinger',
-      args: ['/x/mcp-stdio.cjs'],
-      env: { ELECTRON_RUN_AS_NODE: '1', SLINGER_MCP_URL: status.url, SLINGER_MCP_TOKEN: 'slg_t' },
-    })
+  const status = { url: 'http://127.0.0.1:7354/mcp', stdio: { command: '/opt/Slinger/slinger', args: ['/home/u/.config/Slinger/mcp/bridge.cjs'], env: { ELECTRON_RUN_AS_NODE: '1' } } }
+  it('builds a token-free command setup and a URL + token setup', () => {
+    expect(JSON.parse(mcpSnippet('command', status, 'slg_t'))).toEqual({ mcpServers: { slinger: status.stdio } })
+    expect(JSON.parse(mcpSnippet('http', status, 'slg_t'))).toEqual({ mcpServers: { slinger: { type: 'http', url: status.url, headers: { Authorization: 'Bearer slg_t' } } } })
   })
 })

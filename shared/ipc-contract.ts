@@ -10,7 +10,7 @@
  * Do not rename a channel or change a signature here without updating both
  * the main-process handler and the renderer client in the same change.
  */
-import type { McpCall, McpCallResult, McpSettings, McpStatus } from './mcp'
+import type { McpCall, McpCallResult, McpClientId, McpClientStatus, McpSettings, McpStatus } from './mcp'
 import type {
   ApiFolder,
   ApiRequest,
@@ -258,6 +258,14 @@ export interface SlingerIpcApi {
   regenerateMcpToken(): Promise<McpStatus>
   /** The renderer's answer to an onMcpCall request. */
   mcpRespond(callId: string, result: McpCallResult): Promise<void>
+  /** The renderer subscribed to onMcpCall (tool calls wait for this after a start or reload). */
+  mcpHostReady(): Promise<void>
+  /** Assistants found on this computer and whether Slinger is in their MCP configuration. */
+  listMcpClients(): Promise<McpClientStatus[]>
+  /** Adds Slinger to that assistant's configuration (turning the server on first). */
+  connectMcpClient(clientId: McpClientId): Promise<McpClientStatus[]>
+  /** Removes Slinger's entry from that assistant's configuration. */
+  disconnectMcpClient(clientId: McpClientId): Promise<McpClientStatus[]>
   /** Push channel (main -> renderer): an LLM client called a tool; run it and answer with mcpRespond. */
   onMcpCall(listener: (call: McpCall) => void): () => void
   /**
@@ -415,6 +423,10 @@ export const IPC_CHANNELS = [
   'revealMcpToken',
   'regenerateMcpToken',
   'mcpRespond',
+  'mcpHostReady',
+  'listMcpClients',
+  'connectMcpClient',
+  'disconnectMcpClient',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]

@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, Menu, nativeTheme, net, powerMonitor, proto
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
@@ -30,6 +30,7 @@ import {
   writeWindowState,
   type WindowState,
 } from './lib/windowState'
+import { defaultClientsEnv } from './mcp/clients'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { checkForUpdate, updateFeedUrl } from './services/updateCheck'
@@ -167,12 +168,6 @@ function linuxWindowIcon(): { icon?: string } {
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'build', 'icons', '512x512.png')
   return existsSync(icon) ? { icon } : {}
-}
-
-/** The stdio bridge (dist-electron/mcp-stdio.cjs); unpacked from the asar in a packaged app so Node mode can run it. */
-function mcpStdioScript(): string {
-  const dir = app.isPackaged ? app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked') : app.getAppPath()
-  return join(dir, 'dist-electron', 'mcp-stdio.cjs')
 }
 
 function createWindow(): BrowserWindow {
@@ -356,7 +351,10 @@ function openMainWindow(): BrowserWindow {
   mainWindow = win
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
+    core?.mcp.hostGone()
   })
+  // MCP tool calls wait until the (re)loaded renderer subscribed again (mcpHostReady).
+  win.webContents.on('did-start-loading', () => core?.mcp.hostGone())
   // Auto-sync: timers run in main; focus/blur pick the poll interval, resume re-syncs after sleep.
   win.on('focus', () => core?.sync.notifyFocus(true))
   win.on('blur', () => core?.sync.notifyFocus(false))
@@ -478,8 +476,19 @@ if (!app.requestSingleInstanceLock()) {
           return true
         },
         appVersion: app.getVersion(),
-        // Clients that only start commands (Claude Desktop) run this executable in Node mode with the bundled bridge.
-        stdioCommand: { command: process.execPath, args: [mcpStdioScript()] },
+        // Assistants run this executable in Node mode with the bridge copied to <userData>/mcp (an AppImage's own files
+        // move on every launch, so the bridge and the command must not point into them).
+        userDataDir: app.getPath('userData'),
+        bridgeSource: join(app.getAppPath(), 'dist-electron', 'mcp-stdio.cjs'),
+        executable: process.env.APPIMAGE || process.execPath,
+        launchArgs: app.isPackaged ? [] : [app.getAppPath()],
+        launchEnv: Object.fromEntries(
+          (['SLINGER_USER_DATA_DIR', 'SLINGER_INSECURE_TEST_KEYCHAIN'] as const).flatMap((k) => (process.env[k] ? [[k, process.env[k]!]] : [])),
+        ),
+        // SLINGER_MCP_CLIENTS_HOME (tests): look for assistants' configs under this folder instead of the real home.
+        clientsEnv: process.env.SLINGER_MCP_CLIENTS_HOME
+          ? defaultClientsEnv(process.env.SLINGER_MCP_CLIENTS_HOME, process.platform, join(process.env.SLINGER_MCP_CLIENTS_HOME, 'AppData'), '')
+          : defaultClientsEnv(homedir(), process.platform, app.getPath('appData')),
       },
     })
     let feedUrl: string | null = null

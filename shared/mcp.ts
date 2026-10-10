@@ -239,13 +239,33 @@ export interface McpSettings {
 export interface McpStatus extends McpSettings {
   /** The endpoint is listening. */
   running: boolean
-  /** Why it is not running although enabled (e.g. port in use). */
+  /** Why it is not running although enabled (e.g. no free port). */
   error: string | null
-  /** e.g. http://127.0.0.1:7354/mcp */
+  /** Set when the chosen port was busy and a nearby one is used instead. */
+  portNote: string | null
+  /** e.g. http://127.0.0.1:7354/mcp (the port actually in use while running). */
   url: string
   /** Unix seconds of the last tool call, or null. */
   lastCallAt: number | null
   calls: number
-  /** For clients that only start local commands (Claude Desktop): runs Slinger itself as a stdio <-> HTTP bridge. */
+  /**
+   * What connected assistants run: Slinger's executable in Node mode with the bridge kept in Slinger's data folder
+   * (<userData>/mcp/bridge.cjs). No token or port: the bridge reads them, and starts Slinger when it is not running.
+   */
   stdio: { command: string; args: string[]; env: Record<string, string> }
+}
+
+export type McpClientId = 'claude-desktop' | 'claude-code' | 'cursor' | 'vscode' | 'windsurf'
+
+export interface McpClientStatus {
+  id: McpClientId
+  name: string
+  /** Found on this computer (its config folder exists, or the `claude` command for Claude Code). */
+  installed: boolean
+  /** connected: has Slinger's entry; outdated: has an entry for another Slinger location (Connect again fixes it). */
+  state: 'connected' | 'outdated' | 'not-connected'
+  /** The file Slinger edits (Claude Code: the command it runs instead). */
+  configPath: string | null
+  /** What to do after connecting, e.g. "Restart Claude Desktop." */
+  afterConnect: string
 }

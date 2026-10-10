@@ -38,8 +38,6 @@ asarUnpack:
   - "**/node_modules/bindings/**"
   - "**/node_modules/file-uri-to-path/**"
   - "**/node_modules/@napi-rs/**"
-  # The MCP stdio bridge is run by the executable in Node mode (main.ts: mcpStdioScript), outside the asar.
-  - "dist-electron/mcp-stdio.cjs"
 
 # scripts/ensure-native.mjs (run by `npm run electron:build` / `package`) already rebuilds
 # better-sqlite3 for Electron's ABI on the host arch; do not let electron-builder do it again.

@@ -4,7 +4,7 @@
  * Electron binary in Node mode). Steps run in order and share one app.
  */
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,7 +40,9 @@ async function tool<T = any>(name: string, args: Record<string, unknown> = {}): 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), 'slinger-e2e-mcp-'))
   target = await startTarget()
-  ctx = await launch(join(tmp, 'profile'))
+  // Assistants are looked for in a throwaway home: the test must never touch the real configs.
+  mkdirSync(join(tmp, 'home', '.config', 'Claude'), { recursive: true })
+  ctx = await launch(join(tmp, 'profile'), { SLINGER_MCP_CLIENTS_HOME: join(tmp, 'home') })
   const port = await freePort()
   status = await ctx.page.evaluate((p) => window.slinger.setMcpSettings({ enabled: true, port: p }), port)
   token = await ctx.page.evaluate(() => window.slinger.revealMcpToken())
@@ -92,11 +94,19 @@ describe('MCP server', () => {
     expect(history[0]).toMatchObject({ method: 'GET', status: 200, request_id: req.id })
   })
 
-  it('works through the stdio bridge started like Claude Desktop starts it', async () => {
-    const child = spawn(status.stdio.command, status.stdio.args, {
-      env: { ...process.env, ...status.stdio.env, SLINGER_MCP_TOKEN: token },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
+  it('Connect writes Claude Desktop\'s config, and the command in it reaches Slinger without any token', async () => {
+    const clients = await ctx.page.evaluate(() => window.slinger.connectMcpClient('claude-desktop'))
+    expect(clients.find((c) => c.id === 'claude-desktop')).toMatchObject({ installed: true, state: 'connected' })
+    const config = JSON.parse(readFileSync(join(tmp, 'home', '.config', 'Claude', 'claude_desktop_config.json'), 'utf8'))
+    const entry = config.mcpServers.slinger as { command: string; args: string[]; env: Record<string, string> }
+    expect(JSON.stringify(entry)).not.toContain(token)
+    expect(entry.args[0]).toBe(join(tmp, 'profile', 'mcp', 'bridge.cjs'))
+
+    // Start it the way Claude Desktop does: the command, its args and env, nothing else.
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), ...entry.env }
+    delete env.SLINGER_MCP_URL
+    delete env.SLINGER_MCP_TOKEN
+    const child = spawn(entry.command, entry.args, { env, stdio: ['pipe', 'pipe', 'pipe'] })
     const lines: string[] = []
     let buf = ''
     child.stdout.on('data', (d: Buffer) => {
@@ -123,6 +133,9 @@ describe('MCP server', () => {
     expect((await answer(2)).result.structuredContent.matches[0]).toMatchObject({ name: 'Who am I' })
     child.stdin.end()
     await new Promise((r) => child.on('exit', r))
+
+    const after = await ctx.page.evaluate(() => window.slinger.disconnectMcpClient('claude-desktop'))
+    expect(after.find((c) => c.id === 'claude-desktop')!.state).toBe('not-connected')
   })
 
   it('stops answering when turned off', async () => {

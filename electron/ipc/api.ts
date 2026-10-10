@@ -313,6 +313,7 @@ export interface WindowControls {
   showAppMenu(x: number, y: number): void
 }
 
+const mcpClientId = z.enum(['claude-desktop', 'claude-code', 'cursor', 'vscode', 'windsurf'])
 const mcpSettings = z.object({ enabled: z.boolean(), port: z.number().int().min(1024).max(65535) }).strict()
 const mcpCallResult = z.union([
   z.object({ ok: z.literal(true), text: z.string().max(20_000_000), data: z.record(z.string(), z.unknown()).optional() }).strict(),
@@ -553,6 +554,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [callId, result] = parseArgs(z.tuple([uuid, mcpCallResult]), a)
       core.mcp.respond(callId, result)
     },
+    mcpHostReady: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.hostReady()),
+    listMcpClients: async (...a) => (parseArgs(z.tuple([]), a), core.mcp.clients()),
+    connectMcpClient: async (...a) => core.mcp.connect(parseArgs(z.tuple([mcpClientId]), a)[0]),
+    disconnectMcpClient: async (...a) => core.mcp.disconnect(parseArgs(z.tuple([mcpClientId]), a)[0]),
 
     // App
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),

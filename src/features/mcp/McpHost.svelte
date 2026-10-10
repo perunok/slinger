@@ -7,7 +7,7 @@
 
   onMount(() => {
     void mcp.load()
-    return api().onMcpCall(async (call) => {
+    const unsubscribe = api().onMcpCall(async (call) => {
       mcp.begin(call.tool)
       try {
         const result = await runTool(call.tool, call.args)
@@ -21,5 +21,8 @@
         mcp.end()
       }
     })
+    // Calls that arrived while the window was starting wait for this.
+    void api().mcpHostReady()
+    return unsubscribe
   })
 </script>
