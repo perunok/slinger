@@ -643,8 +643,7 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   (`claude_desktop_config.json` in `~/Library/Application Support/Claude`, `%APPDATA%\Claude`, `~/.config/Claude`), Cursor
   (`~/.cursor/mcp.json`), VS Code (`<config>/Code/User/mcp.json`, key `servers`, `type: "stdio"`), Windsurf
   (`~/.codeium/windsurf/mcp_config.json`): only the `slinger` key changes, the old file is kept as `.slinger-backup`, writes are
-  atomic, files that are not plain JSON are refused. Claude Code: `claude mcp add --scope user -e ELECTRON_RUN_AS_NODE=1 slinger
-  -- <command>` (found on PATH, in the usual install places or via the login shell); status from `~/.claude.json`. An entry for
+  atomic, files that are not plain JSON are refused. Claude Code: `claude mcp add-json --scope user slinger '<entry JSON>'` (found on PATH, in the usual install places or via the login shell); status from `~/.claude.json`. An entry for
   another location shows as `outdated`. Connect turns the server on. Settings shows these first; port, token and manual setups
   (`snippets.ts`: command or URL + token) sit under "Other assistants and advanced".
 - Mock backend: `src/dev/mock/mcp.ts`; `window.__slingerMock.mcp.call(tool, args)` plays the client in browser dev mode.

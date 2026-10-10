@@ -310,10 +310,9 @@ describe('connecting assistants', () => {
       const file = join(home, '.claude.json')
       const cfg = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {}
       cfg.mcpServers ??= {}
-      if (args[1] === 'add') {
-        const sep = args.indexOf('--')
-        const envPairs = args.flatMap((a, i) => (args[i - 1] === '-e' ? [a.split('=')] : []))
-        cfg.mcpServers.slinger = { type: 'stdio', command: args[sep + 1], args: args.slice(sep + 2), env: Object.fromEntries(envPairs) }
+      if (args[1] === 'add-json') {
+        expect(args.slice(2, 5)).toEqual(['--scope', 'user', 'slinger'])
+        cfg.mcpServers.slinger = JSON.parse(args[5]!)
       } else if (args[1] === 'remove') {
         if (!cfg.mcpServers.slinger) return { code: 1, stdout: '', stderr: 'No MCP server found with name: slinger' }
         delete cfg.mcpServers.slinger
@@ -378,7 +377,7 @@ describe('connecting assistants', () => {
     await connectClient(env(), 'claude-code', entry)
     expect(ran).toEqual([
       ['/usr/bin/claude', 'mcp', 'remove', '--scope', 'user', 'slinger'],
-      ['/usr/bin/claude', 'mcp', 'add', '--scope', 'user', '-e', 'ELECTRON_RUN_AS_NODE=1', 'slinger', '--', entry.command, ...entry.args],
+      ['/usr/bin/claude', 'mcp', 'add-json', '--scope', 'user', 'slinger', JSON.stringify({ type: 'stdio', ...entry })],
     ])
     expect((await listClients(env(), entry)).find((c) => c.id === 'claude-code')!.state).toBe('connected')
     await disconnectClient(env(), 'claude-code')

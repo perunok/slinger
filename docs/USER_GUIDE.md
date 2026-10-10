@@ -915,7 +915,7 @@ collection and look at history, just as if you clicked yourself. Changes show up
 3. Ask the assistant, for example "add a POST /orders request to my Shop collection and send it".
 
 Connect writes one entry named `slinger` into that assistant's own settings file (the previous file is kept next to it as
-`.slinger-backup`; Claude Code is set up through its `claude mcp add` command). The entry holds no password or port: it starts a
+`.slinger-backup`; Claude Code is set up through its `claude mcp` command). The entry holds no password or port: it starts a
 small helper from Slinger's data folder that finds them, and **if Slinger is not running, it starts Slinger** and waits for it.
 So nothing breaks when the port changes or you make a **New token**. **Disconnect** removes the entry again; **Update** appears
 when an entry points to another Slinger installation. Slinger only touches these files when you click.

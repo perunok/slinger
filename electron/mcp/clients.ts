@@ -4,7 +4,7 @@
  *
  * File-based clients (Claude Desktop, Cursor, VS Code, Windsurf): JSON is read, only our key changes, the previous file
  * is kept as <file>.slinger-backup, the new one is written atomically. Files that are not plain JSON (comments) are left
- * alone with an explanation. Claude Code: its own CLI (`claude mcp add --scope user ...`), status from ~/.claude.json.
+ * alone with an explanation. Claude Code: its own CLI (`claude mcp add-json --scope user ...`), status from ~/.claude.json.
  * Only ever runs when the user clicks Connect / Disconnect.
  */
 import { execFile } from 'node:child_process'
@@ -196,9 +196,10 @@ async function connectClaudeCode(env: ClientsEnv, expected: ServerEntry): Promis
   if (!claude) throw new ClientConfigError('Claude Code (the `claude` command) was not found. Install it, or add Slinger by hand.')
   // Replace whatever "slinger" entry there is (e.g. one for an older Slinger location).
   await env.run(claude, ['mcp', 'remove', '--scope', 'user', ENTRY_NAME]).catch(() => null)
-  const envArgs = Object.entries(expected.env).flatMap(([k, v]) => ['-e', `${k}=${v}`])
-  const res = await env.run(claude, ['mcp', 'add', '--scope', 'user', ...envArgs, ENTRY_NAME, '--', expected.command, ...expected.args])
-  if (res.code !== 0) throw new ClientConfigError(`claude mcp add failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`)
+  // add-json takes the whole entry as one argument (`add -e` is variadic and would swallow the server name).
+  const json = JSON.stringify({ type: 'stdio', command: expected.command, args: expected.args, env: expected.env })
+  const res = await env.run(claude, ['mcp', 'add-json', '--scope', 'user', ENTRY_NAME, json])
+  if (res.code !== 0) throw new ClientConfigError(`claude mcp add-json failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`)
 }
 
 async function disconnectClaudeCode(env: ClientsEnv): Promise<void> {
