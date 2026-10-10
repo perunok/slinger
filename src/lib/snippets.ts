@@ -1,9 +1,15 @@
 /**
  * Code snippet generation from an already-resolved HttpRequestInput.
  * Pure string builders, one per target language. `{{vars}}` are left verbatim.
+ *
+ * MCP requests get one snippet instead: an MCP Inspector CLI command line (`mcpInspectorSnippet`, input built from the
+ * draft by `prepareMcpSnippet`).
  */
 
-import type { HttpRequestInput } from '../../shared/types'
+import type { HttpRequestInput, McpClientTransport, McpOperationName } from '../../shared/types'
+import { prepareRequest, resolveJsonTemplates, templateResolver, type PrepareContext } from './prepare'
+import { dataRows } from './kv'
+import type { RequestDraft } from './request'
 import { textToBase64, type EditorLanguage } from './response'
 import { mapOutsideTokens } from './urlParams'
 
@@ -536,4 +542,140 @@ export function generateSnippet(lang: SnippetLang, input: HttpRequestInput): str
     case 'http':
       return httpFile(p, input.requestName ?? '')
   }
+}
+
+// ---------------------------------------------------------------------------
+// MCP Inspector CLI (MCP requests)
+// ---------------------------------------------------------------------------
+
+/** The only snippet language of an MCP request. */
+export const MCP_SNIPPET_LANG = { id: 'mcpInspector', label: 'MCP Inspector CLI', editorLanguage: 'text' as EditorLanguage }
+
+export const MCP_INSPECTOR_PACKAGE = '@modelcontextprotocol/inspector'
+
+/** An MCP request with its templates applied (unresolved and secret variables stay `{{name}}`). */
+export interface McpSnippetInput {
+  transport: McpClientTransport
+  /** http/sse: the server URL, headers and auth (auth is turned into headers as for the other snippets). */
+  http?: HttpRequestInput
+  /** stdio */
+  command?: string
+  args?: string[]
+  env?: Array<{ key: string; value: string }>
+  cwd?: string
+  operation: McpOperationName
+  /** Tool or prompt name. */
+  name: string
+  uri?: string
+  /** tools/call: the parsed arguments object; prompts/get: the string arguments. */
+  arguments?: Record<string, unknown>
+}
+
+/** A shell word: bare when it is plain, single-quoted otherwise. */
+const shWord = (s: string) => (/^[\w@%+=:,./-]+$/.test(s) ? s : shq(s))
+
+/** `--tool-arg` value: strings as they are, anything else as JSON (the Inspector parses JSON values). */
+const toolArgValue = (v: unknown) => (typeof v === 'string' ? v : (JSON.stringify(v) ?? 'null'))
+
+/**
+ * Wraps `{{name}}` tokens left outside JSON string literals in quotes, so arguments with an unresolved bare variable
+ * (`{"n": {{n}}}`) still parse; the variable then shows in the snippet as `n={{n}}`.
+ */
+function quoteBareTokens(text: string): string {
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const quote = text.indexOf('"', i)
+    const plain = quote < 0 ? text.slice(i) : text.slice(i, quote)
+    out += plain.replace(/\{\{[^{}]*\}\}/g, (t) => JSON.stringify(t))
+    if (quote < 0) break
+    let end = quote + 1
+    while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1
+    out += text.slice(quote, end + 1)
+    i = end + 1
+  }
+  return out
+}
+
+export type McpSnippetPrepared = { ok: true; input: McpSnippetInput } | { ok: false; error: string }
+
+/**
+ * An MCP draft as McpSnippetInput, resolved like the other snippets (`prepareRequest` with `allowUnresolved`): values of
+ * the active scope are applied, secrets and undefined variables stay `{{name}}`, built-ins get sample values.
+ */
+export function prepareMcpSnippet(draft: RequestDraft, ctx: Omit<PrepareContext, 'allowUnresolved' | 'secrets'>): McpSnippetPrepared {
+  const m = draft.mcp
+  if (!m) return { ok: false, error: 'This is not an MCP request.' }
+  const { resolve: r } = templateResolver(ctx)
+  const input: McpSnippetInput = { transport: m.transport, operation: m.operation, name: '' }
+  if (m.transport === 'stdio') {
+    const command = r(m.command).trim()
+    if (!command) return { ok: false, error: 'Enter the command that starts the MCP server.' }
+    input.command = command
+    input.args = m.args.map(r)
+    input.env = dataRows(m.env)
+      .filter((e) => e.enabled && e.key.trim())
+      .map((e) => ({ key: e.key.trim(), value: r(e.value) }))
+    input.cwd = r(m.cwd).trim()
+  } else {
+    if (!draft.url.trim()) return { ok: false, error: 'Enter the URL of the MCP server.' }
+    const prepared = prepareRequest(draft, { ...ctx, allowUnresolved: true })
+    if (!prepared.ok) return { ok: false, error: prepared.error }
+    input.http = prepared.input
+  }
+  if (m.operation === 'tools/call') {
+    input.name = m.tool.trim()
+    const text = quoteBareTokens(resolveJsonTemplates(m.arguments, r)).trim()
+    let args: unknown = {}
+    if (text) {
+      try {
+        args = JSON.parse(text)
+      } catch (e) {
+        return { ok: false, error: `The tool arguments are not valid JSON: ${e instanceof Error ? e.message : String(e)}` }
+      }
+    }
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return { ok: false, error: 'The tool arguments must be a JSON object.' }
+    input.arguments = args as Record<string, unknown>
+  } else if (m.operation === 'resources/read') {
+    input.uri = r(m.uri).trim()
+  } else {
+    input.name = m.prompt.trim()
+    const args: Record<string, string> = {}
+    for (const row of dataRows(m.promptArguments)) if (row.enabled && row.key.trim()) args[row.key.trim()] = r(row.value)
+    input.arguments = args
+  }
+  return { ok: true, input }
+}
+
+/**
+ * The MCP Inspector CLI command that runs the same operation: `npx @modelcontextprotocol/inspector --cli <server> ...`.
+ * http/sse: the URL, `--transport` and one `--header` per header (auth included; an OAuth 2.0 token is a placeholder).
+ * stdio: `-e KEY=value` per environment variable, then the command and its arguments; a working directory becomes a
+ * leading `cd`. An empty tool, prompt or URI is left as a `<placeholder>`.
+ */
+export function mcpInspectorSnippet(input: McpSnippetInput): string {
+  const first: string[] = ['npx', MCP_INSPECTOR_PACKAGE, '--cli']
+  const parts: string[] = []
+  if (input.transport === 'stdio') {
+    for (const e of input.env ?? []) first.push('-e', shWord(`${e.key}=${e.value}`))
+    first.push(shWord(input.command ?? ''), ...(input.args ?? []).map(shWord))
+  } else {
+    const p = prepare(input.http ?? { method: 'GET', url: '', headers: [], auth: { kind: 'none' }, body: { mode: 'none' }, workspaceId: '' })
+    first.push(shWord(p.url))
+    parts.push(`--transport ${input.transport}`)
+    for (const [k, v] of p.headers) parts.push(`--header ${shq(`${k}: ${v}`)}`)
+  }
+  parts.push(`--method ${input.operation}`)
+  const args = Object.entries(input.arguments ?? {})
+  if (input.operation === 'tools/call') {
+    parts.push(`--tool-name ${shWord(input.name || '<tool>')}`)
+    for (const [k, v] of args) parts.push(`--tool-arg ${shWord(`${k}=${toolArgValue(v)}`)}`)
+  } else if (input.operation === 'resources/read') {
+    parts.push(`--uri ${shWord(input.uri || '<uri>')}`)
+  } else {
+    parts.push(`--prompt-name ${shWord(input.name || '<prompt>')}`)
+    for (const [k, v] of args) parts.push(`--prompt-args ${shWord(`${k}=${toolArgValue(v)}`)}`)
+  }
+  const cd = input.transport === 'stdio' && input.cwd ? `cd ${shWord(input.cwd)} && ` : ''
+  return `${cd}${first.join(' ')} \\\n  ${parts.join(' \\\n  ')}`
 }

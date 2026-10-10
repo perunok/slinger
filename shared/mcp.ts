@@ -45,7 +45,7 @@ const auth = z
 
 const requestFields = {
   name: z.string().min(1).max(512).optional(),
-  method: z.string().min(1).max(32).optional().describe('GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS or a custom verb.'),
+  method: z.string().min(1).max(32).optional().describe('GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS or a custom verb (not MCP).'),
   url: z.string().max(65536).optional().describe('May contain {{variables}} and a query string.'),
   headers: kv.optional().describe('Replaces all headers.'),
   query: kv.optional().describe('Replaces the query parameters (rewrites the query string of the URL).'),
@@ -102,13 +102,15 @@ export const MCP_TOOLS = {
   get_tree: {
     title: 'Collection tree',
     description:
-      'Collections with their folders and requests (ids, method, URL) in sidebar order. Use the ids with the other tools.',
+      'Collections with their folders and requests (ids, type, method, URL) in sidebar order. Use the ids with the other tools. ' +
+      'type "mcp" marks an MCP request (method MCP): it calls a tool, reads a resource or gets a prompt on an MCP server; its ' +
+      'URL is the server URL, or the command line of a local (stdio) server.',
     input: z.object({ workspace_id: optWorkspace, collection_id: id.optional().describe('Only this collection.') }),
     readOnly: true,
   },
   search_requests: {
     title: 'Search requests',
-    description: 'Finds saved requests whose name, URL or method contains the text (case-insensitive).',
+    description: 'Finds saved requests whose name, URL or method contains the text (case-insensitive). Each match has type "http" or "mcp".',
     input: z.object({ query: z.string().min(1).max(512), workspace_id: optWorkspace }),
     readOnly: true,
   },
@@ -116,7 +118,10 @@ export const MCP_TOOLS = {
     title: 'Read a request',
     description:
       'Full request: method, URL, query, headers, body, auth, scripts, docs, and its saved examples (index, name, status). ' +
-      'Literal credentials are masked.',
+      'For an MCP request (type "mcp"): the transport (http = Streamable HTTP, sse, stdio = a local command), the server URL ' +
+      'with headers and auth, or the command, args, environment variable names (values hidden) and cwd; then the operation ' +
+      '(tools/call, resources/read or prompts/get) with its tool and arguments (JSON text), resource URI, or prompt and ' +
+      'arguments. Literal credentials are masked.',
     input: z.object({ request_id: id }),
     readOnly: true,
   },
@@ -132,7 +137,7 @@ export const MCP_TOOLS = {
   },
   create_request: {
     title: 'Create a request',
-    description: 'Saves a new request in a collection or folder. Only name, method and url are needed.',
+    description: 'Saves a new HTTP request in a collection or folder. Only name, method and url are needed. (MCP requests are made in the Slinger window.)',
     input: z.object({
       collection_id: id,
       folder_id: id.optional(),
@@ -144,7 +149,9 @@ export const MCP_TOOLS = {
   },
   update_request: {
     title: 'Edit a request',
-    description: 'Changes the given parts of a saved request; everything not given stays as it is.',
+    description:
+      'Changes the given parts of a saved HTTP request; everything not given stays as it is. MCP requests are edited in the ' +
+      'Slinger window (rename, move_request and delete work for them).',
     input: z.object({ request_id: id, ...requestFields }),
   },
   move_request: {
@@ -173,12 +180,12 @@ export const MCP_TOOLS = {
     title: 'Add a saved example',
     description:
       'Adds a saved example (a stored response, as in Postman) to a request. Defaults: 200 OK, JSON, the request as it is now. ' +
-      'To keep a real response, use send_request with save_as_example instead.',
+      'To keep a real response, use send_request with save_as_example instead. Not for MCP requests.',
     input: z.object({ request_id: id, ...exampleFields, name: z.string().min(1).max(512) }),
   },
   update_example: {
     title: 'Edit a saved example',
-    description: 'Changes the given parts of a saved example; everything not given stays exactly as stored.',
+    description: 'Changes the given parts of a saved example; everything not given stays exactly as stored. Not for MCP requests.',
     input: z.object({ request_id: id, example: exampleSelector, ...exampleFields }),
   },
   delete_example: {
@@ -224,7 +231,10 @@ export const MCP_TOOLS = {
     title: 'Send a request',
     description:
       'Sends a saved request (request_id) or an ad-hoc one (method + url + ...) exactly like the Send button: scripts run, ' +
-      '{{variables}} resolve (secrets inside Slinger), the result lands in history. Returns status, headers, body and tests.',
+      '{{variables}} resolve (secrets inside Slinger), the result lands in history. Returns status, headers, body and tests. ' +
+      'An MCP request (request_id only, sent as saved) runs its operation on its server: the body is the JSON-RPC result, ' +
+      'status 200, or 500 "Tool error" when the tool reports an error. A local command (stdio) runs only after the user ' +
+      'allowed it once in the Slinger window.',
     input: z.object({
       request_id: id.optional().describe('A saved request. Other fields given here override it for this send only.'),
       ...requestFields,
@@ -241,7 +251,9 @@ export const MCP_TOOLS = {
   },
   run_collection: {
     title: 'Run a collection',
-    description: 'Runs every request of a collection or folder in order (like the Runner) and reports each status and test result.',
+    description:
+      'Runs every request of a collection or folder in order (like the Runner) and reports each status and test result. ' +
+      'MCP requests run their saved operation (200, or 500 for a tool error).',
     input: z.object({
       collection_id: id,
       folder_id: id.optional(),
@@ -254,7 +266,9 @@ export const MCP_TOOLS = {
   },
   list_history: {
     title: 'Recent sends',
-    description: 'The latest sends of a workspace (newest first): method, URL, status, duration, request.',
+    description:
+      'The latest sends of a workspace (newest first): method, URL, status, duration, request. MCP calls have method MCP, ' +
+      'type "mcp", detail (operation and tool, URI or prompt) and ok instead of a status.',
     input: z.object({ workspace_id: optWorkspace, limit: z.number().int().min(1).max(200).optional() }),
     readOnly: true,
   },

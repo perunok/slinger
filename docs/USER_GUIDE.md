@@ -24,7 +24,8 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Sidebar:** three tabs, **Collections**, **History** and **Workflows** (see [Workflows](#workflows)). Hide it for more room
   and bring it back with **Ctrl+B**, the Sidebar button in the title bar, View > Toggle Sidebar or Settings > Layout & window > **Show
   sidebar**; it comes back at the width it had.
-- **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below).
+- **Main area:** request tabs, the request editor, and the response pane below it (or beside it, see below). An MCP request
+  has its own editor and result pane, see [MCP requests](#mcp-requests).
 - **Status bar** (bottom, can be hidden): see [Status bar](#status-bar).
 - **Right panel** (closed by default): see [Right panel](#right-panel).
 - **Closing the window** keeps Slinger running in the system tray (macOS: the menu bar), so AI assistants, collection runs and
@@ -54,15 +55,16 @@ A panel on the right of the main area with more about the active request or exam
 panel icon in the top bar, **Ctrl+Alt+B** (Cmd+Option+B on macOS), **View > Toggle
 Right Panel**, or the command palette (`> right panel`, which can also open it directly on one view). It has four views:
 
-- **Variables:** every `{{variable}}` the request uses (URL, enabled headers, body, authorization) with its current value and
+- **Variables:** every `{{variable}}` the request uses (URL, enabled headers, body, authorization; for an MCP request also the
+  command, its arguments and environment, the tool arguments, URI and prompt arguments) with its current value and
   where it comes from (environment, collection, globals, built-in). Secret values are masked; variables that are not defined
   anywhere are highlighted and have a **Create** button. Below: all variables in scope.
 - **Docs:** the request's documentation, rendered. **Edit in Docs** switches the request to its Docs section (for an example,
   **Open request** opens the parent request).
 - **Code:** the code snippet for the request (the same generator as the request's Code section), with a language picker and
-  **Copy** (plus **Save** for the `.http` file language).
-- **Info:** name, method, URL, collection/folder, saved or unsaved, ID, created and updated times, version, and the workspace's
-  sync state.
+  **Copy** (plus **Save** for the `.http` file language). For an MCP request it is an MCP Inspector CLI command instead.
+- **Info:** name, method, URL (for an MCP request: the transport and the server or command), collection/folder, saved or
+  unsaved, ID, created and updated times, version, and the workspace's sync state.
 
 With no request tab active (or a collection overview), the views say so. Drag the panel's left edge to resize it (or focus
 the edge and use Left/Right). Whether it is open, the view and the width are remembered. The panel only shows when the request
@@ -90,12 +92,13 @@ delete every workspace, "Personal" is recreated the next time you start the app.
 
 In the **Collections** sidebar:
 
-- **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New folder**,
+- **New collection** (plus button), then right-click a collection for **Overview & docs**, **New request**, **New MCP request**
+  (see [MCP requests](#mcp-requests)), **New folder**,
   **Run collection...**, **Variables...**, **Scripts...**, **Versions...**, **Export...**, **Rename**, **Delete**.
-- Right-click a folder for **Overview & docs**, **New request**, **New subfolder**, **Run folder...**, **Scripts...**,
+- Right-click a folder for **Overview & docs**, **New request**, **New MCP request**, **New subfolder**, **Run folder...**, **Scripts...**,
   **Extract to new collection...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
-- Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete**.
+- Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete** (and **Add example**, except for MCP requests).
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
 - **Extract to new collection** turns a folder into a collection of its own, named after it (you can change the name). Its
   requests move with it, keeping their history, examples and docs, its subfolders come along, and the folder leaves the original
@@ -107,6 +110,8 @@ In the **Collections** sidebar:
 - In the tree, F2 renames and Delete deletes the selected item. Deleting asks for confirmation and cannot be undone from the UI.
 
 ## Requests
+
+This section is about HTTP requests; for requests to MCP servers see [MCP requests](#mcp-requests).
 
 Ctrl+T opens a new tab. The URL bar has the method selector, the URL, **Send** (Ctrl+Enter, becomes cancel while running) and
 **Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as").
@@ -261,6 +266,158 @@ the assertion message of failures, script errors, a filter, and a `passed/total`
 failed) and **Console** (`console.log/info/warn/error` output with level, time and which script printed it; **Clear** empties it).
 Both belong to the last send and are kept in memory only: they are not saved, not written to history and gone after a restart.
 
+## MCP requests
+
+An MCP request connects to a [Model Context Protocol](https://modelcontextprotocol.io) server and runs one operation on it:
+**call a tool**, **read a resource** or **get a prompt**. It works like the MCP Inspector, inside a collection: connect, see
+what the server offers, fill in a form made from a tool's input schema, run it, and look at the result and at every message
+exchanged. MCP requests are saved, synced, versioned and recorded in History like HTTP requests, and the collection runner,
+workflows and AI assistants can run them. (This is Slinger as an MCP *client*. For Slinger's own MCP server, which lets an
+assistant work in Slinger, see [AI assistants (MCP)](#ai-assistants-mcp).)
+
+**Create one:** right-click a collection or folder > **New MCP request** and give it a name. It opens in a tab with the
+**MCP** method badge. (Ctrl+T and File > New Request open HTTP requests.)
+
+**The bar:** the transport, where the server is, a status dot, **Connect** / **Disconnect**, **Run** (Ctrl+Enter; **Cancel**
+while it runs) and **Save** (Ctrl+S). The transports:
+
+- **Streamable HTTP** (default): the server's URL, for example `https://example.com/mcp`.
+- **SSE (legacy)**: older servers that use a separate Server-Sent Events endpoint, for example `https://example.com/sse`.
+- **Command (stdio)**: Slinger starts a program on this computer and talks to it over its standard input and output. Enter the
+  **Command** (for example `npx`) and its **Arguments** (for example `-y @modelcontextprotocol/server-everything`). Arguments
+  are split at spaces like in a shell: put an argument that contains spaces in quotes (`"My Documents"` or `'My Documents'`),
+  or escape a single character with a backslash. A command runs only after you allowed it, see
+  [Allow this command](#allow-this-command) below.
+
+The editor sections are **Call**, **Connection**, **Server**, **Scripts** and **Docs** (the last two as for HTTP requests).
+
+- **Connection:** for Streamable HTTP and SSE, the **Headers** sent with every HTTP request of the connection and the
+  **Authorization** (the same panel as for HTTP requests: Basic, Bearer, API key, OAuth 2.0; it is sent as a header, or, for an
+  API key or OAuth 2.0 token set to go in the query, in the URL). For a command, its **Environment** variables and **Working
+  directory** (empty: your home directory). The command does not get Slinger's whole environment, only a small safe set
+  (`PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LOGNAME`; on Windows `PATH`, `APPDATA`, `USERPROFILE`, `TEMP` and a few more)
+  plus the variables you add here. For every transport, **Call timeout** in milliseconds (empty: 60 000; at most 600 000, a
+  larger value counts as 600 000).
+- **Server:** once connected, what the server reported: name, version, protocol version, how long connecting took, its
+  capabilities (expand **Raw capabilities** for the JSON) and its instructions, rendered as Markdown.
+
+**Connect and Run.** **Connect** opens the connection and loads what the server offers; the dot turns green (hover it for the
+server's name, or for why connecting failed). Connect resolves `{{variables}}` with the active environment like a send does,
+but does not run pre-request scripts. **Run** runs the selected operation and connects first when needed, so Connect is only
+for looking around before running. The connection belongs to the tab: it stays open while you switch to other tabs, and
+**Disconnect**, changing the transport, closing the tab or switching to another workspace closes it. When the URL, a header, the token or the command changed
+since connecting, the next Run reconnects. Slinger also closes a connection that was not used for 15 minutes, and keeps at most
+20 open (the least recently used one closes first).
+
+**The Call section.** On the left, what the server offers: **Tools**, **Resources**, **Templates** (resource templates) and
+**Prompts**, each with a count, a search box and a reload button. The lists load when the connection opens (only the kinds the
+server supports) and a list reloads by itself when the server says it changed. If the server fails to give one list (some
+servers declare resources but do not implement resource templates), the error shows above the lists and the others still
+load. A list shows at most 1000 entries (the count then ends in `+`). On the right, the **Operation** (**Call a tool**, **Read a resource**, **Get a prompt**) with the tool name,
+resource URI or prompt name; clicking an entry on the left fills them in, and you can also type them. Below are the selected
+entry's title and description (for tools also the server's hints: read-only, destructive, idempotent, open world) and its
+input:
+
+- **Tools:** the **Arguments** form, made from the tool's input schema: text, number and true/false fields, choice lists, lists
+  of values (**Add item**) and nested groups. Required fields are marked `*`; the (i) next to a field shows its description and
+  limits, and an empty field shows the default as a placeholder. Parts of a schema the form cannot show (for example a value
+  that may have one of several shapes) get a small JSON editor of their own. **JSON** switches to the arguments as JSON text;
+  the form and the text edit the same arguments, and keys the schema does not describe are kept. Choosing another tool keeps
+  the arguments as they are, so clicking a tool just to read its description loses nothing (remove arguments the new tool
+  does not take before running it). Before connecting (or for a tool the server does not list), the arguments are edited
+  as JSON.
+- **Resources:** click a resource, or type its URI. Clicking a template (for example `demo://users/{id}`) shows one field per
+  `{name}` in it and builds the URI from them.
+- **Prompts:** argument rows (name and value). Choosing a prompt adds a row for each argument it declares; the declared
+  arguments are listed below the rows, required ones marked `*`.
+
+**Variables and secrets.** `{{variables}}` work in the server URL, headers, authorization, command, arguments, environment
+values, working directory, tool arguments, resource URI and prompt arguments; secret values are read from the keychain just
+before connecting and never saved. Only the fields the transport and operation use have to resolve. In tool arguments, a
+variable inside a JSON string is inserted as text (quotes and line breaks in its value are escaped, so the JSON stays valid);
+a variable that stands for a whole value, such as `{"count": {{n}}}`, is inserted as it is, so with `n` = `5` the tool gets the
+number 5. The form writes number and true/false fields that hold a `{{variable}}` this way. The arguments must be a JSON
+object.
+
+**The result.** The pane below has **Result**, **JSON**, **Messages** and **Logs**. Its status line shows **OK**, **Tool error**
+(the tool ran and answered with `isError: true`; its error text is in the content) or **Error** (the server answered with a
+protocol error, shown under *The server returned an error* with its JSON-RPC code and data; or the call or the connection
+failed; or the request did not run, for example because of an undefined variable, with a **Create** button for each one), the
+time, what ran, and **Copy result JSON**. The latest run counts: when it fails, the error replaces the previous result.
+Warnings (for example an authorization type Slinger cannot send) show above the views. When scripts ran, **Tests** and
+**Console** views follow, as for HTTP responses.
+
+- **Result:** a tool's content, block by block: text (with Copy; very long text shows its start until **Show all**), images
+  (shown), audio (offered as **Save audio to file**: Slinger does not play it), resource links (with **Copy URI**) and embedded
+  resources (text shown with Copy and Save, images shown, other binary content saved to a file); other block types appear as
+  JSON. A tool's **Structured content** follows as JSON. For a resource, its contents; for a prompt, its description and each
+  message with its role.
+- **JSON:** the whole result as the server sent it (a result above 2 MB shows its start until **Show all**).
+- **Messages:** every JSON-RPC message of the tab's connection: → sent by Slinger, ← sent by the server, with the time and
+  method (a response is labelled with its request's method; error responses are red), mixed with server notifications, stderr
+  lines and connection events (for example why it closed). Click a row for its full JSON and Copy. Filter by kind or text;
+  **Clear** empties the log (Logs too).
+- **Logs:** only the server's log messages (`notifications/message`: level, logger and data) and the stderr output of a
+  command (the first 64 KB per connection).
+
+Messages and logs are kept in memory only (the last 500 events per connection) and are not saved or written to History.
+
+### Allow this command
+
+The first time a request would start a command (stdio), Slinger asks **Allow Slinger to run this command on this computer?**
+and shows the exact command, each argument, the working directory and the environment variables you added, with variables
+filled in (the value of an environment variable that comes from a secret variable is hidden). **Allow and connect**
+remembers the command on this device and carries on with the connect or run; **Cancel** does nothing (Cancel has the focus, so
+pressing Enter never allows a command). Slinger asks again whenever the command, an argument, the working directory or an
+environment variable (a new one, a removed one or another value) is different: a variable such as `NODE_OPTIONS` or
+`LD_PRELOAD` can make the same command run other code.
+
+Why: the command is a program that runs with your user's permissions, and a request may not have been written by you. It can
+arrive through a synced workspace, an imported collection or an AI assistant. So no command runs before you have seen it in
+this dialog. Only the dialog can allow one: the collection runner, workflows and AI assistants get the error *This command has
+not been allowed on this device yet. Open the request in Slinger and run it once to allow it.* The allowed commands are kept on
+this device only (not synced or exported), as fingerprints: the command line itself, which may contain a secret, is not
+stored. There is no screen yet to remove one again.
+
+If a command such as `npx` or `uvx` is not found when Slinger was started from your desktop, enter its full path (a terminal's
+`which npx` shows it): the command gets the `PATH` Slinger was started with, which can be shorter than your shell's.
+
+### Scripts, History and running MCP requests elsewhere
+
+- **Scripts:** pre-request and test scripts run as for HTTP requests (including collection and folder scripts). A pre-request
+  script can set variables the request uses; changes it makes to `pm.request` are ignored. Test scripts see the result as a
+  JSON response: `pm.response.code` is 200, or 500 with the status text "Tool error"; `pm.response.json()` is the result (for
+  example its `content` or `structuredContent`); `pm.request.url` is the server URL or the command line. A protocol or
+  connection error fails the send like a network error does, without running the test scripts. Test results and console
+  output appear in the result pane's **Tests** and **Console** views.
+- **History:** every run is a row with the **MCP** badge, what ran (for example `tools/call get_weather`) and **OK** or the
+  error message instead of a status. The server URL or command line and a resource URI are recorded with secrets as
+  `{{name}}` (also a secret a pre-request script copied into another variable); environment values and arguments are not
+  recorded. Connecting and loading the lists are not recorded. See [History](#history).
+- **Collection runner:** MCP requests run with the others; a row passes on **OK** and fails on a tool error or an error.
+- **Workflows:** a **Send request** node can send an MCP request; its `body` is the parsed result.
+- **AI assistants** (through [Slinger's MCP server](#ai-assistants-mcp)) can find, read, send and run MCP requests as saved, and
+  rename, move and delete them, but not create or edit them or give them examples. They see the names of a command's
+  environment variables, never their values, and cannot allow a command.
+
+The runner, workflows and assistants share one connection per server, closed after 2 minutes without a call.
+
+### Import, export, versions and sync
+
+MCP requests are part of collection versions (**Compare** lists their changes under **MCP**) and sync like other requests (sync
+conflicts show the same **MCP** row). A Postman export writes an MCP request with the method `MCP` and its settings under the
+item key `_slinger_mcp`; importing the file into Slinger brings the MCP request back. Postman ignores that key, so the item is
+of no use there. A `.http` export leaves MCP requests out (the file's header says how many). For an MCP request, the right
+panel's **Code** view shows an **MCP Inspector CLI** command (`npx @modelcontextprotocol/inspector --cli ...`, needs Node.js)
+that runs the same operation, and **Info** shows the transport and the server or command.
+
+### Not supported yet
+
+MCP's own OAuth discovery and dynamic client registration (for a server that needs OAuth, enter its endpoints under
+Authorization > OAuth 2.0 and click **Get New Access Token**); sampling, elicitation and roots (Slinger offers none of these to
+servers); resource subscriptions; completions (suggested argument values); saved examples for MCP requests; playing audio;
+creating or editing MCP requests through Slinger's MCP server; using MCP requests in Postman.
+
 ## Saved examples
 
 A saved example is a request/response pair kept with a request, like Postman's "examples": documentation of what an endpoint
@@ -333,7 +490,8 @@ between requests (ms) and optionally **Stop on first failure**, then run. Reques
 environment; each row shows status, time and, expanded, headers and a body preview. A row passes on a 2xx status only (redirects are followed first, so a remaining 3xx means the redirect did not end in a 2xx); 3xx, 4xx, 5xx and
 network errors fail, unless you tick **Treat 3xx as pass**; requests with unresolved variables are skipped with the reason. You can stop a running run.
 While the run is going, a small version of the loading character runs along the progress bar.
-Runner requests are recorded in History.
+Runner requests are recorded in History. [MCP requests](#mcp-requests) run too: a row passes on **OK** and fails on a tool error
+or an error.
 
 **Running in the background.** A run does not have to hold up the app. Start it with **Run in background** instead of
 **Run N requests**, or press **Run in background** (or close the dialog) while it runs: the dialog closes and the run goes on
@@ -573,6 +731,11 @@ Cloud sync traffic is not recorded here. Changes and sends made by an AI assista
 are listed too, marked **AI assistant**; a change shows what was edited (for example "Edited request “Create order”: url and
 headers").
 
+Runs of [MCP requests](#mcp-requests) show the **MCP** badge, what ran (for example `tools/call get_weather`) and **OK** or the
+error message instead of a status code. Clicking one opens the saved request; if it was deleted, a new MCP request opens with
+the server and the operation (a command line opens as **Command (stdio)**, any URL as **Streamable HTTP**; the arguments are not
+in History, so they start empty).
+
 ## Collection versions
 
 Right-click a collection and choose **Versions...**. A version is an immutable snapshot of that collection's folders, requests,
@@ -688,11 +851,14 @@ collections keep theirs).
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
   collection's `variable` list, in order (`disabled: true` for disabled ones). OAuth 2.0 settings are exported in Postman's
   format without any token. Globals and environments are never part of a collection export.
+- **MCP requests** are exported with the method `MCP` and their settings under the item key `_slinger_mcp`, which Slinger's
+  import reads back and Postman ignores (see [MCP requests](#mcp-requests)).
 - **Export as a .http file:** in the Export dialog, set **Format** to **HTTP file (.http)** to save the collection as one
   `<collection name>.http` file for the HTTP Client of IntelliJ IDEA and other JetBrains IDEs, VS Code REST Client and other
   tools that read `.http` files. Every saved request is a `### Folder / Subfolder / Request` block, in sidebar order, written
   like the `.http` code snippet but with `{{variables}}` **unresolved** (these tools use the same syntax), so no variable value
-  and no secret is written into the file. Scripts, documentation, examples and the version history are not part of it.
+  and no secret is written into the file. Scripts, documentation, examples and the version history are not part of it, and
+  MCP requests are left out (the file's header says how many).
   Tick **Also save http-client.env.json and http-client.private.env.json** to write the variables a send would use (globals,
   collection variables, the active environment) under the active environment's name (`default` without one):
   `http-client.env.json` gets the non-secret values, `http-client.private.env.json` only the names of secret variables (and
@@ -938,6 +1104,9 @@ then get a "turned off" message instead of starting Slinger). For assistants Sli
 assistants and advanced**: copy a ready-made command setup (works with any assistant that runs a command) or a URL + token setup
 (keep that one private), and change the port or token.
 
+Assistants can find, read, send and run [MCP requests](#mcp-requests) as saved (and rename, move or delete them), but cannot
+create or edit them, and a command (stdio) runs only after you allowed it in the window.
+
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
 send. Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
 edited, never a value); clicking a change of a request opens it.
@@ -988,6 +1157,8 @@ the left of the title bar (or in the menu bar, with the system title bar).
 
 - **Export Collection…** exports the collection of the active tab (a request or a collection/folder overview). With no such tab
   open, Slinger tells you how to pick one; you can also use Export in a collection's menu in the sidebar.
+- **New Request** opens an HTTP request; an MCP request is created from a collection's or folder's menu in the sidebar (see
+  [MCP requests](#mcp-requests)).
 - **Close Tab** (Ctrl/Cmd+W) closes the request tab, never the window. On macOS, Close Window is Shift+Cmd+W.
 - The zoom level is remembered for the next launch.
 - Help links open in your web browser.
@@ -1001,7 +1172,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+Enter | Send the current request (in a workflow tab: run the workflow) |
+| Ctrl+Enter | Send the current request (in an MCP request: Run; in a workflow tab: run the workflow) |
 | Ctrl+S | Save the current request (Save as, if it is not saved yet); workflows save themselves as you edit |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |

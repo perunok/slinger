@@ -16,10 +16,8 @@ export function truncate(text: string, max = 80): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
-export function methodColor(method: string): string {
-  const m = method.toLowerCase()
-  return ['get', 'post', 'put', 'patch', 'delete'].includes(m) ? `var(--m-${m})` : 'var(--m-other)'
-}
+/** Re-exported for the versions views; the colours live in requests/method.ts. */
+export { methodColor } from '../requests/method'
 
 export interface CreateFormState {
   valid: boolean

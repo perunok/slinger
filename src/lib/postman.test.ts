@@ -11,6 +11,7 @@ import {
 import { newDraft, parseDocument, serializeDraft, type RequestDraft } from './request'
 import exampleCollection from '../../example-postman-collection.json?raw'
 import { buildTree, type TreeNode } from './tree'
+import { newMcpDraft, newMcpRequestDraft, serializeMcp } from './mcpRequest'
 
 // ---------------------------------------------------------------------------
 // Faithful port of src-tauri/src/db.rs: collect_postman_entries + postman_url_to_string
@@ -362,5 +363,60 @@ describe('environments', () => {
   })
   it('exports a string', () => {
     expect(JSON.parse(exportPostmanEnvironment('E', vars)).name).toBe('E')
+  })
+})
+
+describe('MCP requests', () => {
+  const httpMcp = (): RequestDraft => ({
+    ...newMcpRequestDraft('Weather'),
+    url: '{{base}}/mcp',
+    headers: rows({ key: 'X-Team', value: 'core' }),
+    auth: { ...newDraft().auth, kind: 'bearer', bearer: { token: '{{token}}' } },
+    mcp: newMcpDraft({ operation: 'tools/call', tool: 'get_weather', arguments: '{\n  "city": "{{city}}"\n}', timeoutMs: 5000, extra: { future: [1] } }),
+  })
+  const stdioMcp = (): RequestDraft => ({
+    ...newMcpRequestDraft('Local'),
+    mcp: newMcpDraft({
+      transport: 'stdio', command: 'npx', args: ['-y', '@acme/server', '--root', '/tmp/a b'], cwd: '~/work',
+      env: rows({ key: 'API_KEY', value: '{{key}}' }), operation: 'resources/read', uri: 'demo://readme',
+    }),
+  })
+
+  it('writes method MCP, the headers and auth, and the configuration as item-level _slinger_mcp', () => {
+    const http = reqFromDraft('m1', null, 0, httpMcp())
+    const out = buildPostmanCollection({ collection, folders: [], requests: [http] })
+    const item = out.item[0]
+    expect(item.request?.method).toBe('MCP')
+    expect(item.request?.url).toMatchObject({ raw: '{{base}}/mcp', host: ['{{base}}'], path: ['mcp'] })
+    expect(item.request?.header).toEqual([{ key: 'X-Team', value: 'core', type: 'text' }])
+    expect(item.request?.auth).toMatchObject({ type: 'bearer' })
+    expect(item.request).not.toHaveProperty('body')
+    expect(item._slinger_mcp).toEqual(JSON.parse(http.documentJson).mcp)
+    expect(item._slinger_mcp).toMatchObject({ v: 1, transport: 'http', tool: 'get_weather', timeoutMs: 5000, future: [1] })
+    expect(Object.keys(item)).toEqual(['name', 'request', '_slinger_mcp'])
+  })
+
+  it('keeps a stdio command line as the raw URL only', () => {
+    const out = buildPostmanCollection({ collection, folders: [], requests: [reqFromDraft('m2', null, 0, stdioMcp())] })
+    expect(out.item[0].request?.url).toEqual({ raw: "npx -y @acme/server --root /tmp/a b" })
+    expect(out.item[0]._slinger_mcp).toMatchObject({ transport: 'stdio', command: 'npx', args: ['-y', '@acme/server', '--root', '/tmp/a b'], cwd: '~/work' })
+  })
+
+  it('leaves HTTP requests without _slinger_mcp', () => {
+    const out = buildPostmanCollection({ collection, folders: [], requests: [reqFromDraft('h', null, 0, newDraft({ name: 'H', url: 'https://x' }))] })
+    expect(out.item[0]).not.toHaveProperty('_slinger_mcp')
+    expect(out.item[0].request?.method).toBe('GET')
+  })
+
+  it('round-trips through the Postman-shaped import (document.mcp lifted back) to the same draft', () => {
+    for (const draft of [httpMcp(), stdioMcp()]) {
+      const json = exportPostmanCollection({ collection, folders: [], requests: [reqFromDraft('m', null, 0, draft)] })
+      const item = JSON.parse(json).item[0]
+      // What the importers store: the Postman request fields plus the lifted configuration.
+      const doc = { name: item.name, method: 'MCP', url: item.request.url.raw, headers: item.request.header, body: null, auth: item.request.auth, params: [], mcp: item._slinger_mcp }
+      const back = parseDocument({ name: item.name, method: 'MCP', url: item.request.url.raw, documentJson: JSON.stringify(doc) })
+      expect(back.mcp && serializeMcp(back.mcp)).toEqual(serializeMcp(draft.mcp!))
+      expect(serializeDraft(back)).toEqual(serializeDraft(draft))
+    }
   })
 })

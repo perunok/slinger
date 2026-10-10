@@ -24,6 +24,10 @@ electron/
                      outbox (push side), apply (pull side), merge, mapping, conflicts, linking, scheduler, store
   mcp/               local MCP server for LLM clients: HTTP endpoint on 127.0.0.1, tool calls forwarded to the renderer,
                      settings + token, stdio bridge (see docs/ARCHITECTURE.md "MCP server")
+  mcpClient/         MCP client for MCP requests: McpClientService (service.ts) opens sessions with MCP servers over
+                     Streamable HTTP, SSE or a local command (stdio), lists, calls, cancels, pushes the message log on
+                     'mcp-client:event', records History, and starts a stdio command only after the user allowed it on this
+                     device (app_settings 'mcp-client.trusted'); see docs/ARCHITECTURE.md "MCP requests (MCP client)"
   lib/               errors, ids (UUID), text helpers, csp
   __tests__/         vitest suites (run under plain Node, in-memory SQLite); sync/ uses an in-process fake
                      cloud server, sync-it/ the real slinger-admin server (opt-in)

@@ -7,7 +7,7 @@ export type SnapshotFolder = CollectionSnapshot['folders'][number]
 export type SnapshotRequest = CollectionSnapshot['requests'][number]
 
 export type FieldChange = {
-  field: 'name' | 'method' | 'url' | 'body' | 'headers' | 'auth' | 'params' | 'description' | 'folder' | 'other'
+  field: 'name' | 'method' | 'url' | 'body' | 'headers' | 'auth' | 'params' | 'mcp' | 'description' | 'folder' | 'other'
   before: string
   after: string
 }
@@ -122,6 +122,36 @@ function stable(v: unknown): string {
   return JSON.stringify(v) ?? 'null'
 }
 
+/**
+ * An MCP request's configuration (mcpRequest.ts), one `label: value` line per non-empty setting; '' for HTTP requests.
+ * Every stored setting is listed (not only the ones the transport and operation use), so no saved change reads as
+ * unchanged. Rows keep their values, like headers: they are templates, never secret values.
+ */
+function renderMcp(d: RequestDraft): string {
+  const m = d.mcp
+  if (!m) return ''
+  const lines = [`transport: ${m.transport}`]
+  const add = (label: string, value: string) => {
+    if (value !== '') lines.push(`${label}: ${value}`)
+  }
+  add('command', m.command)
+  if (m.args.length > 0) lines.push(`args: ${JSON.stringify(m.args)}`)
+  const env = renderRows(m.env)
+  if (env) lines.push(`env:\n${env}`)
+  add('cwd', m.cwd)
+  lines.push(`operation: ${m.operation}`)
+  add('tool', m.tool)
+  const args = m.arguments.trim()
+  if (args !== '' && args !== '{}') lines.push(`arguments:\n${m.arguments}`)
+  add('uri', m.uri)
+  add('prompt', m.prompt)
+  const promptArgs = renderRows(m.promptArguments)
+  if (promptArgs) lines.push(`prompt arguments:\n${promptArgs}`)
+  if (m.timeoutMs !== null) lines.push(`timeout: ${m.timeoutMs}ms`)
+  if (Object.keys(m.extra).length > 0) lines.push(`other: ${stable(m.extra)}`)
+  return lines.join('\n')
+}
+
 function renderOther(d: RequestDraft): string {
   const lines: string[] = []
   const scripts = d.extras.scripts
@@ -139,6 +169,8 @@ export interface Rendered {
   auth: string
   /** Only disabled rows: enabled params are already part of the URL. */
   params: string
+  /** MCP requests: transport, server command, operation, tool, arguments...; '' for HTTP requests. */
+  mcp: string
   description: string
   other: string
 }
@@ -149,16 +181,18 @@ export function render(r: Pick<SnapshotRequest, 'name' | 'method' | 'url' | 'doc
     name: r.name,
     method: d.method,
     url: d.url,
-    body: renderBody(d),
+    // MCP requests have no body (saved empty): '' keeps a meaningless "none" out of their diffs.
+    body: d.mcp ? '' : renderBody(d),
     headers: renderRows(d.headers),
     auth: renderAuth(d),
     params: renderRows(d.params.filter((p) => !p.enabled)),
+    mcp: renderMcp(d),
     description: d.description,
     other: renderOther(d),
   }
 }
 
-export const FIELDS = ['name', 'method', 'url', 'body', 'headers', 'auth', 'params', 'description', 'other'] as const
+export const FIELDS = ['name', 'method', 'url', 'body', 'headers', 'auth', 'params', 'mcp', 'description', 'other'] as const
 
 // ---------------------------------------------------------------------------
 // Diff

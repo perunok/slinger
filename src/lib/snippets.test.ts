@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { HttpRequestInput } from '../../shared/types'
-import { HTTP_FILE_BOUNDARY, SNIPPET_LANGS, generateSnippet, type SnippetLang } from './snippets'
+import { HTTP_FILE_BOUNDARY, OAUTH2_TOKEN_PLACEHOLDER, SNIPPET_LANGS, generateSnippet, mcpInspectorSnippet, prepareMcpSnippet, type SnippetLang } from './snippets'
+import { newRow } from './kv'
+import { newMcpDraft, newMcpRequestDraft } from './mcpRequest'
+import { emptyAuth, newDraft, type RequestDraft } from './request'
+import { makeScope } from './template'
 
 function req(over: Partial<HttpRequestInput> = {}): HttpRequestInput {
   return {
@@ -533,5 +537,98 @@ describe('http (.http file)', () => {
     expect(http({ auth: oauth('header', '') })).toContain('Authorization: {{oauth2_access_token}}\n')
     expect(http({ auth: oauth('query') })).toBe('GET https://api.example.com/items?access_token={{oauth2_access_token}}\n')
     expect(http({ auth: oauth('header') })).not.toContain('a'.repeat(64))
+  })
+})
+
+describe('MCP Inspector CLI', () => {
+  const scope = makeScope('Dev', [
+    { key: 'base', value: 'https://mcp.example.com', secret: false },
+    { key: 'city', value: 'Paris', secret: false },
+    { key: 'n', value: '3', secret: false },
+    { key: 'token', value: 'hunter2', secret: true },
+  ])
+  const ctx = { workspaceId: 'w', scope }
+  const snippetOf = (draft: RequestDraft) => {
+    const p = prepareMcpSnippet(draft, ctx)
+    if (!p.ok) throw new Error(p.error)
+    return mcpInspectorSnippet(p.input)
+  }
+
+  it('calls a tool over Streamable HTTP with headers, auth and one --tool-arg per argument', () => {
+    const draft: RequestDraft = {
+      ...newMcpRequestDraft('W'),
+      url: '{{base}}/mcp',
+      headers: [newRow({ key: 'X-Team', value: 'core' }), newRow({ key: 'X-Off', value: '1', enabled: false }), newRow()],
+      auth: { ...emptyAuth(), kind: 'bearer', bearer: { token: '{{token}}' } },
+      mcp: newMcpDraft({ tool: 'get_weather', arguments: '{"city": "{{city}}", "days": {{n}}, "opts": {"units": "metric"}, "note": "it\'s {{missing}}"}' }),
+    }
+    expect(snippetOf(draft)).toBe(
+      [
+        'npx @modelcontextprotocol/inspector --cli https://mcp.example.com/mcp \\',
+        '  --transport http \\',
+        "  --header 'X-Team: core' \\",
+        // Secrets stay {{name}}, as in every snippet.
+        "  --header 'Authorization: Bearer {{token}}' \\",
+        '  --method tools/call \\',
+        '  --tool-name get_weather \\',
+        '  --tool-arg city=Paris \\',
+        '  --tool-arg days=3 \\',
+        `  --tool-arg 'opts={"units":"metric"}' \\`,
+        `  --tool-arg 'note=it'\\''s {{missing}}'`,
+      ].join('\n'),
+    )
+  })
+
+  it('uses --transport sse, puts an API key in the query and an OAuth 2.0 token placeholder in a header', () => {
+    const apiKey: RequestDraft = {
+      ...newMcpRequestDraft('S'),
+      url: 'mcp.local:8080/sse',
+      auth: { ...emptyAuth(), kind: 'apiKey', apiKey: { key: 'key', value: 'abc', addTo: 'query' } },
+      mcp: newMcpDraft({ transport: 'sse', operation: 'resources/read', uri: 'demo://users/{{n}}' }),
+    }
+    expect(snippetOf(apiKey)).toBe(
+      ['npx @modelcontextprotocol/inspector --cli \'http://mcp.local:8080/sse?key=abc\' \\', '  --transport sse \\', '  --method resources/read \\', '  --uri demo://users/3'].join('\n'),
+    )
+    const oauth: RequestDraft = { ...apiKey, auth: { ...emptyAuth(), kind: 'oauth2' } }
+    expect(snippetOf(oauth)).toContain(`--header 'Authorization: Bearer ${OAUTH2_TOKEN_PLACEHOLDER}'`)
+  })
+
+  it('starts a stdio server with its environment, arguments and working directory', () => {
+    const draft: RequestDraft = {
+      ...newMcpRequestDraft('L'),
+      mcp: newMcpDraft({
+        transport: 'stdio', command: 'npx', args: ['-y', '@acme/server', '/data dir'], cwd: '~/{{city}}',
+        env: [newRow({ key: 'API_KEY', value: '{{token}}' }), newRow({ key: 'OFF', value: 'x', enabled: false }), newRow()],
+        operation: 'prompts/get', prompt: 'greet', promptArguments: [newRow({ key: 'name', value: 'Ada Lovelace' }), newRow()],
+      }),
+    }
+    expect(snippetOf(draft)).toBe(
+      [
+        "cd '~/Paris' && npx @modelcontextprotocol/inspector --cli -e 'API_KEY={{token}}' npx -y @acme/server '/data dir' \\",
+        '  --method prompts/get \\',
+        '  --prompt-name greet \\',
+        "  --prompt-args 'name=Ada Lovelace'",
+      ].join('\n'),
+    )
+  })
+
+  it('shows placeholders for an empty tool and reports what cannot be built', () => {
+    const empty = { ...newMcpRequestDraft('E'), url: 'https://m/mcp' }
+    expect(snippetOf(empty)).toContain("--tool-name '<tool>'")
+    expect(prepareMcpSnippet(newMcpRequestDraft('No URL'), ctx)).toEqual({ ok: false, error: 'Enter the URL of the MCP server.' })
+    const stdio = { ...newMcpRequestDraft('No command'), mcp: newMcpDraft({ transport: 'stdio' }) }
+    expect(prepareMcpSnippet(stdio, ctx)).toEqual({ ok: false, error: 'Enter the command that starts the MCP server.' })
+    const bad = { ...empty, mcp: newMcpDraft({ tool: 't', arguments: '{nope' }) }
+    expect(prepareMcpSnippet(bad, ctx)).toMatchObject({ ok: false, error: expect.stringContaining('not valid JSON') })
+    const list = { ...empty, mcp: newMcpDraft({ tool: 't', arguments: '[1]' }) }
+    expect(prepareMcpSnippet(list, ctx)).toEqual({ ok: false, error: 'The tool arguments must be a JSON object.' })
+    expect(prepareMcpSnippet(newDraft({ url: 'https://x' }), ctx)).toEqual({ ok: false, error: 'This is not an MCP request.' })
+  })
+
+  it('keeps an undefined bare variable in the arguments as {{name}}', () => {
+    const draft = { ...newMcpRequestDraft('U'), url: 'https://m/mcp', mcp: newMcpDraft({ tool: 'add', arguments: '{"a": {{undefinedVar}}, "b": "x{{n}}"}' }) }
+    const out = snippetOf(draft)
+    expect(out).toContain("--tool-arg 'a={{undefinedVar}}'")
+    expect(out).toContain('--tool-arg b=x3')
   })
 })

@@ -3,6 +3,7 @@
  * `installMockBackend()` sets `window.slinger` (when undefined) and `window.__slingerMock`.
  */
 import { createMcpApi, type MockMcpControls } from './mock/mcp'
+import { createMcpClientApi, type MockMcpClientControls } from './mock/mcpClient'
 import { createSyncApi, type CloudOptions, type MockCloudControls } from './mock/sync'
 import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import type { MenuCommand } from '../../shared/menu'
@@ -37,6 +38,8 @@ export interface MockControls {
   cloud: MockCloudControls
   /** Plays an MCP client (Settings > AI assistants): `__slingerMock.mcp.call('get_tree', {})`. */
   mcp: MockMcpControls
+  /** The in-memory MCP server MCP requests connect to (mock/mcpClient.ts). */
+  mcpClient: MockMcpClientControls
   calls: MockCall[]
   /** Delivers an application-menu command, as the native menu does in Electron. */
   menuCommand(command: MenuCommand): void
@@ -57,8 +60,8 @@ declare global {
 }
 
 const CALL_LOG_CAP = 500
-/** These must start synchronously (cancel has to find the run); executeHttpRequest simulates its own timing. */
-const NO_LATENCY = new Set<string>(['executeHttpRequest', 'cancelHttpRequest'])
+/** These must start synchronously (cancel has to find the run); executeHttpRequest and mcpClientCall simulate their own timing. */
+const NO_LATENCY = new Set<string>(['executeHttpRequest', 'cancelHttpRequest', 'mcpClientCall', 'mcpClientCancel'])
 
 /**
  * The real preload rejects with a PLAIN object (contextBridge strips Error subclass fields),
@@ -89,6 +92,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const misc = createMiscApi()
   const sync = createSyncApi(state, options.cloud)
   const mcp = createMcpApi()
+  const mcpClient = createMcpClientApi(state)
   const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
@@ -101,6 +105,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...misc,
     ...sync.api,
     ...mcp.api,
+    ...mcpClient.api,
     async recordAssistantEdit(input) {
       const entry = {
         id: crypto.randomUUID(),
@@ -170,6 +175,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   for (const channel of IPC_CHANNELS) api[channel] = wrap(channel)
   api.onSyncEvent = impl.onSyncEvent
   api.onMcpCall = impl.onMcpCall
+  api.onMcpClientEvent = impl.onMcpClientEvent
   const menuListeners = new Set<(command: MenuCommand) => void>()
   api.onWindowState = () => () => {}
   api.onMenuCommand = (listener: (command: MenuCommand) => void) => {
@@ -184,6 +190,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
       misc.resetSecureStore()
       misc.setLatestRelease(null)
       sync.reset()
+      mcpClient.controls.reset()
       once.clear()
       always = null
       calls.length = 0
@@ -199,6 +206,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     },
     cloud: sync.controls,
     mcp: mcp.controls,
+    mcpClient: mcpClient.controls,
     calls,
     menuCommand(command) {
       for (const listener of [...menuListeners]) listener(command)

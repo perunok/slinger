@@ -10,6 +10,7 @@
   import NameDialog from '../../components/ui/NameDialog.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import { planDrop, type DragItem, type DropPosition, type DropTarget } from '../../lib/tree'
+  import { isMcpMethod } from '../requests/method'
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
   import ExtractFolderDialog from './ExtractFolderDialog.svelte'
@@ -28,7 +29,7 @@
   type Dlg =
     | { t: 'newCollection' }
     | { t: 'newFolder'; collectionId: string; parentId: string | null }
-    | { t: 'newRequest'; collectionId: string; folderId: string | null }
+    | { t: 'newRequest'; collectionId: string; folderId: string | null; kind: 'http' | 'mcp' }
     | { t: 'newExample'; requestId: string }
     | { t: 'rename'; row: TreeRowModel }
     | { t: 'delete'; row: TreeRowModel }
@@ -97,7 +98,8 @@
       return [
         { label: 'Overview & docs', icon: 'info', action: () => openOverview(row) },
         { separator: true, label: '' },
-        { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.id, folderId: null }) },
+        { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.id, folderId: null, kind: 'http' }) },
+        { label: 'New MCP request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.id, folderId: null, kind: 'mcp' }) },
         { label: 'New folder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.id, parentId: null }) },
         { separator: true, label: '' },
         { label: 'Run collection…', icon: 'play', action: () => (ui.runner = { collectionId: row.id, folderId: null }) },
@@ -114,7 +116,8 @@
       return [
         { label: 'Overview & docs', icon: 'info', action: () => openOverview(row) },
         { separator: true, label: '' },
-        { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.collectionId, folderId: row.id }) },
+        { label: 'New request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.collectionId, folderId: row.id, kind: 'http' }) },
+        { label: 'New MCP request', icon: 'plus', action: () => (dlg = { t: 'newRequest', collectionId: row.collectionId, folderId: row.id, kind: 'mcp' }) },
         { label: 'New subfolder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.collectionId, parentId: row.id }) },
         { label: 'Run folder…', icon: 'play', action: () => (ui.runner = { collectionId: row.collectionId, folderId: row.id }) },
         { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'folder', id: row.id }) },
@@ -137,7 +140,8 @@
       { label: 'Open', icon: 'file', hint: 'Enter', action: () => activate(row) },
       ...(row.expandable ? [{ label: row.expanded ? 'Hide examples' : 'Show examples', icon: 'list', hint: row.expanded ? '←' : '→', action: () => toggle(row) }] : []),
       { label: 'Duplicate', icon: 'copy', action: () => void duplicate(row) },
-      { label: 'Add example', icon: 'plus', action: () => (dlg = { t: 'newExample', requestId: row.id }) },
+      // MCP requests have no saved examples (v1).
+      ...(isMcpMethod(row.method) ? [] : [{ label: 'Add example', icon: 'plus', action: () => (dlg = { t: 'newExample', requestId: row.id }) }]),
       { separator: true, label: '' },
       { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
       { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
@@ -172,7 +176,7 @@
       if (d.parentId) setExpanded(rowKey('folder', d.parentId), true)
       setExpanded(rowKey('folder', f.id), true)
     } else if (d.t === 'newRequest') {
-      const r = await actions.createRequest(d.collectionId, d.folderId, name)
+      const r = await actions.createRequest(d.collectionId, d.folderId, name, d.kind)
       setExpanded(rowKey('collection', d.collectionId), true)
       if (d.folderId) setExpanded(rowKey('folder', d.folderId), true)
       tabsStore.openRequest(r)
@@ -406,6 +410,8 @@
     <NameDialog title="New collection" label="Collection name" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'newFolder'}
     <NameDialog title="New folder" label="Folder name" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
+  {:else if dlg.t === 'newRequest' && dlg.kind === 'mcp'}
+    <NameDialog title="New MCP request" label="Request name" initial="New MCP Request" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'newRequest'}
     <NameDialog title="New request" label="Request name" initial="New Request" submitLabel="Create" onsubmit={submitName} oncancel={() => (dlg = null)} />
   {:else if dlg.t === 'newExample'}

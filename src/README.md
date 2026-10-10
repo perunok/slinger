@@ -33,7 +33,8 @@ app/                        shell + cross-feature state
 components/
   ui/                       Button, IconButton, Icon(+icons.ts), Dialog (focus trap), ConfirmDialog,
                             NameDialog, ContextMenu, Tabs, SplitPane, ToastHost, InlineError, Spinner,
-                            LoadingCharacter (the animated "sending" runner / shuttle / pebble; lib/loader.ts)
+                            LoadingCharacter (the animated "sending" runner / shuttle / pebble; lib/loader.ts),
+                            SchemaForm (form from a JSON Schema, JSON text in/out, {{var}} aware; lib/jsonSchemaForm.ts)
   editor/                   CodeEditor (multi-line CM6), TemplateInput (single-line CM6),
                             cm/{theme,languages,template,sync,pmCompletion}.ts
   kv/KeyValueTable.svelte   params / headers / form-data / urlencoded tables
@@ -57,15 +58,21 @@ features/
           pure logic in lib/updates.ts)
   mcp/ (MCP tool implementations run for LLM clients: tools.ts; McpHost answers main's calls; Settings > AI assistants;
           client setup snippets)
+  mcpRequests/ (MCP requests, Slinger as an MCP client: McpRequestView replaces RequestView for drafts with `mcp`; McpBar,
+          McpCallPanel, McpConnectionPanel, McpServerPanel, McpTrustDialog (allow a stdio command), McpResultPane +
+          McpContentBlocks + McpMessagesLog; connections.svelte.ts = open sessions by key (`tab:<id>` / shared `fp:<sha>`) and
+          the message log from the `mcp-client:event` push channel; see docs/ARCHITECTURE.md "MCP requests (MCP client)")
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
 lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
-                            request (document model), description (Postman description shapes),
-                            prepare (draft -> HttpRequestInput), scripts (Postman events, chain, scopes),
+                            request (document model), mcpRequest (the MCP part of it: document.mcp), jsonSchemaForm (SchemaForm's
+                            pure model), description (Postman description shapes),
+                            prepare (draft -> HttpRequestInput; prepareMcp: draft -> MCP connect + call input), scripts (Postman events, chain, scopes),
                             response, snippets, httpFile (.http collection export + env files), postman, tree,
                             semver, versionDiff, jsonTemplate, headers, autoHeaders, hex, exportFile, ipc,
                             themes (theme/accent registry), appearance (persisted theme settings), customThemes (custom theme model, CSS parser, rules, storage, file format), customThemeAudit (their contrast), loader (sending animation: pick, lap speed, sprite), contrast + themeAudit (WCAG checks)
-dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data
+dev/                        mockBackend.ts + mock/*: full in-memory SlingerIpcApi with seed data (mock/mcpClient.ts: a "Demo MCP
+                            server" for MCP requests; a host under .invalid fails to connect; window.__slingerMock.mcpClient)
 styles/                     themes.css (tokens) + app.css (tailwind, CM overlays)
 ```
 
@@ -82,7 +89,8 @@ One implementation everywhere: `lib/template.ts` (parse/resolve/status), `compon
 entry tagged with its `source` (the hover names it, "create variable" offers environment / collection /
 globals via `scopeStore.createVariable(name, target)`); `scope` follows the active tab's collection, sends and
 the runner use `scopeFor(collectionId)` (a run passes the environment it started with, see `ExecuteContext.environment`). Secrets are only known by name and masked. `lib/prepare.ts` is the
-single place templates are applied before sending (URL, headers, body, form fields, auth), fetching secret
+single place templates are applied before sending (URL, headers, body, form fields, auth; for MCP requests `prepareMcp` also
+resolves the command, args, env, cwd, tool arguments, URI and prompt arguments), fetching secret
 values via `revealEnvironmentVariable` / `revealGlobalVariable` just-in-time (`features/requests/execute.ts`).
 Unresolved variables abort the send with an inline list naming the scopes checked.
 

@@ -1,9 +1,14 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/svelte'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { McpCallResult } from '../../../shared/mcp'
+import type { ApiRequest, HistoryEntry, McpCallOutcome, McpSessionInfo } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { readExamples } from '../../lib/examples'
+import { newRow } from '../../lib/kv'
+import { newMcpDraft, newMcpRequestDraft, type McpDraft } from '../../lib/mcpRequest'
+import { serializeDraft } from '../../lib/request'
+import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { tabsStore } from '../requests/tabs.svelte'
 import { runsStore } from '../runner/runs.svelte'
 import { setupSync, teardownSync, type Backend } from '../sync/testUtils'
@@ -23,8 +28,10 @@ beforeEach(async () => {
   mcp.clientError = null
   mcp.active = 0
 })
-afterEach(() => {
+afterEach(async () => {
   cleanup()
+  vi.restoreAllMocks()
+  await mcpConnections.disconnectAll()
   teardownSync()
   runsStore.sessions = []
 })
@@ -333,5 +340,180 @@ describe('snippets', () => {
   it('builds a token-free command setup and a URL + token setup', () => {
     expect(JSON.parse(mcpSnippet('command', status, 'slg_t'))).toEqual({ mcpServers: { slinger: status.stdio } })
     expect(JSON.parse(mcpSnippet('http', status, 'slg_t'))).toEqual({ mcpServers: { slinger: { type: 'http', url: status.url, headers: { Authorization: 'Bearer slg_t' } } } })
+  })
+})
+
+describe('MCP requests', () => {
+  /** Saves an MCP request in "Demo API" the way the window does (serializeDraft), and shows it in the sidebar. */
+  async function addMcp(name: string, mcp: Partial<McpDraft>, url = '', http: { bearer?: string } = {}): Promise<ApiRequest> {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const d = newMcpRequestDraft(name)
+    d.url = url
+    d.mcp = newMcpDraft(mcp)
+    if (http.bearer) d.auth = { ...d.auth, kind: 'bearer', bearer: { token: http.bearer } }
+    const r = await window.slinger.createRequest({ workspaceId: app.workspaceId!, collectionId: demo.id, folderId: null, ...serializeDraft(d) })
+    await app.reloadCollection(demo.id)
+    return r
+  }
+  const weather = () =>
+    addMcp('Weather', { tool: 'get_weather', arguments: '{"city": "Addis Ababa"}' }, 'https://mcp.example.test/mcp', { bearer: 'sk_live_mcp' })
+  const local = () =>
+    addMcp('Local files', {
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      env: [newRow({ key: 'API_KEY', value: 'sk_env_secret' }), newRow({ key: 'OFF', value: 'x', enabled: false }), newRow()],
+      cwd: '/home/u',
+      operation: 'resources/read',
+      uri: 'file:///tmp/readme.md',
+    })
+
+  const session: McpSessionInfo = { sessionId: 's-1', serverInfo: { name: 'weather', version: '1.0.0' }, protocolVersion: '2025-06-18', capabilities: {}, instructions: null, connectMs: 3 }
+  const outcome = (o: Partial<McpCallOutcome>): McpCallOutcome => ({ ok: true, isError: false, result: { content: [{ type: 'text', text: 'Sunny, 24 °C' }] }, error: null, durationMs: 7, ...o })
+  /** Spies on the MCP client IPC (the main process side is tested in electron/__tests__/mcpClient.test.ts). */
+  function spyClient(call: McpCallOutcome | Error = outcome({})) {
+    const connect = vi.spyOn(window.slinger, 'mcpClientConnect').mockResolvedValue(session)
+    const run = vi.spyOn(window.slinger, 'mcpClientCall')
+    if (call instanceof Error) run.mockRejectedValue(call)
+    else run.mockResolvedValue(call)
+    const trust = vi.spyOn(window.slinger, 'mcpClientTrustCommand')
+    return { connect, run, trust }
+  }
+
+  it('tree and search lines say which requests are MCP requests', async () => {
+    const r = await weather()
+    const demo = (await call('get_tree')).collections.find((c: any) => c.name === 'Demo API')
+    expect(demo.requests.find((x: any) => x.id === r.id)).toEqual({ id: r.id, name: 'Weather', type: 'mcp', method: 'MCP', url: 'https://mcp.example.test/mcp' })
+    expect(demo.requests.find((x: any) => x.name === 'JSON sample').type).toBe('http')
+    const { matches } = await call('search_requests', { query: 'mcp' })
+    expect(matches.map((m: any) => [m.name, m.type])).toEqual([['Weather', 'mcp']])
+  })
+
+  it('get_request returns the MCP config: server, operation and its inputs; credentials masked, env values never shown', async () => {
+    const http = await call('get_request', { request_id: (await weather()).id })
+    expect(http).toMatchObject({
+      name: 'Weather',
+      type: 'mcp',
+      method: 'MCP',
+      transport: 'http',
+      url: 'https://mcp.example.test/mcp',
+      auth: { type: 'bearer', token: '•••• (set, hidden)' },
+      operation: 'tools/call',
+      tool: 'get_weather',
+      arguments: '{"city": "Addis Ababa"}',
+      timeout_ms: null,
+    })
+    expect(http).not.toHaveProperty('body')
+    expect(http).not.toHaveProperty('saved_examples')
+    expect(JSON.stringify(http)).not.toContain('sk_live_mcp')
+
+    const stdio = await call('get_request', { request_id: (await local()).id })
+    expect(stdio).toMatchObject({
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+      env_keys: ['API_KEY'],
+      cwd: '/home/u',
+      operation: 'resources/read',
+      uri: 'file:///tmp/readme.md',
+    })
+    expect(stdio).not.toHaveProperty('url')
+    expect(stdio).not.toHaveProperty('tool')
+    expect(JSON.stringify(stdio)).not.toContain('sk_env_secret')
+
+    const prompt = await call('get_request', {
+      request_id: (await addMcp('Greet', { operation: 'prompts/get', prompt: 'greet', promptArguments: [newRow({ key: 'name', value: '{{user}}' }), newRow()] }, 'https://mcp.example.test/mcp')).id,
+    })
+    expect(prompt).toMatchObject({ operation: 'prompts/get', prompt: 'greet', prompt_arguments: [{ key: 'name', value: '{{user}}', enabled: true }] })
+    // HTTP requests say so too
+    expect(await call('get_request', { request_id: app.requests.find((r) => r.name === 'JSON sample')!.id })).toMatchObject({ type: 'http' })
+  })
+
+  it('refuses to edit MCP requests or give them examples, and to make MCP requests; rename, move and delete still work', async () => {
+    const r = await weather()
+    const stored = app.requestById(r.id)!.documentJson
+    expect(await failure('update_request', { request_id: r.id, url: 'https://elsewhere.test/mcp' })).toContain('“Weather” is an MCP request')
+    expect(await failure('create_example', { request_id: r.id, name: 'Sunny' })).toContain('MCP requests have no saved examples')
+    expect(await failure('update_example', { request_id: r.id, example: 0, body: '{}' })).toContain('MCP requests have no saved examples')
+    expect(app.requestById(r.id)!.documentJson).toBe(stored)
+
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    expect(await failure('create_request', { collection_id: demo.id, name: 'Fake', method: 'mcp', url: 'https://x.test' })).toContain('made in the Slinger window')
+    expect(await failure('send_request', { method: 'MCP', url: 'https://x.test' })).toContain('made in the Slinger window')
+    const json = app.requests.find((x) => x.name === 'JSON sample')!
+    expect(await failure('update_request', { request_id: json.id, method: 'MCP' })).toContain('made in the Slinger window')
+
+    await call('rename', { kind: 'request', id: r.id, name: 'Weather (renamed)' })
+    expect(app.requestById(r.id)?.name).toBe('Weather (renamed)')
+    expect(JSON.parse(app.requestById(r.id)!.documentJson).mcp).toEqual(JSON.parse(stored).mcp)
+    await call('delete', { kind: 'request', id: r.id })
+    expect(app.requestById(r.id)).toBeUndefined()
+  })
+
+  it('send_request runs the saved operation as the assistant: result as JSON, tool errors as 500, history flagged', async () => {
+    const r = await weather()
+    const { connect, run } = spyClient()
+    const tick = app.historyTick
+    const { response } = await call('send_request', { request_id: r.id })
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: app.workspaceId, transport: 'http', url: 'https://mcp.example.test/mcp', origin: 'mcp' }))
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's-1', operation: 'tools/call', name: 'get_weather', arguments: { city: 'Addis Ababa' }, requestId: r.id, historySource: 'mcp' }),
+    )
+    expect(JSON.stringify(run.mock.calls[0]![0].historyUrl)).not.toContain('sk_live_mcp')
+    expect(response).toMatchObject({ status: 200, status_text: 'OK', mcp: { operation: 'tools/call', name: 'get_weather', is_error: false } })
+    expect(JSON.parse(response.body)).toEqual({ content: [{ type: 'text', text: 'Sunny, 24 °C' }] })
+    expect(app.historyTick).toBe(tick + 1)
+
+    run.mockResolvedValue(outcome({ ok: false, isError: true, result: { content: [{ type: 'text', text: 'Unknown city' }], isError: true } }))
+    const bad = await call('send_request', { request_id: r.id })
+    expect(bad.response).toMatchObject({ status: 500, status_text: 'Tool error', mcp: { is_error: true } })
+    expect(bad.response.body).toContain('Unknown city')
+
+    run.mockResolvedValue(outcome({ ok: false, result: null, error: { code: -32602, message: 'Tool get_weather: invalid arguments' } }))
+    expect(await failure('send_request', { request_id: r.id })).toContain('invalid arguments')
+  })
+
+  it('send_request sends an MCP request only as saved and reports unresolved variables', async () => {
+    const r = await weather()
+    const { connect } = spyClient()
+    expect(await failure('send_request', { request_id: r.id, url: 'https://elsewhere.test/mcp', headers: [] })).toContain('url, headers cannot be given')
+    expect(await failure('send_request', { request_id: r.id, save_as_example: 'Sunny' })).toContain('no saved examples')
+    const vars = await addMcp('Templated', { tool: 'echo', arguments: '{"text": "{{nobodyKnows}}"}' }, 'https://mcp.example.test/mcp')
+    expect(await failure('send_request', { request_id: vars.id })).toContain('nobodyKnows')
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('a local command the user has not allowed is never trusted by the assistant: the error says to run it in the window', async () => {
+    const r = await local()
+    const { connect, run, trust } = spyClient()
+    connect.mockRejectedValue({
+      name: 'IpcError',
+      code: 'invalid_input',
+      message: 'This command has not been allowed on this device yet.',
+      details: { reason: 'untrusted_command', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'], cwd: '/home/u' },
+    })
+    const error = await failure('send_request', { request_id: r.id })
+    expect(error).toContain('has not been allowed on this device yet')
+    expect(error).toContain('run it once')
+    expect(error).toContain('open_in_app')
+    expect(error).not.toContain('sk_env_secret')
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ transport: 'stdio', command: 'npx', origin: 'mcp' }))
+    expect(trust).not.toHaveBeenCalled()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('list_history reports MCP calls with their operation and ok', async () => {
+    const ws = app.workspaceId!
+    const row = (h: Partial<HistoryEntry>): HistoryEntry => ({
+      id: 'h', workspaceId: ws, requestId: null, requestName: null, method: 'GET', url: '', statusCode: 200, ok: true, errorMessage: null, durationMs: 4, createdAt: 1_800_000_000, kind: 'send', source: null, detail: null, ...h,
+    })
+    vi.spyOn(window.slinger, 'listHistory').mockResolvedValue([
+      row({ id: 'm1', method: 'MCP', url: 'https://mcp.example.test/mcp', statusCode: null, ok: false, errorMessage: 'Unknown city', detail: 'tools/call get_weather', source: 'mcp', requestName: 'Weather' }),
+      row({ id: 'h1', url: 'https://mock.slinger.local/json' }),
+    ])
+    const { history } = await call('list_history')
+    expect(history[0]).toMatchObject({ method: 'MCP', type: 'mcp', detail: 'tools/call get_weather', status: null, ok: false, error: 'Unknown city', by: 'AI assistant', request_name: 'Weather' })
+    expect(history[1]).not.toHaveProperty('type')
+    expect(history[1]).not.toHaveProperty('detail')
   })
 })

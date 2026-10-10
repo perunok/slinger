@@ -7,7 +7,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { MCP_CALL_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -41,6 +41,8 @@ import { WorkerExecutor } from './scripts/executor'
 const APP_SCHEME = 'app'
 const APP_ORIGIN = `${APP_SCHEME}://slinger`
 const devServerUrl = process.env.SLINGER_DEV_SERVER_URL || null
+/** Quitting: how long MCP request sessions get to close (a stdio server gets 2 s after stdin closes, 2 s after SIGTERM). */
+const MCP_CLIENT_QUIT_MS = 5000
 
 // Menu labels (About/Hide/Quit Slinger) and the profile directory use this name; package.json productName matches.
 app.setName(APP_NAME)
@@ -582,6 +584,16 @@ if (!app.requestSingleInstanceLock()) {
           ? defaultClientsEnv(process.env.SLINGER_MCP_CLIENTS_HOME, process.platform, join(process.env.SLINGER_MCP_CLIENTS_HOME, 'AppData'), '')
           : defaultClientsEnv(homedir(), process.platform, app.getPath('appData')),
       },
+      mcpClient: {
+        // MCP requests: the message log of each session, to the main window only while it shows our UI. HTTP/SSE use Node's
+        // fetch (the default), like the HTTP pipeline.
+        emit: (event) => {
+          if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && isTrustedUrl(mainWindow.webContents.getURL())) {
+            mainWindow.webContents.send(MCP_CLIENT_EVENT_CHANNEL, event)
+          }
+        },
+        appVersion: app.getVersion(),
+      },
     })
     let feedUrl: string | null = null
     try {
@@ -653,8 +665,13 @@ if (!app.requestSingleInstanceLock()) {
       core?.sync.stop()
       core?.authCallbacks.closeAll()
       core?.oauth2.cancelAll()
-      shutdown = 'done'
-      app.quit()
+      // MCP request sessions: stdio servers are asked to exit (stdin closed, then SIGTERM) so none outlives the app;
+      // bounded so a stuck server never blocks quitting.
+      const mcpClosed = core?.mcpClient.closeAll() ?? Promise.resolve()
+      void Promise.race([mcpClosed.catch(() => {}), new Promise((resolve) => setTimeout(resolve, MCP_CLIENT_QUIT_MS))]).finally(() => {
+        shutdown = 'done'
+        app.quit()
+      })
     })
   })
   // After the windows closed (their pages save open tabs on the way out).

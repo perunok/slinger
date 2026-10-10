@@ -12,8 +12,10 @@
   import { api, errorInfo } from '../../lib/ipc'
   import { newDraft } from '../../lib/request'
   import { formatDuration, statusTone } from '../../lib/response'
+  import { isMcpMethod, methodColor } from '../requests/method'
   import { tabsStore } from '../requests/tabs.svelte'
   import { dayLabel, groupByDay } from './group'
+  import { mcpDraftFromHistory } from './mcpEntry'
 
   let entries = $state.raw<HistoryEntry[]>([])
   let loading = $state(true)
@@ -74,7 +76,9 @@
     const req: ApiRequest | undefined = app.requestById(entry.requestId)
     if (req) tabsStore.openRequest(req)
     // An edit of something that is not a request (a collection, an environment...): nothing to open.
-    else if (entry.kind !== 'edit') tabsStore.newTab({ draft: newDraft({ method: entry.method, url: entry.url, name: entry.requestName ?? entry.url }) })
+    else if (entry.kind === 'edit') return
+    else if (isMcpMethod(entry.method)) tabsStore.newTab({ draft: mcpDraftFromHistory(entry) })
+    else tabsStore.newTab({ draft: newDraft({ method: entry.method, url: entry.url, name: entry.requestName ?? entry.url }) })
   }
 
   async function remove(entry: HistoryEntry) {
@@ -155,10 +159,6 @@
     warning: 'bg-warning-soft text-warning',
     danger: 'bg-danger-soft text-danger',
   }
-  const methodColor = (m: string) => {
-    const k = m.toLowerCase()
-    return `var(--m-${['get', 'post', 'put', 'patch', 'delete'].includes(k) ? k : 'other'})`
-  }
   const time = (sec: number) => new Date(sec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 </script>
 
@@ -216,12 +216,23 @@
                       <span class="ml-auto">{time(entry.createdAt)}</span>
                     </div>
                   {:else}
+                    {@const mcp = isMcpMethod(entry.method)}
                     <div class="flex items-center gap-2">
                       <span class="w-12 shrink-0 text-xs font-semibold" style="color: {methodColor(entry.method)}">{entry.method}</span>
                       <span class="min-w-0 flex-1 truncate text-xs">{entry.url}</span>
                     </div>
+                    {#if mcp && entry.detail}
+                      <div class="truncate pl-14 font-mono text-[11px] text-muted" data-testid="history-mcp-detail" title={entry.detail}>{entry.detail}</div>
+                    {/if}
                     <div class="flex items-center gap-2 pl-14 text-[11px] text-muted">
-                      {#if entry.statusCode !== null}
+                      {#if mcp}
+                        <!-- MCP calls have no HTTP status: ok, or the error (protocol, transport or the tool's own). -->
+                        {#if entry.ok}
+                          <span class="rounded px-1 font-medium {TONE.success}">OK</span>
+                        {:else}
+                          <span class="truncate rounded bg-danger-soft px-1 text-danger" title={entry.errorMessage ?? 'Failed'}>{entry.errorMessage ?? 'Failed'}</span>
+                        {/if}
+                      {:else if entry.statusCode !== null}
                         <span class="rounded px-1 font-medium {TONE[statusTone(entry.statusCode)]}">{entry.statusCode}</span>
                       {:else}
                         <span class="truncate rounded bg-danger-soft px-1 text-danger" title={entry.errorMessage ?? 'Failed'}>{entry.errorMessage ?? 'Failed'}</span>

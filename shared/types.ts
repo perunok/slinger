@@ -423,6 +423,124 @@ export interface HttpResponseData {
   /** Present when the body is not valid UTF-8; base64-encoded raw bytes. */
   bodyBase64: string | null
   bodyByteLength: number
+  /**
+   * ADDED (MCP requests): set by the renderer on the synthetic response of an MCP request (executeDraft), never by main.
+   * `bodyText` then holds the JSON-RPC result; `operation` is 'tools/call' | 'resources/read' | 'prompts/get' and `name`
+   * the tool or prompt name (the resource URI for resources/read).
+   */
+  mcp?: McpCallOutcome & { operation: string; name: string | null }
+}
+
+// ---------------------------------------------------------------------------
+// MCP client (MCP requests: Slinger connects to an MCP server; electron/mcpClient). Not the MCP *server* (shared/mcp.ts).
+// Every input is fully resolved by the renderer: main rejects any string that still holds a `{{variable}}`.
+// ---------------------------------------------------------------------------
+
+export type McpClientTransport = 'http' | 'sse' | 'stdio'
+
+export interface McpConnectInput {
+  workspaceId: string
+  transport: McpClientTransport
+  /** http/sse: the server's http(s) URL. */
+  url?: string
+  /** http/sse: request headers, the request's auth already applied as headers. */
+  headers?: Array<{ key: string; value: string }>
+  /** stdio: the executable Slinger starts (only after the user allowed it on this device: mcpClientTrustCommand). */
+  command?: string
+  args?: string[]
+  /** stdio: extra environment variables on top of the SDK's safe default environment. */
+  env?: Array<{ key: string; value: string }>
+  /** stdio: working directory; empty = the user's home directory. */
+  cwd?: string
+  /** Who starts it: 'user' (window), 'runner', 'workflow', 'mcp' (an AI assistant through Slinger's MCP server). */
+  origin: 'user' | 'runner' | 'workflow' | 'mcp'
+  /** Connect + initialize timeout, default 30000. */
+  timeoutMs?: number
+}
+
+export interface McpSessionInfo {
+  sessionId: string
+  serverInfo: { name: string; version: string; title?: string }
+  protocolVersion: string | null
+  /** Server capabilities as sent. */
+  capabilities: Record<string, unknown>
+  instructions: string | null
+  connectMs: number
+}
+
+export type McpListKind = 'tools' | 'resources' | 'resourceTemplates' | 'prompts'
+
+/** Every page of a list (nextCursor followed), at most 1000 items (`truncated` then true). */
+export interface McpListResult {
+  kind: McpListKind
+  items: Array<Record<string, unknown>>
+  truncated: boolean
+}
+
+export type McpOperationName = 'tools/call' | 'resources/read' | 'prompts/get'
+
+export interface McpCallInput {
+  sessionId: string
+  operation: McpOperationName
+  /** tools/call and prompts/get: the tool or prompt name. */
+  name?: string
+  /** resources/read: the resource URI. */
+  uri?: string
+  /** tools/call: any JSON object; prompts/get: string values only. */
+  arguments?: Record<string, unknown>
+  /** For mcpClientCancel. */
+  requestRunId: string
+  /** Default 60000, max 600000. */
+  timeoutMs?: number
+  // History (same meaning as for HTTP sends):
+  workspaceId: string
+  requestId?: string | null
+  requestName?: string | null
+  /** 'mcp' = an AI assistant (Slinger's MCP server) sent it. */
+  historySource?: 'mcp' | null
+  /** Unresolved display string (templates, never secret values) recorded in History. */
+  historyUrl: string
+  /**
+   * ADDED (review): History's `detail` as shown to the user (`resources/read demo://{{id}}`: secrets stay `{{name}}`).
+   * Absent: the operation and the tool or prompt name (never the resolved URI).
+   */
+  historyDetail?: string
+  /** ADDED (review): groups the send's script runs, so History hides secret values the scripts read (like HTTP sends). */
+  scriptSessionId?: string | null
+}
+
+export interface McpCallOutcome {
+  /** false: protocol/transport error OR a tool result with isError. */
+  ok: boolean
+  /** tools/call result.isError. */
+  isError: boolean
+  /** The raw JSON-RPC result (null on error). */
+  result: Record<string, unknown> | null
+  /** JSON-RPC / transport error. */
+  error: { code: number | null; message: string; data?: unknown } | null
+  durationMs: number
+}
+
+/** Push channel 'mcp-client:event' (main -> renderer): the message log of one MCP client session. */
+export interface McpClientEvent {
+  sessionId: string
+  /** ms since epoch. */
+  at: number
+  type: 'send' | 'receive' | 'notification' | 'stderr' | 'closed' | 'error'
+  /** send/receive: the JSON-RPC message; notification: {method, params}; stderr: {text}; closed/error: {message} */
+  payload: unknown
+}
+
+/** A stdio command the user allowed on this device (mcpClientTrustCommand). */
+export interface McpTrustCommandInput {
+  command: string
+  args: string[]
+  cwd: string
+  /**
+   * ADDED (review): the command's extra environment as resolved (the same rows as McpConnectInput.env). Part of what is
+   * allowed: variables such as NODE_OPTIONS, LD_PRELOAD or PATH change what the command runs.
+   */
+  env: Array<{ key: string; value: string }>
 }
 
 // ---------------------------------------------------------------------------

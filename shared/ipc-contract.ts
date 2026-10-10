@@ -28,6 +28,14 @@ import type {
   HistoryEntry,
   HttpRequestInput,
   HttpResponseData,
+  McpCallInput,
+  McpCallOutcome,
+  McpClientEvent,
+  McpConnectInput,
+  McpListKind,
+  McpListResult,
+  McpSessionInfo,
+  McpTrustCommandInput,
   ExtractFolderInput,
   ExtractFolderResult,
   MoveFolderInput,
@@ -273,6 +281,22 @@ export interface SlingerIpcApi {
   disconnectMcpClient(clientId: McpClientId): Promise<McpClientStatus[]>
   /** Push channel (main -> renderer): an LLM client called a tool; run it and answer with mcpRespond. */
   onMcpCall(listener: (call: McpCall) => void): () => void
+
+  // --- ADDED (MCP requests): Slinger as an MCP *client* (electron/mcpClient). Inputs are fully resolved (no `{{ }}`). ---
+  /** Connects and initializes. stdio commands must be allowed first (invalid_input, details.reason 'untrusted_command'). */
+  mcpClientConnect(input: McpConnectInput): Promise<McpSessionInfo>
+  /** Every page of tools / resources / resource templates / prompts (max 1000 items). */
+  mcpClientList(sessionId: string, kind: McpListKind): Promise<McpListResult>
+  /** Runs one operation and records History. Never rejects for tool/protocol errors (ok: false); only for invalid input or an unknown session. */
+  mcpClientCall(input: McpCallInput): Promise<McpCallOutcome>
+  /** Aborts a running mcpClientCall with that requestRunId (no-op when unknown). */
+  mcpClientCancel(requestRunId: string): Promise<void>
+  /** Closes a session (no-op when unknown). */
+  mcpClientDisconnect(sessionId: string): Promise<void>
+  /** The user allowed this stdio command (exact command, args, cwd) in the window; kept on this device only. */
+  mcpClientTrustCommand(input: McpTrustCommandInput): Promise<void>
+  /** Push channel (main -> renderer, 'mcp-client:event'): message log, notifications, stderr and closes of client sessions. */
+  onMcpClientEvent(listener: (event: McpClientEvent) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -434,19 +458,26 @@ export const IPC_CHANNELS = [
   'listMcpClients',
   'connectMcpClient',
   'disconnectMcpClient',
+  'mcpClientConnect',
+  'mcpClientList',
+  'mcpClientCall',
+  'mcpClientCancel',
+  'mcpClientDisconnect',
+  'mcpClientTrustCommand',
 ] as const satisfies readonly (keyof SlingerIpcApi)[]
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call', 'mcp-client:event'] as const
 export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
 export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
 export const WINDOW_STATE_CHANNEL = IPC_EVENT_CHANNELS[2]
 export const MCP_CALL_CHANNEL = IPC_EVENT_CHANNELS[3]
+export const MCP_CLIENT_EVENT_CHANNEL = IPC_EVENT_CHANNELS[4]
 
 /** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall'>
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall' | 'onMcpClientEvent'>
 
 declare global {
   interface Window {

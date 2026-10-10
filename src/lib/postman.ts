@@ -5,6 +5,10 @@
  * auth, scripts (`scripts` -> `event`) and `responses` (-> `response`) are passed through
  * verbatim, as are collection/folder scripts (`scriptsJson` -> `event`); only the URL is decomposed and query params are rebuilt. `{{variables}}` are
  * never encoded or split.
+ *
+ * MCP requests (document key `mcp`, see mcpRequest.ts) are written as `request: {method: 'MCP', url, header, auth}` plus the
+ * item-level `_slinger_mcp` (the document's `mcp` object verbatim), which the Slinger importers lift back. Postman itself
+ * ignores the extra key; the item is only meaningful to Slinger.
  */
 import type { SlingerExportBlock } from '../../shared/slingerExport'
 import { stripOAuth2Tokens } from '../../shared/oauth2'
@@ -68,7 +72,12 @@ export interface PostmanItem {
   request?: PostmanRequest
   event?: unknown[]
   response?: unknown[]
+  /** MCP requests only: the document's `mcp` object (wire format of mcpRequest.ts), lifted back by the importers. */
+  _slinger_mcp?: Json
 }
+
+/** Item key of an MCP request's configuration in a Postman export. */
+export const SLINGER_MCP_ITEM_KEY = '_slinger_mcp'
 
 export interface PostmanCollectionV21 {
   info: {
@@ -337,6 +346,14 @@ export { postmanUrlToString } from '../../shared/postmanUrl'
 function requestItem(request: ApiRequest): PostmanItem {
   const doc = parseDoc(request.documentJson)
   const item: PostmanItem = { name: request.name, request: postmanRequestFromDocument(doc, request) }
+  if (isObj(doc.mcp)) {
+    const req = item.request!
+    req.method = 'MCP'
+    // A stdio request's URL is its command line: kept as `raw` only, never decomposed into host and path.
+    if (doc.mcp.transport === 'stdio') req.url = { raw: req.url.raw }
+    delete req.body
+    item._slinger_mcp = doc.mcp
+  }
   if (Array.isArray(doc.scripts) && doc.scripts.length > 0) item.event = doc.scripts
   if (Array.isArray(doc.responses) && doc.responses.length > 0) item.response = doc.responses
   return item

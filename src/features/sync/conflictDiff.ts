@@ -4,7 +4,7 @@
  * Request content comes in two tiers:
  *  - full: when a group carries `localDetail` / `remoteDetail` (JSON text of the wire fields
  *    `{name, method, url, document_json}`; an optional, additive extension of SyncConflictGroup) every field is
- *    compared: name, method, URL, headers, body, authorization...
+ *    compared: name, method, URL, headers, body, authorization, an MCP request's configuration...
  *  - summary: the contract's own `local`/`remote` text for group `content`, "<name> - <METHOD> <url> [details #hash]",
  *    which allows comparing name, method and URL, and headers/body/auth only as a fingerprint.
  * Anything else is compared as plain text. `null` means the entity does not exist on that side.
@@ -50,6 +50,7 @@ const FIELD_LABEL: Record<(typeof FIELDS)[number], string> = {
   headers: 'Headers',
   auth: 'Authorization',
   params: 'Disabled params',
+  mcp: 'MCP',
   description: 'Description',
   other: 'Other settings',
 }
@@ -139,7 +140,7 @@ function requestRows(local: string | null, remote: string | null): DiffRow[] | n
     if (a === b && !ALWAYS.has(f) && (a ?? '') === '') continue
     if (a === b && !ALWAYS.has(f)) {
       // Equal, non-empty: keep for context only for the main sections.
-      if (f === 'headers' || f === 'body' || f === 'auth') rows.push(row(f, FIELD_LABEL[f], a, b))
+      if (f === 'headers' || f === 'body' || f === 'auth' || f === 'mcp') rows.push(row(f, FIELD_LABEL[f], a, b))
       continue
     }
     rows.push(row(f, FIELD_LABEL[f], a, b))

@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Right panel > Info: facts about the active request (ids, location, times, version, sync). */
   import { app } from '../../../app/state.svelte'
+  import { mcpDisplayUrl, type McpTransport } from '../../../lib/mcpRequest'
   import type { RequestTab } from '../../requests/tabs.svelte'
   import { sync } from '../../sync/syncStore.svelte'
   import PanelEmpty from './PanelEmpty.svelte'
@@ -22,6 +23,8 @@
     }
     return [collection.name, ...parts].join(' / ')
   })
+  const mcp = $derived(tab?.draft.mcp)
+  const MCP_TRANSPORT_LABELS: Record<McpTransport, string> = { http: 'Streamable HTTP', sse: 'SSE (legacy)', stdio: 'Command (stdio)' }
   const when = (s: number | undefined) => (s ? new Date(s * 1000).toLocaleString() : '—')
   const state = $derived(!tab ? '' : !tab.requestId ? 'Not saved yet' : tab.dirty ? 'Unsaved changes' : 'Saved')
   const cloud = $derived.by(() => {
@@ -44,8 +47,15 @@
       <dd class="break-words">{tab.draft.name || 'Untitled Request'}</dd>
       <dt class="text-muted">Method</dt>
       <dd class="font-mono">{tab.draft.method}</dd>
-      <dt class="text-muted">URL</dt>
-      <dd class="break-all font-mono">{tab.draft.url || '—'}</dd>
+      {#if mcp}
+        <dt class="text-muted">Transport</dt>
+        <dd>{MCP_TRANSPORT_LABELS[mcp.transport]}</dd>
+        <dt class="text-muted">{mcp.transport === 'stdio' ? 'Command' : 'Server'}</dt>
+        <dd class="break-all font-mono">{mcpDisplayUrl(tab.draft) || '—'}</dd>
+      {:else}
+        <dt class="text-muted">URL</dt>
+        <dd class="break-all font-mono">{tab.draft.url || '—'}</dd>
+      {/if}
       <dt class="text-muted">Location</dt>
       <dd class="break-words">{location ?? 'Not in a collection'}</dd>
       <dt class="text-muted">State</dt>

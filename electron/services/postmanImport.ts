@@ -15,6 +15,8 @@ import { stripOAuth2Tokens, stripOAuth2TokensFromItem } from '../../shared/oauth
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_DEPTH = 100
+/** Method of an MCP request (src/lib/mcpRequest.ts MCP_METHOD). */
+const MCP_METHOD = 'MCP'
 
 type Json = Record<string, unknown>
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -90,30 +92,28 @@ function collect(
     if (!isObject(item.request)) continue
     const request = item.request
     const name = str(item.name) ?? 'Untitled Request'
-    const method = (str(request.method) ?? 'GET').toUpperCase()
+    // A Slinger MCP request (see src/lib/postman.ts): its configuration comes back from the item's `_slinger_mcp`.
+    const mcp = isObject(item._slinger_mcp) ? item._slinger_mcp : null
+    const method = mcp ? MCP_METHOD : (str(request.method) ?? 'GET').toUpperCase()
     const url = postmanUrlToString(request.url)
     out.scriptCount += countScripts(item.event)
-    out.requests.push({
-      folderTempId: parentTempId,
+    const { _slinger_mcp: _mcp, ...sourceItem } = item
+    const document: Json = {
       name,
       method,
       url,
-      sortOrder: requestOrder++,
-      document: {
-        name,
-        method,
-        url,
-        description: request.description ?? null,
-        headers: Array.isArray(request.header) ? request.header : [],
-        body: request.body ?? null,
-        // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
-        // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
-        auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
-        scripts: Array.isArray(item.event) ? item.event : [],
-        responses: Array.isArray(item.response) ? item.response : [],
-        source: stripOAuth2TokensFromItem(item),
-      },
-    })
+      description: request.description ?? null,
+      headers: Array.isArray(request.header) ? request.header : [],
+      body: mcp ? null : (request.body ?? null),
+      // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
+      // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
+      auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
+      scripts: Array.isArray(item.event) ? item.event : [],
+      responses: Array.isArray(item.response) ? item.response : [],
+      source: stripOAuth2TokensFromItem(sourceItem),
+    }
+    if (mcp) Object.assign(document, { params: [], mcp })
+    out.requests.push({ folderTempId: parentTempId, name, method, url, sortOrder: requestOrder++, document })
   }
 }
 

@@ -4,12 +4,15 @@
  * mutations on the outgoing copy only, environment refresh, failures, and the tab's Tests/Console output.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { HttpRequestInput, RunScriptsInput, RunScriptsResult } from '../../../shared/types'
+import type { HttpRequestInput, McpCallInput, McpCallOutcome, McpConnectInput, RunScriptsInput, RunScriptsResult } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
-import { draftFingerprint, parseDocument } from '../../lib/request'
-import { executeDraft, newScriptRun } from './execute'
+import { newRow } from '../../lib/kv'
+import { newMcpDraft, newMcpRequestDraft, type McpDraft } from '../../lib/mcpRequest'
+import { draftFingerprint, parseDocument, type RequestDraft } from '../../lib/request'
+import { mcpConnections } from '../mcpRequests/connections.svelte'
+import { cancelRun, executeDraft, newScriptRun, UNTRUSTED_COMMAND_MESSAGE } from './execute'
 import { tabsStore } from './tabs.svelte'
 
 let backend: ReturnType<typeof createMockBackend>
@@ -362,5 +365,223 @@ describe('executeDraft in a data-driven run', () => {
     const { r, draft } = withScripts(pre('1'))
     await executeDraft(draft, ctx(r))
     expect('iterationData' in calls[0]!).toBe(false)
+  })
+})
+
+describe('executeDraft with an MCP request', () => {
+  let connects: McpConnectInput[]
+  let mcpCalls: McpCallInput[]
+  let answer: (input: McpCallInput) => Promise<McpCallOutcome>
+  const okResult = { content: [{ type: 'text', text: 'Sunny' }], structuredContent: { temp: 21 } }
+
+  beforeEach(async () => {
+    await mcpConnections.reset()
+    connects = []
+    mcpCalls = []
+    answer = async () => ({ ok: true, isError: false, result: okResult, error: null, durationMs: 7 })
+    vi.spyOn(backend, 'mcpClientConnect').mockImplementation(async (input) => {
+      connects.push(structuredClone(input))
+      return { sessionId: `s${connects.length}`, serverInfo: { name: 'Demo', version: '1' }, protocolVersion: null, capabilities: {}, instructions: null, connectMs: 1 }
+    })
+    vi.spyOn(backend, 'mcpClientCall').mockImplementation(async (input) => {
+      mcpCalls.push(structuredClone(input))
+      return answer(input)
+    })
+    vi.spyOn(backend, 'mcpClientDisconnect').mockResolvedValue()
+  })
+
+  const mcpRequest = (mcp: Partial<McpDraft> = {}): RequestDraft => ({
+    ...newMcpRequestDraft('Weather'),
+    url: '{{baseUrl}}/mcp',
+    mcp: newMcpDraft({ tool: 'get_weather', arguments: '{"city": "{{city}}", "user": {{userId}}}', ...mcp }),
+  })
+  const wsCtx = (over: Partial<Parameters<typeof executeDraft>[1]> = {}) => ({ workspaceId: app.workspaceId!, requestId: 'req-1', ...over })
+
+  it('runs the scripts, connects, calls the tool and answers with a synthetic JSON response', async () => {
+    respond = (input) =>
+      input.event === 'prerequest'
+        ? { variables: { ...input.variables, city: 'Oslo' }, request: { ...input.request, method: 'POST', url: 'http://elsewhere' } }
+        : {}
+    const draft = mcpRequest()
+    draft.auth = { ...draft.auth, kind: 'bearer', bearer: { token: '{{apiToken}}' } }
+    draft.extras = { scripts: [...pre('p()'), ...testEv('t()')] }
+    const out = await executeDraft(draft, wsCtx())
+
+    expect(sent).toEqual([])
+    expect(connects).toEqual([
+      {
+        transport: 'http',
+        url: 'https://mock.slinger.local/mcp',
+        headers: [{ key: 'Authorization', value: 'Bearer sk_live_demo_123' }],
+        workspaceId: app.workspaceId,
+        origin: 'user',
+      },
+    ])
+    expect(mcpCalls).toEqual([
+      {
+        operation: 'tools/call',
+        name: 'get_weather',
+        arguments: { city: 'Oslo', user: 42 },
+        historyUrl: 'https://mock.slinger.local/mcp',
+        historyDetail: 'tools/call get_weather',
+        sessionId: 's1',
+        requestRunId: calls[0].runId,
+        workspaceId: app.workspaceId,
+        requestId: 'req-1',
+        requestName: 'Weather',
+        scriptSessionId: calls[0].sessionId,
+      },
+    ])
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.runId).toBe(calls[0].runId)
+    expect(out.response).toMatchObject({
+      status: 200,
+      statusText: 'OK',
+      durationMs: 7,
+      headers: [{ key: 'Content-Type', value: 'application/json' }],
+      bodyBase64: null,
+      mcp: { ok: true, isError: false, result: okResult, error: null, durationMs: 7, operation: 'tools/call', name: 'get_weather' },
+    })
+    expect(JSON.parse(out.response.bodyText!)).toEqual(okResult)
+    expect(out.response.bodyByteLength).toBe(out.response.bodyText!.length)
+    // Test scripts see the result as the response body and the request without secret values.
+    expect(calls[1].event).toBe('test')
+    expect(calls[1].response).toMatchObject({ code: 200, status: 'OK', body: out.response.bodyText })
+    expect(calls[1].request.url).toBe('https://mock.slinger.local/mcp')
+    expect(JSON.stringify(calls[1].request)).not.toContain('sk_live_demo_123')
+  })
+
+  it('reports a tool error as a 500 "Tool error" response, and a protocol error as a failed send', async () => {
+    answer = async () => ({ ok: false, isError: true, result: { content: [{ type: 'text', text: 'boom' }], isError: true }, error: null, durationMs: 2 })
+    const toolError = await executeDraft(mcpRequest({ tool: 'fail', arguments: '{}' }), wsCtx())
+    expect(toolError).toMatchObject({ ok: true, response: { status: 500, statusText: 'Tool error', mcp: { isError: true, name: 'fail' } } })
+
+    const error = { code: -32602, message: 'MCP error -32602: Tool nope not found', data: { hint: 'list tools' } }
+    answer = async () => ({ ok: false, isError: false, result: null, error, durationMs: 2 })
+    // The JSON-RPC code and data travel with the failure (the result pane shows them).
+    expect(await executeDraft(mcpRequest({ tool: 'nope', arguments: '{}' }), wsCtx())).toMatchObject({
+      ok: false,
+      kind: 'failed',
+      error: 'MCP error -32602: Tool nope not found',
+      mcpError: error,
+    })
+  })
+
+  it('reuses the session of a tab key, and an assistant or a run gets its own shared session', async () => {
+    const draft = mcpRequest({ operation: 'resources/read', uri: 'demo://users/{{userId}}' })
+    await executeDraft(draft, wsCtx({ mcpSessionKey: 'tab:1' }))
+    await executeDraft(draft, wsCtx({ mcpSessionKey: 'tab:1' }))
+    expect(connects).toHaveLength(1)
+    expect(mcpCalls.map((c) => [c.sessionId, c.operation, c.uri])).toEqual([
+      ['s1', 'resources/read', 'demo://users/42'],
+      ['s1', 'resources/read', 'demo://users/42'],
+    ])
+
+    const out = await executeDraft(draft, wsCtx({ source: 'mcp' }))
+    expect(connects[1].origin).toBe('mcp')
+    expect(mcpCalls[2]).toMatchObject({ sessionId: 's2', historySource: 'mcp', historyDetail: 'resources/read demo://users/42' })
+    expect(out.ok && out.response.mcp).toMatchObject({ operation: 'resources/read', name: 'demo://users/42' })
+    await executeDraft(draft, wsCtx({ run: newScriptRun() }))
+    expect(connects).toHaveLength(2)
+    await executeDraft(mcpRequest({ operation: 'prompts/get', prompt: 'greet', promptArguments: [newRow({ key: 'name', value: '{{userId}}' })] }), wsCtx({ run: newScriptRun(), mcpSessionKey: 'tab:9' }))
+    expect(connects[2].origin).toBe('runner')
+    expect(mcpCalls.at(-1)).toMatchObject({ operation: 'prompts/get', name: 'greet', arguments: { name: '42' } })
+  })
+
+  it('reconnects once when main no longer knows the session', async () => {
+    await executeDraft(mcpRequest({ arguments: '{}' }), wsCtx({ mcpSessionKey: 'tab:1' }))
+    answer = async (input) => {
+      if (input.sessionId === 's1') throw { name: 'IpcError', code: 'not_found', message: 'Unknown MCP session' }
+      return { ok: true, isError: false, result: okResult, error: null, durationMs: 1 }
+    }
+    const out = await executeDraft(mcpRequest({ arguments: '{}' }), wsCtx({ mcpSessionKey: 'tab:1' }))
+    expect(out.ok).toBe(true)
+    expect(mcpCalls.map((c) => c.sessionId)).toEqual(['s1', 's1', 's2'])
+  })
+
+  it('an untrusted stdio command fails with a pointer to the window and the command to allow', async () => {
+    vi.mocked(backend.mcpClientConnect).mockRejectedValueOnce({
+      name: 'IpcError',
+      code: 'invalid_input',
+      message: 'This command has not been allowed on this device yet.',
+      details: { reason: 'untrusted_command', command: 'node', args: ['srv.js', '42'], cwd: '', env: [{ key: 'TOKEN', value: 'sk_live_demo_123' }] },
+    })
+    const draft = mcpRequest({ transport: 'stdio', command: 'node', args: ['srv.js', '{{userId}}'], env: [newRow({ key: 'TOKEN', value: '{{apiToken}}' })], arguments: '{}' })
+    const out = await executeDraft(draft, wsCtx({ source: 'mcp' }))
+    expect(out).toMatchObject({
+      ok: false,
+      kind: 'failed',
+      error: UNTRUSTED_COMMAND_MESSAGE,
+      untrustedCommand: { command: 'node', args: ['srv.js', '42'], cwd: '', env: [{ key: 'TOKEN', value: 'sk_live_demo_123' }] },
+    })
+    expect(UNTRUSTED_COMMAND_MESSAGE).toContain('Open the request in Slinger and run it once')
+    expect(mcpCalls).toEqual([])
+    // The stdio connect input carries the resolved command and env, no url or headers.
+    vi.mocked(backend.mcpClientConnect).mockClear()
+    await executeDraft(draft, wsCtx())
+    expect(connects.at(-1)).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      args: ['srv.js', '42'],
+      env: [{ key: 'TOKEN', value: 'sk_live_demo_123' }],
+      cwd: '',
+      workspaceId: app.workspaceId,
+      origin: 'user',
+    })
+    expect(mcpCalls.at(-1)?.historyUrl).toBe('node srv.js 42')
+  })
+
+  it('records a secret in a resource URI as {{name}}: History detail and the result name', async () => {
+    const out = await executeDraft(mcpRequest({ operation: 'resources/read', uri: 'demo://docs?key={{apiToken}}' }), wsCtx())
+    expect(mcpCalls.at(-1)).toMatchObject({ uri: 'demo://docs?key=sk_live_demo_123', historyDetail: 'resources/read demo://docs?key={{apiToken}}' })
+    expect(out.ok && out.response.mcp?.name).toBe('demo://docs?key={{apiToken}}')
+  })
+
+  it('stops before connecting on unresolved variables or invalid arguments', async () => {
+    expect(await executeDraft(mcpRequest({ arguments: '{"a": "{{nowhere}}"}' }), wsCtx())).toMatchObject({ ok: false, kind: 'unresolved', unresolved: ['nowhere'] })
+    expect(await executeDraft(mcpRequest({ arguments: '{"a": }' }), wsCtx())).toMatchObject({
+      ok: false,
+      kind: 'invalid',
+      error: expect.stringContaining('not valid JSON'),
+    })
+    expect(connects).toEqual([])
+  })
+
+  it('cancel stops the MCP call with the same run id', async () => {
+    let cancelled = false
+    let release: () => void = () => {}
+    answer = () =>
+      new Promise((resolve) => {
+        release = () => resolve({ ok: false, isError: false, result: null, error: { code: null, message: 'This operation was aborted' }, durationMs: 3 })
+      })
+    const mcpCancel = vi.spyOn(backend, 'mcpClientCancel')
+    const httpCancel = vi.spyOn(backend, 'cancelHttpRequest')
+    let runId = ''
+    const pending = executeDraft(mcpRequest({ arguments: '{}' }), wsCtx({ onRunId: (id) => (runId = id), wasCancelled: () => cancelled }))
+    await vi.waitFor(() => expect(mcpCalls).toHaveLength(1))
+    cancelled = true
+    await cancelRun(runId)
+    expect(mcpCancel).toHaveBeenCalledWith(runId)
+    expect(httpCancel).toHaveBeenCalledWith(runId)
+    release()
+    expect(await pending).toMatchObject({ ok: false, kind: 'cancelled' })
+  })
+
+  it('OAuth 2.0: the stored token is looked up, revealed for the connect and sent as a header', async () => {
+    const draft = mcpRequest({ arguments: '{}' })
+    draft.auth.kind = 'oauth2'
+    Object.assign(draft.auth.oauth2, { grantType: 'client_credentials', accessTokenUrl: '{{baseUrl}}/token', clientId: 'app', scope: 'read' })
+    const refresh = vi.spyOn(backend, 'refreshOAuth2Token')
+    const none = await executeDraft(draft, wsCtx())
+    // An MCP request's Authorization panel is in its Connection section (there is no Authorization tab).
+    expect(none).toMatchObject({ ok: false, kind: 'invalid', error: 'No access token yet: click Get New Access Token in the Connection section.' })
+    expect(connects).toEqual([])
+    const status = await backend.getOAuth2Token(refresh.mock.calls[0]![0])
+    const token = await backend.revealOAuth2Token(status.tokenKey)
+    const out = await executeDraft(draft, wsCtx())
+    expect(out.ok).toBe(true)
+    expect(connects.at(-1)?.headers).toEqual([{ key: 'Authorization', value: `Bearer ${token}` }])
+    expect(JSON.stringify(mcpCalls)).not.toContain(token)
   })
 })
