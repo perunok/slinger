@@ -562,7 +562,9 @@ a script can read the environment and send what it reads in the request it is at
 The **History** sidebar tab lists recent requests of the current workspace grouped by day (last 200 shown; the app keeps up to 1000
 per workspace), with a filter box. Click an entry to open the saved request, or a new tab pre-filled with method and URL if it was
 not saved. Delete single entries or clear all. Secret values are never stored; the URL is recorded with secrets as `{{name}}`.
-Cloud sync traffic is not recorded here.
+Cloud sync traffic is not recorded here. Changes and sends made by an AI assistant (see [AI assistants (MCP)](#ai-assistants-mcp))
+are listed too, marked **AI assistant**; a change shows what was edited (for example "Edited request “Create order”: url and
+headers").
 
 ## Collection versions
 
@@ -925,6 +927,10 @@ connected assistants and you can read. Turning **Let AI assistants work in Sling
 then get a "turned off" message instead of starting Slinger). For assistants Slinger cannot connect by itself, open **Other
 assistants and advanced**: copy a ready-made command setup (works with any assistant that runs a command) or a URL + token setup
 (keep that one private), and change the port or token.
+
+Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
+send. Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
+edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
 change their values, and requests they send use them inside Slinger, but a secret value is never shown to them; credentials typed

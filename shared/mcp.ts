@@ -56,6 +56,28 @@ const requestFields = {
   test_script: z.string().max(500_000).optional().describe('JavaScript tests (pm.test...). Empty string removes it.'),
 }
 
+const exampleSelector = z
+  .union([z.number().int().min(0), z.string().min(1).max(512)])
+  .describe('Which saved example: its index from get_request (saved_examples), or its exact name.')
+const exampleFields = {
+  name: z.string().min(1).max(512).optional(),
+  status_code: z.number().int().min(100).max(599).optional().describe('HTTP status code of the example response.'),
+  status_text: z.string().max(200).optional().describe('Reason phrase; defaults to the standard one for status_code.'),
+  headers: kv.optional().describe('Response headers (replaces all).'),
+  body: z.string().max(5_000_000).optional().describe('Response body text.'),
+  language: z.enum(['json', 'xml', 'html', 'text', 'javascript']).optional().describe('How the body is shown (preview language).'),
+  request: z
+    .object({
+      method: requestFields.method,
+      url: requestFields.url,
+      headers: requestFields.headers,
+      query: requestFields.query,
+      body: requestFields.body,
+    })
+    .optional()
+    .describe('The request saved with the example (default: the request as it is now). Only the given parts change.'),
+}
+
 export interface McpToolSpec {
   title: string
   description: string
@@ -93,7 +115,8 @@ export const MCP_TOOLS = {
   get_request: {
     title: 'Read a request',
     description:
-      'Full request: method, URL, query, headers, body, auth, scripts, docs, saved example names. Literal credentials are masked.',
+      'Full request: method, URL, query, headers, body, auth, scripts, docs, and its saved examples (index, name, status). ' +
+      'Literal credentials are masked.',
     input: z.object({ request_id: id }),
     readOnly: true,
   },
@@ -140,6 +163,30 @@ export const MCP_TOOLS = {
     input: z.object({ kind: z.enum(['collection', 'folder', 'request', 'environment']), id }),
     destructive: true,
   },
+  get_example: {
+    title: 'Read a saved example',
+    description: 'One saved example (stored response) of a request: name, status, headers, body, and the request saved with it.',
+    input: z.object({ request_id: id, example: exampleSelector }),
+    readOnly: true,
+  },
+  create_example: {
+    title: 'Add a saved example',
+    description:
+      'Adds a saved example (a stored response, as in Postman) to a request. Defaults: 200 OK, JSON, the request as it is now. ' +
+      'To keep a real response, use send_request with save_as_example instead.',
+    input: z.object({ request_id: id, ...exampleFields, name: z.string().min(1).max(512) }),
+  },
+  update_example: {
+    title: 'Edit a saved example',
+    description: 'Changes the given parts of a saved example; everything not given stays exactly as stored.',
+    input: z.object({ request_id: id, example: exampleSelector, ...exampleFields }),
+  },
+  delete_example: {
+    title: 'Delete a saved example',
+    description: 'Removes one saved example from a request.',
+    input: z.object({ request_id: id, example: exampleSelector }),
+    destructive: true,
+  },
   list_environments: {
     title: 'Environments',
     description: 'Environments with their variables; the active one is marked. Secret values are never shown, only that they are set.',
@@ -182,6 +229,12 @@ export const MCP_TOOLS = {
       request_id: id.optional().describe('A saved request. Other fields given here override it for this send only.'),
       ...requestFields,
       environment_id: id.nullable().optional().describe('Use this environment instead of the active one (null: none).'),
+      save_as_example: z
+        .string()
+        .min(1)
+        .max(512)
+        .optional()
+        .describe('Also keep the response as a saved example with this name (needs request_id), like "Save as example".'),
     }),
     openWorld: true,
     timeoutMs: 330 * SEC,

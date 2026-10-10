@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { McpCallResult } from '../../../shared/mcp'
 import { app } from '../../app/state.svelte'
+import { readExamples } from '../../lib/examples'
 import { tabsStore } from '../requests/tabs.svelte'
 import { runsStore } from '../runner/runs.svelte'
 import { setupSync, teardownSync, type Backend } from '../sync/testUtils'
+import HistoryPanel from '../history/HistoryPanel.svelte'
 import McpHost from './McpHost.svelte'
 import McpSettings from './McpSettings.svelte'
 import { mcp } from './mcpStore.svelte'
@@ -34,6 +36,7 @@ async function call<T = any>(tool: string, args: unknown = {}): Promise<T> {
   expect(JSON.parse(r.text)).toEqual(r.data)
   return r.data as T
 }
+const readStored = (requestId: string) => readExamples(app.requestById(requestId)!.documentJson)
 const failure = async (tool: string, args: unknown = {}) => {
   const r = (await runTool(tool, args)) as Extract<McpCallResult, { ok: false }>
   expect(r.ok).toBe(false)
@@ -123,6 +126,83 @@ describe('editing requests', () => {
     expect(imported).toMatchObject({ name: 'Imported by AI', requests: 1 })
     expect(await failure('create_request', { collection_id: created.id, name: 'x' })).toContain('Invalid arguments')
     expect(await failure('format_disk')).toContain('Unknown tool')
+  })
+})
+
+describe('saved examples', () => {
+  it('lists, reads, adds, edits and deletes examples; an open example tab follows; stored fields not edited stay', async () => {
+    const pets = app.requests.find((r) => r.name === 'List pets')!
+    const { saved_examples } = await call('get_request', { request_id: pets.id })
+    expect(saved_examples).toEqual([
+      { index: 0, name: 'Two pets', status: 200 },
+      { index: 1, name: 'Server error', status: 500 },
+    ])
+    const two = await call('get_example', { request_id: pets.id, example: 'Two pets' })
+    expect(two).toMatchObject({ index: 0, name: 'Two pets', status_code: 200, request: { method: 'GET' } })
+    expect(two.body.length).toBeGreaterThan(0)
+
+    const { created } = await call('create_example', {
+      request_id: pets.id,
+      name: 'Empty list',
+      body: '[]',
+      headers: [{ key: 'Content-Type', value: 'application/json' }],
+      request: { url: '{{baseUrl}}/pets?limit=0' },
+    })
+    expect(created).toMatchObject({ index: 2, name: 'Empty list', status_code: 200, status_text: 'OK', language: 'json', body: '[]', request: { url: '{{baseUrl}}/pets?limit=0' } })
+    expect(readStored(pets.id)).toHaveLength(3) // the window's store has it
+
+    const tab = tabsStore.openExample(app.requestById(pets.id)!, 2)
+    const before = JSON.stringify(readStored(pets.id)[1])
+    const { updated } = await call('update_example', { request_id: pets.id, example: 2, status_code: 404, body: '{"error":"none"}' })
+    expect(updated).toMatchObject({ status_code: 404, status_text: 'Not Found', body: '{"error":"none"}', name: 'Empty list', request: { url: '{{baseUrl}}/pets?limit=0' } })
+    expect(JSON.stringify(readStored(pets.id)[1])).toBe(before) // other examples untouched
+    await waitFor(() => expect(tab.exampleDraft?.code).toBe(404))
+
+    expect(await failure('get_example', { request_id: pets.id, example: 7 })).toContain('There is no example 7')
+    expect(await failure('get_example', { request_id: pets.id, example: 'Nope' })).toContain('No saved example named')
+    await call('create_example', { request_id: pets.id, name: 'Two pets' })
+    expect(await failure('update_example', { request_id: pets.id, example: 'Two pets', status_code: 201 })).toContain('Several examples are named')
+
+    const { deleted, saved_examples: left } = await call('delete_example', { request_id: pets.id, example: 'Empty list' })
+    expect(deleted).toMatchObject({ index: 2, name: 'Empty list' })
+    expect(left.map((e: any) => e.name)).toEqual(['Two pets', 'Server error', 'Two pets'])
+  })
+
+  it('send_request can keep the response as an example (needs a saved request)', async () => {
+    const req = app.requests.find((r) => r.name === 'JSON sample')!
+    const res = await call('send_request', { request_id: req.id, save_as_example: 'Live sample' })
+    expect(res.saved_example).toMatchObject({ index: 0, name: 'Live sample' })
+    const ex = await call('get_example', { request_id: req.id, example: 'Live sample' })
+    expect(ex).toMatchObject({ status_code: res.response.status })
+    expect(await failure('send_request', { url: 'https://mock.slinger.local/json', save_as_example: 'x' })).toContain('needs request_id')
+  })
+})
+
+describe('history', () => {
+  it('records what an assistant changed and sent, flagged; the History panel shows it', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', { collection_id: demo.id, name: 'Create order', method: 'POST', url: 'https://mock.slinger.local/json' })
+    await call('update_request', { request_id: created.id, url: 'https://mock.slinger.local/json?v=2', headers: [] })
+    await call('send_request', { request_id: created.id })
+    const { created: env } = await call('create_environment', { name: 'Assistant env' })
+    await call('set_variable', { environment_id: env.id, key: 'apiToken', value: 'sk_never_logged', secret: true })
+    const { history } = await call('list_history', { limit: 10 })
+    expect(history.slice(0, 5).map((h: any) => [h.kind ?? 'send', h.by, h.detail ?? `${h.method} ${h.status}`])).toEqual([
+      ['edit', 'AI assistant', 'Added secret variable “apiToken” in “Assistant env”'],
+      ['edit', 'AI assistant', 'Created environment “Assistant env”'],
+      ['send', 'AI assistant', 'POST 200'],
+      ['edit', 'AI assistant', 'Edited request “Create order”: url and headers'],
+      ['edit', 'AI assistant', 'Created request “Create order” in “Demo API”'],
+    ])
+    expect(JSON.stringify(history)).not.toContain('sk_never_logged')
+
+    render(HistoryPanel)
+    const edits = await screen.findAllByTestId('history-edit')
+    expect(edits[0]).toHaveTextContent('Added secret variable “apiToken” in “Assistant env”')
+    expect(screen.getAllByText('AI assistant').length).toBeGreaterThanOrEqual(5)
+    // clicking an edit of a request opens that request
+    await userEvent.setup().click(screen.getByText('Edited request “Create order”: url and headers'))
+    expect(tabsStore.tabs.some((t) => t.requestId === created.id)).toBe(true)
   })
 })
 

@@ -190,6 +190,23 @@ export interface HistoryEntry {
   errorMessage: string | null
   durationMs: number
   createdAt: number
+  /** ADDED (MCP): 'send' for an HTTP request, 'edit' for a change an AI assistant made. Absent in older fixtures: 'send'. */
+  kind?: 'send' | 'edit'
+  /** ADDED (MCP): 'mcp' when an AI assistant did it (through the MCP server); null when the user did. */
+  source?: 'mcp' | null
+  /** ADDED (MCP): for edits, what changed (e.g. 'Edited request "Create order"'). Never a value. */
+  detail?: string | null
+}
+
+/** An edit an AI assistant made through the MCP server, for History (recordAssistantEdit). */
+export interface AssistantEditInput {
+  workspaceId: string
+  /** The request it concerns (clicking the entry opens it), or null. */
+  requestId: string | null
+  requestName: string | null
+  method: string
+  url: string
+  detail: string
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +404,8 @@ export interface HttpRequestInput {
    * with secrets left as `{{name}}` placeholders and without auth query parameters here.
    */
   historyUrl?: string | null
+  /** ADDED (MCP): 'mcp' when an AI assistant sent it; recorded on the history entry. */
+  historySource?: 'mcp' | null
   /**
    * ADDED (scripts): the script session of this send / collection run (RunScriptsInput.sessionId). Secret values
    * that scripts of the session read are replaced by `{{name}}` in the history entry.

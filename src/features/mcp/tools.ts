@@ -10,7 +10,17 @@ import { MCP_BODY_LIMIT, MCP_TOOLS, type McpCallResult, type McpToolArgs, type M
 import type { ApiFolder, ApiRequest, Collection, HttpResponseData } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { api, errorInfo } from '../../lib/ipc'
-import { readExamples } from '../../lib/examples'
+import {
+  assertDocumentFits,
+  blankExample,
+  exampleFromResponse,
+  exampleName,
+  parseExample,
+  readExamples,
+  serializeExample,
+  statusReason,
+  updateExamples,
+} from '../../lib/examples'
 import { dataRows, newRow, type KvRow } from '../../lib/kv'
 import { emptyBody, newDraft, parseDocument, serializeDraft, type RawLanguage, type RequestDraft } from '../../lib/request'
 import { editorCode, withScript } from '../../lib/scripts'
@@ -75,6 +85,31 @@ async function findEnvironment(id: string) {
     if (env) return env
   }
   return fail(`No environment with id "${id}". Use list_environments.`)
+}
+
+/** History entry for an edit (flagged "AI assistant"). Best effort: a failure never fails the edit itself. */
+async function logEdit(workspaceId: string, detail: string, request?: Pick<ApiRequest, 'id' | 'name' | 'method' | 'url'> | null): Promise<void> {
+  try {
+    await api().recordAssistantEdit({
+      workspaceId,
+      requestId: request?.id ?? null,
+      requestName: request?.name ?? null,
+      method: request?.method ?? '',
+      url: request?.url ?? '',
+      detail: detail.slice(0, 1000),
+    })
+    if (workspaceId === app.workspaceId) app.historyTick++
+  } catch {
+    /* history is a log; the change itself succeeded */
+  }
+}
+
+const q = (name: string) => `“${name}”`
+/** "url, headers and body" from the tool arguments that were given. */
+function changedParts(a: Record<string, unknown>, skip: string[]): string {
+  const parts = Object.keys(a).filter((k) => !skip.includes(k) && a[k] !== undefined).map((k) => k.replace(/_/g, ' '))
+  if (parts.length === 0) return 'nothing'
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
 }
 
 /** Refreshes what the window shows after a write in `workspaceId` (other workspaces load when opened). */
@@ -159,7 +194,7 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
     pre_request_script: editorCode(d.extras.scripts, 'prerequest'),
     test_script: editorCode(d.extras.scripts, 'test'),
     description: d.description,
-    saved_examples: readExamples(r.documentJson).map((e) => String((e as { name?: unknown }).name ?? 'Example')),
+    saved_examples: exampleList(r),
     version: r.version,
   }
 }
@@ -224,6 +259,86 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
     d.extras = extras
   }
   return d
+}
+
+// ---- saved examples (the request document's `responses`) ---------------------------------------------------------
+
+type ExampleFields = Partial<McpToolArgs<'update_example'>>
+
+/** Saves a changed example list on the request (any workspace); the window follows when it shows that workspace. */
+async function writeExamples(r: ApiRequest, fn: (list: unknown[]) => unknown[]): Promise<ApiRequest> {
+  const documentJson = updateExamples(r.documentJson, fn)
+  try {
+    assertDocumentFits(documentJson)
+  } catch (e) {
+    fail((e as Error).message)
+  }
+  const updated = await api().updateRequest({ requestId: r.id, name: r.name, method: r.method, url: r.url, documentJson, expectedVersion: r.version })
+  if (r.workspaceId === app.workspaceId) {
+    tabsStore.afterExamplesWrite(updated)
+    await app.reloadCollection(r.collectionId)
+  }
+  return updated
+}
+
+function pickExample(list: unknown[], sel: number | string): number {
+  if (typeof sel === 'number') {
+    if (sel >= list.length) fail(list.length ? `There is no example ${sel}: the request has ${list.length} (0 to ${list.length - 1}).` : 'The request has no saved examples.')
+    return sel
+  }
+  const hits = list.flatMap((e, i) => (exampleName(e) === sel ? [i] : []))
+  if (hits.length === 0) fail(`No saved example named "${sel}". get_request lists them.`)
+  if (hits.length > 1) fail(`Several examples are named "${sel}" (indices ${hits.join(', ')}); give the index instead.`)
+  return hits[0]!
+}
+
+const exampleList = (r: ApiRequest) =>
+  readExamples(r.documentJson).map((e, index) => ({ index, name: exampleName(e), status: parseExample(e, r).response.code }))
+
+function exampleOut(r: ApiRequest, index: number): Data {
+  const stored = readExamples(r.documentJson)[index]
+  const p = parseExample(stored, r)
+  let body = p.response.body
+  let note: string | null = null
+  if (p.response.bodyEncoding === 'base64') {
+    note = `binary body stored as base64 (${body.length} characters), not shown`
+    body = ''
+  } else if (body.length > MCP_BODY_LIMIT) {
+    body = body.slice(0, MCP_BODY_LIMIT)
+    note = `only the first ${MCP_BODY_LIMIT} characters are shown`
+  }
+  return {
+    request_id: r.id,
+    index,
+    name: exampleName(stored),
+    status_code: p.response.code,
+    status_text: p.response.status,
+    headers: rowsOut(p.response.headers),
+    language: p.response.language || null,
+    body,
+    ...(note ? { body_note: note } : {}),
+    request: { method: p.request.method, url: p.request.url, query: rowsOut(p.request.params), headers: rowsOut(p.request.headers), body: bodyOut(p.request), auth: authOut(p.request) },
+  }
+}
+
+/** The stored example with the given tool fields applied; everything not given stays exactly as stored. */
+function editedExample(stored: unknown, parent: ApiRequest, f: ExampleFields): unknown {
+  const baseline = parseExample(stored, parent)
+  const response = { ...baseline.response }
+  if (f.name !== undefined) response.name = f.name
+  if (f.status_code !== undefined) {
+    response.code = f.status_code
+    if (f.status_text === undefined) response.status = statusReason(f.status_code)
+  }
+  if (f.status_text !== undefined) response.status = f.status_text
+  if (f.headers !== undefined) response.headers = rowsIn(f.headers)
+  if (f.body !== undefined) {
+    response.body = f.body
+    response.bodyEncoding = null
+  }
+  if (f.language !== undefined) response.language = f.language
+  const request = f.request ? applyFields(parseExample(stored, parent).request, f.request) : baseline.request
+  return serializeExample(stored, baseline, { response, request })
 }
 
 // ---- trees ------------------------------------------------------------------------------------------------------
@@ -323,6 +438,7 @@ const tools: Impls = {
     const ws = workspaceOf(a.workspace_id)
     const c = await api().createCollection(ws, a.name)
     await refresh(ws)
+    await logEdit(ws, `Created collection ${q(c.name)}`)
     return done({ created: { id: c.id, name: c.name, workspace_id: ws } })
   },
 
@@ -334,6 +450,7 @@ const tools: Impls = {
     }
     const f = await api().createFolder({ workspaceId: c.workspaceId, collectionId: c.id, parentFolderId: a.parent_folder_id ?? null, name: a.name })
     await refresh(c.workspaceId, c.id)
+    await logEdit(c.workspaceId, `Created folder ${q(f.name)} in ${q(c.name)}`)
     return done({ created: { id: f.id, name: f.name, collection_id: c.id, parent_folder_id: f.parentFolderId } })
   },
 
@@ -343,6 +460,7 @@ const tools: Impls = {
     const s = serializeDraft(applyFields(newDraft({ name: a.name, method: a.method, url: a.url }), a))
     const r = await api().createRequest({ workspaceId: c.workspaceId, collectionId: c.id, folderId: a.folder_id ?? null, ...s })
     await refresh(c.workspaceId, c.id)
+    await logEdit(c.workspaceId, `Created request ${q(r.name)} in ${q(c.name)}`, r)
     return done({ created: requestOut(r, parseDocument(r)) })
   },
 
@@ -351,6 +469,7 @@ const tools: Impls = {
     const s = serializeDraft(applyFields(parseDocument(r), a))
     const updated = await api().updateRequest({ requestId: r.id, ...s, expectedVersion: r.version })
     await refresh(r.workspaceId, r.collectionId)
+    await logEdit(r.workspaceId, `Edited request ${q(updated.name)}: ${changedParts(a, ['request_id'])}`, updated)
     return done({ updated: requestOut(updated, parseDocument(updated)) })
   },
 
@@ -363,6 +482,7 @@ const tools: Impls = {
     const siblings = (await treeOf(c.workspaceId)).requests.filter((x) => x.collectionId === c.id && x.folderId === folderId && x.id !== r.id)
     const moved = await api().moveRequest({ requestId: r.id, targetCollectionId: c.id, targetFolderId: folderId, targetIndex: siblings.length })
     if (r.workspaceId === app.workspaceId) await app.reloadCollectionsById([r.collectionId, c.id])
+    await logEdit(r.workspaceId, `Moved request ${q(r.name)} to ${q(c.name)}${folderId ? ` / ${q((await findFolder(folderId)).name)}` : ''}`, moved)
     return done({ moved: { id: moved.id, collection_id: moved.collectionId, folder_id: moved.folderId } })
   },
 
@@ -372,24 +492,28 @@ const tools: Impls = {
         const c = await findCollection(a.id)
         await api().renameCollection(c.id, a.name)
         await refresh(c.workspaceId)
+        await logEdit(c.workspaceId, `Renamed collection ${q(c.name)} to ${q(a.name)}`)
         break
       }
       case 'folder': {
         const f = await findFolder(a.id)
         await api().renameFolder(f.id, a.name)
         await refresh(f.workspaceId, f.collectionId)
+        await logEdit(f.workspaceId, `Renamed folder ${q(f.name)} to ${q(a.name)}`)
         break
       }
       case 'request': {
         const r = await findRequest(a.id)
         await api().renameRequest(r.id, a.name)
         await refresh(r.workspaceId, r.collectionId)
+        await logEdit(r.workspaceId, `Renamed request ${q(r.name)} to ${q(a.name)}`, { ...r, name: a.name })
         break
       }
       case 'environment': {
         const e = await findEnvironment(a.id)
         await api().renameEnvironment(e.id, a.name)
         if (e.workspaceId === app.workspaceId) await app.reloadEnvironments()
+        await logEdit(e.workspaceId, `Renamed environment ${q(e.name)} to ${q(a.name)}`)
         break
       }
     }
@@ -402,28 +526,73 @@ const tools: Impls = {
         const c = await findCollection(a.id)
         await api().deleteCollection(c.id)
         await refresh(c.workspaceId)
+        await logEdit(c.workspaceId, `Deleted collection ${q(c.name)}`)
         break
       }
       case 'folder': {
         const f = await findFolder(a.id)
         await api().deleteFolder(f.id)
         await refresh(f.workspaceId, f.collectionId)
+        await logEdit(f.workspaceId, `Deleted folder ${q(f.name)} and its contents`)
         break
       }
       case 'request': {
         const r = await findRequest(a.id)
         await api().deleteRequest(r.id)
         await refresh(r.workspaceId, r.collectionId)
+        await logEdit(r.workspaceId, `Deleted request ${q(r.name)}`, r)
         break
       }
       case 'environment': {
         const e = await findEnvironment(a.id)
         await api().deleteEnvironment(e.id)
         if (e.workspaceId === app.workspaceId) await app.reloadEnvironments()
+        await logEdit(e.workspaceId, `Deleted environment ${q(e.name)}`)
         break
       }
     }
     return done({ deleted: { kind: a.kind, id: a.id } })
+  },
+
+  async get_example(a) {
+    const r = await findRequest(a.request_id)
+    return done(exampleOut(r, pickExample(readExamples(r.documentJson), a.example)))
+  },
+
+  async create_example(a) {
+    const r = await findRequest(a.request_id)
+    const example = editedExample(blankExample(a.name, parseDocument(r)), r, { ...a, name: undefined })
+    let index = -1
+    const updated = await writeExamples(r, (list) => {
+      index = list.length
+      return [...list, example]
+    })
+    await logEdit(r.workspaceId, `Added example ${q(a.name)} to ${q(r.name)}`, updated)
+    return done({ created: exampleOut(updated, index) })
+  },
+
+  async update_example(a) {
+    const r = await findRequest(a.request_id)
+    const index = pickExample(readExamples(r.documentJson), a.example)
+    const before = exampleName(readExamples(r.documentJson)[index])
+    const updated = await writeExamples(r, (list) => {
+      list[index] = editedExample(list[index], r, a)
+      return list
+    })
+    await logEdit(r.workspaceId, `Edited example ${q(before)} of ${q(r.name)}: ${changedParts(a, ['request_id', 'example'])}`, updated)
+    return done({ updated: exampleOut(updated, index) })
+  },
+
+  async delete_example(a) {
+    const r = await findRequest(a.request_id)
+    const index = pickExample(readExamples(r.documentJson), a.example)
+    const name = exampleName(readExamples(r.documentJson)[index])
+    const updated = await writeExamples(r, (list) => {
+      list.splice(index, 1)
+      return list
+    })
+    await logEdit(r.workspaceId, `Deleted example ${q(name)} of ${q(r.name)}`, updated)
+    return done({ deleted: { request_id: r.id, index, name }, saved_examples: exampleList(updated) })
   },
 
   async list_environments(a) {
@@ -446,6 +615,7 @@ const tools: Impls = {
     const ws = workspaceOf(a.workspace_id)
     const e = await api().createEnvironment(ws, a.name)
     if (ws === app.workspaceId) await app.reloadEnvironments()
+    await logEdit(ws, `Created environment ${q(e.name)}`)
     return done({ created: { id: e.id, name: e.name, workspace_id: ws } })
   },
 
@@ -455,6 +625,7 @@ const tools: Impls = {
     const isSecret = a.secret ?? existing?.isSecret ?? false
     await api().upsertEnvironmentVariable({ environmentId: env.id, key: a.key, value: a.value, isSecret, variableId: existing?.id })
     if (env.workspaceId === app.workspaceId) await app.refreshEnvVariables()
+    await logEdit(env.workspaceId, `${existing ? 'Changed' : 'Added'} ${isSecret ? 'secret ' : ''}variable ${q(a.key)} in ${q(env.name)}`)
     return done({ set: { environment_id: env.id, key: a.key, secret: isSecret, created: !existing } })
   },
 
@@ -463,6 +634,7 @@ const tools: Impls = {
     const v = (await api().listEnvironmentVariables(env.id)).find((x) => x.key === a.key) ?? fail(`No variable "${a.key}" in "${env.name}".`)
     await api().deleteEnvironmentVariable(v.id)
     if (env.workspaceId === app.workspaceId) await app.refreshEnvVariables()
+    await logEdit(env.workspaceId, `Deleted variable ${q(a.key)} from ${q(env.name)}`)
     return done({ deleted: { environment_id: env.id, key: a.key } })
   },
 
@@ -478,6 +650,7 @@ const tools: Impls = {
   async send_request(a) {
     let draft: RequestDraft
     let ctx: Parameters<typeof executeDraft>[1]
+    if (a.save_as_example && !a.request_id) fail('save_as_example needs request_id: examples belong to a saved request.')
     if (a.request_id) {
       const r = await findRequest(a.request_id)
       requireOpen(r.workspaceId, 'Sending')
@@ -491,6 +664,7 @@ const tools: Impls = {
     }
     const environment = await environmentArg(a.environment_id, ctx.workspaceId)
     if (environment !== undefined) ctx.environment = environment
+    ctx.source = 'mcp'
     const outcome = await executeDraft(draft, ctx)
     app.historyTick++
     const tests = outcome.scripts.tests.map((t) => ({ name: t.name, result: t.status, ...(t.error ? { error: t.error } : {}) }))
@@ -503,7 +677,23 @@ const tools: Impls = {
       const unresolved = outcome.kind === 'unresolved' ? ` Unresolved variables: ${outcome.unresolved.join(', ')}.` : ''
       return { ok: false, error: `Not sent (${outcome.kind}): ${outcome.error}.${unresolved}${Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : ''}` }
     }
-    return done({ response: responseOut(outcome.response), ...(outcome.warnings.length ? { warnings: outcome.warnings } : {}), ...extra })
+    let saved: Data = {}
+    if (a.save_as_example && ctx.requestId) {
+      // Like "Save as example": the request as sent (templates unresolved) plus the response.
+      try {
+        const { example, note } = exampleFromResponse({ name: a.save_as_example, request: draft, response: outcome.response })
+        let index = -1
+        const stored = await writeExamples(await findRequest(ctx.requestId), (list) => {
+          index = list.length
+          return [...list, example]
+        })
+        await logEdit(stored.workspaceId, `Saved the response as example ${q(a.save_as_example)} of ${q(stored.name)}`, stored)
+        saved = { saved_example: { index, name: a.save_as_example, ...(note ? { note } : {}) } }
+      } catch (e) {
+        saved = { saved_example_error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+    return done({ response: responseOut(outcome.response), ...(outcome.warnings.length ? { warnings: outcome.warnings } : {}), ...extra, ...saved })
   },
 
   async run_collection(a) {
@@ -520,6 +710,7 @@ const tools: Impls = {
       items,
       options: { delayMs: 0, stopOnFailure: a.stop_on_failure ?? false, iterations: a.iterations ?? 1 },
       environment: await environmentArg(a.environment_id, c.workspaceId),
+      source: 'mcp',
     })
     await session.finished
     const s = summarize(session.state)
@@ -556,6 +747,8 @@ const tools: Impls = {
         time_ms: h.durationMs,
         request_id: h.requestId,
         request_name: h.requestName,
+        ...(h.kind === 'edit' ? { kind: 'edit', detail: h.detail } : {}),
+        ...(h.source === 'mcp' ? { by: 'AI assistant' } : {}),
       })),
     })
   },
@@ -564,6 +757,7 @@ const tools: Impls = {
     const ws = workspaceOf(a.workspace_id)
     const res = await api().importPostmanCollection(ws, a.collection_json)
     await refresh(ws)
+    await logEdit(ws, `Imported collection ${q(res.collection.name)} (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({ imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length } })
   },
 

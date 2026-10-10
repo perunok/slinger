@@ -86,6 +86,8 @@ export interface ExecuteContext {
   onRunId?: (runId: string) => void
   /** Set by the caller when it requested cancellation; used to label the failure. */
   wasCancelled?: () => boolean
+  /** 'mcp': an AI assistant sent it (the history entry is flagged). */
+  source?: 'mcp'
 }
 
 function scriptsOf(draft: RequestDraft, ctx: ExecuteContext, event: ScriptEventName) {
@@ -222,7 +224,12 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   const started = performance.now()
   let response: HttpResponseData
   try {
-    response = await api().executeHttpRequest({ ...prepared.input, requestRunId: runId, scriptSessionId: run.sessionId })
+    response = await api().executeHttpRequest({
+      ...prepared.input,
+      requestRunId: runId,
+      scriptSessionId: run.sessionId,
+      ...(ctx.source ? { historySource: ctx.source } : {}),
+    })
   } catch (e) {
     const info = errorInfo(e)
     if (ctx.wasCancelled?.()) return cancelled()

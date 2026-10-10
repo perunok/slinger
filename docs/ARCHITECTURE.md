@@ -611,9 +611,15 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
 
 - **Tools** are declared once in `shared/mcp.ts` (`MCP_TOOLS`: name, description, zod input schema, read-only / destructive /
   open-world hints, timeout): reading (`list_workspaces`, `get_tree`, `search_requests`, `get_request`, `list_environments`,
-  `list_history`), editing (`create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`, `rename`,
-  `delete`, `create_environment`, `set_variable`, `delete_variable`, `set_active_environment`, `import_postman`, `open_in_app`) and
-  sending (`send_request`, `run_collection`).
+  `list_history`, `get_example`), editing (`create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`,
+  `rename`, `delete`, `create_example`, `update_example`, `delete_example`, `create_environment`, `set_variable`, `delete_variable`,
+  `set_active_environment`, `import_postman`, `open_in_app`) and sending (`send_request`, optionally `save_as_example`;
+  `run_collection`). Examples are addressed by index or exact name and edited through `parseExample` / `serializeExample`
+  (unedited fields stay byte-identical), in any workspace.
+- **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
+  `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
+  (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel
+  shows edit rows and an "AI assistant" badge.
 - **Main** (`electron/mcp`): `McpHttpServer` serves Streamable HTTP on `127.0.0.1:<port>/mcp` (default 7354), stateless with JSON
   responses: a fresh SDK `Server` (`@modelcontextprotocol/sdk`, bundled into main.cjs; a devDependency so its dependency tree never
   ships) per POST. Every request needs `Authorization: Bearer <token>`; Host must be a loopback name with the right port and any
