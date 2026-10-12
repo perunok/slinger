@@ -56,6 +56,11 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 - Workflows: chain saved requests on a visual canvas (Start, Send request, Evaluate, If, For each, Delay, Set variable,
   Output nodes); a response feeds the next request's `{{variables}}`, a sandboxed script or a branch, and a run shows each
   node's input and output live. Kept on this device (not synced).
+- Mock servers: serve a collection's saved examples on `http://127.0.0.1:<port>` so you can call an API before it exists; matches by
+  path, query and body, works with web apps (CORS), can delay answers, shows what each request sent, and restarts with Slinger.
+  Requests match by method and path (`:id` / `{{id}}` segments as wildcards, exact paths first, Postman's
+  `x-mock-response-name` / `x-mock-response-code` headers to pick an example), edits apply live, and a request log shows what
+  answered. Local only, stopped when the app quits.
 - Request history per workspace (every attempt is recorded, secrets are not).
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).

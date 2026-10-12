@@ -90,7 +90,7 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Variables…', 'Scripts…', 'Versions…', 'Export…'])
+    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Mock server…', 'Variables…', 'Scripts…', 'Versions…', 'Export…'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -103,6 +103,7 @@
         { label: 'New folder', icon: 'folder-plus', action: () => (dlg = { t: 'newFolder', collectionId: row.id, parentId: null }) },
         { separator: true, label: '' },
         { label: 'Run collection…', icon: 'play', action: () => (ui.runner = { collectionId: row.id, folderId: null }) },
+        { label: 'Mock server…', icon: 'server', action: () => (ui.mockServerFor = row.id) },
         { label: 'Variables…', icon: 'list', action: () => openCollectionVariables(row.id) },
         { label: 'Scripts…', icon: 'code', action: () => (ui.scriptsFor = { kind: 'collection', id: row.id }) },
         { label: 'Versions…', icon: 'tag', action: () => (ui.versionsFor = row.id) },

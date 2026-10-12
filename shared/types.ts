@@ -1150,3 +1150,129 @@ export interface VersionInfo {
   v8: string | null
   os: { platform: string; release: string; arch: string }
 }
+
+// ---------------------------------------------------------------------------
+// ADDED (mock servers): a collection's saved examples served over local HTTP by the main process. Local-only: running
+// state lives in main memory, nothing is stored or synced. See docs/ARCHITECTURE.md, "Mock servers".
+// ---------------------------------------------------------------------------
+
+/**
+ * One saved example as the mock server serves it. The renderer resolves these from the request documents (which are
+ * opaque to main) and sends them on start / when they change.
+ */
+export interface MockExample {
+  /** The request the example belongs to and the example's position in its `responses` (to open it from the log). */
+  requestId: string
+  exampleIndex: number
+  requestName: string
+  /** Example name ('Untitled example' when it has none). */
+  name: string
+  /** Method of the example's saved request (its `originalRequest`, else the parent request). */
+  method: string
+  /** URL of the example's saved request, templates unresolved (`{{baseUrl}}/users/:id`); only its path is matched. */
+  url: string
+  /** Status code to answer with (null: 200). */
+  code: number | null
+  /** Reason phrase ('' : the standard one). */
+  status: string
+  /** Response headers in order (enabled rows only). */
+  headers: RequestHeader[]
+  body: string
+  /** 'base64' when `body` holds base64 bytes (binary examples). */
+  bodyEncoding: 'base64' | null
+  /**
+   * Raw body text of the example's saved request (null: none). Among examples that match equally well, one whose saved
+   * request body equals the incoming body (JSON compared by value) answers.
+   */
+  requestBody: string | null
+}
+
+/** How a mock server treats browsers and how fast it answers; changeable while it runs. */
+export interface MockServerOptions {
+  /**
+   * CORS for web apps calling the mock from a browser. 'local': pages served from this computer (localhost, 127.0.0.1,
+   * [::1], *.localhost) get CORS headers and preflight answers; 'any': every website does.
+   */
+  cors: 'local' | 'any'
+  /** Wait this long before every answer (0-60000 ms), to test loading states. */
+  delayMs: number
+}
+
+export const DEFAULT_MOCK_OPTIONS: MockServerOptions = { cors: 'local', delayMs: 0 }
+export const MOCK_MAX_DELAY_MS = 60_000
+
+export interface StartMockServerInput {
+  workspaceId: string
+  collectionId: string
+  /** Shown in the tray menu. */
+  collectionName: string
+  /** 1-65535; the server binds 127.0.0.1 only. */
+  port: number
+  examples: MockExample[]
+  /** Absent: DEFAULT_MOCK_OPTIONS. */
+  options?: MockServerOptions
+}
+
+export interface MockServerInfo {
+  workspaceId: string
+  collectionId: string
+  collectionName: string
+  options: MockServerOptions
+  port: number
+  /** `http://127.0.0.1:<port>` */
+  url: string
+  /** Unix seconds. */
+  startedAt: number
+  exampleCount: number
+  /** Requests answered since the start. */
+  requestCount: number
+}
+
+export interface MockServerLogEntry {
+  /** Increases per server; the log is capped at MOCK_LOG_LIMIT entries, oldest dropped. */
+  seq: number
+  /** Unix seconds. */
+  at: number
+  method: string
+  /** Path and query as received. */
+  path: string
+  status: number
+  /** The example that answered; null: none matched (or the request was refused). */
+  match: { requestId: string; exampleIndex: number; requestName: string; name: string } | null
+  /** Why nothing matched (shown in the log), null for a match. */
+  reason: string | null
+  /** 'example': answered by `match`; 'notFound': 404, nothing matched; 'refused': 403 (Host or CORS origin); 'preflight': a CORS preflight the server answered itself. */
+  kind: 'example' | 'notFound' | 'refused' | 'preflight'
+  /** What the client sent. Header names lower-case, in order; values as sent (the UI hides credentials). */
+  request: {
+    headers: Array<[string, string]>
+    /** First MOCK_LOG_BODY_LIMIT bytes: text, or base64 when not UTF-8 (`bodyEncoding`); null when there was none. */
+    body: string | null
+    bodyEncoding: 'base64' | null
+    /** Size of the whole body in bytes. */
+    bodyBytes: number
+    /** The body was longer than what `body` holds. */
+    truncated: boolean
+  }
+  /** What the mock answered: status line and headers (the body is the example's). */
+  response: { statusText: string; headers: Array<[string, string]>; delayMs: number }
+  /** Time from the request's arrival to the end of the answer (delay included). */
+  durationMs: number
+}
+
+/** Bytes of each request body kept in the log. */
+export const MOCK_LOG_BODY_LIMIT = 64 * 1024
+
+/**
+ * Pushed on `mock:event` (onMockServerEvent). `stopped.by`: 'user' (Stop in the window or the tray), 'quit' (Slinger
+ * quits; started again next time when the user chose so), 'error' (the server failed; `reason` says why), 'replaced' (it
+ * moved to another port).
+ */
+export type MockServerEvent =
+  | { type: 'request'; collectionId: string; entry: MockServerLogEntry; requestCount: number }
+  | { type: 'started'; server: MockServerInfo }
+  | { type: 'updated'; server: MockServerInfo }
+  | { type: 'stopped'; collectionId: string; reason: string | null; by: 'user' | 'quit' | 'error' | 'replaced' }
+
+/** Log entries kept per mock server (main and renderer). */
+export const MOCK_LOG_LIMIT = 200

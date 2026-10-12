@@ -27,6 +27,29 @@ describe('closing to the tray', () => {
     expect(quit).toHaveBeenCalledTimes(1)
   })
 
+  it('lists running mock servers with Copy URL and Stop, sorted by port', () => {
+    const copy = vi.fn()
+    const stop = vi.fn()
+    const items = trayMenuTemplate({
+      open: vi.fn(),
+      quit: vi.fn(),
+      copyText: copy,
+      stopMockServer: stop,
+      mockServers: [
+        { collectionId: 'b', collectionName: 'R&D API', port: 4011, url: 'http://127.0.0.1:4011' },
+        { collectionId: 'a', collectionName: 'Shop', port: 4010, url: 'http://127.0.0.1:4010' },
+      ],
+    })
+    expect(items.map((i) => i.label ?? i.type)).toEqual(['Open Slinger', 'separator', 'Mock servers', 'Shop · 4010', 'R&&D API · 4011', 'separator', 'Quit Slinger'])
+    expect(items[2]!.enabled).toBe(false)
+    const sub = items[4]!.submenu as MenuItemConstructorOptions[]
+    expect(sub.map((i) => i.label)).toEqual(['Copy http://127.0.0.1:4011', 'Stop'])
+    ;(sub[0]!.click as unknown as () => void)()
+    ;(sub[1]!.click as unknown as () => void)()
+    expect(copy).toHaveBeenCalledWith('http://127.0.0.1:4011')
+    expect(stop).toHaveBeenCalledWith('b')
+  })
+
   it('icons per platform: a macOS template image, 16 px (+32 px for HiDPI) on Windows, 32 px on Linux', () => {
     expect(trayIconFiles('darwin')).toEqual({ file: 'trayTemplate.png' })
     expect(trayIconFiles('win32')).toEqual({ file: 'tray-16.png', hiDpi: 'tray-32.png' })

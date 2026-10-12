@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MENU_COMMAND_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import { IPC_CHANNELS, MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MENU_COMMAND_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
 import type { McpCall } from '../shared/mcp'
 import { parseMenuCommand, type MenuCommand } from '../shared/menu'
-import type { McpClientEvent, SyncEvent, WindowState } from '../shared/types'
+import type { McpClientEvent, MockServerEvent, SyncEvent, WindowState } from '../shared/types'
 import type { IpcEnvelope } from './ipc/envelope'
 
 // Exposes `window.slinger` exactly as declared by SlingerIpcApi. No Node/Electron objects leak:
@@ -74,6 +74,19 @@ api.onMcpClientEvent = (listener: (event: McpClientEvent) => void): (() => void)
   ipcRenderer.on(MCP_CLIENT_EVENT_CHANNEL, handler)
   return () => {
     ipcRenderer.removeListener(MCP_CLIENT_EVENT_CHANNEL, handler)
+  }
+}
+
+// Mock servers (started / updated / stopped / request log entries). Plain JSON built by main; only known event types pass.
+const MOCK_EVENT_TYPES = new Set<unknown>(['request', 'started', 'updated', 'stopped'])
+api.onMockServerEvent = (listener: (event: MockServerEvent) => void): (() => void) => {
+  const handler = (_event: unknown, payload: unknown) => {
+    const p = (payload ?? {}) as { type?: unknown }
+    if (MOCK_EVENT_TYPES.has(p.type)) listener(payload as MockServerEvent)
+  }
+  ipcRenderer.on(MOCK_EVENT_CHANNEL, handler)
+  return () => {
+    ipcRenderer.removeListener(MOCK_EVENT_CHANNEL, handler)
   }
 }
 
