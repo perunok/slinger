@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, 
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
-import { homedir, hostname } from 'node:os'
+import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
@@ -20,6 +20,7 @@ import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
+import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -546,6 +547,24 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   }
 }
 
+/**
+ * The per-user lock next to Electron's per-profile one (electron/lib/instanceGuard.ts): packaged builds only, so development
+ * and test runs with their own profiles keep running side by side. SLINGER_INSTANCE_GUARD=<path> turns it on with that
+ * socket path (tests).
+ */
+function instanceGuardTarget(): string | null {
+  if (process.env.SLINGER_INSTANCE_GUARD) return process.env.SLINGER_INSTANCE_GUARD
+  if (!app.isPackaged || process.env.SLINGER_SMOKE_TEST) return null
+  let username = 'user'
+  try {
+    username = userInfo().username
+  } catch {
+    /* no passwd entry: the uid (POSIX) still makes the path unique */
+  }
+  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir() })
+}
+let instanceGuard: InstanceGuard | null = null
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -554,7 +573,18 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow) showMainWindow()
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const guardPath = instanceGuardTarget()
+    if (guardPath) {
+      // Another Slinger (another profile) runs for this user: it shows its window; this one leaves before touching anything.
+      instanceGuard = await acquireInstanceGuard(guardPath, () => {
+        if (mainWindow) showMainWindow()
+      })
+      if (!instanceGuard.primary) {
+        app.exit(0)
+        return
+      }
+    }
     timeMark('appReady')
     windowState = readWindowState(windowStateFile())
     db = openDatabase(join(app.getPath('userData'), 'slinger.db'))
@@ -699,5 +729,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => {
     db?.close()
     db = null
+    if (instanceGuard?.primary) instanceGuard.close()
   })
 }

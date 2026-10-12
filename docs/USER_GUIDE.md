@@ -31,7 +31,8 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Closing the window** keeps Slinger running in the system tray (macOS: the menu bar), so AI assistants, collection runs and
   sync go on. Click the tray icon (on desktops that support it; otherwise open its menu and choose **Open Slinger**) to bring
   the window back; starting
-  Slinger again (or, on macOS, clicking its Dock icon) does the same. **Quit Slinger** in the tray menu, File > Quit (Exit on
+  Slinger again (or, on macOS, clicking its Dock icon) does the same: only one Slinger runs at a time for your user account,
+  so starting it again never opens a second copy. **Quit Slinger** in the tray menu, File > Quit (Exit on
   Windows, Ctrl+Q on Linux) or Slinger > Quit Slinger (Cmd+Q) closes it completely: an assistant's request in progress gets up
   to 10 seconds to finish, then the MCP server stops, and connected assistants do not start Slinger again until you open it
   yourself. Turn this off in Settings > Layout & window (for example when your desktop shows no tray icons).
@@ -1152,7 +1153,8 @@ Assistants can find, read, send and run [MCP requests](#mcp-requests) as saved (
 create or edit them, and a command (stdio) runs only after you allowed it in the window.
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
-send. Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
+send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a
+version, and restore one as a copy or in place (assistants that ask before destructive actions ask you first). Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
 edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and

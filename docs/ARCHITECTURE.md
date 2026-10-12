@@ -21,7 +21,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
                      HTTP servers answering with saved examples)
-  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
   mcpClient/         MCP client for MCP requests: service.ts (McpClientService: sessions over Streamable HTTP / SSE / stdio,
@@ -51,7 +51,12 @@ is unit-tested without launching Electron.
 
 Window preferences: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`,
 `allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch (also bringing it
-back from the tray).
+back from the tray). Electron's lock is per profile (userData), so packaged builds also take a per-user lock
+(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the named pipe
+`\\.\pipe\slinger-<user>` on Windows, taken at `whenReady` before the database opens. A second start with any profile
+connects, sends `show` (the first shows its window) and exits; a socket file nobody listens on (refused) is replaced, but a
+first instance that is slow to answer still counts as running. A lock that cannot be created never blocks starting. Unpackaged
+(dev, e2e) builds skip it so profiles can run side by side; `SLINGER_INSTANCE_GUARD=<path>` turns it on (e2e).
 
 **Tray and quitting** (`electron/lib/tray.ts` + `main.ts`). With `closeToTray` on (`window-state.json`, absent = on; IPC
 `setCloseToTray`, Settings > Layout & window), closing the main window (`close` event, any source: title bar button, Alt+F4,
@@ -711,11 +716,13 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
 
 - **Tools** are declared once in `shared/mcp.ts` (`MCP_TOOLS`: name, description, zod input schema, read-only / destructive /
   open-world hints, timeout): reading (`list_workspaces`, `get_tree`, `search_requests`, `get_request`, `list_environments`,
-  `list_history`, `get_example`), editing (`create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`,
+  `list_history`, `get_example`, `list_versions`, `get_version`), editing (`create_version`, `restore_version`, `create_collection`, `create_folder`, `create_request`, `update_request`, `move_request`,
   `rename`, `delete`, `create_example`, `update_example`, `delete_example`, `create_environment`, `set_variable`, `delete_variable`,
   `set_active_environment`, `import_postman`, `open_in_app`) and sending (`send_request`, optionally `save_as_example`;
   `run_collection`). Examples are addressed by index or exact name and edited through `parseExample` / `serializeExample`
-  (unedited fields stay byte-identical), in any workspace.
+  (unedited fields stay byte-identical), in any workspace. Versions: `create_version` takes a number or a bump
+  (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`;
+  `restore_version` replace carries expanded folders and clean open tabs over (`mapRestored`), like the Versions panel.
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
   (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel
@@ -1085,7 +1092,8 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 between Node (tests) and Electron (app). Env vars used by tooling: `SLINGER_USER_DATA_DIR`, `SLINGER_DEV_SERVER_URL`,
 `SLINGER_VITE_PORT`, `SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW` (off-screen rendering for automation), `SLINGER_DEVTOOLS=1`
 (Reload / Developer Tools menu items in a packaged build), `SLINGER_UPDATE_FEED_URL` (stand-in for GitHub's latest-release
-endpoint), `SLINGER_MCP_CLIENTS_HOME` (where Settings > AI assistants looks for assistants' configs; e2e uses a temp folder).
+endpoint), `SLINGER_MCP_CLIENTS_HOME` (where Settings > AI assistants looks for assistants' configs; e2e uses a temp folder),
+`SLINGER_INSTANCE_GUARD` (socket path of the per-user single-instance lock, which unpackaged builds otherwise skip).
 
 ## Adding an IPC method end to end
 
