@@ -976,7 +976,7 @@ describe('import and export', () => {
     }
     await page.getByRole('button', { name: 'Import collection or environment' }).click()
     const dialog = page.getByRole('dialog', { name: 'Import' })
-    await dialog.getByLabel('Or paste JSON').fill(JSON.stringify(pasted, null, 2))
+    await dialog.getByLabel('Or paste JSON or a cURL command').fill(JSON.stringify(pasted, null, 2))
     await dialog.getByTestId('import-source').getByText('Postman collection v2.1').waitFor()
     await dialog.getByRole('button', { name: 'Import', exact: true }).click()
     await dialog.waitFor({ state: 'hidden' })

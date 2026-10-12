@@ -25,6 +25,10 @@ export const IMPORT_FILE_ACCEPT = [
   '.postman_globals.json',
   '.json',
   'application/json',
+  // A text file with cURL commands.
+  '.sh',
+  '.curl',
+  '.txt',
 ].join(',')
 
 export const MAX_STEM_CHARS = 150

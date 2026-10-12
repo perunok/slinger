@@ -67,7 +67,7 @@ features/
           the message log from the `mcp-client:event` push channel; see docs/ARCHITECTURE.md "MCP requests (MCP client)")
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
-lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), mockServers (examples a mock server serves, ports), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
+lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), mockServers (examples a mock server serves, ports), curl (cURL commands -> request drafts), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
                             request (document model), mcpRequest (the MCP part of it: document.mcp), jsonSchemaForm (SchemaForm's
                             pure model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput; prepareMcp: draft -> MCP connect + call input), scripts (Postman events, chain, scopes),

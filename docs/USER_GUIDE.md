@@ -837,13 +837,30 @@ collections keep theirs).
   **collection**, an **environment** or Postman **globals** from Slinger or Postman (collection v2.0/v2.1): Slinger exports
   (`.slinger_collection.json`, `.slinger_environment.json`), Postman exports (`.postman_collection.json`,
   `.postman_environment.json`, `.postman_globals.json`) or any other `.json`. Either drop or choose a file, or **paste the JSON**: into the
-  *Or paste JSON* box, or press **Ctrl+V** anywhere in the dialog when no text field has focus. Whichever you gave last is
+  *Or paste JSON or a cURL command* box, or press **Ctrl+V** anywhere in the dialog when no text field has focus. Whichever you gave last is
   imported. Very large pastes (megabytes) are not shown in the box; a size indicator and **Clear** stand in for them. Text you
   type into the box is checked once you pause. Invalid JSON, or JSON that is neither a collection nor an environment, shows an
   error in the dialog.
-- **Paste into the URL bar:** pasting a whole collection or environment export into a request's URL field does not put it in
-  the URL: the Import dialog opens with it, marked *Detected pasted collection — review and import*. Only an export is taken
-  over (an object with `info` and `item[]`, or an environment with `values[]`, at least 200 characters); URLs, `{{variables}}`,
+- **cURL commands:** paste one or more `curl` commands (or choose a `.sh` / `.txt` file with them) and each becomes a
+  request. The preview lists them with their method, URL, a name you can change (*POST /orders* by default), what was read
+  (headers, body, auth, timeout) and anything that was not imported (a proxy, a client certificate, data read from a file,
+  ...). Choose the **Collection** (the one of the open request by default, or **New collection…** with a name) and, if it has
+  folders, the **Folder**, then **Add request**. The request opens in a tab.
+  - Read: browsers' *Copy as cURL* (bash and Windows cmd) and *Copy all as cURL* (several commands), API docs (`\` line ends,
+    `$'…'` quotes, `-sSL`, `-XPOST`, `--header=…`). Other commands in the text, such as `export TOKEN=…;` or `| jq`, are skipped.
+  - `-X`, `-H`, `-A` (User-Agent), `-e` (Referer), `-b` (cookies), `-d` / `--data-raw` / `--data-binary` / `--data-urlencode`
+    (several joined with `&`), `--json`, `-F` / `--form-string` (form data; `@file` fields become file fields), `-T` (file
+    body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth), `--oauth2-bearer` (Bearer auth) and `-m` (timeout).
+    A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `-L`, `--compressed`, `-k`,
+    `-v`, ...) are skipped silently.
+  - Data without a `Content-Type` is url-encoded form data, as curl sends it; JSON data without one becomes a JSON body (the
+    preview notes it). A copied `multipart/form-data` header is dropped, since Slinger sets its own boundary.
+  - Shell variables become Slinger variables: `$TOKEN` and `${BASE_URL}` (outside single quotes) are imported as `{{TOKEN}}`
+    and `{{BASE_URL}}`, so they take their values from your environment.
+- **Paste into the URL bar:** pasting a whole collection or environment export, or a `curl` command, into a request's URL
+  field does not put it in the URL: the Import dialog opens with it, marked *Detected pasted collection — review and import*
+  (or *Detected pasted cURL command — choose where to add it*). Only an export (an object with `info` and `item[]`, or an
+  environment with `values[]`, at least 200 characters) or text starting with `curl` is taken over; URLs, `{{variables}}`,
   query strings and other JSON paste as usual, and the URL field's undo history is unchanged.
 - **Preview:** the preview shows the detected format (for example *Slinger collection v1.2.0*, *Postman collection v2.1*,
   *Postman environment*, *Slinger environment*) and what will be imported. Everything below works the same for a file and for

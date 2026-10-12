@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Import dialog: Slinger or Postman collections, environments and globals, from a file (drop / choose) or pasted JSON
-   * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar).
+   * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar), and cURL commands
+   * (added as requests to a collection the user picks; lib/curl.ts parses them, curlImport.ts places them).
    * Whichever was provided last is imported.
    */
   import { tick } from 'svelte'
@@ -22,6 +23,9 @@
   import { IMPORT_FILE_ACCEPT } from './fileName'
   import { parsePostmanFile, type PostmanFile } from './parse'
   import { copyName, findReimportMatches } from './reimport'
+  import { containsCurl, curlRequestName, parseCurl, type ParsedCurl } from '../../lib/curl'
+  import { methodColor } from '../requests/method'
+  import { addCurlRequests, defaultCurlTarget, folderChoices, NEW_COLLECTION_NAME, type CurlTarget } from './curlImport'
 
   interface Props {
     open: boolean
@@ -59,6 +63,32 @@
   /** Re-import of an existing collection: replace it (default) or import as a copy. */
   let mode = $state<'replace' | 'copy'>('replace')
   let targetId = $state<string | null>(null)
+  /** cURL commands to add as requests (instead of `parsed`), their names and where they go. */
+  let curl = $state.raw<ParsedCurl[] | null>(null)
+  let curlNames = $state<string[]>([])
+  let curlTarget = $state<CurlTarget>({ collectionId: null, newName: NEW_COLLECTION_NAME, folderId: null })
+  const curlFolders = $derived(curlTarget.collectionId ? folderChoices(app.foldersOf(curlTarget.collectionId)) : [])
+
+  /** Parses `t` as a cURL command (text that is not JSON and has `curl` in it) or an export. */
+  function parseText(t: string) {
+    parsed = null
+    curl = null
+    if (!t.trimStart().startsWith('{') && containsCurl(t)) {
+      const r = parseCurl(t)
+      if (!r.ok) {
+        error = r.error
+        return
+      }
+      curl = r.requests
+      curlNames = r.requests.map((p) => curlRequestName(p))
+      const activeId = tabsStore.active?.requestId ?? null
+      curlTarget = defaultCurlTarget(app.collections, activeId ? (app.requests.find((x) => x.id === activeId) ?? null) : null)
+      return
+    }
+    const r = parsePostmanFile(t)
+    if (r.ok) parsed = r.file
+    else error = r.error
+  }
 
   $effect(() => {
     if (!open) {
@@ -76,13 +106,17 @@
       dragging = false
       mode = 'replace'
       targetId = null
+      curl = null
+      curlNames = []
       return
     }
     const t = initialText
     if (t) {
       void tick().then(() => {
         putPaste(t)
-        note = `Detected pasted ${parsed?.kind === 'environment' ? 'environment' : parsed?.kind === 'globals' ? 'globals' : 'collection'} — review and import`
+        note = curl
+          ? `Detected pasted cURL command${curl.length === 1 ? '' : 's'} — choose where to add ${curl.length === 1 ? 'it' : 'them'}`
+          : `Detected pasted ${parsed?.kind === 'environment' ? 'environment' : parsed?.kind === 'globals' ? 'globals' : 'collection'} — review and import`
       })
     }
   })
@@ -99,17 +133,15 @@
         source = null
         text = ''
         parsed = null
+        curl = null
         error = null
       }
       return
     }
     source = 'paste'
     text = t
-    parsed = null
     error = null
-    const r = parsePostmanFile(t)
-    if (r.ok) parsed = r.file
-    else error = r.error
+    parseText(t)
     mode = 'replace'
     targetId = null
   }
@@ -193,6 +225,7 @@
     pasteLarge = false
     if (pasteArea) pasteArea.value = ''
     parsed = null
+    curl = null
     error = null
     try {
       text = await readText(file)
@@ -201,9 +234,7 @@
       error = `Could not read the file: ${errorInfo(e).message}`
       return
     }
-    const r = parsePostmanFile(text)
-    if (r.ok) parsed = r.file
-    else error = r.error
+    parseText(text)
     mode = 'replace'
     targetId = null
   }
@@ -286,7 +317,36 @@
     }
   }
 
+  /** Adds the cURL commands as requests where the user chose, then opens the first one. */
+  async function submitCurl(list: ParsedCurl[]) {
+    const ws = app.workspaceId
+    if (!ws || busy) return
+    busy = true
+    error = null
+    try {
+      const target = { ...curlTarget }
+      const { collectionId, created } = await addCurlRequests(
+        ws,
+        list.map((p, i) => ({ parsed: p, name: curlNames[i]?.trim() || curlRequestName(p) })),
+        target,
+      )
+      await app.reloadCollections()
+      expandedStore.set(`collection:${collectionId}`, true)
+      if (target.collectionId && target.folderId) expandedStore.set(`folder:${target.folderId}`, true)
+      if (created[0]) tabsStore.openRequest(created[0])
+      const collectionName = app.collections.find((c) => c.id === collectionId)?.name ?? target.newName
+      const n = created.length
+      toast.success(n === 1 ? 'Request added' : `${n} requests added`, `${n === 1 ? `"${created[0]!.name}"` : `${n} requests`} in "${collectionName}"`)
+      onclose()
+    } catch (e) {
+      error = errorInfo(e).message
+    } finally {
+      busy = false
+    }
+  }
+
   async function submit() {
+    if (curl) return submitCurl(curl)
     const file = parsed
     const ws = app.workspaceId
     if (!file || !ws || busy) return
@@ -353,7 +413,7 @@
 {#if open}
   <Dialog title="Import" {onclose} {busy} size="md">
     <div class="flex flex-col gap-3 text-sm">
-      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections, environments and globals (JSON)</p>
+      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections, environments and globals (JSON), or cURL commands</p>
       {#if note}
         <p class="rounded border border-accent bg-accent-soft px-2 py-1.5 text-xs" role="status" data-testid="import-note">{note}</p>
       {/if}
@@ -383,7 +443,7 @@
 
       <div class="flex flex-col gap-1">
         <div class="flex items-baseline justify-between gap-2">
-          <label for="import-paste" class="text-xs font-medium">Or paste JSON</label>
+          <label for="import-paste" class="text-xs font-medium">Or paste JSON or a cURL command</label>
           {#if source === 'paste' && pasteSize > 0}
             <span class="text-xs text-muted" data-testid="import-paste-size">{formatBytes(pasteSize)} pasted</span>
           {/if}
@@ -403,7 +463,7 @@
           hidden={pasteLarge}
           disabled={busy}
           class="w-full resize-y rounded border border-border bg-surface px-2 py-1.5 font-mono text-xs {source === 'paste' ? 'ring-1 ring-accent' : ''}"
-          placeholder={'Paste an exported collection or environment, e.g. {"info": {…}, "item": […]}. Ctrl+V anywhere in this dialog works too.'}
+          placeholder={'Paste an exported collection or environment ({"info": {…}, "item": […]}), or one or more cURL commands (curl https://…). Ctrl+V anywhere in this dialog works too.'}
           onpaste={onAreaPaste}
           oninput={onAreaInput}
           onblur={flushArea}
@@ -412,7 +472,9 @@
 
       <InlineError message={error} />
 
-      {#if parsed?.kind === 'collection'}
+      {#if curl}
+        {@render curlPreview(curl)}
+      {:else if parsed?.kind === 'collection'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
           <dt class="text-muted">Format</dt><dd data-testid="import-source">{parsed.source}</dd>
           <dt class="text-muted">Collection</dt><dd class="font-medium">{parsed.name}</dd>
@@ -535,9 +597,68 @@
     </div>
     {#snippet footer()}
       <Button onclick={onclose} disabled={busy}>Cancel</Button>
-      <Button variant="primary" loading={busy} disabled={!parsed} onclick={submit}>
-        {choice === 'replace' ? 'Replace' : choice === 'copy' ? 'Import as copy' : 'Import'}
+      <Button variant="primary" loading={busy} disabled={curl ? sync.blocked : !parsed} onclick={submit}>
+        {curl ? (curl.length === 1 ? 'Add request' : `Add ${curl.length} requests`) : choice === 'replace' ? 'Replace' : choice === 'copy' ? 'Import as copy' : 'Import'}
       </Button>
     {/snippet}
   </Dialog>
 {/if}
+
+{#snippet curlPreview(list: ParsedCurl[])}
+  <section class="flex flex-col gap-3" aria-label="cURL import" data-testid="curl-preview">
+    <ul class="flex max-h-72 flex-col gap-2 overflow-auto">
+      {#each list as p, i (i)}
+        <li class="rounded border border-border p-2" data-testid="curl-request">
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="w-16 shrink-0 font-mono text-xs font-semibold" style="color:{methodColor(p.method)}">{p.method}</span>
+            <span class="min-w-0 truncate font-mono text-xs" title={p.url}>{p.url}</span>
+          </div>
+          <label class="mt-1.5 flex items-center gap-2 text-xs">
+            <span class="w-12 shrink-0 text-muted">Name</span>
+            <input class="min-w-0 flex-1" bind:value={curlNames[i]} aria-label={list.length === 1 ? 'Request name' : `Name of request ${i + 1}`} disabled={busy} />
+          </label>
+          <p class="mt-1 text-xs text-muted" data-testid="curl-summary">
+            {[
+              `${p.headers.length} header${p.headers.length === 1 ? '' : 's'}`,
+              p.body.kind === 'none' ? 'no body' : p.body.kind === 'raw' ? `${p.body.rawLanguage.toUpperCase()} body` : p.body.kind === 'urlEncoded' ? 'form body (url-encoded)' : p.body.kind === 'formData' ? 'form-data body' : 'file body',
+              p.auth ? `${p.auth.kind === 'basic' ? 'Basic' : 'Bearer'} auth` : null,
+              p.timeoutMs ? `timeout ${p.timeoutMs / 1000} s` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+          {#if p.warnings.length > 0}
+            <ul class="mt-1 list-disc pl-4 text-xs text-warning" data-testid="curl-warnings">
+              {#each p.warnings as w (w)}<li>{w}</li>{/each}
+            </ul>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+    <div class="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-2 text-xs">
+      <label for="curl-collection" class="text-muted">Collection</label>
+      <select
+        id="curl-collection"
+        value={curlTarget.collectionId ?? ''}
+        disabled={busy}
+        onchange={(e) => (curlTarget = { ...curlTarget, collectionId: e.currentTarget.value || null, folderId: null })}
+      >
+        {#each app.collections as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+        <option value="">New collection…</option>
+      </select>
+      {#if curlTarget.collectionId === null}
+        <label for="curl-new-collection" class="text-muted">New collection name</label>
+        <input id="curl-new-collection" bind:value={curlTarget.newName} disabled={busy} />
+      {:else if curlFolders.length > 0}
+        <label for="curl-folder" class="text-muted">Folder</label>
+        <select id="curl-folder" value={curlTarget.folderId ?? ''} disabled={busy} onchange={(e) => (curlTarget = { ...curlTarget, folderId: e.currentTarget.value || null })}>
+          <option value="">(top level)</option>
+          {#each curlFolders as f (f.id)}<option value={f.id}>{f.label}</option>{/each}
+        </select>
+      {/if}
+    </div>
+    {#if sync.blocked}
+      <p class="text-xs text-muted">Not available: {sync.blockedMessage}</p>
+    {/if}
+  </section>
+{/snippet}

@@ -99,7 +99,7 @@ describe('Import dialog with a Slinger export', () => {
     const text = await versionedExport(mock)
     const onclose = vi.fn()
     render(ImportDialog, { open: true, onclose })
-    const area = screen.getByLabelText('Or paste JSON') as HTMLTextAreaElement
+    const area = screen.getByLabelText('Or paste JSON or a cURL command') as HTMLTextAreaElement
     area.value = text
     await fireEvent.input(area)
     await fireEvent.blur(area)

@@ -600,6 +600,19 @@ major/minor/patch/prerelease columns), not by creation time. Restore modes: `cop
 **new ids** (the renderer refetches and closes affected tabs). Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
 runs in the renderer on snapshots.
 
+**cURL import (renderer only).** `lib/curl.ts` `parseCurl(text)` turns one or more curl commands into `ParsedCurl` (method,
+URL, headers, a `BodyDraft`, basic/bearer auth, timeout, and `warnings` for what was not imported). It tokenizes like bash
+(`'…'`, `"…"` with `\` escapes, `$'…'` ANSI-C quoting, `\` line continuations, `#` comments; `$VAR` / `${VAR}` outside single
+quotes become `{{VAR}}`) or, when the text has `^` line ends or `^"`, like Windows cmd (`^X` -> X first). A new line starting
+with `curl`, `;`, `&&` and `|` separate commands; words not starting with `curl` are other commands and skipped. Options are
+read as curl does (combined short flags, attached values, `--long=value`; an explicit table of options that take a value, so
+unknown flags never swallow the URL). `curlToDraft` builds a `RequestDraft` (query params from the URL), serialized like any
+request. The Import dialog uses it for text that is not JSON and contains a curl command (`containsCurl`), and the URL bar
+(`detectImportText` -> `'curl'` for text starting with `curl`) opens the dialog with it, like a pasted export.
+`importexport/curlImport.ts` places the requests: `defaultCurlTarget` (the open tab's collection and folder), `folderChoices`
+(folder paths in tree order), `addCurlRequests` (optionally `createCollection`, then `createRequest` per command, in order).
+Nothing reaches main except those two existing IPC calls.
+
 **Re-import (replace).** `replaceCollectionFromPostman(collectionId, fileContents, sourceName?)` (`services/postmanImport.ts`)
 reuses the importer's parser (`parsePostmanCollection`), then in one transaction: creates an automatic safety version (the next
 patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`), soft-deletes the live
