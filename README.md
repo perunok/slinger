@@ -60,7 +60,8 @@ All shots are the real app with a fictional "Acme Store API" collection imported
 - Collection versions: immutable semver snapshots (`1.4.0`, `2.0.0-beta.1`) with compare and restore (as a copy or replacing
   the live collection).
 - Import Postman collections (including collection, folder and request scripts and collection variables), environments and
-  globals (v2.x), export collections as Postman v2.1 JSON or as a `.http` file (variables kept as `{{name}}`, optional
+  globals (v2.x), and cURL commands (pasted or from a file, also several at once, into the collection and folder you pick),
+  export collections as Postman v2.1 JSON or as a `.http` file (variables kept as `{{name}}`, optional
   `http-client.env.json` without secret values).
 - 31 themes and 18 accent colours plus "follow the OS", your own custom themes (CSS or colour pickers, contrast warnings,
   import/export as `.slinger-theme.json`), adjustable font size, keyboard shortcuts.

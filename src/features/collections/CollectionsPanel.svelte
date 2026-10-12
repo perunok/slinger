@@ -348,7 +348,7 @@
       <input id="tree-filter" type="search" class="w-full" placeholder="Filter…" bind:value={filter} onkeydown={(e) => e.key === 'Escape' && (filter = '')} />
     </div>
     <IconButton icon="plus" label="New collection" disabled={ro} title={ro ? sync.blockedMessage : 'New collection'} onclick={() => (dlg = { t: 'newCollection' })} />
-    <IconButton icon="upload" label="Import collection or environment" disabled={ro} title={ro ? sync.blockedMessage : 'Import collection or environment (Slinger or Postman JSON)'} onclick={() => ui.openImport()} />
+    <IconButton icon="upload" label="Import collection or environment" disabled={ro} title={ro ? sync.blockedMessage : 'Import collection or environment (Slinger or Postman JSON), or cURL commands'} onclick={() => ui.openImport()} />
   </div>
 
   <div

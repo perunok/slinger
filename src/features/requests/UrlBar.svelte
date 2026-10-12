@@ -26,8 +26,8 @@
   }
 
   /**
-   * A collection or environment export pasted into the URL bar opens the Import dialog with it instead of
-   * becoming the URL. Anything else (URLs, `{{vars}}`, query strings, small JSON) pastes as usual.
+   * A collection or environment export, or a cURL command, pasted into the URL bar opens the Import dialog with it instead
+   * of becoming the URL. Anything else (URLs, `{{vars}}`, query strings, small JSON) pastes as usual.
    */
   function onpastetext(text: string): boolean {
     if (sync.blocked || !detectImportText(text)) return false

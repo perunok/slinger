@@ -146,7 +146,7 @@
     ...(sync.blocked ? [] : [{
       key: 'import',
       label: 'Import collection or environment…',
-      hint: 'Slinger or Postman JSON, file or paste',
+      hint: 'Slinger or Postman JSON, or cURL commands; file or paste',
       swatch: {},
       icon: 'upload' as const,
       current: () => false,

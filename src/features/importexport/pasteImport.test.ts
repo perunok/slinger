@@ -57,7 +57,7 @@ async function setup(props: { initialText?: string | null } = {}) {
   render(ImportDialog, { open: true, onclose, ...props })
   return { mock, onclose }
 }
-const area = () => screen.getByLabelText('Or paste JSON') as HTMLTextAreaElement
+const area = () => screen.getByLabelText('Or paste JSON or a cURL command') as HTMLTextAreaElement
 /** Paste into the paste area like a browser does: the value changes, then the parse runs. */
 async function pasteIntoArea(text: string) {
   const el = area()

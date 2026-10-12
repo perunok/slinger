@@ -5,6 +5,7 @@
  * `_postman_exported_using` is "Slinger/x.y.z"), so one parser handles both.
  */
 import { variablesFromPostman } from '../../../shared/postmanVariables'
+import { looksLikeCurl } from '../../lib/curl'
 import { countScripts } from '../../lib/scripts'
 
 export interface CollectionVariable {
@@ -111,10 +112,11 @@ export const MIN_PASTED_EXPORT_CHARS = 200
 
 /**
  * Whether pasted text is a collection, environment or globals export (by shape only, so the Import dialog can still
- * explain why it cannot be imported, e.g. "no requests"). Cheap for other text: only text that starts with
- * `{` and is longer than {@link MIN_PASTED_EXPORT_CHARS} is parsed at all.
+ * explain why it cannot be imported, e.g. "no requests"), or a cURL command (text starting with `curl`). Cheap for other
+ * text: only text that starts with `{` and is longer than {@link MIN_PASTED_EXPORT_CHARS} is parsed at all.
  */
-export function detectImportText(text: string): 'collection' | 'environment' | 'globals' | null {
+export function detectImportText(text: string): 'collection' | 'environment' | 'globals' | 'curl' | null {
+  if (looksLikeCurl(text)) return 'curl'
   const t = text.trimStart()
   if (t.length < MIN_PASTED_EXPORT_CHARS || t[0] !== '{' || text.trimEnd().at(-1) !== '}') return null
   let data: unknown
