@@ -31,7 +31,8 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Closing the window** keeps Slinger running in the system tray (macOS: the menu bar), so AI assistants, collection runs and
   sync go on. Click the tray icon (on desktops that support it; otherwise open its menu and choose **Open Slinger**) to bring
   the window back; starting
-  Slinger again (or, on macOS, clicking its Dock icon) does the same. **Quit Slinger** in the tray menu, File > Quit (Exit on
+  Slinger again (or, on macOS, clicking its Dock icon) does the same: only one Slinger runs at a time for your user account,
+  so starting it again never opens a second copy. **Quit Slinger** in the tray menu, File > Quit (Exit on
   Windows, Ctrl+Q on Linux) or Slinger > Quit Slinger (Cmd+Q) closes it completely: an assistant's request in progress gets up
   to 10 seconds to finish, then the MCP server stops, and connected assistants do not start Slinger again until you open it
   yourself. Turn this off in Settings > Layout & window (for example when your desktop shows no tray icons).
