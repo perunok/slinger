@@ -84,6 +84,8 @@ import type {
   UpsertCollectionVariableInput,
   UpsertGlobalVariableInput,
   VariableEntryInput,
+  SyncActivityItem,
+  SyncRun,
 } from './types'
 import type { MenuCommand } from './menu'
 
@@ -280,6 +282,10 @@ export interface SlingerIpcApi {
   listSyncConflicts(workspaceId: string, includeResolved?: boolean): Promise<SyncConflict[]>
   resolveSyncConflict(input: ResolveSyncConflictInput): Promise<SyncStatus>
   discardPendingChanges(workspaceId: string): Promise<SyncStatus>
+  /** ADDED (sync activity): local changes waiting to be uploaded, newest first (at most SYNC_ACTIVITY_ITEMS). */
+  listSyncPending(workspaceId: string): Promise<SyncActivityItem[]>
+  /** ADDED (sync activity): the latest sync runs of the workspace since Slinger started, newest first. */
+  listSyncActivity(workspaceId: string): Promise<SyncRun[]>
 
   /** Push channel (main -> renderer). Returns an unsubscribe function. Implemented in preload with ipcRenderer.on('sync:event'). */
   onSyncEvent(listener: (event: SyncEvent) => void): () => void
@@ -467,6 +473,8 @@ export const IPC_CHANNELS = [
   'listSyncConflicts',
   'resolveSyncConflict',
   'discardPendingChanges',
+  'listSyncPending',
+  'listSyncActivity',
   'grantedFiles',
   'listCollectionVariables',
   'upsertCollectionVariable',

@@ -1045,8 +1045,48 @@ export interface LinkRemoteWorkspaceInput {
   localWorkspaceId: string | null
 }
 
+/** ADDED (sync activity): one item a sync uploads or downloads, or that waits to be uploaded. */
+export interface SyncActivityItem {
+  entityType: SyncEntityType
+  entityId: string
+  /** Display breadcrumb from the local rows: `Collection / Folder / Request`, `Environment / KEY`, `Globals / KEY`. */
+  path: string[]
+  change: 'created' | 'updated' | 'deleted'
+}
+
+/**
+ * ADDED (sync activity): one sync cycle of a workspace as the Sync activity view lists it. Kept in main's memory while
+ * Slinger runs (the latest SYNC_ACTIVITY_RUNS per workspace), never stored or synced.
+ */
+export interface SyncRun {
+  /** Increases per app run. */
+  id: number
+  workspaceId: string
+  trigger: 'manual' | 'auto'
+  /** Epoch ms. */
+  startedAt: number
+  finishedAt: number | null
+  result: 'running' | 'ok' | 'error'
+  error: string | null
+  /** The first initial download after linking (the whole cloud workspace). */
+  initial: boolean
+  /** Accepted by the cloud (at most SYNC_ACTIVITY_ITEMS listed; `uploadedCount` is the total). */
+  uploaded: SyncActivityItem[]
+  uploadedCount: number
+  /** Applied from the cloud. */
+  downloaded: SyncActivityItem[]
+  downloadedCount: number
+  /** Conflicts opened by this run. */
+  conflicts: number
+}
+
+export const SYNC_ACTIVITY_RUNS = 50
+export const SYNC_ACTIVITY_ITEMS = 500
+
 export type SyncEvent =
   | { type: 'status'; status: SyncStatus }
+  /** ADDED (sync activity): a run started, made progress or ended. */
+  | { type: 'activity'; run: SyncRun }
   | {
       type: 'applied'
       workspaceId: string

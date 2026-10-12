@@ -2,20 +2,7 @@
  * SyncService: the 18 cloud-account/sync IPC methods over the engine, the cloud client and the scheduler
  * (docs/SYNC_DESIGN.md sections 11, 12). No Electron imports.
  */
-import type {
-  CloudConfig,
-  CloudSession,
-  CloudSignInStart,
-  LinkRemoteWorkspaceInput,
-  RemoteWorkspace,
-  RemoteWorkspaceCounts,
-  RemoteWorkspacePreview,
-  ResolveSyncConflictInput,
-  SyncConflict,
-  SyncEvent,
-  SyncStatus,
-  Workspace,
-} from '../../shared/types'
+import type { CloudConfig, CloudSession, CloudSignInStart, LinkRemoteWorkspaceInput, RemoteWorkspace, RemoteWorkspaceCounts, RemoteWorkspacePreview, ResolveSyncConflictInput, SyncActivityItem, SyncConflict, SyncEvent, SyncRun, SyncStatus, Workspace } from '../../shared/types'
 import { CloudApi, type CloudGateway } from '../cloud/api'
 import { CloudAuth } from '../cloud/auth'
 import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
@@ -29,6 +16,7 @@ import type { SecretStore } from '../services/secrets'
 import { getConflict } from './conflictStore'
 import { resolveConflict, toSyncConflict } from './conflicts'
 import { detachSync } from './detach'
+import { pendingItems } from './activity'
 import { SyncEngine } from './engine'
 import { createLocalWorkspace, discardAllPending, hasLiveContent, insertLink, markAllLiveDirty } from './linking'
 import { SyncScheduler } from './scheduler'
@@ -309,6 +297,12 @@ export class SyncService {
     void this.engine.runCycle(conflict.workspace_id, { manual: true })
     return this.engine.status(conflict.workspace_id)
   }
+
+  /** Local changes waiting to be uploaded (empty when the workspace is not linked). */
+  listSyncPending = async (workspaceId: string): Promise<SyncActivityItem[]> => (getLink(this.db, workspaceId) ? pendingItems(this.db, workspaceId) : [])
+
+  /** The latest sync runs of the workspace since Slinger started, newest first. */
+  listSyncActivity = async (workspaceId: string): Promise<SyncRun[]> => this.engine.activity.list(workspaceId)
 
   discardPendingChanges = async (workspaceId: string): Promise<SyncStatus> => {
     if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })

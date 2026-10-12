@@ -1,5 +1,5 @@
 <script lang="ts">
-  /** Top-bar sync status chip. Click opens a small popover: state, last synced, Sync now, auto sync, conflicts. */
+  /** Top-bar sync status chip. Click opens a small popover: state, last synced, Sync now, auto sync, conflicts, Sync activity. */
   import { onMount } from 'svelte'
   import { app } from '../../app/state.svelte'
   import { ui } from '../../app/ui.svelte'
@@ -87,7 +87,10 @@
           <Button size="sm" variant="primary" onclick={() => (close(false), (ui.conflictsOpen = true))}>Review {status.openConflicts} conflict{status.openConflicts === 1 ? '' : 's'}</Button>
         {/if}
       {/if}
-      <div class="border-t border-border pt-2">
+      <div class="flex flex-wrap gap-1 border-t border-border pt-2">
+        {#if status?.linked}
+          <Button size="sm" variant="ghost" icon="history" onclick={() => (close(false), (ui.syncActivityOpen = true))}>Sync activity…</Button>
+        {/if}
         <Button size="sm" variant="ghost" icon="cloud" onclick={() => (close(false), (ui.cloudOpen = true))}>{status?.linked ? 'Cloud settings…' : 'Cloud…'}</Button>
       </div>
     </div>

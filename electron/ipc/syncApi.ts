@@ -26,6 +26,8 @@ type SyncIpcMethod =
   | 'listSyncConflicts'
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
+  | 'listSyncPending'
+  | 'listSyncActivity'
 
 const uuid = z.string().refine(isUuid, { message: 'must be a valid UUID' })
 const remoteId = z.string().min(1).max(64)
@@ -82,5 +84,7 @@ export function createSyncIpc(core: Core): SyncIpcApi {
     },
     resolveSyncConflict: async (...a) => s.resolveSyncConflict(parseArgs(z.tuple([resolveInput]), a)[0]),
     discardPendingChanges: async (...a) => s.discardPendingChanges(parseArgs(z.tuple([uuid]), a)[0]),
+    listSyncPending: async (...a) => s.listSyncPending(parseArgs(z.tuple([uuid]), a)[0]),
+    listSyncActivity: async (...a) => s.listSyncActivity(parseArgs(z.tuple([uuid]), a)[0]),
   }
 }

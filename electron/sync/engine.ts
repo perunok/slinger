@@ -2,7 +2,8 @@
  * The sync engine: cycle (pull then push), status model, backoff, snapshot phase, role handling
  * (docs/SYNC_DESIGN.md sections 7, 10). No Electron imports: fetch, clock, timers and events are injected.
  */
-import type { CloudRole, SyncEntityType, SyncEvent, SyncState, SyncStatus } from '../../shared/types'
+import type { CloudRole, SyncEntityType, SyncEvent, SyncRun, SyncState, SyncStatus } from '../../shared/types'
+import { SyncActivity } from './activity'
 import type { CloudAuth } from '../cloud/auth'
 import type { CloudGateway } from '../cloud/api'
 import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
@@ -70,6 +71,8 @@ interface Runtime {
   debounce: unknown
   /** Counts last announced in a status event (the scheduler's watcher announces local edits). */
   announced: { pending: number; open: number } | null
+  /** The activity record of the cycle in progress (Sync activity view). */
+  run: SyncRun | null
 }
 
 /** Raised inside a cycle when the workspace is gone or the user lost access (not an error state). */
@@ -78,15 +81,18 @@ class AccessLost extends Error {}
 export class SyncEngine {
   private readonly rts = new Map<string, Runtime>()
   private readonly random: () => number
+  /** What each cycle uploaded and downloaded, in memory (electron/sync/activity.ts). */
+  readonly activity: SyncActivity
 
   constructor(private readonly deps: EngineDeps) {
     this.random = deps.random ?? Math.random
+    this.activity = new SyncActivity({ db: deps.db, emit: (run) => deps.emit({ type: 'activity', run }), now: () => deps.clock.now() })
   }
 
   rt(workspaceId: string): Runtime {
     let r = this.rts.get(workspaceId)
     if (!r) {
-      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, dirtySince: null, debounce: null, announced: null }
+      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, dirtySince: null, debounce: null, announced: null, run: null }
       this.rts.set(workspaceId, r)
     }
     return r
@@ -145,6 +151,8 @@ export class SyncEngine {
 
   emitApplied(workspaceId: string, changed: ChangeLog): void {
     if (!changed.size) return
+    const run = this.rt(workspaceId).run
+    if (run) this.activity.downloaded(run, changed)
     const all = [...changed.values()]
     this.deps.emit({ type: 'applied', workspaceId, changed: all.slice(0, 500), truncated: all.length > 500 })
   }
@@ -165,6 +173,8 @@ export class SyncEngine {
     this.emitApplied(workspaceId, ctx.changed)
     const after = openConflictCount(db, workspaceId)
     if (after !== before) this.deps.emit({ type: 'conflicts', workspaceId, open: after })
+    const run = this.rt(workspaceId).run
+    if (run && after > before) this.activity.conflictsOpened(run, after - before)
     return result
   }
 
@@ -174,14 +184,23 @@ export class SyncEngine {
   runCycle(workspaceId: string, opts: { manual?: boolean } = {}): Promise<SyncStatus> {
     const rt = this.rt(workspaceId)
     if (rt.running) return rt.running
-    if (!getLink(this.deps.db, workspaceId)) return Promise.resolve(this.status(workspaceId))
+    const link = getLink(this.deps.db, workspaceId)
+    if (!link) return Promise.resolve(this.status(workspaceId))
+    const run = this.activity.begin(workspaceId, opts.manual === true ? 'manual' : 'auto', link.link_state === 'initial')
+    rt.run = run
+    let failed = false
     const p: Promise<SyncStatus> = this.cycle(workspaceId, opts.manual === true)
-      .catch((err) => this.fail(workspaceId, err))
+      .catch((err) => {
+        failed = true
+        this.fail(workspaceId, err)
+      })
       .then(() => {
         rt.running = null
         rt.progress = null
+        rt.run = null
         rt.lastCycleAtMs = this.deps.clock.now()
         const s = this.status(workspaceId)
+        this.activity.finish(run, failed ? (s.lastError?.message ?? 'The sync failed.') : null)
         this.deps.emit({ type: 'status', status: s })
         return s
       })
@@ -476,7 +495,7 @@ export class SyncEngine {
     let pending = orderOps(db, ops)
     let maxOps = MAX_OPS_PER_PUSH
     let maxBytes = MAX_BYTES_PER_PUSH
-    const agg: PushOutcome = { accepted: 0, retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
+    const agg: PushOutcome = { accepted: 0, acceptedOps: [], retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
     while (pending.length) {
       const chunk = chunkOps(pending, maxOps, maxBytes)[0]!
       const link = getLink(db, workspaceId)!
@@ -511,7 +530,9 @@ export class SyncEngine {
         throw err
       }
       const outcome = this.runApply(workspaceId, (ctx) => applyPushResponse(ctx, chunk, res))
+      if (rt.run) this.activity.uploaded(rt.run, outcome.acceptedOps)
       agg.accepted += outcome.accepted
+      agg.acceptedOps.push(...outcome.acceptedOps)
       agg.retry.push(...outcome.retry)
       agg.transient ||= outcome.transient
       agg.conflicts += outcome.conflicts

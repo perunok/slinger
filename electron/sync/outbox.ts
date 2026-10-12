@@ -243,6 +243,8 @@ export function chunkOps(ops: BuiltOp[], maxOps = MAX_OPS_PER_PUSH, maxBytes = M
 
 export interface PushOutcome {
   accepted: number
+  /** What the cloud accepted, for the Sync activity view (covered child deletes included). */
+  acceptedOps: Array<{ type: SyncEntityType; id: string; change: 'created' | 'updated' | 'deleted' }>
   /** Rejected entities that need a fresh pull before the retry (no usable server state in the rejection). */
   retry: BuiltOp[]
   /**
@@ -287,7 +289,11 @@ export function rejectionReason(r: Pick<PushRejected, 'code' | 'reason'>, type: 
 export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushResponse): PushOutcome {
   const { db, workspaceId } = ctx
   const byOp = new Map(chunk.map((c) => [c.op.operation_id, c]))
-  const out: PushOutcome = { accepted: 0, retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
+  const out: PushOutcome = { accepted: 0, acceptedOps: [], retry: [], resolved: 0, transient: false, conflicts: 0, denied: null }
+  const accepted = (b: BuiltOp) => {
+    out.acceptedOps.push({ type: b.type, id: b.id, change: b.op.op === 'delete' ? 'deleted' : b.op.base_version === 0 ? 'created' : 'updated' })
+    for (const c of b.covers) out.acceptedOps.push({ type: c.type, id: c.id, change: 'deleted' })
+  }
   const settled = (b: BuiltOp) => void db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(b.op.operation_id)
   const acceptedIds = new Set(resp.accepted.map((a) => a.resource_id))
 
@@ -297,6 +303,7 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
     byOp.delete(a.operation_id)
     ack(ctx, b, a.resulting_version)
     out.accepted++
+    accepted(b)
   }
   for (const r of resp.rejected) {
     const b = byOp.get(r.operation_id)
@@ -319,6 +326,7 @@ export function applyPushResponse(ctx: ApplyCtx, chunk: BuiltOp[], resp: PushRes
         if (b.op.op === 'delete') {
           ack(ctx, b, 0) // already gone
           out.accepted++
+          accepted(b)
         } else {
           // The entity itself was deleted on the server (legacy code sync_conflict), or a parent / target collection is
           // missing: the pull right after brings the tombstone(s), which open remote_deleted exactly like any pulled
