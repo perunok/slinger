@@ -307,10 +307,21 @@ describe('Import entry points', () => {
     const input = screen.getByRole('combobox', { name: 'Search requests and commands' })
     await fireEvent.input(input, { target: { value: '> import' } })
     expect(screen.getAllByRole('option').map((o) => o.textContent?.replace(/\s+/g, ' ').trim())).toContain(
-      'Import collection or environment… Slinger or Postman JSON, file or paste',
+      'Import collection or environment… Slinger or Postman JSON, or cURL commands; file or paste',
     )
     await fireEvent.keyDown(input, { key: 'Enter' })
     expect(ui.importOpen).toBe(true)
     expect(ui.importText).toBeNull()
+  })
+
+  it('Ctrl+K finds Import by "curl" too', async () => {
+    window.slinger = createMockBackend({ latencyMs: 0, seed: false })
+    sync.statuses = {}
+    await app.init()
+    ui.quickOpen = true
+    render(QuickOpen)
+    const input = screen.getByRole('combobox', { name: 'Search requests and commands' })
+    await fireEvent.input(input, { target: { value: '> curl' } })
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([expect.stringContaining('Import collection or environment')])
   })
 })
