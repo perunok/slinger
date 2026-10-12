@@ -20,7 +20,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener)
-  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
   mcpClient/         MCP client for MCP requests: service.ts (McpClientService: sessions over Streamable HTTP / SSE / stdio,
@@ -49,7 +49,12 @@ is unit-tested without launching Electron.
 
 Window preferences: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`,
 `allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch (also bringing it
-back from the tray).
+back from the tray). Electron's lock is per profile (userData), so packaged builds also take a per-user lock
+(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the named pipe
+`\\.\pipe\slinger-<user>` on Windows, taken at `whenReady` before the database opens. A second start with any profile
+connects, sends `show` (the first shows its window) and exits; a socket file nobody listens on (refused) is replaced, but a
+first instance that is slow to answer still counts as running. A lock that cannot be created never blocks starting. Unpackaged
+(dev, e2e) builds skip it so profiles can run side by side; `SLINGER_INSTANCE_GUARD=<path>` turns it on (e2e).
 
 **Tray and quitting** (`electron/lib/tray.ts` + `main.ts`). With `closeToTray` on (`window-state.json`, absent = on; IPC
 `setCloseToTray`, Settings > Layout & window), closing the main window (`close` event, any source: title bar button, Alt+F4,
@@ -1009,7 +1014,8 @@ method colours, misc (`overlay`, `shadow-pop`, `selection`, `preview-bg`). Prefe
 between Node (tests) and Electron (app). Env vars used by tooling: `SLINGER_USER_DATA_DIR`, `SLINGER_DEV_SERVER_URL`,
 `SLINGER_VITE_PORT`, `SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW` (off-screen rendering for automation), `SLINGER_DEVTOOLS=1`
 (Reload / Developer Tools menu items in a packaged build), `SLINGER_UPDATE_FEED_URL` (stand-in for GitHub's latest-release
-endpoint), `SLINGER_MCP_CLIENTS_HOME` (where Settings > AI assistants looks for assistants' configs; e2e uses a temp folder).
+endpoint), `SLINGER_MCP_CLIENTS_HOME` (where Settings > AI assistants looks for assistants' configs; e2e uses a temp folder),
+`SLINGER_INSTANCE_GUARD` (socket path of the per-user single-instance lock, which unpackaged builds otherwise skip).
 
 ## Adding an IPC method end to end
 
