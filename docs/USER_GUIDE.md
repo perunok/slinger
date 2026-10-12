@@ -984,9 +984,18 @@ importing the same Postman collection on both), identical ones become one; diffe
 collection variables or globals simply leaves them on each device (nothing is reported); they upload by themselves once the
 server is updated.
 
-**Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing, Offline (edits are kept and upload
-later), Sync error (with a Retry toast), conflicts, Read-only, Signed out, Access revoked. Click it for **Sync now** and the
-**Auto sync** switch (on by default: Slinger checks for cloud changes regularly and uploads your edits shortly after you save).
+**Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing (with what it is doing: *Uploading
+3/12*, *Downloading 40 changes*), Offline (edits are kept and upload later), Sync error (with a Retry toast), conflicts,
+Read-only, Signed out, Access revoked. Click it for **Sync now**, the **Auto sync** switch (on by default: Slinger checks for
+cloud changes regularly and uploads your edits shortly after you save) and **Sync activity…**.
+
+**Sync activity** (the chip's menu, or Ctrl+K > *Sync activity*) shows what syncs, for the open workspace:
+- **Waiting to upload:** every change on this device the cloud does not have yet, marked **New**, **Edited** or **Deleted**,
+  with its place (`Collection / Folder / Request`, `Environment / variable`, `Globals / variable`). It updates as you edit.
+- **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
+  started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
+  why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other
+  devices show as downloads (who made them is not shown yet). **Sync now** is there too.
 
 **Conflicts.** Changes are merged automatically when they do not overlap. When they do, the item is kept as you have it, is not
 uploaded, and appears in **Review conflicts**, grouped by kind: changed in both places, deleted in the cloud (you have unsent

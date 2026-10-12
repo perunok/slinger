@@ -24,6 +24,10 @@ import {
   type SyncResolution,
   type SyncState,
   type SyncStatus,
+  type SyncActivityItem,
+  type SyncRun,
+  SYNC_ACTIVITY_ITEMS,
+  SYNC_ACTIVITY_RUNS,
   type Workspace,
 } from '../../../shared/types'
 import {
@@ -72,6 +76,8 @@ type SyncApi = Pick<
   | 'listSyncConflicts'
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
+  | 'listSyncPending'
+  | 'listSyncActivity'
   | 'onSyncEvent'
 >
 
@@ -127,6 +133,8 @@ interface ConflictRow {
   resolution: SyncResolution | null
 }
 interface Link {
+  /** The activity record of the cycle in progress. */
+  run?: SyncRun | null
   workspaceId: string
   remoteId: string
   remoteName: string
@@ -272,6 +280,51 @@ export function createSyncApi(
   const pendingCount = (l: Link) => {
     const d = dirtyKeys(l)
     return d.upserts.length + d.deletes.length
+  }
+
+  // ---- sync activity (same shape as electron/sync/activity.ts) ----------------------------------------------------
+
+  const activity = new Map<string, SyncRun[]>()
+  let runSeq = 0
+  /** Wire payload of an entity: the local one, else the last one both sides agreed on (deleted items). */
+  function payloadOf(l: Link, type: SyncEntityType, id: string): Record<string, unknown> | null {
+    return (toWire(s, type, id) as Record<string, unknown> | null) ?? (l.base.get(`${type}:${id}`)?.payload as Record<string, unknown> | undefined) ?? null
+  }
+  function itemOf(l: Link, type: SyncEntityType, id: string, change: SyncActivityItem['change']): SyncActivityItem {
+    const label = (p: Record<string, unknown> | null) => String(p?.name ?? p?.key ?? p?.semver ?? p?.version ?? id.slice(0, 8))
+    const p = payloadOf(l, type, id)
+    const path = [label(p)]
+    let parent: [SyncEntityType, unknown] | null =
+      type === 'folder' ? (p?.parent_folder_id ? ['folder', p.parent_folder_id] : ['collection', p?.collection_id])
+      : type === 'request' ? (p?.folder_id ? ['folder', p.folder_id] : ['collection', p?.collection_id])
+      : type === 'environment_variable' ? ['environment', p?.environment_id]
+      : type === 'collection_version' || type === 'collection_variable' ? ['collection', p?.collection_id]
+      : null
+    if (type === 'global_variable') path.unshift('Globals')
+    for (let depth = 0; parent && typeof parent[1] === 'string' && depth < 30; depth++) {
+      const pp = payloadOf(l, parent[0], parent[1])
+      if (!pp) break
+      path.unshift(label(pp))
+      parent = parent[0] === 'folder' ? (pp.parent_folder_id ? ['folder', pp.parent_folder_id] : ['collection', pp.collection_id]) : null
+    }
+    return { entityType: type, entityId: id, path, change }
+  }
+  function emitRun(run: SyncRun) {
+    emit({ type: 'activity', run: { ...run, uploaded: [...run.uploaded], downloaded: [...run.downloaded] } })
+  }
+  function beginRun(l: Link, trigger: SyncRun['trigger']): SyncRun {
+    const run: SyncRun = {
+      id: ++runSeq, workspaceId: l.workspaceId, trigger, startedAt: Date.now(), finishedAt: null, result: 'running', error: null,
+      initial: l.linkState === 'initial', uploaded: [], uploadedCount: 0, downloaded: [], downloadedCount: 0, conflicts: 0,
+    }
+    const runs = [...(activity.get(l.workspaceId) ?? []), run].slice(-SYNC_ACTIVITY_RUNS)
+    activity.set(l.workspaceId, runs)
+    emitRun(run)
+    return run
+  }
+  function addItems(list: SyncActivityItem[], items: SyncActivityItem[]): number {
+    for (const i of items) if (list.length < SYNC_ACTIVITY_ITEMS) list.push(i)
+    return items.length
   }
 
   function stateOf(l: Link): SyncState {
@@ -658,6 +711,7 @@ export function createSyncApi(
     for (const { k, del } of ops) {
       const { type, id } = splitKey(k)
       if (del) {
+        if (l.run) l.run.uploadedCount += addItems(l.run.uploaded, [itemOf(l, type, id, 'deleted')])
         r.entities.delete(k)
         r.tombstones.add(k)
         l.base.delete(k)
@@ -680,6 +734,7 @@ export function createSyncApi(
           const version = (cur?.version ?? 0) + 1
           r.entities.set(k, { version, payload })
           r.tombstones.delete(k)
+          if (l.run) l.run.uploadedCount += addItems(l.run.uploaded, [itemOf(l, type, id, b ? 'updated' : 'created')])
           l.base.set(k, { version, payload })
         }
       }
@@ -705,11 +760,13 @@ export function createSyncApi(
     }
   }
 
-  function runCycle(l: Link): Promise<void> {
+  function runCycle(l: Link, trigger: SyncRun['trigger'] = 'auto'): Promise<void> {
     if (l.running) return l.running
     const p = (async () => {
       const ch: Changes = { changed: [] }
       const openBefore = openConflicts(l).length
+      const run = beginRun(l, trigger)
+      l.run = run
       l.progress = null
       emitStatus(l)
       await step()
@@ -745,9 +802,19 @@ export function createSyncApi(
       } finally {
         l.progress = null
         l.running = null
+        l.run = null
         if (ch.changed.length > 0) emit({ type: 'applied', workspaceId: l.workspaceId, changed: ch.changed.slice(0, 500), truncated: ch.changed.length > 500 })
         const open = openConflicts(l).length
         if (open !== openBefore) emit({ type: 'conflicts', workspaceId: l.workspaceId, open })
+        run.downloadedCount += addItems(
+          run.downloaded,
+          ch.changed.map((c) => itemOf(l, c.entityType, c.entityId, c.change === 'delete' ? 'deleted' : run.initial || l.base.get(`${c.entityType}:${c.entityId}`)?.version === 1 ? 'created' : 'updated')),
+        )
+        run.conflicts = Math.max(0, open - openBefore)
+        run.finishedAt = Date.now()
+        run.result = l.lastError ? 'error' : 'ok'
+        run.error = l.lastError?.message ?? null
+        emitRun(run)
         emitStatus(l)
       }
     })()
@@ -1127,8 +1194,26 @@ export function createSyncApi(
       const l = links.get(workspaceId)
       if (!l) return statusOf(workspaceId)
       if (l.timer) clearTimeout(l.timer)
-      await runCycle(l)
+      await runCycle(l, 'manual')
       return statusOf(workspaceId)
+    },
+    async listSyncPending(workspaceId) {
+      const l = links.get(workspaceId)
+      if (!l) return []
+      const d = dirtyKeys(l)
+      const item = (k: string, change: SyncActivityItem['change']) => {
+        const { type, id } = splitKey(k)
+        return itemOf(l, type, id, change)
+      }
+      return [
+        ...d.upserts.filter((k) => !isFrozen(l, k)).map((k) => item(k, l.base.has(k) ? 'updated' : 'created')),
+        ...d.deletes.filter((k) => !isFrozen(l, k)).map((k) => item(k, 'deleted')),
+      ]
+        .sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
+        .slice(0, SYNC_ACTIVITY_ITEMS)
+    },
+    async listSyncActivity(workspaceId) {
+      return [...(activity.get(workspaceId) ?? [])].reverse().map((r) => ({ ...r, uploaded: [...r.uploaded], downloaded: [...r.downloaded] }))
     },
     async setAutoSync(workspaceId, enabled) {
       const l = links.get(workspaceId)

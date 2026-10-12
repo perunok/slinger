@@ -26,7 +26,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload' | 'help' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left'
+    icon?: 'download' | 'upload' | 'help' | 'history' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left'
     current: () => boolean
     run: () => void
   }
@@ -142,6 +142,17 @@
       current: () => settings.theme === t.id,
       run: () => settings.setTheme(t.id),
     })),
+    ...(sync.current?.linked
+      ? [{
+          key: 'sync-activity',
+          label: 'Sync activity…',
+          hint: 'what syncs: changes waiting to upload, recent syncs',
+          swatch: {},
+          icon: 'history' as const,
+          current: () => false,
+          run: () => void (ui.syncActivityOpen = true),
+        }]
+      : []),
     // Read-only or revoked workspaces cannot import (the toolbar button is disabled too).
     ...(sync.blocked ? [] : [{
       key: 'import',

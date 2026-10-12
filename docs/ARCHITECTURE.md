@@ -338,6 +338,17 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   a global created elsewhere has `secretMissing` until this device sets a value (keychain `slinger:global-var:<id>`). Equal
   never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
   `source_postman_id` (0007) stays device-local.
+- **Activity** (`sync/activity.ts`, IPC `listSyncPending` / `listSyncActivity`, `sync:event` `activity`): every `runCycle`
+  opens a `SyncRun` (trigger manual/auto, `initial` for the first download) in `SyncEngine.activity`, in memory only (the
+  latest `SYNC_ACTIVITY_RUNS` = 50 per workspace since start; nothing stored or synced). Downloads come from the ChangeLog of
+  every `runApply` while the run is open (pulled pages, snapshot pages, merges from push rejections; an upsert whose cloud
+  version is 1 is *created*), uploads from `PushOutcome.acceptedOps` (`base_version` 0 -> created; covered child deletes
+  included), conflicts from the open-conflict count rising; `finish` records the error message. Items are labelled with
+  `pathOf` from the local rows (deleted rows keep their names), at most `SYNC_ACTIVITY_ITEMS` = 500 per direction (counts are
+  exact). `pendingItems` lists `sync_dirty` minus conflict-frozen entities: deleted row -> deleted, no cloud version -> created,
+  else updated. Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
+  (refetched when the pending count changes or a run ends while the dialog is open), `features/sync/SyncActivityDialog.svelte`
+  opened from the chip's popover and Ctrl+K. The protocol has no author per operation, so "who" is not shown.
 - **Cycle** (`engine.ts`, one per workspace at a time): register client (refuses servers below protocol v2), re-read the role,
   snapshot download for a new link, then up to 4 rounds of pull (apply pages in one transaction each; the checkpoint only advances
   with the applied page) -> build ops from the dirty set (`outbox.buildOps`: no-op elimination, limits quarantine, cascade pruning,

@@ -12,11 +12,14 @@ import type {
   RemoteWorkspace,
   RemoteWorkspacePreview,
   ResolveSyncConflictInput,
+  SyncActivityItem,
   SyncConflict,
   SyncEvent,
+  SyncRun,
   SyncStatus,
   Workspace,
 } from '../../../shared/types'
+import { SYNC_ACTIVITY_RUNS } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import { ui } from '../../app/ui.svelte'
@@ -51,6 +54,11 @@ export class SyncStore {
   /** Open conflicts of the workspace whose conflict center is (or was last) open. */
   conflicts = $state<SyncConflict[]>([])
   conflictsLoading = $state(false)
+  /** ADDED (sync activity): runs of the open workspace, newest first (live from `activity` events), and what waits to upload. */
+  activity = $state<SyncRun[]>([])
+  pending = $state<SyncActivityItem[]>([])
+  activityLoading = $state(false)
+  #pendingTimer: ReturnType<typeof setTimeout> | null = null
   /** Legacy renderer-side links found in localStorage: names only, shown once as a hint. */
   legacyLinks = $state<LegacyHint[]>([])
   /** Epoch seconds, refreshed locally so relative times stay current. */
@@ -124,6 +132,8 @@ export class SyncStore {
     this.remotes = []
     this.remotesError = null
     this.conflicts = []
+    this.activity = []
+    this.pending = []
     this.legacyLinks = []
     this.busy = {}
     this.dismissedShares = loadDismissed()
@@ -204,10 +214,19 @@ export class SyncStore {
 
   handleEvent(e: SyncEvent): void {
     switch (e.type) {
+      case 'activity':
+        if (e.run.workspaceId === app.workspaceId) {
+          const i = this.activity.findIndex((r) => r.id === e.run.id)
+          this.activity = i >= 0 ? this.activity.map((r, j) => (j === i ? e.run : r)) : [e.run, ...this.activity].slice(0, SYNC_ACTIVITY_RUNS)
+          // A finished run changed what waits to upload.
+          if (e.run.result !== 'running' && ui.syncActivityOpen) this.#queuePending()
+        }
+        return
       case 'status': {
         const prev = this.statuses[e.status.workspaceId] ?? null
         this.statuses[e.status.workspaceId] = e.status
         this.#notifyStatus(prev, e.status)
+        if (ui.syncActivityOpen && e.status.workspaceId === app.workspaceId && prev?.pendingChanges !== e.status.pendingChanges) this.#queuePending()
         if (ui.conflictsOpen && e.status.workspaceId === app.workspaceId && prev && prev.openConflicts !== e.status.openConflicts) void this.loadConflicts()
         return
       }
@@ -502,6 +521,39 @@ export class SyncStore {
   async openConflicts(workspaceId: string): Promise<void> {
     if (workspaceId !== app.workspaceId) await app.selectWorkspace(workspaceId)
     ui.conflictsOpen = true
+  }
+
+  /** Sync activity of the open workspace: the runs since Slinger started and the changes waiting to upload. */
+  async loadActivity(): Promise<void> {
+    const ws = app.workspaceId
+    if (!ws) return
+    this.activityLoading = true
+    try {
+      const [runs, pending] = await Promise.all([api().listSyncActivity(ws), api().listSyncPending(ws)])
+      if (ws !== app.workspaceId) return
+      this.activity = runs
+      this.pending = pending
+    } catch (e) {
+      toast.error('Could not load the sync activity', errorInfo(e).message)
+    } finally {
+      this.activityLoading = false
+    }
+  }
+
+  /** The waiting list again shortly after the pending count changed (edits come in bursts). */
+  #queuePending(): void {
+    if (this.#pendingTimer) clearTimeout(this.#pendingTimer)
+    this.#pendingTimer = setTimeout(() => {
+      this.#pendingTimer = null
+      const ws = app.workspaceId
+      if (!ws || !ui.syncActivityOpen) return
+      api()
+        .listSyncPending(ws)
+        .then((p) => {
+          if (ws === app.workspaceId) this.pending = p
+        })
+        .catch(() => {})
+    }, 300)
   }
 
   async loadConflicts(includeResolved = false): Promise<void> {

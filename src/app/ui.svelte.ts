@@ -9,6 +9,8 @@ class UiState {
   cloudOpen = $state(false)
   /** Conflict center for the current workspace. */
   conflictsOpen = $state(false)
+  /** ADDED (sync activity): the Sync activity dialog of the open workspace. */
+  syncActivityOpen = $state(false)
   /** Publish-to-cloud flow for the current workspace. */
   publishOpen = $state(false)
   /** Link-a-cloud-workspace flow; `remoteId` pre-selects one from the list. */

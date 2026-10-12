@@ -20,6 +20,7 @@ export async function setupSync(opts: { seed?: boolean } = {}): Promise<Backend>
   ui.publishOpen = false
   ui.linkOpen = null
   ui.cloudOpen = false
+  ui.syncActivityOpen = false
   await app.init()
   await sync.init()
   return backend
@@ -33,6 +34,7 @@ export function teardownSync(): void {
   ui.publishOpen = false
   ui.linkOpen = null
   ui.cloudOpen = false
+  ui.syncActivityOpen = false
 }
 
 export async function signInMock(b: Backend): Promise<void> {

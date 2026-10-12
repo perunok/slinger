@@ -82,7 +82,15 @@ export function deriveChip(status: SyncStatus | null | undefined, session: Cloud
   }
   if (status.state === 'syncing') {
     const p = status.progress
-    const what = p ? `${p.phase === 'push' ? 'Uploading' : p.phase === 'snapshot' ? 'Downloading' : 'Checking for changes'}${p.total !== null ? ` ${p.done}/${p.total}` : ''}` : 'Syncing'
+    const what = !p
+      ? 'Syncing'
+      : p.phase === 'push'
+        ? `Uploading${p.total !== null ? ` ${p.done}/${p.total}` : ''}`
+        : p.phase === 'snapshot'
+          ? `Downloading${p.done > 0 ? ` ${p.done} item${p.done === 1 ? '' : 's'}` : ''}`
+          : p.done > 0
+            ? `Downloading ${p.done} change${p.done === 1 ? '' : 's'}`
+            : 'Checking for changes'
     return { ...common, kind: 'syncing', tone: 'accent', icon: 'refresh', label: status.initialSyncPending && p?.total ? `${what}` : 'Syncing', detail: `${what}…` }
   }
   if (status.readOnly) {
