@@ -17,7 +17,7 @@ electron/
   migrations/        numbered .sql files
   repositories/      SQL access per aggregate (workspaces, collections, tree=folders+requests, environments, history)
   services/          httpExecutor/httpService, scriptService, postmanImport, collectionVersions, semver, secrets,
-                     exportFiles, externalUrl, authCallback, oauth2 + oauth2Callback (OAuth 2.0 request tokens), core (wiring)
+                     exportFiles, externalUrl, authCallback, oauth2 + oauth2Callback (OAuth 2.0 request tokens), mockServers (mock servers), core (wiring)
   scripts/           pre-request/test script sandbox: QuickJS (WASM) runner, pm API prelude, worker-thread pool
   cloud/             cloud HTTP client (http.ts), device-flow sign-in + token refresh (auth.ts), typed API (api.ts)
   sync/              collection sync engine: index.ts (SyncService, IPC methods), engine (cycle, status, backoff),

@@ -1,13 +1,13 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
-import { homedir, hostname } from 'node:os'
+import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -20,6 +20,7 @@ import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
+import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -356,9 +357,22 @@ function syncTray(): void {
   if (tray) return
   tray = new Tray(trayImage())
   tray.setToolTip(APP_NAME)
-  tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({ open: showMainWindow, quit: quitByUser })))
+  refreshTrayMenu()
   // A click on the icon brings the window back (Windows, KDE and other StatusNotifier hosts); the menu is on right-click.
   tray.on('click', showMainWindow)
+}
+
+/** The tray menu: Open, the running mock servers (Copy URL / Stop), Quit. Rebuilt when a mock server starts or stops. */
+function refreshTrayMenu(): void {
+  if (!tray) return
+  const template = trayMenuTemplate({
+    open: showMainWindow,
+    quit: quitByUser,
+    mockServers: core?.mockServers.list() ?? [],
+    copyText: (text) => clipboard.writeText(text),
+    stopMockServer: (collectionId) => void core?.mockServers.stop(collectionId),
+  })
+  tray.setContextMenu(Menu.buildFromTemplate(template))
 }
 
 /** Hides the window to the tray. The page keeps running (MCP calls, collection runs, sync), at full speed. */
@@ -533,6 +547,24 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
   }
 }
 
+/**
+ * The per-user lock next to Electron's per-profile one (electron/lib/instanceGuard.ts): packaged builds only, so development
+ * and test runs with their own profiles keep running side by side. SLINGER_INSTANCE_GUARD=<path> turns it on with that
+ * socket path (tests).
+ */
+function instanceGuardTarget(): string | null {
+  if (process.env.SLINGER_INSTANCE_GUARD) return process.env.SLINGER_INSTANCE_GUARD
+  if (!app.isPackaged || process.env.SLINGER_SMOKE_TEST) return null
+  let username = 'user'
+  try {
+    username = userInfo().username
+  } catch {
+    /* no passwd entry: the uid (POSIX) still makes the path unique */
+  }
+  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir() })
+}
+let instanceGuard: InstanceGuard | null = null
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -541,7 +573,18 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow) showMainWindow()
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const guardPath = instanceGuardTarget()
+    if (guardPath) {
+      // Another Slinger (another profile) runs for this user: it shows its window; this one leaves before touching anything.
+      instanceGuard = await acquireInstanceGuard(guardPath, () => {
+        if (mainWindow) showMainWindow()
+      })
+      if (!instanceGuard.primary) {
+        app.exit(0)
+        return
+      }
+    }
     timeMark('appReady')
     windowState = readWindowState(windowStateFile())
     db = openDatabase(join(app.getPath('userData'), 'slinger.db'))
@@ -593,6 +636,12 @@ if (!app.requestSingleInstanceLock()) {
           }
         },
         appVersion: app.getVersion(),
+      },
+      mockServerEvents: (event) => {
+        if (event.type !== 'request') refreshTrayMenu()
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && isTrustedUrl(mainWindow.webContents.getURL())) {
+          mainWindow.webContents.send(MOCK_EVENT_CHANNEL, event)
+        }
       },
     })
     let feedUrl: string | null = null
@@ -665,6 +714,8 @@ if (!app.requestSingleInstanceLock()) {
       core?.sync.stop()
       core?.authCallbacks.closeAll()
       core?.oauth2.cancelAll()
+      // Mock servers live only while the app runs (close() stops listening at once; connections are closed too).
+      void core?.mockServers.stopAll()
       // MCP request sessions: stdio servers are asked to exit (stdin closed, then SIGTERM) so none outlives the app;
       // bounded so a stuck server never blocks quitting.
       const mcpClosed = core?.mcpClient.closeAll() ?? Promise.resolve()
@@ -678,5 +729,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on('will-quit', () => {
     db?.close()
     db = null
+    if (instanceGuard?.primary) instanceGuard.close()
   })
 }

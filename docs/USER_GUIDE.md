@@ -31,7 +31,8 @@ On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 - **Closing the window** keeps Slinger running in the system tray (macOS: the menu bar), so AI assistants, collection runs and
   sync go on. Click the tray icon (on desktops that support it; otherwise open its menu and choose **Open Slinger**) to bring
   the window back; starting
-  Slinger again (or, on macOS, clicking its Dock icon) does the same. **Quit Slinger** in the tray menu, File > Quit (Exit on
+  Slinger again (or, on macOS, clicking its Dock icon) does the same: only one Slinger runs at a time for your user account,
+  so starting it again never opens a second copy. **Quit Slinger** in the tray menu, File > Quit (Exit on
   Windows, Ctrl+Q on Linux) or Slinger > Quit Slinger (Cmd+Q) closes it completely: an assistant's request in progress gets up
   to 10 seconds to finish, then the MCP server stops, and connected assistants do not start Slinger again until you open it
   yourself. Turn this off in Settings > Layout & window (for example when your desktop shows no tray icons).
@@ -42,7 +43,8 @@ The thin bar at the bottom of the window shows status only (the cloud sync state
 
 - **Activity:** *Running <collection>… 3/10* while a collection run goes on (also in the background), *Run finished:
   <collection>* when one finished in the background; click it to open the run (with several runs, choose one from the list).
-  *Sending…* while requests are in flight.
+  *Sending…* while requests are in flight. *Mock 127.0.0.1:4010* while a [mock server](#mock-servers) runs; click it to
+  open its dialog (with several, choose one from the list).
 - On the right, for the active request tab, the **last response**: status (coloured like in the response pane), time and size;
   *Not sent* when the last send failed before a response.
 
@@ -450,6 +452,49 @@ returns, a fixture to compare against, or a response you want to keep.
   of synced examples. In a workspace linked to cloud sync, the request editor warns right in the tab once a request's saved
   examples and response bodies push it over that 900 KB limit, since an oversized one is skipped by sync instead of blocked -
   remove or shrink examples to bring it back under the cap. Read-only (viewer) workspaces can open examples but not change them.
+
+## Mock servers
+
+A mock server answers HTTP requests with a collection's saved examples, so you (or the app you are building) can call an API
+before it exists. It runs inside Slinger on your computer and listens on `127.0.0.1` only: nothing is published, nothing syncs.
+
+- **Start:** right-click a collection > **Mock server…**, check the port (default 4010; Slinger remembers the last port per
+  collection) and click **Start**. If the port is taken by another program or mock server, the dialog says so; choose another.
+  Ports below 1024 are refused (they need administrator rights).
+- **Use it:** the dialog shows the base URL (`http://127.0.0.1:4010`) with a copy button. Point your requests at it, for example
+  by setting `{{baseUrl}}` in an environment to that URL, or call it from any other program on this computer.
+- **Matching:** a request matches an example by HTTP method and path. The scheme and host of the example's saved URL, a leading
+  variable such as `{{baseUrl}}` and a trailing slash are ignored. `:id` and `{{id}}` path segments match any value; an exact
+  path wins over such a wildcard (`/users/me` before `/users/:id`). HEAD requests use GET examples.
+- **Several examples for one path** (e.g. *200 OK* and *404 Not found*), in this order:
+  - the request can pick one with the header `x-mock-response-name: <example name>` or `x-mock-response-code: 404` (Postman's
+    convention);
+  - **query parameters:** an example saved with `?page=2` answers requests that have `page=2`; a request without it, or with
+    another page, gets an example without that parameter. A `{{variable}}` or empty value in the saved URL matches any value;
+  - **request body:** when examples were saved with different request bodies (a login with the right and the wrong password),
+    the one whose body equals the request's answers (JSON is compared by value, so spacing and key order do not matter);
+  - otherwise the first in the collection.
+- **Answer:** the example's status, headers and body (binary examples are sent as bytes; *204* and *304* examples send no body).
+  An example without a `Content-Type` header gets one from its body type. When nothing matches, the answer is a 404 with a
+  short JSON explanation.
+- **Web apps in a browser (CORS):** a page you run on this computer (`http://localhost:5173`, `http://127.0.0.1:3000`, ...) can
+  call the mock directly: it answers the browser's preflight (`OPTIONS`) and sends the CORS headers. Other websites cannot,
+  unless you turn on **Allow any website (CORS)** in the dialog; leave it off otherwise, since any site you visit could then read
+  the mock's answers.
+- **Delay:** set **Delay** (milliseconds, up to 60 000) to answer slowly, for testing loading states. It applies at once, also
+  while the server runs.
+- **Edits apply live:** saving an example, adding or deleting one, or moving requests updates the running server right away.
+- **Request log:** the dialog lists the latest 200 requests (time, method, path, the example that answered or *no match*, status),
+  newest first. Click a row to see what was sent (query parameters, headers, body) and what was answered (status, headers, which
+  example, delay, time taken), or why nothing matched. Credentials in headers (`Authorization`, cookies, API keys, tokens) are
+  shown shortened. Click an example's name to open it. The trash button clears the log.
+- **Stop:** **Stop** in the dialog, or in the tray menu (each running mock server is listed there with **Copy** for its URL and
+  **Stop**). The status bar shows running mock servers (click to reopen the dialog). A collection's server stops when the
+  collection or its workspace is deleted. Switching workspaces keeps them running.
+- **Start again when Slinger starts** (on by default): mock servers that were running when Slinger quit start again, on the same
+  port and with the same settings, the next time it starts. Stopping one yourself turns this off for it until you start it again.
+  If its port is taken by then, Slinger says so.
+- Example bodies are sent as stored: `{{variables}}` in them are not resolved.
 
 ## Workflows
 
@@ -1125,7 +1170,8 @@ Assistants can find, read, send and run [MCP requests](#mcp-requests) as saved (
 create or edit them, and a command (stdio) runs only after you allowed it in the window.
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
-send. Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
+send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a
+version, and restore one as a copy or in place (assistants that ask before destructive actions ask you first). Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
 edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and

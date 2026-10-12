@@ -33,6 +33,7 @@
   import SettingsDialog from '../features/settings/SettingsDialog.svelte'
   import ShortcutsDialog from '../features/settings/ShortcutsDialog.svelte'
   import VersionsDialog from '../features/versions/VersionsDialog.svelte'
+  import MockServersHost from '../features/mockServers/MockServersHost.svelte'
   import WorkspacesDialog from '../features/workspaces/WorkspacesDialog.svelte'
   import EmptyState from './EmptyState.svelte'
   import StatusBar from '../features/layout/StatusBar.svelte'
@@ -180,6 +181,7 @@
 <McpHost />
 <EnvironmentEditor />
 <VersionsDialog />
+<MockServersHost />
 <RunnerDialog />
 <ScriptsDialogHost />
 <ExportCollectionDialog />

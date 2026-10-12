@@ -23,6 +23,8 @@ class UiState {
   /** Collection- or folder-level scripts editor. */
   scriptsFor = $state<{ kind: 'collection' | 'folder'; id: string } | null>(null)
   versionsFor = $state<string | null>(null)
+  /** Mock server dialog of this collection (features/mockServers). */
+  mockServerFor = $state<string | null>(null)
   saveAsTabId = $state<string | null>(null)
   exportCollectionId = $state<string | null>(null)
   exportEnvironmentId = $state<string | null>(null)

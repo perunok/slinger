@@ -65,6 +65,11 @@ describe('UUID validation', () => {
       ['moveFolder', [{ folderId: bad, targetParentFolderId: null, targetIndex: 0 }]],
       ['moveRequest', [{ requestId: newId(), targetCollectionId: bad, targetFolderId: null, targetIndex: 0 }]],
       ['createCollectionVersion', [{ collectionId: bad, version: '1.0.0' }]],
+      ['startMockServer', [{ workspaceId: newId(), collectionId: bad, port: 4010, examples: [] }]],
+      ['updateMockServer', [bad, []]],
+      ['stopMockServer', [bad]],
+      ['getMockServerLog', [bad]],
+      ['clearMockServerLog', [bad]],
     ]
     for (const [method, args] of calls) {
       await expect((env.api[method] as (...a: unknown[]) => Promise<unknown>)(...args), method).rejects.toMatchObject({ code: 'invalid_input' })

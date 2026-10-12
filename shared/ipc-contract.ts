@@ -65,6 +65,12 @@ import type {
   WorkflowSummary,
   CreateWorkflowInput,
   UpdateWorkflowInput,
+  MockExample,
+  MockServerEvent,
+  MockServerInfo,
+  MockServerLogEntry,
+  MockServerOptions,
+  StartMockServerInput,
   UpdateCheckResult,
   WindowChrome,
   TitleBarStyle,
@@ -186,6 +192,27 @@ export interface SlingerIpcApi {
   duplicateWorkflow(workflowId: string, name?: string): Promise<Workflow>
   deleteWorkflow(workflowId: string): Promise<void>
 
+  // Mock servers (ADDED: a collection's saved examples served on 127.0.0.1 by main; in memory, local-only, stopped on quit)
+  /**
+   * Starts (or, on the same port, refreshes) the collection's mock server with these examples. A busy port is io_error
+   * with details.reason 'port_in_use' (below 1024 without rights: 'port_denied'); the old server keeps running then.
+   */
+  startMockServer(input: StartMockServerInput): Promise<MockServerInfo>
+  /**
+   * Replaces the examples a running server answers with (edits picked up live), and its collection name when given (a
+   * rename). not_found when it is not running.
+   */
+  updateMockServer(collectionId: string, examples: MockExample[], collectionName?: string): Promise<MockServerInfo>
+  /** CORS and delay of a running server, applied to the next request. not_found when it is not running. */
+  setMockServerOptions(collectionId: string, options: MockServerOptions): Promise<MockServerInfo>
+  /** Stops it and closes its connections; nothing happens when it is not running. */
+  stopMockServer(collectionId: string): Promise<void>
+  /** Every running mock server (all workspaces). */
+  listMockServers(): Promise<MockServerInfo[]>
+  /** The server's request log, oldest first (at most MOCK_LOG_LIMIT entries; empty when it is not running). */
+  getMockServerLog(collectionId: string): Promise<MockServerLogEntry[]>
+  clearMockServerLog(collectionId: string): Promise<void>
+
   // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
   secureStoreGet(key: string): Promise<string | null>
   secureStoreSet(key: string, value: string): Promise<void>
@@ -297,6 +324,9 @@ export interface SlingerIpcApi {
   mcpClientTrustCommand(input: McpTrustCommandInput): Promise<void>
   /** Push channel (main -> renderer, 'mcp-client:event'): message log, notifications, stderr and closes of client sessions. */
   onMcpClientEvent(listener: (event: McpClientEvent) => void): () => void
+
+  /** Push channel (main -> renderer): mock server started / stopped / answered a request ('mock:event'). */
+  onMockServerEvent(listener: (event: MockServerEvent) => void): () => void
   /**
    * Which of these saved file paths the user has granted in this session (via pickFile). Local files
    * are only readable by executeHttpRequest after a grant; grants are in-memory and reset on restart.
@@ -395,6 +425,13 @@ export const IPC_CHANNELS = [
   'updateWorkflow',
   'duplicateWorkflow',
   'deleteWorkflow',
+  'startMockServer',
+  'updateMockServer',
+  'setMockServerOptions',
+  'stopMockServer',
+  'listMockServers',
+  'getMockServerLog',
+  'clearMockServerLog',
   'secureStoreGet',
   'secureStoreSet',
   'secureStoreDelete',
@@ -469,15 +506,16 @@ export const IPC_CHANNELS = [
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call', 'mcp-client:event'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call', 'mcp-client:event', 'mock:event'] as const
 export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
 export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
 export const WINDOW_STATE_CHANNEL = IPC_EVENT_CHANNELS[2]
 export const MCP_CALL_CHANNEL = IPC_EVENT_CHANNELS[3]
 export const MCP_CLIENT_EVENT_CHANNEL = IPC_EVENT_CHANNELS[4]
+export const MOCK_EVENT_CHANNEL = IPC_EVENT_CHANNELS[5]
 
 /** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall' | 'onMcpClientEvent'>
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall' | 'onMcpClientEvent' | 'onMockServerEvent'>
 
 declare global {
   interface Window {

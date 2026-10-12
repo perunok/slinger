@@ -54,6 +54,9 @@ features/
   oauth2/ (OAuth 2.0 settings + token actions in the Authorization tab; oauth2Actions resolves the settings like a send)
   workflows/ (visual workflows: WorkflowsPanel in the sidebar, WorkflowView/WorkflowEditor = Svelte Flow canvas + palette +
           inspector + run log; workflowRuns.svelte.ts runs lib/workflow/engine.ts with executeDraft / runScripts)
+  mockServers/ (mock servers: mockServers.svelte.ts store mirrors main's servers + log via onMockServerEvent;
+          MockServerDialog (port, start/stop, base URL, request log); MockServersHost pushes edited examples to running
+          servers; collection menu "Mock server…" and a status bar item open it; pure logic in lib/mockServers.ts)
   updates/ (new-release notice: daily check, one toast per version, Help > Check for Updates…, Settings > Updates;
           pure logic in lib/updates.ts)
   mcp/ (MCP tool implementations run for LLM clients: tools.ts; McpHost answers main's calls; Settings > AI assistants;
@@ -64,7 +67,7 @@ features/
           the message log from the `mcp-client:event` push channel; see docs/ARCHITECTURE.md "MCP requests (MCP client)")
   about/ (About Slinger dialog; credits.ts holds the developer/links/manifesto text; the acknowledgements list is
           `virtual:acknowledgements`, generated from node_modules by scripts/acknowledgements.mjs)
-lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), curl (cURL commands -> request drafts), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
+lib/                        pure logic, no DOM: workflow/ (graph document, engine, values), mockServers (examples a mock server serves, ports), curl (cURL commands -> request drafts), template, requestVariables (variables a draft uses, for the right panel), urlParams, kv,
                             request (document model), mcpRequest (the MCP part of it: document.mcp), jsonSchemaForm (SchemaForm's
                             pure model), description (Postman description shapes),
                             prepare (draft -> HttpRequestInput; prepareMcp: draft -> MCP connect + call input), scripts (Postman events, chain, scopes),
@@ -196,7 +199,8 @@ backgrounds; dark variant: bright enough for 3:1 on dark ones; `-fg` = `#ffffff`
 * Read-only workspaces: edit affordances read `sync.blocked` (`features/sync/syncStore.svelte.ts`); the main process still rejects writes with `read_only`.
 * Browser dev mode: `window.__slingerMock.cloud` scripts the fake cloud (`approveSignIn()`, `scenario('conflicts' | 'readonly' | 'signedin')`, `setOffline()`,
   `expireAuth()`, `setRole()`, `remoteEdit()`, `injectConflict()`, ...); see `src/dev/mock/sync.ts`.
-* Other `localStorage` keys: `slinger.updates` (JSON `{ auto, lastCheckedAt, latest, notified }`, see lib/updates.ts), `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
+* Other `localStorage` keys: `slinger.mockServers` (JSON `{ ports: { <collectionId>: <port> } }`, the last mock server port per
+  collection, see lib/mockServers.ts), `slinger.updates` (JSON `{ auto, lastCheckedAt, latest, notified }`, see lib/updates.ts), `slinger.appearance` (theme/accent), `slinger.fontSize`, `slinger.editorWrap`, `slinger.activeEnv.<workspaceId>`,
   `slinger.restoreTabsOnStartup`, `slinger.tabs.<workspaceId>` (below), `slinger.responsePosition` (`below` | `beside`),
   `slinger.statusBar` (`false` hides the status bar), `slinger.sidebar` (`false` hides the sidebar), `slinger.titleBarLayout`
   (JSON `{ v, left, right, hidden }`), `slinger.rightPanel` (JSON `{ open, panel, width }`, closed by default), and the
