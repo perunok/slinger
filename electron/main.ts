@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
@@ -356,9 +356,22 @@ function syncTray(): void {
   if (tray) return
   tray = new Tray(trayImage())
   tray.setToolTip(APP_NAME)
-  tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate({ open: showMainWindow, quit: quitByUser })))
+  refreshTrayMenu()
   // A click on the icon brings the window back (Windows, KDE and other StatusNotifier hosts); the menu is on right-click.
   tray.on('click', showMainWindow)
+}
+
+/** The tray menu: Open, the running mock servers (Copy URL / Stop), Quit. Rebuilt when a mock server starts or stops. */
+function refreshTrayMenu(): void {
+  if (!tray) return
+  const template = trayMenuTemplate({
+    open: showMainWindow,
+    quit: quitByUser,
+    mockServers: core?.mockServers.list() ?? [],
+    copyText: (text) => clipboard.writeText(text),
+    stopMockServer: (collectionId) => void core?.mockServers.stop(collectionId),
+  })
+  tray.setContextMenu(Menu.buildFromTemplate(template))
 }
 
 /** Hides the window to the tray. The page keeps running (MCP calls, collection runs, sync), at full speed. */
@@ -595,7 +608,8 @@ if (!app.requestSingleInstanceLock()) {
         appVersion: app.getVersion(),
       },
       mockServerEvents: (event) => {
-        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        if (event.type !== 'request') refreshTrayMenu()
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && isTrustedUrl(mainWindow.webContents.getURL())) {
           mainWindow.webContents.send(MOCK_EVENT_CHANNEL, event)
         }
       },

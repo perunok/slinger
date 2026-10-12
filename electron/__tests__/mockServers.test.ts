@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { newId } from '../lib/ids'
 import { MockServers } from '../services/mockServers'
-import { MOCK_LOG_LIMIT, type MockExample, type MockServerEvent } from '../../shared/types'
+import { MOCK_LOG_BODY_LIMIT, MOCK_LOG_LIMIT, type MockExample, type MockServerEvent } from '../../shared/types'
 import { makeEnv, type TestEnv } from './helpers'
 
 const REQ_A = newId()
@@ -24,6 +24,7 @@ function example(over: Partial<MockExample> = {}): MockExample {
     headers: [{ key: 'Content-Type', value: 'application/json' }],
     body: '{"id":1}',
     bodyEncoding: null,
+    requestBody: null,
     ...over,
   }
 }
@@ -64,7 +65,21 @@ afterEach(async () => {
 })
 
 async function start(examples = EXAMPLES, port = 0, collectionId = COLL) {
-  return servers.start({ workspaceId: WS, collectionId, port, examples })
+  return servers.start({ workspaceId: WS, collectionId, collectionName: 'Shop API', port, examples })
+}
+
+/** A raw HTTP call (fetch may not set Origin or Host). */
+function raw(port: number, o: { method?: string; path?: string; headers?: Record<string, string>; body?: string | Buffer } = {}) {
+  return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string; ms: number }>((resolve, reject) => {
+    const t0 = Date.now()
+    const req = httpRequest({ host: '127.0.0.1', port, method: o.method ?? 'GET', path: o.path ?? '/', headers: o.headers }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => chunks.push(c))
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString('utf8'), ms: Date.now() - t0 }))
+    })
+    req.on('error', reject)
+    req.end(o.body)
+  })
 }
 
 describe('MockServers (real HTTP on 127.0.0.1)', () => {
@@ -119,10 +134,13 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
     await fetch(`${url}/users/5`)
     await fetch(`${url}/missing`)
     const log = servers.log(COLL)
-    expect(log).toEqual([
-      { seq: 1, at: 1_700_000_000, method: 'GET', path: '/users/5', status: 200, match: { requestId: REQ_A, exampleIndex: 0, requestName: 'Get user', name: 'OK' }, reason: null },
-      { seq: 2, at: 1_700_000_000, method: 'GET', path: '/missing', status: 404, match: null, reason: 'No saved example matches GET /missing.' },
+    expect(log).toMatchObject([
+      { seq: 1, at: 1_700_000_000, method: 'GET', path: '/users/5', status: 200, kind: 'example', match: { requestId: REQ_A, exampleIndex: 0, requestName: 'Get user', name: 'OK' }, reason: null },
+      { seq: 2, at: 1_700_000_000, method: 'GET', path: '/missing', status: 404, kind: 'notFound', match: null, reason: 'No saved example matches GET /missing.' },
     ])
+    expect(log[0]!.response).toMatchObject({ statusText: 'OK', delayMs: 0 })
+    expect(log[0]!.response.headers).toContainEqual(['content-type', 'application/json'])
+    expect(log[0]!.request).toMatchObject({ body: null, bodyBytes: 0, truncated: false })
     expect(events.filter((e) => e.type === 'request').map((e) => e.type === 'request' && e.requestCount)).toEqual([1, 2])
     expect(servers.list()[0]!.requestCount).toBe(2)
     servers.clearLog(COLL)
@@ -148,7 +166,7 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
       req.end()
     })
     expect(status).toBe(403)
-    expect(servers.log(COLL)[0]).toMatchObject({ status: 403, match: null })
+    expect(servers.log(COLL)[0]).toMatchObject({ status: 403, match: null, kind: 'refused' })
   })
 
   it('reports a busy port as io_error port_in_use and keeps the running server', async () => {
@@ -171,7 +189,7 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
 
   it('restarting on the same port swaps the examples; another port moves the server', async () => {
     const first = await start()
-    const again = await servers.start({ workspaceId: WS, collectionId: COLL, port: first.port, examples: [example({ url: '/only' })] })
+    const again = await servers.start({ workspaceId: WS, collectionId: COLL, collectionName: 'Shop API', port: first.port, examples: [example({ url: '/only' })] })
     expect(again.port).toBe(first.port)
     expect(again.exampleCount).toBe(1)
     expect((await fetch(`${first.url}/only`)).status).toBe(200)
@@ -180,6 +198,7 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
     expect(moved.port).not.toBe(first.port)
     expect(servers.list()).toHaveLength(1)
     await expect(fetch(`${first.url}/only`)).rejects.toThrow()
+    expect(events).toContainEqual({ type: 'stopped', collectionId: COLL, reason: null, by: 'replaced' })
   })
 
   it('update() picks up edited examples live; not_found when not running', async () => {
@@ -196,7 +215,7 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
     await servers.stop(COLL)
     expect(servers.list()).toEqual([])
     expect(servers.log(COLL)).toEqual([])
-    expect(events.at(-1)).toEqual({ type: 'stopped', collectionId: COLL, reason: null })
+    expect(events.at(-1)).toEqual({ type: 'stopped', collectionId: COLL, reason: null, by: 'user' })
     await expect(fetch(`${url}/users/1`)).rejects.toThrow()
     await servers.stop(COLL)
   })
@@ -208,7 +227,130 @@ describe('MockServers (real HTTP on 127.0.0.1)', () => {
     expect(servers.list()).toEqual([])
     await expect(fetch(`${a.url}/users/1`)).rejects.toThrow()
     await expect(fetch(`${b.url}/users/1`)).rejects.toThrow()
-    expect(events.filter((e) => e.type === 'stopped').every((e) => e.type === 'stopped' && e.reason === 'app quit')).toBe(true)
+    expect(events.filter((e) => e.type === 'stopped').every((e) => e.type === 'stopped' && e.reason === 'app quit' && e.by === 'quit')).toBe(true)
+  })
+
+  it('picks the example whose saved query parameters the request has', async () => {
+    const { url } = await start([
+      example({ url: '{{baseUrl}}/items', body: '"all"' }),
+      example({ exampleIndex: 1, url: '{{baseUrl}}/items?page=2', body: '"page 2"' }),
+      example({ exampleIndex: 2, url: '{{baseUrl}}/items?page=2&sort={{sort}}', body: '"page 2 sorted"' }),
+    ])
+    expect(await (await fetch(`${url}/items`)).json()).toBe('all')
+    expect(await (await fetch(`${url}/items?page=3`)).json()).toBe('all')
+    expect(await (await fetch(`${url}/items?page=2`)).json()).toBe('page 2')
+    expect(await (await fetch(`${url}/items?sort=name&page=2`)).json()).toBe('page 2 sorted')
+  })
+
+  it('among equal matches, answers with the example saved with the same request body (JSON by value)', async () => {
+    const { url } = await start([
+      example({ method: 'POST', url: '/login', name: 'OK', requestBody: '{"user":"ann","pass":"right"}', body: '"welcome"' }),
+      example({ exampleIndex: 1, method: 'POST', url: '/login', name: 'Wrong', code: 401, requestBody: '{"user":"ann","pass":"wrong"}', body: '"denied"' }),
+    ])
+    const login = (body: string) => fetch(`${url}/login`, { method: 'POST', body, headers: { 'content-type': 'application/json' } })
+    expect((await login('{ "pass": "wrong", "user": "ann" }')).status).toBe(401)
+    expect((await login('{"user":"ann","pass":"right"}')).status).toBe(200)
+    expect((await login('{"user":"bob"}')).status).toBe(200) // no body matches: first in collection order
+  })
+
+  it('keeps what the client sent for the inspector: headers, body preview, sizes', async () => {
+    const { port } = await start([example({ method: 'POST', url: '/upload' })])
+    await raw(port, { method: 'POST', path: '/upload?x=1', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token' }, body: '{"a":1}' })
+    await raw(port, { method: 'POST', path: '/upload', body: Buffer.from([0xff, 0xfe, 0x00]) })
+    await raw(port, { method: 'POST', path: '/upload', body: 'x'.repeat(MOCK_LOG_BODY_LIMIT + 10) })
+    const [json, binary, big] = servers.log(COLL)
+    expect(json!.path).toBe('/upload?x=1')
+    expect(json!.request).toMatchObject({ body: '{"a":1}', bodyEncoding: null, bodyBytes: 7, truncated: false })
+    expect(json!.request.headers).toContainEqual(['authorization', 'Bearer secret-token'])
+    expect(json!.request.headers).toContainEqual(['content-type', 'application/json'])
+    expect(binary!.request).toMatchObject({ body: Buffer.from([0xff, 0xfe, 0x00]).toString('base64'), bodyEncoding: 'base64', bodyBytes: 3 })
+    expect(big!.request).toMatchObject({ bodyBytes: MOCK_LOG_BODY_LIMIT + 10, truncated: true })
+    expect(big!.request.body).toHaveLength(MOCK_LOG_BODY_LIMIT)
+  })
+
+  it('CORS: pages on this computer by default, any website when allowed; preflights answered', async () => {
+    const { port } = await start()
+    const local = await raw(port, { path: '/users/1', headers: { Origin: 'http://localhost:5173' } })
+    expect(local.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+    expect(local.headers['vary']).toBe('Origin')
+    const pre = await raw(port, {
+      method: 'OPTIONS',
+      path: '/users/1',
+      headers: { Origin: 'http://127.0.0.1:3000', 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'authorization, content-type' },
+    })
+    expect(pre.status).toBe(204)
+    expect(pre.headers).toMatchObject({
+      'access-control-allow-origin': 'http://127.0.0.1:3000',
+      'access-control-allow-methods': 'PUT',
+      'access-control-allow-headers': 'authorization, content-type',
+      'access-control-max-age': '600',
+    })
+    // A website elsewhere: no CORS headers, preflight refused (and said why in the log).
+    const evil = await raw(port, { path: '/users/1', headers: { Origin: 'https://evil.example' } })
+    expect(evil.status).toBe(200)
+    expect(evil.headers['access-control-allow-origin']).toBeUndefined()
+    const evilPre = await raw(port, { method: 'OPTIONS', path: '/users/1', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'GET' } })
+    expect(evilPre.status).toBe(403)
+    expect(servers.log(COLL).at(-1)).toMatchObject({ kind: 'refused', status: 403 })
+    expect(servers.log(COLL).find((e) => e.kind === 'preflight')).toMatchObject({ method: 'OPTIONS', status: 204 })
+
+    servers.setOptions(COLL, { cors: 'any', delayMs: 0 })
+    expect(events.at(-1)).toMatchObject({ type: 'updated', server: { options: { cors: 'any' } } })
+    const anyPre = await raw(port, {
+      method: 'OPTIONS',
+      path: '/users/1',
+      headers: { Origin: 'https://app.example', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' },
+    })
+    expect(anyPre.status).toBe(204)
+    expect(anyPre.headers['access-control-allow-private-network']).toBe('true')
+    expect((await raw(port, { path: '/users/1', headers: { Origin: 'https://app.example' } })).headers['access-control-allow-origin']).toBe('https://app.example')
+  })
+
+  it('waits the delay before answering (not for preflights); a stop ends the wait', async () => {
+    const { port } = await start()
+    servers.setOptions(COLL, { cors: 'local', delayMs: 150 })
+    const slow = await raw(port, { path: '/users/1' })
+    expect(slow.status).toBe(200)
+    expect(slow.ms).toBeGreaterThanOrEqual(140)
+    expect(servers.log(COLL).at(-1)).toMatchObject({ response: { delayMs: 150 } })
+    expect(servers.log(COLL).at(-1)!.durationMs).toBeGreaterThanOrEqual(140)
+    const pre = await raw(port, { method: 'OPTIONS', path: '/users/1', headers: { Origin: 'http://localhost:1', 'Access-Control-Request-Method': 'GET' } })
+    expect(pre.ms).toBeLessThan(140)
+
+    servers.setOptions(COLL, { cors: 'local', delayMs: 10_000 })
+    const pending = raw(port, { path: '/users/1' }).catch(() => 'closed')
+    await new Promise((r) => setTimeout(r, 50))
+    const t0 = Date.now()
+    await servers.stop(COLL)
+    expect(await pending).toBe('closed')
+    expect(Date.now() - t0).toBeLessThan(2000)
+  })
+
+  it('204/304 examples send no body or length; HEAD sends the length without the body', async () => {
+    const { port } = await start([
+      example({ method: 'DELETE', url: '/users/:id', code: 204, status: 'No Content', body: 'ignored' }),
+      example({ exampleIndex: 1, url: '/cached', code: 304, status: 'Not Modified', body: 'ignored' }),
+    ])
+    const del = await raw(port, { method: 'DELETE', path: '/users/1' })
+    expect(del.status).toBe(204)
+    expect(del.body).toBe('')
+    expect(del.headers['content-length']).toBeUndefined()
+    expect((await raw(port, { path: '/cached' })).status).toBe(304)
+    servers.update(COLL, [example()])
+    const head = await raw(port, { method: 'HEAD', path: '/users/1' })
+    expect(head.status).toBe(200)
+    expect(head.body).toBe('')
+    expect(head.headers['content-length']).toBe('8')
+  })
+
+  it('a rename reaches the server (tray label) as an updated event', async () => {
+    await start()
+    servers.update(COLL, EXAMPLES, 'Shop API v2')
+    expect(servers.list()[0]!.collectionName).toBe('Shop API v2')
+    expect(events.at(-1)).toMatchObject({ type: 'updated', server: { collectionName: 'Shop API v2' } })
+    const before = events.length
+    servers.update(COLL, EXAMPLES, 'Shop API v2')
+    expect(events).toHaveLength(before) // same name: no event
   })
 })
 
@@ -224,13 +366,18 @@ describe('mock server IPC methods', () => {
 
   it('validates input at the boundary', async () => {
     const call = (m: string, ...a: unknown[]) => (env.api as unknown as Record<string, (...x: unknown[]) => Promise<unknown>>)[m]!(...a)
-    const base = { workspaceId: WS, collectionId: COLL, port: 4010, examples: [] }
+    const base = { workspaceId: WS, collectionId: COLL, collectionName: 'Shop API', port: 4010, examples: [] }
     await expect(call('startMockServer', { ...base, port: 0 })).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(call('startMockServer', { ...base, port: 70000 })).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(call('startMockServer', { ...base, port: 4010.5 })).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(call('startMockServer', { ...base, extra: 1 })).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(call('startMockServer', { ...base, examples: [{ ...example(), bodyEncoding: 'hex' }] })).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(call('startMockServer', { ...base, examples: [{ ...example(), requestId: 'x' }] })).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(call('startMockServer', { ...base, options: { cors: 'everyone', delayMs: 0 } })).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(call('startMockServer', { ...base, options: { cors: 'local', delayMs: 60_001 } })).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(call('startMockServer', { ...base, examples: [{ ...example(), requestBody: 5 }] })).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(call('setMockServerOptions', COLL, { cors: 'local', delayMs: -1 })).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(call('setMockServerOptions', COLL, { cors: 'local', delayMs: 0 })).rejects.toMatchObject({ code: 'not_found' })
     await expect(call('updateMockServer', COLL, [])).rejects.toMatchObject({ code: 'not_found' })
     await expect(call('listMockServers', 1)).rejects.toMatchObject({ code: 'invalid_input' })
   })
@@ -242,8 +389,10 @@ describe('mock server IPC methods', () => {
     const port = (probe.address() as AddressInfo).port
     await new Promise((r) => probe.close(r))
 
-    const info = await env.api.startMockServer({ workspaceId: WS, collectionId: COLL, port, examples: EXAMPLES })
+    const info = await env.api.startMockServer({ workspaceId: WS, collectionId: COLL, collectionName: 'Shop API', port, examples: EXAMPLES })
     expect(info.url).toBe(`http://127.0.0.1:${port}`)
+    expect(info.options).toEqual({ cors: 'local', delayMs: 0 })
+    expect(await env.api.setMockServerOptions(COLL, { cors: 'any', delayMs: 5 })).toMatchObject({ options: { cors: 'any', delayMs: 5 } })
     expect(await env.api.listMockServers()).toHaveLength(1)
     await fetch(`${info.url}/users/me`)
     expect(await env.api.getMockServerLog(COLL)).toHaveLength(1)

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { SlingerInvokeApi } from '../../shared/ipc-contract'
 import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, WindowAction, WindowChrome } from '../../shared/types'
+import { MOCK_MAX_DELAY_MS } from '../../shared/types'
 import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
@@ -67,11 +68,21 @@ const mockExample = z
     headers: z.array(requestHeader).max(500),
     body: z.string().max(12 * 1024 * 1024),
     bodyEncoding: z.enum(['base64']).nullable(),
+    requestBody: z.string().max(1024 * 1024).nullable(),
   })
   .strict()
 const mockExamples = z.array(mockExample).max(20_000)
+const mockServerOptions = z.object({ cors: z.enum(['local', 'any']), delayMs: z.number().int().min(0).max(MOCK_MAX_DELAY_MS) }).strict()
+const collectionName = z.string().max(500)
 const startMockServerInput = z
-  .object({ workspaceId: uuid, collectionId: uuid, port: z.number().int().min(1).max(65_535), examples: mockExamples })
+  .object({
+    workspaceId: uuid,
+    collectionId: uuid,
+    collectionName,
+    port: z.number().int().min(1).max(65_535),
+    examples: mockExamples,
+    options: mockServerOptions.optional(),
+  })
   .strict()
 
 const httpRequestInput = z.object({
@@ -642,8 +653,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     // Mock servers (services/mockServers.ts; local-only, in memory)
     startMockServer: async (...a) => core.mockServers.start(parseArgs(z.tuple([startMockServerInput]), a)[0]),
     updateMockServer: async (...a) => {
-      const [collectionId, examples] = parseArgs(z.tuple([uuid, mockExamples]), a)
-      return core.mockServers.update(collectionId, examples)
+      const [collectionId, examples, name] = parseArgs(z.tuple([uuid, mockExamples, collectionName.optional()]), a)
+      return core.mockServers.update(collectionId, examples, name)
+    },
+    setMockServerOptions: async (...a) => {
+      const [collectionId, options] = parseArgs(z.tuple([uuid, mockServerOptions]), a)
+      return core.mockServers.setOptions(collectionId, options)
     },
     stopMockServer: async (...a) => core.mockServers.stop(parseArgs(z.tuple([uuid]), a)[0]),
     listMockServers: async (...a) => (parseArgs(z.tuple([]), a), core.mockServers.list()),

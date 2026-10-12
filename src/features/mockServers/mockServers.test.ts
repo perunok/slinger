@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import { ui } from '../../app/ui.svelte'
+import type { MockServerLogEntry, StartMockServerInput } from '../../../shared/types'
 import { createMockBackend } from '../../dev/mockBackend'
-import { MOCK_PORTS_KEY } from '../../lib/mockServers'
+import { MOCK_SETTINGS_KEY, loadMockSettings } from '../../lib/mockServers'
 import StatusBar from '../layout/StatusBar.svelte'
 import MockServerDialog from './MockServerDialog.svelte'
 import MockServersHost from './MockServersHost.svelte'
@@ -61,8 +62,12 @@ describe('mockServers store', () => {
     const off = mockServers.init()
     expect(await mockServers.start(ids.col, 5050)).toBe(true)
     expect(mockServers.running(ids.col)).toMatchObject({ port: 5050, url: 'http://127.0.0.1:5050', exampleCount: 3 })
-    expect(JSON.parse(localStorage.getItem(MOCK_PORTS_KEY)!)).toEqual({ ports: { [ids.col]: 5050 } })
-    const sent = mock.calls.find((c) => c.method === 'startMockServer')!.args[0] as { examples: { name: string; url: string }[] }
+    expect(loadMockSettings(localStorage)).toEqual({
+      collections: { [ids.col]: { port: 5050, options: { cors: 'local', delayMs: 0 }, startWithSlinger: true } },
+      running: [{ collectionId: ids.col, workspaceId: app.workspaceId }],
+    })
+    const sent = mock.calls.find((c) => c.method === 'startMockServer')!.args[0] as StartMockServerInput
+    expect(sent).toMatchObject({ collectionName: 'Users API', port: 5050, options: { cors: 'local', delayMs: 0 } })
     expect(sent.examples.map((e) => [e.name, e.url])).toEqual([
       ['Found', '{{baseUrl}}/users/:id'],
       ['Missing', '{{baseUrl}}/users/:id'],
@@ -81,6 +86,8 @@ describe('mockServers store', () => {
 
     await mockServers.stop(ids.col)
     expect(mockServers.running(ids.col)).toBeNull()
+    // Stopped by the user: it does not start again with Slinger.
+    expect(loadMockSettings(localStorage).running).toEqual([])
     // The log stays readable after a stop.
     expect(mockServers.logs[ids.col]).toHaveLength(3)
     await mockServers.clearLog(ids.col)
@@ -93,7 +100,7 @@ describe('mockServers store', () => {
     expect(mockServers.suggestedPort(ids.col)).toBe(4010)
     await mockServers.start(ids.empty, 4010)
     expect(mockServers.suggestedPort(ids.col)).toBe(4011)
-    localStorage.setItem(MOCK_PORTS_KEY, JSON.stringify({ ports: { [ids.col]: 6000 } }))
+    localStorage.setItem(MOCK_SETTINGS_KEY, JSON.stringify({ ports: { [ids.col]: 6000 } }))
     expect(mockServers.suggestedPort(ids.col)).toBe(6000)
   })
 
@@ -128,9 +135,185 @@ describe('mockServers store', () => {
   })
 
   it('picks up servers that were already running (renderer reload)', async () => {
-    await mock.startMockServer({ workspaceId: app.workspaceId!, collectionId: ids.col, port: 4321, examples: [] })
+    await mock.startMockServer({ workspaceId: app.workspaceId!, collectionId: ids.col, collectionName: 'Users API', port: 4321, examples: [] })
     mockServers.init()
     await waitFor(() => expect(mockServers.running(ids.col)?.port).toBe(4321))
+  })
+})
+
+describe('mockServers store: options, events and the running list', () => {
+  const runningIds = () => loadMockSettings(localStorage).running.map((r) => r.collectionId)
+
+  it('remembers options before a start, starts with them, and applies changes live', async () => {
+    mockServers.init()
+    expect(await mockServers.setOptions(ids.col, { cors: 'any', delayMs: 300 })).toBe(true)
+    expect(mock.calls.some((c) => c.method === 'setMockServerOptions')).toBe(false)
+    expect(mockServers.optionsFor(ids.col)).toEqual({ cors: 'any', delayMs: 300 })
+    await mockServers.start(ids.col, 4010)
+    const sent = mock.calls.find((c) => c.method === 'startMockServer')!.args[0] as StartMockServerInput
+    expect(sent.options).toEqual({ cors: 'any', delayMs: 300 })
+    expect(mockServers.running(ids.col)!.options).toEqual({ cors: 'any', delayMs: 300 })
+
+    expect(await mockServers.setOptions(ids.col, { cors: 'local', delayMs: 99999 })).toBe(true)
+    // Clamped to the maximum before it is sent.
+    expect(mock.calls.find((c) => c.method === 'setMockServerOptions')!.args).toEqual([ids.col, { cors: 'local', delayMs: 60000 }])
+    expect(mockServers.running(ids.col)!.options).toEqual({ cors: 'local', delayMs: 60000 })
+    expect(mock.mockServers.hit(ids.col, { path: '/users/me' }).entry.response.delayMs).toBe(60000)
+    expect(loadMockSettings(localStorage).collections[ids.col]!.options).toEqual({ cors: 'local', delayMs: 60000 })
+
+    mockServers.setStartWithSlinger(ids.col, false)
+    expect(mockServers.settingsFor(ids.col).startWithSlinger).toBe(false)
+    expect(loadMockSettings(localStorage).collections[ids.col]!.startWithSlinger).toBe(false)
+  })
+
+  it('follows updated events from elsewhere (options, name)', async () => {
+    mockServers.init()
+    await mockServers.start(ids.col, 4010)
+    mock.mockServers.hit(ids.col, { path: '/users/me' })
+    await mock.setMockServerOptions(ids.col, { cors: 'any', delayMs: 5 })
+    expect(mockServers.running(ids.col)).toMatchObject({ options: { cors: 'any', delayMs: 5 }, requestCount: 1 })
+    expect(mockServers.settingsFor(ids.col).options).toEqual({ cors: 'any', delayMs: 5 })
+  })
+
+  it('sends the new name after a rename', async () => {
+    mockServers.init()
+    await mockServers.start(ids.col, 4010)
+    await mock.renameCollection(ids.col, 'People API')
+    await app.reloadCollections()
+    await mockServers.refreshExamples()
+    const update = mock.calls.filter((c) => c.method === 'updateMockServer')
+    expect(update).toHaveLength(1)
+    expect(update[0]!.args[2]).toBe('People API')
+    expect(mockServers.running(ids.col)!.collectionName).toBe('People API')
+    // An edit without a rename sends no name.
+    const r = app.requestById(ids.me)!
+    await mock.updateRequest({ requestId: r.id, name: r.name, method: r.method, url: r.url, expectedVersion: r.version, documentJson: doc([{ name: 'v2', code: 200 }]) })
+    await app.reloadCollection(ids.col)
+    await mockServers.refreshExamples()
+    const again = mock.calls.filter((c) => c.method === 'updateMockServer')
+    expect(again).toHaveLength(2)
+    expect(again[1]!.args).toHaveLength(2)
+  })
+
+  it('keeps the running list on quit, drops it on a stop by the user or a failure, ignores a replace', async () => {
+    mockServers.init()
+    await mockServers.start(ids.col, 4010)
+    await mockServers.start(ids.empty, 4011)
+    expect(runningIds().sort()).toEqual([ids.col, ids.empty].sort())
+
+    // Moving to another port: still running, still listed.
+    await mockServers.start(ids.col, 4020)
+    expect(mockServers.running(ids.col)?.port).toBe(4020)
+    expect(runningIds()).toContain(ids.col)
+    expect(loadMockSettings(localStorage).collections[ids.col]!.port).toBe(4020)
+
+    mock.mockServers.crash(ids.empty, 'boom')
+    expect(runningIds()).toEqual([ids.col])
+
+    mock.mockServers.quit()
+    expect(mockServers.list).toEqual([])
+    expect(runningIds()).toEqual([ids.col])
+    // No toast for a quit.
+    expect(toast.items.map((t) => t.detail)).toEqual(['boom'])
+  })
+
+  it('a stop from the tray (stopped by user) leaves the running list', async () => {
+    mockServers.init()
+    await mockServers.start(ids.col, 4010)
+    await mock.stopMockServer(ids.col)
+    expect(mockServers.running(ids.col)).toBeNull()
+    expect(runningIds()).toEqual([])
+  })
+
+  it('deleting the collection forgets it', async () => {
+    mockServers.init()
+    await mockServers.setOptions(ids.col, { cors: 'any', delayMs: 0 })
+    await mockServers.start(ids.col, 4010)
+    await mockServers.stopIfRunning(ids.col)
+    expect(loadMockSettings(localStorage)).toEqual({ collections: {}, running: [] })
+  })
+})
+
+describe('start with Slinger', () => {
+  const remember = (settings: unknown) => localStorage.setItem(MOCK_SETTINGS_KEY, JSON.stringify(settings))
+  const options = { cors: 'any', delayMs: 100 }
+
+  it('starts what was running when Slinger quit, also in another workspace, with its port and options', async () => {
+    const other = await mock.createWorkspace('Other')
+    const otherCol = await mock.createCollection(other.id, 'Elsewhere')
+    await mock.createRequest({
+      workspaceId: other.id,
+      collectionId: otherCol.id,
+      folderId: null,
+      name: 'Ping',
+      method: 'GET',
+      url: '/ping',
+      documentJson: doc([{ name: 'Pong', code: 200, body: 'pong' }]),
+    })
+    remember({
+      v: 2,
+      collections: {
+        [ids.col]: { port: 4600, options, startWithSlinger: true },
+        [otherCol.id]: { port: 4601, options: { cors: 'local', delayMs: 0 }, startWithSlinger: true },
+      },
+      running: [
+        { collectionId: ids.col, workspaceId: app.workspaceId },
+        { collectionId: otherCol.id, workspaceId: other.id },
+      ],
+    })
+    mockServers.init()
+    await mockServers.ready
+    expect(mockServers.running(ids.col)).toMatchObject({ port: 4600, options, collectionName: 'Users API', exampleCount: 3 })
+    expect(mockServers.running(otherCol.id)).toMatchObject({ port: 4601, workspaceId: other.id, collectionName: 'Elsewhere', exampleCount: 1 })
+    expect(mock.mockServers.hit(otherCol.id, { path: '/ping' }).body).toBe('pong')
+    expect(toast.items).toEqual([])
+    expect(loadMockSettings(localStorage).running).toHaveLength(2)
+
+    // Live reload does not resend an unchanged collection that was started this way.
+    await mockServers.refreshExamples()
+    expect(mock.calls.filter((c) => c.method === 'updateMockServer')).toHaveLength(0)
+
+    // A second init (renderer reload) does not start them twice.
+    const starts = mock.calls.filter((c) => c.method === 'startMockServer').length
+    mockServers.init()
+    await mockServers.ready
+    expect(mock.calls.filter((c) => c.method === 'startMockServer')).toHaveLength(starts)
+  })
+
+  it('a full quit and relaunch starts it again', async () => {
+    mockServers.init()
+    await mockServers.setOptions(ids.col, { cors: 'any', delayMs: 100 })
+    await mockServers.start(ids.col, 4700)
+    mock.mockServers.quit()
+    mockServers.reset()
+    mockServers.init()
+    await mockServers.ready
+    expect(mockServers.running(ids.col)).toMatchObject({ port: 4700, options })
+  })
+
+  it('skips servers switched off, drops gone collections quietly, and names the ones that fail', async () => {
+    mock.mockServers.occupyPort(4801)
+    remember({
+      v: 2,
+      collections: {
+        [ids.col]: { port: 4800, options, startWithSlinger: false },
+        [ids.empty]: { port: 4801, options, startWithSlinger: true },
+        gone: { port: 4802, options, startWithSlinger: true },
+      },
+      running: [
+        { collectionId: ids.col, workspaceId: app.workspaceId },
+        { collectionId: ids.empty, workspaceId: app.workspaceId },
+        { collectionId: 'gone', workspaceId: app.workspaceId },
+        { collectionId: 'lost', workspaceId: 'no-such-workspace' },
+      ],
+    })
+    mockServers.init()
+    await mockServers.ready
+    expect(mockServers.list).toEqual([])
+    expect(toast.items.map((t) => [t.title, t.detail])).toEqual([['Could not start the mock server of “Empty”', expect.stringMatching(/Port 4801 is already in use/)]])
+    expect(loadMockSettings(localStorage).running).toEqual([])
+    // What is remembered about each collection stays.
+    expect(loadMockSettings(localStorage).collections[ids.col]!.port).toBe(4800)
   })
 })
 

@@ -13,6 +13,7 @@
   import { app } from '../../app/state.svelte'
   import { ui } from '../../app/ui.svelte'
   import { mockServers } from '../mockServers/mockServers.svelte'
+  import type { MockServerInfo } from '../../../shared/types'
   import { tabsStore } from '../requests/tabs.svelte'
   import { summarize } from '../runner/runner'
   import { runsStore, runSummaryText, type RunSession } from '../runner/runs.svelte'
@@ -61,11 +62,11 @@
 
   // Running mock servers (every workspace: they hold their port until stopped).
   const mocks = $derived(mockServers.list)
-  const mockName = (collectionId: string) => app.collections.find((c) => c.id === collectionId)?.name ?? 'a collection in another workspace'
+  const mockName = (m: MockServerInfo) => app.collections.find((c) => c.id === m.collectionId)?.name ?? m.collectionName
   const mockText = $derived(mocks.length === 1 ? `Mock ${mocks[0]!.url.replace(/^http:\/\//, '')}` : mocks.length > 1 ? `${mocks.length} mock servers` : '')
   let mockMenu = $state<{ x: number; y: number } | null>(null)
   const mockItems = $derived<MenuItem[]>(
-    mocks.map((m) => ({ label: `${mockName(m.collectionId)}: ${m.url.replace(/^http:\/\//, '')}`, icon: 'server', action: () => (ui.mockServerFor = m.collectionId) })),
+    mocks.map((m) => ({ label: `${mockName(m)}: ${m.url.replace(/^http:\/\//, '')}`, icon: 'server', action: () => (ui.mockServerFor = m.collectionId) })),
   )
   function openMocks(e: MouseEvent) {
     if (mocks.length === 1) {
@@ -110,7 +111,7 @@
       <button
         type="button"
         class={item}
-        title={mocks.length === 1 ? `Mock server of ${mockName(mocks[0]!.collectionId)} (click to open it)` : 'Mock servers (click to choose one)'}
+        title={mocks.length === 1 ? `Mock server of ${mockName(mocks[0]!)} (click to open it)` : 'Mock servers (click to choose one)'}
         aria-haspopup={mocks.length > 1 ? 'menu' : 'dialog'}
         data-testid="status-mocks"
         onclick={openMocks}

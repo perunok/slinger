@@ -77,9 +77,13 @@ api.onMcpClientEvent = (listener: (event: McpClientEvent) => void): (() => void)
   }
 }
 
-// Mock servers (started / stopped / request log entries). Plain JSON built by main.
+// Mock servers (started / updated / stopped / request log entries). Plain JSON built by main; only known event types pass.
+const MOCK_EVENT_TYPES = new Set<unknown>(['request', 'started', 'updated', 'stopped'])
 api.onMockServerEvent = (listener: (event: MockServerEvent) => void): (() => void) => {
-  const handler = (_event: unknown, payload: unknown) => listener(payload as MockServerEvent)
+  const handler = (_event: unknown, payload: unknown) => {
+    const p = (payload ?? {}) as { type?: unknown }
+    if (MOCK_EVENT_TYPES.has(p.type)) listener(payload as MockServerEvent)
+  }
   ipcRenderer.on(MOCK_EVENT_CHANNEL, handler)
   return () => {
     ipcRenderer.removeListener(MOCK_EVENT_CHANNEL, handler)

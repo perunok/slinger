@@ -69,6 +69,7 @@ import type {
   MockServerEvent,
   MockServerInfo,
   MockServerLogEntry,
+  MockServerOptions,
   StartMockServerInput,
   UpdateCheckResult,
   WindowChrome,
@@ -197,8 +198,13 @@ export interface SlingerIpcApi {
    * with details.reason 'port_in_use' (below 1024 without rights: 'port_denied'); the old server keeps running then.
    */
   startMockServer(input: StartMockServerInput): Promise<MockServerInfo>
-  /** Replaces the examples a running server answers with (edits picked up live). not_found when it is not running. */
-  updateMockServer(collectionId: string, examples: MockExample[]): Promise<MockServerInfo>
+  /**
+   * Replaces the examples a running server answers with (edits picked up live), and its collection name when given (a
+   * rename). not_found when it is not running.
+   */
+  updateMockServer(collectionId: string, examples: MockExample[], collectionName?: string): Promise<MockServerInfo>
+  /** CORS and delay of a running server, applied to the next request. not_found when it is not running. */
+  setMockServerOptions(collectionId: string, options: MockServerOptions): Promise<MockServerInfo>
   /** Stops it and closes its connections; nothing happens when it is not running. */
   stopMockServer(collectionId: string): Promise<void>
   /** Every running mock server (all workspaces). */
@@ -421,6 +427,7 @@ export const IPC_CHANNELS = [
   'deleteWorkflow',
   'startMockServer',
   'updateMockServer',
+  'setMockServerOptions',
   'stopMockServer',
   'listMockServers',
   'getMockServerLog',

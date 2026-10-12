@@ -85,7 +85,7 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 131 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 132 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
@@ -511,15 +511,19 @@ triggers, so a viewer of a shared workspace can build workflows on this device; 
 A collection's saved examples served over HTTP so requests can be pointed at an API that does not exist yet (Postman's mock
 servers, but local). **Local-only and in memory, no migration:** a running server is state of the main process
 (`electron/services/mockServers.ts`, `MockServers` in `core.mockServers`); nothing is written to SQLite or synced, and
-`before-quit` stops all of them. The only persisted bit is the last port per collection, in the renderer's
-`localStorage['slinger.mockServers']`.
+`before-quit` stops all of them (`stopped` with `by: 'quit'`). The renderer persists per collection the port, the options and
+"Start again when Slinger starts", plus the list of servers that were running at quit, in
+`localStorage['slinger.mockServers']`; on the next start it loads those collections (`listFolders` / `listRequests`, any
+workspace) and starts them again.
 
 - **Who parses the examples: the renderer.** Request documents stay opaque to main. The renderer already owns the example model
   (`lib/examples.ts`: `originalRequest` or the parent request, header rows, base64 bodies, Postman URL objects), so
   `lib/mockServers.ts` `collectMockExamples(folders, requests)` resolves every example in sidebar order into a flat
   `MockExample` (`requestId`, `exampleIndex`, `requestName`, `name`, `method`, `url` with templates unresolved, `code`,
-  `status`, enabled `headers` (plus a `Content-Type` from `_postman_previewlanguage` when missing), `body`, `bodyEncoding`) and
-  sends the list with `startMockServer`. Main zod-validates it (20 000 examples, 12 MB per body, 200 MB of bodies per server).
+  `status`, enabled `headers` (plus a `Content-Type` from `_postman_previewlanguage` when missing), `body`, `bodyEncoding`,
+  `requestBody` (the saved request's body text, for matching); MCP requests are skipped) and sends the list with
+  `startMockServer` together with the collection name (for the tray) and `MockServerOptions` (`cors: 'local' | 'any'`,
+  `delayMs` 0-60 000; `setMockServerOptions` changes them live). Main zod-validates it (20 000 examples, 12 MB per body, 200 MB of bodies per server).
   The alternative, main reading `document_json` itself, would have duplicated the example parsing in main and broken the
   "documents are opaque to main" rule for little gain: the renderer has the whole tree loaded anyway.
 - **Live edits:** `features/mockServers/MockServersHost.svelte` watches the loaded tree; 300 ms after a change it calls
@@ -530,28 +534,49 @@ servers, but local). **Local-only and in memory, no migration:** a running serve
 - **Server:** `node:http` on `127.0.0.1` only (`exclusive: true`, keep-alive 5 s). `start` on the port a collection already uses
   swaps its examples; on another port the new server is bound first and the old one stopped afterwards, so a busy port keeps the
   old one. `EADDRINUSE` is `io_error` with `details.reason: 'port_in_use'`, `EACCES` `'port_denied'`. `stop` closes the listener
-  and all open connections. Requests whose `Host` is not a loopback name (`127.0.0.1`, `localhost`, `*.localhost`, `[::1]`) get
-  403, so a DNS-rebinding web page cannot read the examples; no CORS headers are sent. Request bodies are never read.
+  and all open connections (and ends answers waiting for the delay). Requests whose `Host` is not a loopback name (`127.0.0.1`,
+  `localhost`, `*.localhost`, `[::1]`) get 403, so a DNS-rebinding web page cannot read the examples. Request bodies are read up to
+  10 MB (the rest drained) for matching and the log.
+- **CORS:** `corsOriginAllowed(options.cors, Origin)`: with `'local'` only loopback origins (`http(s)://localhost|127.0.0.1|[::1]|
+  *.localhost[:port]`), with `'any'` every origin. Allowed origins get `Access-Control-Allow-Origin: <origin>`, `-Credentials:
+  true`, `-Expose-Headers: *`, `Vary: Origin` (an example's own `Access-Control-*` headers win). A preflight (`OPTIONS` with
+  `Origin` and `Access-Control-Request-Method`) is answered by the server itself: 204 echoing the requested method and headers,
+  `Max-Age` 600 and, when asked, `Access-Control-Allow-Private-Network`; from an origin that is not allowed it is 403 (logged as
+  `refused`, with the reason). Other requests from such origins are answered without CORS headers (the browser then hides them).
+- **Delay:** `options.delayMs` before each answer (not preflights or refusals); a client that disconnects or a stop ends the wait.
 - **Matching** (`shared/mockMatch.ts`, shared with the browser mock backend): the example URL is reduced to its path (scheme +
   host, or a leading `{{var}}`/host part, query and fragment dropped). Segments compare one by one (percent-decoded, empty ones
   ignored): literal (case-sensitive), wildcard (`:name` or a whole `{{name}}`), or mixed (`v{{n}}.json`, a regex). Candidates are
   the examples with the request's method (HEAD falls back to GET) and a matching path; `x-mock-response-id`,
-  `x-mock-response-name` (case-insensitive) and `x-mock-response-code` narrow them (nothing left: 404 naming what exists); the most
-  specific path wins (left to right, literal > mixed > wildcard), ties go to collection order. No match: 404 with
+  `x-mock-response-name` (case-insensitive) and `x-mock-response-code` narrow them (nothing left: 404 naming what exists). Then
+  they are ranked: the most specific path (left to right, literal > mixed > wildcard); then query parameters (`mockQueryOf`: an
+  example whose saved parameters all appear with equal values beats one with a missing or different one, then more matched
+  parameters win; a `{{var}}`, `:var` or empty saved value matches any value); then the request body (equal to the example's
+  `requestBody`, JSON compared by value with sorted keys, other text trimmed); then collection order. No match: 404 with
   `{error: 'mockRequestNotFound', message, hint}`.
 - **Response:** the example's status when 200-599 (else 200) and reason phrase, its headers except framing ones
   (`Content-Length`, `Transfer-Encoding`, `Content-Encoding`, `Connection`, ...; repeated names such as `Set-Cookie` are sent as
-  separate lines; a header Node refuses is skipped), the body as UTF-8 or decoded base64, with an exact `Content-Length`.
-  `{{variables}}` in bodies are not resolved.
-- **Log:** every request becomes a `MockServerLogEntry` (seq, time, method, path+query, status, matched example or the reason),
-  capped at `MOCK_LOG_LIMIT` (200) in main and in the renderer, pushed as `mock:event` `request`; `started` / `stopped` events
-  keep the renderer in step (also after a renderer reload, via `listMockServers` + `getMockServerLog`).
+  separate lines; a header Node refuses is skipped), the body as UTF-8 or decoded base64, with an exact `Content-Length`; 204,
+  205 and 304 send neither a body nor a length, HEAD the length without the body. `{{variables}}` in bodies are not resolved.
+- **Log:** every request becomes a `MockServerLogEntry` (seq, time, method, path+query, status, `kind` example / notFound /
+  refused / preflight, matched example or the reason, the request's headers in order (values cut at 4 KB) and body (first
+  `MOCK_LOG_BODY_LIMIT` = 64 KB, base64 when not UTF-8, with its full size), the answer's status text, headers and delay, and
+  the duration), capped at `MOCK_LOG_LIMIT` (200) in main and in the renderer, pushed as `mock:event` `request`; `started` /
+  `updated` (options or name changed) / `stopped` (`by` user / quit / error / replaced) keep the renderer in step (also after a
+  renderer reload, via `listMockServers` + `getMockServerLog`). The log lives in memory only; the UI shortens credential
+  header values.
+- **Tray:** `main.ts` rebuilds the tray menu (`lib/tray.ts` `trayMenuTemplate`) on every `started` / `updated` / `stopped`:
+  each running server as "<collection> · <port>" with **Copy <url>** and **Stop** (a `stopped` with `by: 'user'`).
 - **UI:** collection context menu **Mock server…** (also for read-only workspaces: it changes nothing) opens
-  `MockServerDialog` (`ui.mockServerFor`): port field + Start, or base URL + copy + Stop, an InfoTip with the rules, the log
-  (a matched example opens its tab). The status bar shows running servers of every workspace and reopens the dialog.
-- **Tests:** `electron/__tests__/mockMatch.test.ts` (the matcher), `electron/__tests__/mockServers.test.ts` (real servers on
-  ephemeral ports hit with `fetch`: matching, header selection, binary bodies, 404, Host check, busy port, restart/update, stop,
-  stopAll, IPC validation), `src/lib/mockServers.test.ts`, `src/features/mockServers/mockServers.test.ts` (store, dialog,
+  `MockServerDialog` (`ui.mockServerFor`): port field + Start, or base URL + copy + Stop; the options (Allow any website (CORS),
+  Delay, Start again when Slinger starts), editable while running; an InfoTip with the rules; the log, whose rows open an
+  inspector (request and answer details; a matched example opens its tab). The status bar shows running servers of every
+  workspace and reopens the dialog.
+- **Tests:** `electron/__tests__/mockMatch.test.ts` (the matcher, query/body ranking, CORS origins),
+  `electron/__tests__/mockServers.test.ts` (real servers on ephemeral ports: matching, query and body selection, header
+  selection, binary bodies, 204/304/HEAD, 404, Host check, CORS and preflights, delay, inspector fields, busy port,
+  restart/update/rename, stop, stopAll, IPC validation), `electron/__tests__/tray.test.ts` (the tray's mock server items),
+  `e2e/mockServers.e2e.test.ts` (the real app), `src/lib/mockServers.test.ts`, `src/features/mockServers/mockServers.test.ts` (store, dialog,
   status bar against the browser mock, whose `__slingerMock.mockServers.hit(collectionId, {method, path, headers})` plays
   requests through the same matcher).
 

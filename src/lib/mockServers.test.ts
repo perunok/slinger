@@ -3,16 +3,30 @@ import type { ApiFolder, ApiRequest } from '../../shared/types'
 import { compileMockRoutes, matchMockRequest } from '../../shared/mockMatch'
 import {
   DEFAULT_MOCK_PORT,
-  MOCK_PORTS_KEY,
+  MOCK_SETTINGS_KEY,
   collectMockExamples,
-  loadMockPorts,
+  collectionMockSettings,
+  displayHeaderValue,
+  isCredentialHeader,
+  loadMockSettings,
   logTime,
   mockBaseUrl,
+  mockRequestBody,
   mockSourceKey,
+  normalizeMockOptions,
+  parseDelay,
   parsePort,
-  saveMockPort,
+  pathOnly,
+  prettyBody,
+  queryParams,
+  saveMockSettings,
   suggestPort,
+  updateMockSettings,
+  withCollectionSettings,
+  withoutCollection,
+  withRunning,
 } from './mockServers'
+import { parseBody } from './request'
 
 const C = 'c0000000-0000-4000-8000-000000000000'
 function folder(id: string, sortOrder: number, parentFolderId: string | null = null): ApiFolder {
@@ -77,7 +91,68 @@ describe('collectMockExamples', () => {
     ])
     const listEx = list[2]!
     expect(listEx.headers).toEqual([{ key: 'Content-Type', value: 'application/json' }])
-    expect(listEx).toMatchObject({ requestName: 'root', status: 'OK', body: '[]', bodyEncoding: null })
+    expect(listEx).toMatchObject({ requestName: 'root', status: 'OK', body: '[]', bodyEncoding: null, requestBody: null })
+  })
+
+  it('skips MCP requests (method MCP or an mcp document)', () => {
+    const responses = [{ name: 'r', code: 200, body: '{}' }]
+    const list = collectMockExamples([], [
+      request('http', { doc: { responses } }),
+      request('mcpMethod', { method: 'MCP', doc: { responses } }),
+      request('mcpDoc', { method: 'POST', doc: { mcp: { v: 1, transport: 'http' }, responses } }),
+      request('mcpNotObject', { doc: { mcp: 'x', responses } }),
+    ])
+    expect(list.map((e) => e.requestId)).toEqual(['http', 'mcpNotObject'])
+  })
+
+  it('fills requestBody from the example\'s saved request, else the parent request', () => {
+    const list = collectMockExamples([], [
+      request('raw', {
+        method: 'POST',
+        sortOrder: 0,
+        doc: {
+          body: { mode: 'raw', raw: '{"parent":true}' },
+          responses: [
+            { name: 'own', originalRequest: { method: 'POST', url: '/users', body: { mode: 'raw', raw: '{"name":"Ann"}' } } },
+            { name: 'fromParent' },
+            { name: 'noBody', originalRequest: { method: 'POST', url: '/users' } },
+          ],
+        },
+      }),
+      request('form', {
+        method: 'POST',
+        sortOrder: 1,
+        doc: {
+          responses: [
+            {
+              name: 'urlencoded',
+              originalRequest: {
+                method: 'POST',
+                url: '/login',
+                body: { mode: 'urlencoded', urlencoded: [{ key: 'user', value: 'a b' }, { key: 'pw', value: '1&2' }, { key: 'off', value: 'x', disabled: true }] },
+              },
+            },
+            {
+              name: 'formdata',
+              originalRequest: {
+                method: 'POST',
+                url: '/upload',
+                body: { mode: 'formdata', formdata: [{ key: 'title', value: 'T' }, { key: 'file', type: 'file', src: '/tmp/x' }] },
+              },
+            },
+            { name: 'file', originalRequest: { method: 'POST', url: '/bin', body: { mode: 'file', file: { src: '/tmp/x' } } } },
+          ],
+        },
+      }),
+    ])
+    expect(list.map((e) => [e.name, e.requestBody])).toEqual([
+      ['own', '{"name":"Ann"}'],
+      ['fromParent', '{"parent":true}'],
+      ['noBody', null],
+      ['urlencoded', 'user=a+b&pw=1%262'],
+      ['formdata', 'title=T'],
+      ['file', null],
+    ])
   })
 
   it('adds a Content-Type from the preview language only when missing', () => {
@@ -119,6 +194,19 @@ describe('collectMockExamples', () => {
   })
 })
 
+describe('mockRequestBody', () => {
+  it('turns every body kind into text or null', () => {
+    expect(mockRequestBody(parseBody(null))).toBeNull()
+    expect(mockRequestBody(parseBody({ mode: 'raw', raw: '' }))).toBeNull()
+    expect(mockRequestBody(parseBody({ mode: 'raw', raw: '<a/>' }))).toBe('<a/>')
+    expect(mockRequestBody(parseBody({ mode: 'urlencoded', urlencoded: [] }))).toBeNull()
+    expect(mockRequestBody(parseBody({ mode: 'graphql', graphql: { query: '{ me { id } }', variables: '{"a":1}' } }))).toBe('{"query":"{ me { id } }","variables":{"a":1}}')
+    expect(mockRequestBody(parseBody({ mode: 'graphql', graphql: { query: '{ me }', variables: 'not json' } }))).toBe('{"query":"{ me }"}')
+    expect(mockRequestBody(parseBody({ mode: 'graphql', graphql: { query: '' } }))).toBeNull()
+    expect(mockRequestBody(parseBody({ mode: 'something' }))).toBeNull()
+  })
+})
+
 describe('mockSourceKey', () => {
   it('changes when a request version, place or name changes, not on reordering the input', () => {
     const a = request('a')
@@ -147,17 +235,65 @@ describe('ports', () => {
     expect(suggestPort(undefined, new Set([4010, 4011]))).toBe(4012)
   })
 
-  it('remembers the last port per collection and ignores junk', () => {
-    const data = new Map<string, string>()
-    const storage = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) }
-    expect(loadMockPorts(storage)).toEqual({})
-    saveMockPort(storage, 'x', 5001)
-    saveMockPort(storage, 'y', 5002)
-    expect(loadMockPorts(storage)).toEqual({ x: 5001, y: 5002 })
-    data.set(MOCK_PORTS_KEY, '{"ports":{"a":1.5,"b":"7","c":70000,"d":4010}}')
-    expect(loadMockPorts(storage)).toEqual({ d: 4010 })
-    data.set(MOCK_PORTS_KEY, 'not json')
-    expect(loadMockPorts(storage)).toEqual({})
+  it('formats URLs and times', () => {
+    expect(mockBaseUrl(4010)).toBe('http://127.0.0.1:4010')
+    expect(logTime(new Date(2026, 0, 2, 3, 4, 5).getTime() / 1000)).toBe('03:04:05')
+  })
+})
+
+function memoryStorage(initial?: string) {
+  const data = new Map<string, string>()
+  if (initial !== undefined) data.set(MOCK_SETTINGS_KEY, initial)
+  return { data, getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) }
+}
+
+describe('remembered settings', () => {
+  it('migrates the old ports-only format', () => {
+    const storage = memoryStorage('{"ports":{"a":5001,"b":1.5,"c":"7","d":70000}}')
+    expect(loadMockSettings(storage)).toEqual({
+      collections: { a: { port: 5001, options: { cors: 'local', delayMs: 0 }, startWithSlinger: true } },
+      running: [],
+    })
+  })
+
+  it('round-trips collections and the running list, dropping junk', () => {
+    const storage = memoryStorage()
+    expect(loadMockSettings(storage)).toEqual({ collections: {}, running: [] })
+    let s = withCollectionSettings(loadMockSettings(storage), 'x', { port: 5001, options: { cors: 'any', delayMs: 250 } })
+    s = withCollectionSettings(s, 'y', { startWithSlinger: false })
+    s = withRunning(s, { collectionId: 'x', workspaceId: 'w1' }, true)
+    s = withRunning(s, { collectionId: 'x', workspaceId: 'w2' }, true)
+    saveMockSettings(storage, s)
+    expect(JSON.parse(storage.data.get(MOCK_SETTINGS_KEY)!).v).toBe(2)
+    const loaded = loadMockSettings(storage)
+    expect(loaded).toEqual({
+      collections: {
+        x: { port: 5001, options: { cors: 'any', delayMs: 250 }, startWithSlinger: true },
+        y: { port: null, options: { cors: 'local', delayMs: 0 }, startWithSlinger: false },
+      },
+      running: [{ collectionId: 'x', workspaceId: 'w2' }],
+    })
+    expect(collectionMockSettings(loaded, 'nope')).toEqual({ port: null, options: { cors: 'local', delayMs: 0 }, startWithSlinger: true })
+    expect(withRunning(loaded, { collectionId: 'x', workspaceId: '' }, false).running).toEqual([])
+    expect(withoutCollection(loaded, 'x')).toEqual({ collections: { y: loaded.collections.y }, running: [] })
+
+    storage.data.set(
+      MOCK_SETTINGS_KEY,
+      JSON.stringify({
+        v: 2,
+        collections: { a: { port: 0, options: { cors: 'everyone', delayMs: 999999 } }, b: 'junk' },
+        running: [{ collectionId: 'a', workspaceId: 'w' }, { collectionId: 'a', workspaceId: 'w' }, { collectionId: 5 }, 'x'],
+      }),
+    )
+    expect(loadMockSettings(storage)).toEqual({
+      collections: { a: { port: null, options: { cors: 'local', delayMs: 60000 }, startWithSlinger: true } },
+      running: [{ collectionId: 'a', workspaceId: 'w' }],
+    })
+    storage.data.set(MOCK_SETTINGS_KEY, 'not json')
+    expect(loadMockSettings(storage)).toEqual({ collections: {}, running: [] })
+  })
+
+  it('survives storage that throws or is missing', () => {
     const throwing = {
       getItem: () => {
         throw new Error('denied')
@@ -166,13 +302,47 @@ describe('ports', () => {
         throw new Error('denied')
       },
     }
-    expect(loadMockPorts(throwing)).toEqual({})
-    expect(() => saveMockPort(throwing, 'x', 1)).not.toThrow()
-    expect(loadMockPorts(null)).toEqual({})
+    expect(loadMockSettings(throwing)).toEqual({ collections: {}, running: [] })
+    expect(() => saveMockSettings(throwing, { collections: {}, running: [] })).not.toThrow()
+    expect(loadMockSettings(null)).toEqual({ collections: {}, running: [] })
+    expect(updateMockSettings(null, (s) => withCollectionSettings(s, 'x', { port: 4010 })).collections.x!.port).toBe(4010)
   })
 
-  it('formats URLs and times', () => {
-    expect(mockBaseUrl(4010)).toBe('http://127.0.0.1:4010')
-    expect(logTime(new Date(2026, 0, 2, 3, 4, 5).getTime() / 1000)).toBe('03:04:05')
+  it('normalizes options and parses the delay field', () => {
+    expect(normalizeMockOptions(undefined)).toEqual({ cors: 'local', delayMs: 0 })
+    expect(normalizeMockOptions({ cors: 'any', delayMs: 12.6 })).toEqual({ cors: 'any', delayMs: 13 })
+    expect(normalizeMockOptions({ delayMs: -5 })).toEqual({ cors: 'local', delayMs: 0 })
+    expect(parseDelay(' 1500 ')).toEqual({ delayMs: 1500, error: null })
+    expect(parseDelay('')).toEqual({ delayMs: 0, error: null })
+    expect(parseDelay('60000').delayMs).toBe(60000)
+    for (const bad of ['60001', '-1', '1.5', 'abc']) expect(parseDelay(bad).error, bad).toMatch(/between 0 and 60000/)
+  })
+})
+
+describe('request inspector helpers', () => {
+  it('shortens credential headers and leaves the rest alone', () => {
+    for (const name of ['Authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'X-API-Key', 'x-csrf-token', 'X-Client-Secret']) {
+      expect(isCredentialHeader(name), name).toBe(true)
+    }
+    for (const name of ['content-type', 'accept', 'x-request-id']) expect(isCredentialHeader(name), name).toBe(false)
+    expect(displayHeaderValue('authorization', 'Bearer abcdefghijklmnop')).toBe('Bearer… (23 characters)')
+    expect(displayHeaderValue('x-api-key', 'abcd')).toBe('ab… (4 characters)')
+    expect(displayHeaderValue('cookie', 'a')).toBe('… (1 character)')
+    expect(displayHeaderValue('accept', 'application/json')).toBe('application/json')
+  })
+
+  it('splits query parameters and pretty-prints JSON bodies', () => {
+    expect(queryParams('/users?page=2&q=a%20b&flag&q=c')).toEqual([
+      ['page', '2'],
+      ['q', 'a b'],
+      ['flag', ''],
+      ['q', 'c'],
+    ])
+    expect(queryParams('/users')).toEqual([])
+    expect(queryParams('/users?')).toEqual([])
+    expect(pathOnly('/users?page=2')).toBe('/users')
+    expect(prettyBody('{"a":[1,2]}')).toEqual({ text: '{\n  "a": [\n    1,\n    2\n  ]\n}', json: true })
+    expect(prettyBody('{not json')).toEqual({ text: '{not json', json: false })
+    expect(prettyBody('a=1')).toEqual({ text: 'a=1', json: false })
   })
 })

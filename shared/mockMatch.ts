@@ -14,14 +14,26 @@
  *     `x-mock-response-code`. When they leave nothing, the answer is a 404 that says so.
  *  2. The most specific path wins: compared segment by segment from the left, literal > mixed > wildcard
  *     (`/users/me` beats `/users/:id`).
- *  3. Ties go to the first example in collection order.
+ *  3. Query parameters: an example whose saved parameters all appear in the request with the same values (a `{{var}}`,
+ *     `:var` or empty value matches any value) beats one that has a parameter the request lacks or sets differently;
+ *     among those, the one matching more parameters wins (`/users?page=2` answers `?page=2`, `/users` the rest).
+ *  4. The request body: an example whose saved request body equals the incoming one (JSON compared by value, other text
+ *     trimmed) wins.
+ *  5. Ties go to the first example in collection order.
  */
 
 export type MockSegment = { kind: 'literal'; value: string } | { kind: 'mixed'; re: RegExp } | { kind: 'wildcard' }
 
+/** A saved query parameter; `value` null matches any value (template, `:var` or empty). */
+export interface MockQueryParam {
+  key: string
+  value: string | null
+}
+
 export interface MockRoute<T> {
   method: string
   segments: MockSegment[]
+  query: MockQueryParam[]
   /** Position in the list given to `compileMockRoutes` (collection order). */
   order: number
   example: T
@@ -35,6 +47,8 @@ export interface MockRouteSource {
   code: number | null
   /** A Postman example id when the example has one (`x-mock-response-id`). */
   id?: string | null
+  /** Raw body of the example's saved request (tie-breaker, see the header comment). */
+  requestBody?: string | null
 }
 
 export interface MockRequestInfo {
@@ -43,6 +57,8 @@ export interface MockRequestInfo {
   path: string
   /** Header lookup by lower-case name. */
   header: (name: string) => string | undefined
+  /** The request body as text (undefined/'' when there was none). */
+  body?: string
 }
 
 export type MockMatch<T> = { route: MockRoute<T>; reason: null } | { route: null; reason: string }
@@ -94,13 +110,79 @@ export function compileMockPath(path: string): MockSegment[] {
     })
 }
 
+/** Saved query parameters of an example's URL (templates, `:var` and empty values match anything). */
+export function mockQueryOf(url: string): MockQueryParam[] {
+  const raw = url.trim().replace(/#.*$/, '')
+  const q = raw.indexOf('?')
+  if (q < 0) return []
+  return raw
+    .slice(q + 1)
+    .split('&')
+    .filter((p) => p !== '')
+    .map((pair) => {
+      const eq = pair.indexOf('=')
+      const key = decode((eq < 0 ? pair : pair.slice(0, eq)).replace(/\+/g, ' '))
+      const value = eq < 0 ? '' : decode(pair.slice(eq + 1).replace(/\+/g, ' '))
+      const wild = value === '' || /^:./.test(value) || /^\{\{[^{}]*\}\}$/.test(value)
+      return { key, value: wild ? null : value }
+    })
+    .filter((p) => p.key !== '')
+}
+
 export function compileMockRoutes<T extends MockRouteSource>(examples: readonly T[]): MockRoute<T>[] {
   return examples.map((example, order) => ({
     method: example.method.trim().toUpperCase() || 'GET',
     segments: compileMockPath(mockPathOf(example.url)),
+    query: mockQueryOf(example.url),
     order,
     example,
   }))
+}
+
+/** Query parameters of an incoming request (all values of a repeated key). */
+function requestQuery(path: string): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const q = path.indexOf('?')
+  if (q < 0) return out
+  for (const pair of path.slice(q + 1).replace(/#.*$/, '').split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    const key = decode((eq < 0 ? pair : pair.slice(0, eq)).replace(/\+/g, ' '))
+    const value = eq < 0 ? '' : decode(pair.slice(eq + 1).replace(/\+/g, ' '))
+    out.set(key, [...(out.get(key) ?? []), value])
+  }
+  return out
+}
+
+/** -1: a saved parameter is missing or different; otherwise how many saved parameters the request matches. */
+function queryScore(saved: MockQueryParam[], query: Map<string, string[]>): number {
+  let score = 0
+  for (const p of saved) {
+    const values = query.get(p.key)
+    if (!values) return -1
+    if (p.value !== null && !values.includes(p.value)) return -1
+    score++
+  }
+  return score
+}
+
+/** A body in comparable form: JSON by value (key order ignored), anything else trimmed. */
+function normalizeBody(text: string | null | undefined): string | null {
+  const t = (text ?? '').trim()
+  if (!t) return null
+  try {
+    return JSON.stringify(sortKeys(JSON.parse(t)))
+  } catch {
+    return t
+  }
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value as object).sort().map((k) => [k, sortKeys((value as Record<string, unknown>)[k])]))
+  }
+  return value
 }
 
 /** Path of an incoming request as segments (query dropped, percent-decoded, empty segments ignored). */
@@ -124,13 +206,13 @@ function pathMatches(route: MockSegment[], segments: string[]): boolean {
 
 const RANK = { literal: 2, mixed: 1, wildcard: 0 } as const
 
-/** Negative when `a` is more specific than `b`. */
-function bySpecificity<T>(a: MockRoute<T>, b: MockRoute<T>): number {
+/** Negative when `a`'s path is more specific than `b`'s (0: equally specific). */
+function pathSpecificity<T>(a: MockRoute<T>, b: MockRoute<T>): number {
   for (let i = 0; i < a.segments.length; i++) {
     const d = RANK[b.segments[i]!.kind] - RANK[a.segments[i]!.kind]
     if (d !== 0) return d
   }
-  return a.order - b.order
+  return 0
 }
 
 function quoteList(values: string[]): string {
@@ -179,7 +261,15 @@ export function matchMockRequest<T extends MockRouteSource>(routes: readonly Moc
     }
     candidates = narrowed
   }
-  return { route: [...candidates].sort(bySpecificity)[0]!, reason: null }
+  const query = requestQuery(req.path)
+  const body = normalizeBody(req.body)
+  const ranked = candidates.map((route) => ({
+    route,
+    query: queryScore(route.query, query),
+    body: body !== null && normalizeBody(route.example.requestBody) === body ? 1 : 0,
+  }))
+  ranked.sort((a, b) => pathSpecificity(a.route, b.route) || b.query - a.query || b.body - a.body || a.route.order - b.route.order)
+  return { route: ranked[0]!.route, reason: null }
 }
 
 /** Response headers that would break the mock's answer: the server sets its own framing, and bodies are stored decoded. */
@@ -224,6 +314,20 @@ export function mockNotFoundBody(reason: string): string {
     null,
     2,
   )}\n`
+}
+
+/** An Origin served from this computer: http(s) on localhost, 127.0.0.1, [::1] or a *.localhost name (any port). */
+export function isLoopbackOrigin(origin: string): boolean {
+  const m = /^https?:\/\/(\[::1\]|[^/:]+)(?::\d+)?$/i.exec(origin.trim())
+  if (!m) return false
+  const host = m[1]!.toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost')
+}
+
+/** Whether a browser page with this Origin may read the mock's answers ('null' and other origins only with 'any'). */
+export function corsOriginAllowed(cors: 'local' | 'any', origin: string | undefined): boolean {
+  if (!origin) return false
+  return cors === 'any' || isLoopbackOrigin(origin)
 }
 
 /** Host header values the mock accepts (loopback names only; stops DNS-rebinding pages from reading it). */

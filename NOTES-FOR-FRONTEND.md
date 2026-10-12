@@ -52,14 +52,17 @@ that are not obvious from the types:
   Tokens are keyed by workspace + identifying settings (not secrets), so requests with the same settings share one token;
   `deleteWorkspace` also deletes the workspace's tokens.
 * `RunScriptsInput.request.auth` (optional `ScriptAuthData`): read-only `pm.request.auth` for scripts.
-* Mock servers (local-only, in main memory): `startMockServer({workspaceId, collectionId, port, examples})` with the examples
-  already resolved by the renderer (`lib/mockServers.ts collectMockExamples`; main never parses request documents).
-  Starting a running collection on the same port only swaps the examples; on another port the new one is bound first, so a
-  failure keeps the old one. A busy port rejects with `io_error` and `details.reason === 'port_in_use'` (`'port_denied'` below
-  1024 without rights). `updateMockServer(collectionId, examples)` (live edits; `not_found` when not running),
-  `stopMockServer` (no-op when not running), `listMockServers` (all workspaces), `getMockServerLog` / `clearMockServerLog`
-  (at most `MOCK_LOG_LIMIT` = 200 entries, oldest first). `onMockServerEvent` pushes `started`, `stopped` (with a `reason`
-  when it failed or the app quit) and `request` (one log entry plus the server's `requestCount`).
+* Mock servers (local-only, in main memory): `startMockServer({workspaceId, collectionId, collectionName, port, examples,
+  options?})` with the examples already resolved by the renderer (`lib/mockServers.ts collectMockExamples`; main never parses
+  request documents). Starting a running collection on the same port only swaps the examples (and options); on another port
+  the new one is bound first, so a failure keeps the old one. A busy port rejects with `io_error` and
+  `details.reason === 'port_in_use'` (`'port_denied'` below 1024 without rights). `updateMockServer(collectionId, examples,
+  collectionName?)` (live edits and renames; `not_found` when not running), `setMockServerOptions(collectionId, {cors,
+  delayMs})` (live; `not_found` when not running), `stopMockServer` (no-op when not running), `listMockServers` (all
+  workspaces), `getMockServerLog` / `clearMockServerLog` (at most `MOCK_LOG_LIMIT` = 200 entries, oldest first; each with the
+  request's headers and a 64 KB body preview). `onMockServerEvent` pushes `started`, `updated` (options or name changed, also
+  from the tray), `stopped` (`by`: 'user' from the window or the tray, 'quit', 'error' with a `reason`, 'replaced' when it
+  moved port) and `request` (one log entry plus the server's `requestCount`).
 
 ## Behavior
 * Timestamps are Unix **seconds**.

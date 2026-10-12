@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   compileMockPath,
   compileMockRoutes,
+  corsOriginAllowed,
   isLoopbackHost,
+  isLoopbackOrigin,
+  mockQueryOf,
   matchMockRequest,
   mockNotFoundBody,
   mockPathOf,
@@ -195,5 +198,48 @@ describe('response helpers', () => {
   it('accepts loopback Host headers only', () => {
     for (const ok of [undefined, '127.0.0.1:4010', 'localhost', 'LOCALHOST:1', '[::1]:4010', 'app.localhost:4010']) expect(isLoopbackHost(ok), String(ok)).toBe(true)
     for (const bad of ['evil.example.com', 'evil.example.com:4010', '192.168.1.5:4010', 'localhost.evil.com']) expect(isLoopbackHost(bad), bad).toBe(false)
+  })
+
+  it('reads saved query parameters; templates, :vars and empty values match any value', () => {
+    expect(mockQueryOf('{{baseUrl}}/items?page=2&sort={{sort}}&id=:id&flag&q=a+b%21#frag')).toEqual([
+      { key: 'page', value: '2' },
+      { key: 'sort', value: null },
+      { key: 'id', value: null },
+      { key: 'flag', value: null },
+      { key: 'q', value: 'a b!' },
+    ])
+    expect(mockQueryOf('/items')).toEqual([])
+  })
+
+  it('ranks by path first, then query parameters, then the request body, then collection order', () => {
+    const src = (url: string, over: Partial<MockRouteSource> = {}): MockRouteSource => ({ method: 'GET', url, name: url, code: 200, ...over })
+    const routes = compileMockRoutes([
+      src('/items'),
+      src('/items?page=2'),
+      src('/items/:id?page=2'),
+      src('/items/me'),
+      src('/login', { method: 'POST', name: 'a', requestBody: '{"u":1}' }),
+      src('/login', { method: 'POST', name: 'b', requestBody: '{"u":2}' }),
+    ])
+    const pick = (method: string, path: string, body?: string) =>
+      matchMockRequest(routes, { method, path, header: () => undefined, body }).route?.example.name
+    expect(pick('GET', '/items?page=2')).toBe('/items?page=2')
+    expect(pick('GET', '/items?page=9')).toBe('/items')
+    expect(pick('GET', '/items/me?page=2')).toBe('/items/me') // path specificity beats query
+    expect(pick('POST', '/login', '{ "u": 2 }')).toBe('b')
+    expect(pick('POST', '/login', 'not json')).toBe('a')
+    expect(pick('POST', '/login')).toBe('a')
+  })
+
+  it('CORS origins: pages on this computer, or any with "any"', () => {
+    for (const ok of ['http://localhost:5173', 'https://LOCALHOST', 'http://127.0.0.1:3000', 'http://[::1]:8080', 'http://app.localhost:1']) {
+      expect(isLoopbackOrigin(ok), ok).toBe(true)
+    }
+    for (const bad of ['https://evil.example', 'http://localhost.evil.com', 'null', 'file://', 'http://192.168.1.2:3000', 'http://localhost:5173/path']) {
+      expect(isLoopbackOrigin(bad), bad).toBe(false)
+    }
+    expect(corsOriginAllowed('local', 'https://evil.example')).toBe(false)
+    expect(corsOriginAllowed('any', 'https://evil.example')).toBe(true)
+    expect(corsOriginAllowed('any', undefined)).toBe(false)
   })
 })

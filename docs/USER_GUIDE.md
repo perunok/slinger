@@ -463,18 +463,36 @@ before it exists. It runs inside Slinger on your computer and listens on `127.0.
 - **Use it:** the dialog shows the base URL (`http://127.0.0.1:4010`) with a copy button. Point your requests at it, for example
   by setting `{{baseUrl}}` in an environment to that URL, or call it from any other program on this computer.
 - **Matching:** a request matches an example by HTTP method and path. The scheme and host of the example's saved URL, a leading
-  variable such as `{{baseUrl}}`, the query string and a trailing slash are ignored. `:id` and `{{id}}` path segments match any
-  value; an exact path wins over such a wildcard (`/users/me` before `/users/:id`). HEAD requests use GET examples.
-- **Several examples for one path** (e.g. *200 OK* and *404 Not found*): the first in the collection answers, unless the request
-  picks one with the header `x-mock-response-name: <example name>` or `x-mock-response-code: 404` (Postman's convention).
-- **Answer:** the example's status, headers and body (binary examples are sent as bytes). An example without a `Content-Type`
-  header gets one from its body type. When nothing matches, the answer is a 404 with a short JSON explanation.
+  variable such as `{{baseUrl}}` and a trailing slash are ignored. `:id` and `{{id}}` path segments match any value; an exact
+  path wins over such a wildcard (`/users/me` before `/users/:id`). HEAD requests use GET examples.
+- **Several examples for one path** (e.g. *200 OK* and *404 Not found*), in this order:
+  - the request can pick one with the header `x-mock-response-name: <example name>` or `x-mock-response-code: 404` (Postman's
+    convention);
+  - **query parameters:** an example saved with `?page=2` answers requests that have `page=2`; a request without it, or with
+    another page, gets an example without that parameter. A `{{variable}}` or empty value in the saved URL matches any value;
+  - **request body:** when examples were saved with different request bodies (a login with the right and the wrong password),
+    the one whose body equals the request's answers (JSON is compared by value, so spacing and key order do not matter);
+  - otherwise the first in the collection.
+- **Answer:** the example's status, headers and body (binary examples are sent as bytes; *204* and *304* examples send no body).
+  An example without a `Content-Type` header gets one from its body type. When nothing matches, the answer is a 404 with a
+  short JSON explanation.
+- **Web apps in a browser (CORS):** a page you run on this computer (`http://localhost:5173`, `http://127.0.0.1:3000`, ...) can
+  call the mock directly: it answers the browser's preflight (`OPTIONS`) and sends the CORS headers. Other websites cannot,
+  unless you turn on **Allow any website (CORS)** in the dialog; leave it off otherwise, since any site you visit could then read
+  the mock's answers.
+- **Delay:** set **Delay** (milliseconds, up to 60 000) to answer slowly, for testing loading states. It applies at once, also
+  while the server runs.
 - **Edits apply live:** saving an example, adding or deleting one, or moving requests updates the running server right away.
 - **Request log:** the dialog lists the latest 200 requests (time, method, path, the example that answered or *no match*, status),
-  newest first. Hover *no match* to see why; click an example to open it. The trash button clears the log.
-- **Stop:** **Stop** in the dialog. The status bar shows running mock servers (click to reopen the dialog). All mock servers stop
-  when Slinger quits, and a collection's server stops when the collection or its workspace is deleted. Switching workspaces
-  keeps them running.
+  newest first. Click a row to see what was sent (query parameters, headers, body) and what was answered (status, headers, which
+  example, delay, time taken), or why nothing matched. Credentials in headers (`Authorization`, cookies, API keys, tokens) are
+  shown shortened. Click an example's name to open it. The trash button clears the log.
+- **Stop:** **Stop** in the dialog, or in the tray menu (each running mock server is listed there with **Copy** for its URL and
+  **Stop**). The status bar shows running mock servers (click to reopen the dialog). A collection's server stops when the
+  collection or its workspace is deleted. Switching workspaces keeps them running.
+- **Start again when Slinger starts** (on by default): mock servers that were running when Slinger quit start again, on the same
+  port and with the same settings, the next time it starts. Stopping one yourself turns this off for it until you start it again.
+  If its port is taken by then, Slinger says so.
 - Example bodies are sent as stored: `{{variables}}` in them are not resolved.
 
 ## Workflows

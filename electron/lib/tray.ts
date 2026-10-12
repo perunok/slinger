@@ -14,17 +14,42 @@ export function trayIconFiles(platform: NodeJS.Platform): { file: string; hiDpi?
   return { file: 'tray-32.png' } // the panel scales it to its own size
 }
 
+/** A running mock server as the tray lists it. */
+export interface TrayMockServer {
+  collectionId: string
+  collectionName: string
+  port: number
+  url: string
+}
+
 export interface TrayMenuOptions {
   open(): void
   quit(): void
+  /** Running mock servers (any workspace), listed with Copy URL and Stop. */
+  mockServers?: TrayMockServer[]
+  copyText?(text: string): void
+  stopMockServer?(collectionId: string): void
 }
 
 export function trayMenuTemplate(o: TrayMenuOptions): MenuItemConstructorOptions[] {
-  return [
-    { label: `Open ${APP_NAME}`, click: o.open },
-    { type: 'separator' },
-    { label: `Quit ${APP_NAME}`, click: o.quit },
-  ]
+  const servers = [...(o.mockServers ?? [])].sort((a, b) => a.port - b.port)
+  const mocks: MenuItemConstructorOptions[] = servers.length
+    ? [
+        { type: 'separator' },
+        { label: 'Mock servers', enabled: false },
+        ...servers.map(
+          (s): MenuItemConstructorOptions => ({
+            // Menus treat & as a mnemonic marker: double it so a name like "R&D API" shows as written.
+            label: `${(s.collectionName || 'Collection').replace(/&/g, '&&')} · ${s.port}`,
+            submenu: [
+              { label: `Copy ${s.url}`, click: () => o.copyText?.(s.url) },
+              { label: 'Stop', click: () => o.stopMockServer?.(s.collectionId) },
+            ],
+          }),
+        ),
+      ]
+    : []
+  return [{ label: `Open ${APP_NAME}`, click: o.open }, ...mocks, { type: 'separator' }, { label: `Quit ${APP_NAME}`, click: o.quit }]
 }
 
 export interface CloseContext {
