@@ -208,14 +208,28 @@
             </label>
             <InfoTip label="About update checks">
               Once a day Slinger asks GitHub which version of Slinger is the latest release (github.com/perunok/slinger) and shows a
-              notification when there is a newer one. The request sends nothing about you or your data. Nothing is downloaded or
-              installed: the notification links to the release page. Help &gt; Check for Updates… checks right away.
+              notification when there is a newer one. The request sends nothing about you or your data. Nothing is downloaded
+              until you click Update now; then Slinger downloads the installer from GitHub, checks it, and installs it when you
+              restart. Help &gt; Check for Updates… checks right away.
             </InfoTip>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="update-status" aria-live="polite">
             {#if updates.available}
+              {@const phase = updates.install?.phase}
               <span class="font-medium text-fg">Slinger {updates.available.version} is available.</span>
-              <Button size="sm" variant="primary" onclick={() => updates.openRelease()}>View release</Button>
+              {#if updates.canInstall}
+                <Button size="sm" variant="primary" icon={phase === 'ready' ? 'refresh' : 'download'} onclick={() => void updates.updateNow()} data-testid="settings-update-now">
+                  {phase === 'downloading' || phase === 'verifying'
+                    ? `Downloading… ${updates.install && updates.install.total ? Math.floor((updates.install.received / updates.install.total) * 100) : 0}%`
+                    : phase === 'ready'
+                      ? 'Restart to update'
+                      : phase === 'installing'
+                        ? 'Installing…'
+                        : 'Update now'}
+                </Button>
+              {:else}
+                <Button size="sm" variant="primary" onclick={() => updates.openRelease()}>View release</Button>
+              {/if}
             {:else if updates.error}
               <span class="text-danger">Could not check: {updates.error}</span>
             {:else if updates.lastCheckedAt !== null}

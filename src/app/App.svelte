@@ -48,6 +48,7 @@
   import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
   import { updates } from '../features/updates/updates.svelte'
+  import UpdateDialog from '../features/updates/UpdateDialog.svelte'
   import { windowChrome } from './windowChrome.svelte'
   import { ui } from './ui.svelte'
 
@@ -187,6 +188,7 @@
 <ExportCollectionDialog />
 <EnvironmentExportDialog />
 <ImportDialog open={ui.importOpen} initialText={ui.importText} onclose={() => ui.closeImport()} />
+{#if ui.updateOpen}<UpdateDialog />{/if}
 <SaveAsDialog />
 <UnsavedDialog />
 <ToastHost />

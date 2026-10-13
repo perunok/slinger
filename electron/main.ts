@@ -7,7 +7,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join, normalize, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL } from '../shared/ipc-contract'
+import { MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, UPDATE_STATE_CHANNEL } from '../shared/ipc-contract'
 import type { MenuCommand } from '../shared/menu'
 import type { TitleBarStyle, WindowAction, WindowChrome, WindowState as WindowNowState } from '../shared/types'
 import { openDatabase, type Db } from './db/database'
@@ -36,6 +36,8 @@ import { defaultClientsEnv } from './mcp/clients'
 import { createCore, type Core } from './services/core'
 import { assertExternalUrl } from './services/externalUrl'
 import { checkForUpdate, updateFeedUrl } from './services/updateCheck'
+import { detectInstall, installChecks, UpdateInstaller } from './services/updateInstall'
+import { spawn } from 'node:child_process'
 import { chooseSecretStore, KEYCHAIN_SERVICE, KeychainSecretStore } from './services/secrets'
 import { WorkerExecutor } from './scripts/executor'
 
@@ -375,6 +377,31 @@ function refreshTrayMenu(): void {
   tray.setContextMenu(Menu.buildFromTemplate(template))
 }
 
+/**
+ * The in-app updater (services/updateInstall.ts) for this installation; its state is pushed to the window. Installing quits
+ * through the normal quit path (assistant calls finish, mock servers stop), then the new version starts.
+ */
+function createUpdater(feedUrl: string): UpdateInstaller {
+  const installer = new UpdateInstaller({
+    currentVersion: app.getVersion(),
+    fetchImpl: netFetch,
+    feedUrl,
+    install: detectInstall({ platform: process.platform, arch: process.arch, isPackaged: app.isPackaged, appImage: process.env.APPIMAGE, execPath: process.execPath, ...installChecks }),
+    arch: process.arch,
+    downloadDir: join(app.getPath('userData'), 'updates'),
+    emit: (state) => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && isTrustedUrl(mainWindow.webContents.getURL())) {
+        mainWindow.webContents.send(UPDATE_STATE_CHANNEL, state)
+      }
+    },
+    spawn: (command, args, options) => spawn(command, args, options),
+    pid: process.pid,
+    execPath: process.execPath,
+    quit: () => setTimeout(() => app.quit(), 100),
+  })
+  return installer
+}
+
 /** Hides the window to the tray. The page keeps running (MCP calls, collection runs, sync), at full speed. */
 function hideToTray(win: BrowserWindow): void {
   syncTray()
@@ -672,6 +699,7 @@ if (!app.requestSingleInstanceLock()) {
       checkForUpdates: feedUrl
         ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
         : undefined,
+      updates: feedUrl ? createUpdater(feedUrl) : undefined,
       window: { chrome: windowChrome, setTitleBarStyle, setCloseToTray, reopen: reopenMainWindow, control: windowControl, showAppMenu },
     })
     registerIpcHandlers(api, isTrustedUrl)

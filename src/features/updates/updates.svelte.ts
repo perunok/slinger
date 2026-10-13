@@ -1,10 +1,13 @@
 /**
  * New-release notice. The main process asks GitHub (checkForUpdates); this store decides when (once a day while
  * "Check for new releases automatically" is on, plus Help > Check for Updates… and Settings > Check now) and shows one
- * notification per new version with a link to its release page. Updating itself stays manual.
+ * notification per new version. Its "Update now" opens the Update Slinger dialog: the main process downloads the installer
+ * (progress pushed on `update:state`), verifies it, and installs it on "Restart to update" (services/updateInstall.ts).
+ * Installations that cannot update themselves (development builds, ...) get "View release" instead.
  */
-import type { ReleaseInfo, UpdateCheckResult } from '../../../shared/types'
+import type { ReleaseInfo, UpdateCheckResult, UpdateInstallState } from '../../../shared/types'
 import { toast } from '../../app/toast.svelte'
+import { ui } from '../../app/ui.svelte'
 import { api, errorInfo } from '../../lib/ipc'
 import { isCheckDue, isNewer, loadUpdatePrefs, shouldNotify, UPDATES_STORAGE_KEY, type UpdatePrefs } from '../../lib/updates'
 
@@ -32,6 +35,13 @@ class UpdatesStore {
   checking = $state(false)
   /** The last check's failure (cleared by the next success). */
   error = $state<string | null>(null)
+  /** The in-app updater's state (null until known, or when the backend has none). */
+  install = $state<UpdateInstallState | null>(null)
+
+  /** This installation can download and install updates itself. */
+  get canInstall(): boolean {
+    return !!this.install?.method
+  }
 
   /** The newer release, if the last check found one. */
   get available(): ReleaseInfo | null {
@@ -47,10 +57,15 @@ class UpdatesStore {
     const first = setTimeout(tick, STARTUP_DELAY_MS)
     const poll = setInterval(tick, POLL_MS)
     void this.#loadVersion()
+    const off = api().onUpdateState?.((s) => (this.install = s)) ?? null
+    api()
+      .getUpdateInstallState?.()
+      .then((s) => (this.install ??= s), () => {})
     return () => {
       stopped = true
       clearTimeout(first)
       clearInterval(poll)
+      off?.()
     }
   }
 
@@ -83,6 +98,36 @@ class UpdatesStore {
     this.#save({ auto: v })
   }
 
+  /** Opens the Update Slinger dialog and starts downloading (unless a download is already going or done). */
+  async updateNow(): Promise<void> {
+    ui.updateOpen = true
+    const phase = this.install?.phase
+    if (phase === 'downloading' || phase === 'verifying' || phase === 'ready' || phase === 'installing') return
+    try {
+      this.install = await api().downloadUpdate()
+    } catch (e) {
+      if (this.install) this.install = { ...this.install, phase: 'error', error: errorInfo(e).message }
+      else toast.error('Could not download the update', errorInfo(e).message)
+    }
+  }
+
+  async cancelDownload(): Promise<void> {
+    try {
+      this.install = await api().cancelUpdateDownload()
+    } catch (e) {
+      toast.error('Could not cancel the download', errorInfo(e).message)
+    }
+  }
+
+  /** Installs the downloaded update; Slinger quits and starts again. A failure stays in `install.error`. */
+  async restartToUpdate(): Promise<void> {
+    try {
+      this.install = await api().installUpdate()
+    } catch (e) {
+      if (this.install) this.install = { ...this.install, phase: 'error', error: errorInfo(e).message }
+    }
+  }
+
   openRelease(release: ReleaseInfo | null = this.available) {
     if (!release) return
     api()
@@ -99,14 +144,18 @@ class UpdatesStore {
     this.currentVersion = null
     this.checking = false
     this.error = null
+    this.install = null
   }
 
   #notify(release: ReleaseInfo, currentVersion: string) {
     // Stays until dismissed: it is shown at most once per version.
-    toast.push('info', `Slinger ${release.version} is available`, `You have ${currentVersion}.`, 0, {
-      label: 'View release',
-      run: () => this.openRelease(release),
-    })
+    toast.push(
+      'info',
+      `Slinger ${release.version} is available`,
+      `You have ${currentVersion}.`,
+      0,
+      this.canInstall ? { label: 'Update now', run: () => void this.updateNow() } : { label: 'View release', run: () => this.openRelease(release) },
+    )
   }
 
   async #loadVersion() {

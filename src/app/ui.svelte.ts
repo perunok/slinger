@@ -9,6 +9,8 @@ class UiState {
   cloudOpen = $state(false)
   /** Conflict center for the current workspace. */
   conflictsOpen = $state(false)
+  /** ADDED (update install): the Update Slinger dialog (download progress, restart to update). */
+  updateOpen = $state(false)
   /** ADDED (sync activity): the Sync activity dialog of the open workspace. */
   syncActivityOpen = $state(false)
   /** Publish-to-cloud flow for the current workspace. */
