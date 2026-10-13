@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { SlingerInvokeApi } from '../../shared/ipc-contract'
-import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, WindowAction, WindowChrome } from '../../shared/types'
+import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, UpdateInstallState, WindowAction, WindowChrome } from '../../shared/types'
 import { MOCK_MAX_DELAY_MS } from '../../shared/types'
 import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
@@ -335,6 +335,13 @@ export interface PlatformDeps {
   setWindowBackground?(color: string): void
   /** Latest-release lookup (services/updateCheck.ts); absent when update checks are off (automated runs, tests). */
   checkForUpdates?(): Promise<UpdateCheckResult>
+  /** The in-app updater (services/updateInstall.ts); absent in tests and runs without update checks. */
+  updates?: {
+    state(): UpdateInstallState
+    download(): UpdateInstallState
+    cancel(): UpdateInstallState
+    install(): Promise<UpdateInstallState>
+  }
   /** The main window's frame (custom title bar). Optional: tests omit it. */
   window?: WindowControls
 }
@@ -771,6 +778,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     getAppVersion: async (...a) => (parseArgs(z.tuple([]), a), platform.appVersion),
     getVersionInfo: async (...a) => (parseArgs(z.tuple([]), a), collectVersionInfo(platform.appVersion)),
     setWindowBackground: async (...a) => platform.setWindowBackground?.(parseArgs(z.tuple([cssColorSchema]), a)[0]),
+    getUpdateInstallState: async (...a) => (parseArgs(z.tuple([]), a), updater().state()),
+    downloadUpdate: async (...a) => (parseArgs(z.tuple([]), a), updater().download()),
+    cancelUpdateDownload: async (...a) => (parseArgs(z.tuple([]), a), updater().cancel()),
+    installUpdate: async (...a) => (parseArgs(z.tuple([]), a), updater().install()),
     checkForUpdates: async (...a) => {
       parseArgs(z.tuple([]), a)
       if (!platform.checkForUpdates) throw ioError('Update checks are off in this run')
@@ -785,6 +796,11 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [x, y] = parseArgs(z.tuple([pagePoint, pagePoint]), a)
       platform.window?.showAppMenu(x, y)
     },
+  }
+
+  function updater(): NonNullable<PlatformDeps['updates']> {
+    if (!platform.updates) throw ioError('Updates are off in this run')
+    return platform.updates
   }
 
   function windowControls(): WindowControls {

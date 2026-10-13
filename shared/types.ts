@@ -1155,6 +1155,28 @@ export interface UpdateCheckResult {
   checkedAt: number
 }
 
+/**
+ * ADDED (update install): how this installation replaces itself with a newer release. `appimage`: the AppImage file is
+ * replaced; `deb`: `pkexec dpkg -i` (the desktop asks for the password); `nsis`: the Windows installer runs silently; `dmg`:
+ * the app bundle is replaced from the disk image.
+ */
+export type UpdateInstallMethod = 'appimage' | 'deb' | 'nsis' | 'dmg'
+
+/** ADDED (update install): the in-app updater's state, pushed on `update:state`. */
+export interface UpdateInstallState {
+  /** null: this installation cannot update itself (`unsupportedReason` says why); the release page still works. */
+  method: UpdateInstallMethod | null
+  unsupportedReason: string | null
+  phase: 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'error'
+  /** The release being downloaded, ready or installed. */
+  version: string | null
+  /** Downloaded bytes, the installer's size (null until known) and the current speed. */
+  received: number
+  total: number | null
+  bytesPerSec: number | null
+  error: string | null
+}
+
 /** `custom`: the top bar is the title bar (system buttons drawn over it); `system`: the OS title bar. */
 export type TitleBarStyle = 'custom' | 'system'
 

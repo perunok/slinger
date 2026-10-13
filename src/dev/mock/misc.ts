@@ -1,5 +1,5 @@
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
-import type { TitleBarStyle } from '../../../shared/types'
+import type { TitleBarStyle, UpdateInstallState } from '../../../shared/types'
 import { compareSemver } from '../../lib/semver'
 import { base64ToBytes, fail, sleep, uuid } from './util'
 
@@ -18,6 +18,11 @@ type MiscApi = Pick<
   | 'getVersionInfo'
   | 'setWindowBackground'
   | 'checkForUpdates'
+  | 'getUpdateInstallState'
+  | 'downloadUpdate'
+  | 'cancelUpdateDownload'
+  | 'installUpdate'
+  | 'onUpdateState'
   | 'getWindowChrome'
   | 'setTitleBarStyle'
   | 'setCloseToTray'
@@ -81,6 +86,14 @@ export function createMiscApi(): MiscApi {
   let exportDir = '/home/user/Downloads'
   /** The "latest release" checkForUpdates reports; null = none published (no notice in dev and tests by default). */
   let latestRelease: string | null = null
+  // In-app updater: a pretend .deb installation whose download takes ~1 s in 10 steps (no real file, nothing installed).
+  const updateListeners = new Set<(s: UpdateInstallState) => void>()
+  let update: UpdateInstallState = { method: 'deb', unsupportedReason: null, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
+  let updateTimer: ReturnType<typeof setTimeout> | null = null
+  const setUpdate = (patch: Partial<UpdateInstallState>) => {
+    update = { ...update, ...patch }
+    for (const l of updateListeners) l({ ...update })
+  }
   // A page load is a new "window": it shows the preference saved before it (reopenWindow reloads).
   const windowTitleBar = loadTitleBar()
   let preferredTitleBar = windowTitleBar
@@ -184,8 +197,47 @@ export function createMiscApi(): MiscApi {
     async grantedFiles(paths) {
       return paths.filter((p) => granted.has(p))
     },
+    async getUpdateInstallState() {
+      return { ...update }
+    },
+    async downloadUpdate() {
+      if (!latestRelease || compareSemver(latestRelease, MOCK_VERSION) <= 0) fail('io_error', `Slinger ${MOCK_VERSION} is already the latest release.`)
+      if (update.phase === 'downloading') return { ...update }
+      const total = 85 * 1024 * 1024
+      setUpdate({ phase: 'downloading', version: latestRelease, received: 0, total, bytesPerSec: null, error: null })
+      let step = 0
+      const tick = () => {
+        step++
+        if (step < 10) {
+          setUpdate({ received: Math.round((total * step) / 10), bytesPerSec: 6 * 1024 * 1024 })
+          updateTimer = setTimeout(tick, 100)
+        } else {
+          setUpdate({ phase: 'verifying', received: total, bytesPerSec: null })
+          updateTimer = setTimeout(() => setUpdate({ phase: 'ready' }), 100)
+        }
+      }
+      updateTimer = setTimeout(tick, 100)
+      return { ...update }
+    },
+    async cancelUpdateDownload() {
+      if (updateTimer) clearTimeout(updateTimer)
+      updateTimer = null
+      if (update.phase === 'downloading' || update.phase === 'verifying') setUpdate({ phase: 'idle', received: 0, total: null, bytesPerSec: null })
+      return { ...update }
+    },
+    async installUpdate() {
+      if (update.phase !== 'ready') fail('io_error', 'No downloaded update is ready to install.')
+      setUpdate({ phase: 'installing' })
+      return { ...update }
+    },
+    onUpdateState(listener) {
+      updateListeners.add(listener)
+      return () => updateListeners.delete(listener)
+    },
     setLatestRelease(version) {
       latestRelease = version
+      if (updateTimer) clearTimeout(updateTimer)
+      update = { ...update, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
     },
     resetSecureStore() {
       secure = new Map()

@@ -86,6 +86,7 @@ import type {
   VariableEntryInput,
   SyncActivityItem,
   SyncRun,
+  UpdateInstallState,
 } from './types'
 import type { MenuCommand } from './menu'
 
@@ -239,6 +240,22 @@ export interface SlingerIpcApi {
    * installed. Rejects with `network_error` when offline, `io_error` for an unexpected answer.
    */
   checkForUpdates(): Promise<UpdateCheckResult>
+  /** ADDED (update install): whether and how this installation updates itself, and the download/install progress. */
+  getUpdateInstallState(): Promise<UpdateInstallState>
+  /**
+   * Starts downloading the latest release's installer for this installation (verified against GitHub's SHA-256 digest);
+   * progress arrives on onUpdateState. Resolves at once. io_error when this installation cannot update itself.
+   */
+  downloadUpdate(): Promise<UpdateInstallState>
+  /** Stops a download in progress (no-op otherwise). */
+  cancelUpdateDownload(): Promise<UpdateInstallState>
+  /**
+   * Installs the downloaded update and restarts Slinger. Resolves when Slinger is about to quit; rejects (and the state
+   * says why) when installing failed or was cancelled (for example no password given).
+   */
+  installUpdate(): Promise<UpdateInstallState>
+  /** Push channel (main -> renderer, 'update:state'). */
+  onUpdateState(listener: (state: UpdateInstallState) => void): () => void
   /** ADDED (custom title bar): platform, the current window's title bar and the saved preference. */
   getWindowChrome(): Promise<WindowChrome>
   /** Saves the title bar preference (window-state.json); it applies when the window is reopened. */
@@ -448,6 +465,10 @@ export const IPC_CHANNELS = [
   'getVersionInfo',
   'setWindowBackground',
   'checkForUpdates',
+  'getUpdateInstallState',
+  'downloadUpdate',
+  'cancelUpdateDownload',
+  'installUpdate',
   'getWindowChrome',
   'setTitleBarStyle',
   'setCloseToTray',
@@ -514,16 +535,17 @@ export const IPC_CHANNELS = [
 export type IpcChannel = (typeof IPC_CHANNELS)[number]
 
 /** Push channels (main -> renderer, `webContents.send`); NOT invoke channels, so not in IPC_CHANNELS. */
-export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call', 'mcp-client:event', 'mock:event'] as const
+export const IPC_EVENT_CHANNELS = ['sync:event', 'menu:command', 'window:state', 'mcp:call', 'mcp-client:event', 'mock:event', 'update:state'] as const
 export const SYNC_EVENT_CHANNEL = IPC_EVENT_CHANNELS[0]
 export const MENU_COMMAND_CHANNEL = IPC_EVENT_CHANNELS[1]
 export const WINDOW_STATE_CHANNEL = IPC_EVENT_CHANNELS[2]
 export const MCP_CALL_CHANNEL = IPC_EVENT_CHANNELS[3]
 export const MCP_CLIENT_EVENT_CHANNEL = IPC_EVENT_CHANNELS[4]
 export const MOCK_EVENT_CHANNEL = IPC_EVENT_CHANNELS[5]
+export const UPDATE_STATE_CHANNEL = IPC_EVENT_CHANNELS[6]
 
 /** The invoke-only part of the API (everything except the push subscriptions), i.e. what main implements. */
-export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall' | 'onMcpClientEvent' | 'onMockServerEvent'>
+export type SlingerInvokeApi = Omit<SlingerIpcApi, 'onSyncEvent' | 'onMenuCommand' | 'onWindowState' | 'onMcpCall' | 'onMcpClientEvent' | 'onMockServerEvent' | 'onUpdateState'>
 
 declare global {
   interface Window {

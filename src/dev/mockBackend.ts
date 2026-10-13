@@ -182,6 +182,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   api.onMcpCall = impl.onMcpCall
   api.onMcpClientEvent = impl.onMcpClientEvent
   api.onMockServerEvent = impl.onMockServerEvent
+  api.onUpdateState = impl.onUpdateState
   const menuListeners = new Set<(command: MenuCommand) => void>()
   api.onWindowState = () => () => {}
   api.onMenuCommand = (listener: (command: MenuCommand) => void) => {

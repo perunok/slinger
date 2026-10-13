@@ -954,7 +954,22 @@ through `net.fetch` (system proxy), 15 s timeout, `User-Agent: Slinger/<version>
 pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`) and `published_at` are
 read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
 from the response. 404 means "no release yet"; other HTTP errors and failures are `network_error`, an unreadable answer
-`io_error`. Nothing is downloaded or installed.
+`io_error`. The check itself downloads nothing.
+
+**Installing** (`electron/services/updateInstall.ts`, IPC `getUpdateInstallState` / `downloadUpdate` / `cancelUpdateDownload` /
+`installUpdate`, push channel `update:state`): `detectInstall` decides how this installation updates itself, else why not:
+`appimage` (`$APPIMAGE`, its folder writable), `deb` (`process.execPath` under `/opt/Slinger/`, `/var/lib/dpkg/info/slinger.list`
+exists, `pkexec` on PATH), `nsis` (Windows x64), `dmg` (macOS app bundle whose folder is writable); development builds and other
+layouts get a reason and keep **View release**. `downloadUpdate` re-reads the latest release, picks the asset with the exact
+name the release workflow uses (`Slinger-<v>-linux-amd64.deb`, `-linux-x86_64.AppImage`, `-win-x64.exe`, `-mac-<arch>.dmg`),
+accepts only `https://github.com/perunok/slinger/releases/download/...` (or the test feed's own origin), streams it to
+`<userData>/updates/<name>.part` with progress (every 200 ms, speed over 1 s), and requires the exact size and GitHub's
+`digest` (`sha256:...`; no digest: refused) before renaming it; older files there are deleted. `installUpdate`: AppImage:
+copy to `<file>.new`, chmod 755, rename over `$APPIMAGE`; deb: `pkexec dpkg -i` (exit 126/127 = password not given ->
+error, Slinger keeps running); then a detached `/bin/sh` waits for this pid to exit and starts the new version (the
+single-instance lock would otherwise send it back to this process); Windows: the installer runs detached with
+`/S --updated --force-run` (it restarts Slinger); macOS: the helper mounts the dmg after the quit, `ditto`s the bundle into
+place and `open`s it. Then `app.quit()` runs the normal quit (assistant calls finish, mock servers stop).
 
 `SLINGER_UPDATE_FEED_URL` (http/https) replaces the GitHub URL (tests, e2e). Automated runs (`SLINGER_SMOKE_TEST`,
 `SLINGER_HIDE_WINDOW`) without it never call out: `checkForUpdates` answers `io_error` there.
@@ -962,8 +977,12 @@ from the response. 404 means "no release yet"; other HTTP errors and failures ar
 Renderer: `src/features/updates/updates.svelte.ts` schedules it (first check 8 s after startup, then an hourly tick that only
 checks when the last successful check is a day old, while the setting is on), via `src/lib/updates.ts` (pure:
 `localStorage['slinger.updates']` = `{ auto, lastCheckedAt, latest, notified }`, `isCheckDue`, `shouldNotify`). A newer
-version shows one persistent info toast per version ("Slinger X is available", **View release** -> `openExternalUrl`).
-Help > Check for Updates… always answers with a toast; Settings > Updates > Check now answers inline.
+version shows one persistent info toast per version ("Slinger X is available", **Update now** -> `updates.updateNow()`, which
+opens `UpdateDialog.svelte` and starts `downloadUpdate`; **View release** -> `openExternalUrl` where the installation cannot
+update itself). The store follows `onUpdateState`; the dialog shows progress (`progress.ts`: percent, time left), **Restart to
+update**, errors with **Try again**. Help > Check for Updates… always answers with a toast; Settings > Updates > Check now answers
+inline and shows the same Update now / progress / Restart to update button. The browser mock pretends to be a .deb install
+whose download takes a second.
 
 ## Files, dialogs and the OS
 

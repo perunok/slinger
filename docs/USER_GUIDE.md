@@ -1192,13 +1192,25 @@ eye on what it does to important collections (a collection version is a good bac
 ## Updates
 
 Once a day Slinger asks GitHub which version is the latest release of Slinger. When there is a newer one than yours, a
-notification says so (once per version) with **View release**, which opens its release page in your web browser; download and
-install it from there as you did the first time. Nothing is downloaded or installed automatically, and the request carries
-nothing about you or your data.
+notification says so (once per version) with **Update now**. The request carries nothing about you or your data, and nothing is
+downloaded until you click.
+
+- **Update now** opens **Update Slinger**: it downloads the new version for your system from GitHub with a progress bar (size,
+  speed, time left; **Cancel** stops it, **Hide** lets it continue in the background) and checks it against GitHub's
+  checksum. Then **Restart to update** installs it and starts Slinger again; your open tabs come back. **Later** keeps the
+  download: Settings > Updates then offers **Restart to update**.
+- How it installs:
+  - Linux, installed from the **.deb**: with your system's package manager (`pkexec dpkg`), which asks for your password in a
+    system dialog. Cancelling that dialog cancels the update; Slinger keeps running.
+  - Linux **AppImage**: the AppImage file is replaced with the new one (its folder must be writable).
+  - **Windows**: the installer runs in the background (Windows may ask for permission) and starts Slinger again.
+  - **macOS**: after Slinger quits, the new Slinger.app replaces the old one (its folder, usually Applications, must be writable).
+- Where Slinger cannot update itself (a development build, a copy not installed from the .deb or the AppImage, an unwritable
+  folder), the notification and Settings offer **View release** instead, and the dialog says why.
 
 - **Help > Check for Updates…** checks right away and always answers (up to date, a newer version, or why it could not check).
 - Settings > Updates: turn **Check for new releases automatically** off, or **Check now**; it shows the result and when Slinger
-  last checked.
+  last checked, and **Update now** (or the download progress, or **Restart to update**) when there is a newer version.
 
 ## About Slinger
 

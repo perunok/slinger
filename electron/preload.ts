@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MENU_COMMAND_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
+import { IPC_CHANNELS, MCP_CALL_CHANNEL, MCP_CLIENT_EVENT_CHANNEL, MENU_COMMAND_CHANNEL, MOCK_EVENT_CHANNEL, SYNC_EVENT_CHANNEL, UPDATE_STATE_CHANNEL, WINDOW_STATE_CHANNEL, type SlingerIpcApi } from '../shared/ipc-contract'
 import type { McpCall } from '../shared/mcp'
 import { parseMenuCommand, type MenuCommand } from '../shared/menu'
-import type { McpClientEvent, MockServerEvent, SyncEvent, WindowState } from '../shared/types'
+import type { McpClientEvent, MockServerEvent, SyncEvent, UpdateInstallState, WindowState } from '../shared/types'
 import type { IpcEnvelope } from './ipc/envelope'
 
 // Exposes `window.slinger` exactly as declared by SlingerIpcApi. No Node/Electron objects leak:
@@ -87,6 +87,18 @@ api.onMockServerEvent = (listener: (event: MockServerEvent) => void): (() => voi
   ipcRenderer.on(MOCK_EVENT_CHANNEL, handler)
   return () => {
     ipcRenderer.removeListener(MOCK_EVENT_CHANNEL, handler)
+  }
+}
+
+// In-app updater state (download progress, ready, installing, error). Plain JSON built by main.
+api.onUpdateState = (listener: (state: UpdateInstallState) => void): (() => void) => {
+  const handler = (_event: unknown, payload: unknown) => {
+    const p = (payload ?? {}) as { phase?: unknown }
+    if (typeof p.phase === 'string') listener(payload as UpdateInstallState)
+  }
+  ipcRenderer.on(UPDATE_STATE_CHANNEL, handler)
+  return () => {
+    ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, handler)
   }
 }
 
