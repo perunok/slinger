@@ -1,4 +1,4 @@
-import type { ApiFolder, ApiRequest, Collection, DescriptionType, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionVersionAuthor, DescriptionType, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../shared/types'
 import type { Db } from '../db/database'
 import { invalidInput } from '../lib/errors'
 import { newId } from '../lib/ids'
@@ -272,7 +272,14 @@ const MAX_SOURCE_LABEL = 500
  * 4. collection scripts, description, variables and `source_postman_id` are updated.
  * The collection keeps its id, name and versions. Any failure (bad file, read-only workspace) changes nothing.
  */
-export function replaceCollectionFromPostman(db: Db, collectionId: string, fileContents: string, sourceName?: string | null): PostmanReplaceResult {
+export function replaceCollectionFromPostman(
+  db: Db,
+  collectionId: string,
+  fileContents: string,
+  sourceName?: string | null,
+  /** Creator of the automatic safety version (the signed-in cloud user; `Core.versionAuthor()`). */
+  author: CollectionVersionAuthor | null = null,
+): PostmanReplaceResult {
   const content = parsePostmanCollection(fileContents)
   const collection = requireCollection(db, collectionId)
   const label = (typeof sourceName === 'string' && sourceName.trim() ? sourceName.trim() : 'a Postman file').slice(0, MAX_SOURCE_LABEL)
@@ -283,7 +290,7 @@ export function replaceCollectionFromPostman(db: Db, collectionId: string, fileC
       collectionId: collection.id,
       version,
       notes: `Automatic snapshot before re-import from ${label}`,
-    })
+    }, author)
     const now = nowSeconds()
     for (const table of ['requests', 'folders']) {
       db.prepare(`UPDATE ${table} SET deleted = 1, updated_at = ?, version = version + 1 WHERE collection_id = ? AND deleted = 0`)

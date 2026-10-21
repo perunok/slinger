@@ -63,6 +63,15 @@ that are not obvious from the types:
   request's headers and a 64 KB body preview). `onMockServerEvent` pushes `started`, `updated` (options or name changed, also
   from the tray), `stopped` (`by`: 'user' from the window or the tray, 'quit', 'error' with a `reason`, 'replaced' when it
   moved port) and `request` (one log entry plus the server's `requestCount`).
+* Team (who is in a shared cloud workspace): `SyncStatus.members` is the number of active members of the linked cloud workspace
+  (you included), `null` when the workspace is not linked or the count was never read; it is stored (`cloud_links.member_count`,
+  migration 0013), so it is right at startup, and main re-reads it at most once a minute per sync cycle (cycles run every minute while the window is focused, every 5 minutes otherwise; a manual Sync now, link, publish and
+  `listWorkspaceMembers` always read it; a failed read keeps the old number). A change arrives as a normal `status` event.
+  `listWorkspaceMembers(workspaceId): Promise<WorkspaceMember[]>` is a live fetch of all pages (at most 500) of
+  `{ id, userId, email, displayName, role, joinedAt (Unix seconds), isYou }`; it also refreshes `members`. It rejects with
+  `sync_blocked` when the workspace is not linked, `unauthenticated` when signed out, `network_error` when the cloud cannot be
+  reached (and `sync_blocked`/`not_found` when access was lost). The workspace type does not change when a workspace is shared:
+  show "team" with `isTeamWorkspace(ws, status)` (`features/team/team.ts`: `workspaceType === 'team' || members > 1`).
 
 ## Behavior
 * Timestamps are Unix **seconds**.
@@ -103,6 +112,11 @@ that are not obvious from the types:
   `restoreCollectionVersion(id, 'replace')` recreates folders/requests with **new ids** (refetch
   folders/requests and close tabs of the old ones); `'copy'` returns the new collection. Both also set the collection variables
   from the snapshot (`snapshot.collectionVariables`, absent in older snapshots = none): reload them.
+* Version authors: every `CollectionVersion` has `createdBy: {id: string | null, name: string} | null` (and `createdAt` in Unix
+  seconds). It is set by main (the signed-in cloud user at creation; `createCollectionVersion` takes no author input) or by sync (the
+  server's value, which can arrive after the version was created); `null` = unknown (signed out, older version, older server; authors from teammates need Slinger Cloud 0.4.0 or newer). `id` is
+  `null` for an author whose account was deleted; compare `id` with `getCloudSession().user.id` for "(you)" and never match `null`.
+  A sync `applied` event for a `collection_version` can mean only the author changed.
 * `openExternalUrl` only accepts http/https. `secureStore*` cannot touch the reserved
   `slinger:env-var:`, `slinger:global-var:`, `slinger.cloud.tokens:` and `slinger:oauth2:` key prefixes.
 * Content-Security-Policy: `script-src 'self'` (no inline/eval scripts), no network access from the

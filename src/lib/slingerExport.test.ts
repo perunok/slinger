@@ -17,6 +17,7 @@ const v = (version: string, createdAt: number, notes: string | null = null): Ver
   folderCount: 0,
   requestCount: 1,
   createdAt,
+  createdBy: null,
   snapshot: snap(`C ${version}`),
 })
 
@@ -50,6 +51,20 @@ describe('buildSlingerBlock', () => {
 
   it('refuses to silently drop a snapshot that was not loaded', () => {
     expect(() => buildSlingerBlock({ collectionId: 'c', versions: [{ ...v('1.0.0', 1), snapshot: null }], includeSnapshots: true, appVersion: '1' })).toThrow(/1\.0\.0/)
+  })
+
+  it('writes createdBy (id only when known) and omits it for an unknown author', () => {
+    const block = buildSlingerBlock({
+      collectionId: 'c', includeSnapshots: false, appVersion: '1',
+      versions: [
+        { ...v('1.0.0', 1), createdBy: { id: 'u1', name: 'Ana' } },
+        { ...v('1.1.0', 2), createdBy: { id: null, name: 'Former member' } },
+        v('1.2.0', 3),
+      ],
+    })
+    expect(block.versions[0]!.createdBy).toEqual({ id: 'u1', name: 'Ana' })
+    expect(block.versions[1]!.createdBy).toEqual({ name: 'Former member' })
+    expect(block.versions[2]).not.toHaveProperty('createdBy')
   })
 
   it('round-trips epoch seconds through ISO exactly', () => {

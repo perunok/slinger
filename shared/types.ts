@@ -693,7 +693,16 @@ export interface CollectionVersion {
   notes: string | null
   folderCount: number
   requestCount: number
+  /** Unix seconds. */
   createdAt: number
+  /** Who created the version; `null` = unknown (made before authors were recorded, or while not signed in to the cloud). */
+  createdBy: CollectionVersionAuthor | null
+}
+
+/** The creator of a collection version. `id` is the cloud user id; `null` when the account no longer exists or is unknown. */
+export interface CollectionVersionAuthor {
+  id: string | null
+  name: string
 }
 
 export interface CollectionVersionDetail extends CollectionVersion {
@@ -980,6 +989,21 @@ export interface SyncStatus {
   /** Epoch seconds of the next automatic retry while backing off, else null. */
   nextRetryAt: number | null
   progress: SyncProgress | null
+  /** ADDED (team): active members of the linked cloud workspace (you included); null = not known yet or not linked. */
+  members: number | null
+}
+
+/** ADDED (team): one active member of a cloud workspace, as the Team dialog lists it. */
+export interface WorkspaceMember {
+  id: string
+  userId: string
+  email: string
+  displayName: string
+  role: CloudRole
+  /** Unix seconds. */
+  joinedAt: number
+  /** True for the signed-in account. */
+  isYou: boolean
 }
 
 export type SyncConflictKind =

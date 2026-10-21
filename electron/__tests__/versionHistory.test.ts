@@ -288,3 +288,50 @@ describe('replace from a file restores its version history', () => {
     expect(r.versionHistory).toBeUndefined()
   })
 })
+
+describe('who created a version (createdBy)', () => {
+  const setAuthor = (id: string, authorId: string | null, name: string | null) =>
+    env.core.db.prepare('UPDATE collection_versions SET created_by_id = ?, created_by_name = ? WHERE id = ?').run(authorId, name, id)
+
+  it('is exported with id and name when known, omitted otherwise, and round-trips through import', async () => {
+    const { colId, ids } = await versionedCollection()
+    setAuthor(ids[0]!, 'user-1', 'Ana Silva')
+    setAuthor(ids[1]!, null, 'Account Gone')
+    const out = await exportCollection(env, colId)
+    const versions = out.info._slinger!.versions
+    expect(versions[0]).toMatchObject({ version: '1.0.0', createdBy: { id: 'user-1', name: 'Ana Silva' } })
+    expect(versions[1]).toMatchObject({ version: '1.2.0', createdBy: { name: 'Account Gone' } })
+    expect(versions[1]!.createdBy).not.toHaveProperty('id')
+    expect(versions[2]).not.toHaveProperty('createdBy')
+
+    const ws2 = (await env.api.createWorkspace('Other')).id
+    const imported = await env.api.importPostmanCollection(ws2, JSON.stringify(out))
+    expect(imported.versionHistory).toMatchObject({ restored: 3, skipped: 0 })
+    const after = await env.api.listCollectionVersions(imported.collection.id)
+    expect(after.map((v) => [v.version, v.createdBy])).toEqual([
+      ['2.0.0-beta.1', null],
+      ['1.2.0', { id: null, name: 'Account Gone' }],
+      ['1.0.0', { id: 'user-1', name: 'Ana Silva' }],
+    ])
+  })
+
+  it('files without it (older Slinger) import with an unknown author; a malformed one is ignored, not fatal', async () => {
+    const { colId } = await versionedCollection()
+    const out = await exportCollection(env, colId)
+    const versions = out.info._slinger!.versions as unknown as Array<Record<string, unknown>>
+    versions.forEach((v) => delete v.createdBy)
+    versions[0]!.createdBy = { id: 7, name: '' }
+    versions[1]!.createdBy = 'nobody'
+    const ws2 = (await env.api.createWorkspace('Other')).id
+    const imported = await env.api.importPostmanCollection(ws2, JSON.stringify(out))
+    expect(imported.versionHistory).toMatchObject({ restored: 3, skipped: 0, notes: [] })
+    expect((await env.api.listCollectionVersions(imported.collection.id)).map((v) => v.createdBy)).toEqual([null, null, null])
+  })
+
+  it('the parsed block keeps createdBy and trims the name', () => {
+    const block = { formatVersion: 1, versions: [{ version: '1.0.0', notes: null, createdAt: '2026-01-01T00:00:00.000Z', folderCount: 0, requestCount: 0, createdBy: { name: '  Ann  ' } }] }
+    const parsed = parseSlingerBlock(block)
+    expect(parsed.ok && parsed.versions[0]!.createdBy).toEqual({ name: 'Ann' })
+  })
+})
+

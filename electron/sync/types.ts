@@ -123,6 +123,8 @@ export interface LinkRow {
   snapshot_cursor: string | null
   /** JSON array of the effective sync extension features (0009); NULL until the server answered once. */
   sync_features: string | null
+  /** Active members of the cloud workspace as last read (0013); NULL = not known yet. */
+  member_count: number | null
 }
 
 export interface EntityState {

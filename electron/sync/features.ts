@@ -28,6 +28,11 @@ export function effectiveFeatures(server: readonly string[] | undefined): SyncFe
   return CLIENT_FEATURES.filter((f) => server?.includes(f) === true)
 }
 
+/** True when a live version of the workspace has no recorded author (`version_authors` has authors to backfill). */
+export function hasUnattributedVersions(db: Db, workspaceId: string): boolean {
+  return db.prepare('SELECT 1 FROM collection_versions WHERE workspace_id = ? AND deleted = 0 AND created_by_name IS NULL LIMIT 1').get(workspaceId) !== undefined
+}
+
 const FIELDS: Partial<Record<SyncFeature, string[]>> = { folder_scripts: ['scripts_json'], docs: ['description', 'description_type'] }
 
 /**
@@ -61,6 +66,10 @@ export function updateLinkFeatures(ctx: ApplyCtx, server: readonly string[] | un
  * A read-only link only adjusts the bases: it cannot upload anything.
  */
 function activate(ctx: ApplyCtx, feature: SyncFeature, readOnly: boolean): void {
+  // `version_authors` adds a field the server sends on collection_version payloads and the client never uploads or
+  // compares (it is split off every incoming payload, apply.ts `splitAuthor`): nothing to re-base or re-upload. The
+  // authors of versions that are already here arrive through a one-time replay of the log (engine.ts `pull`).
+  if (feature === 'version_authors') return
   const { db, workspaceId } = ctx
   const fields = FIELDS[feature]
   if (fields) {

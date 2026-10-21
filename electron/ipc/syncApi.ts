@@ -28,6 +28,7 @@ type SyncIpcMethod =
   | 'discardPendingChanges'
   | 'listSyncPending'
   | 'listSyncActivity'
+  | 'listWorkspaceMembers'
 
 const uuid = z.string().refine(isUuid, { message: 'must be a valid UUID' })
 const remoteId = z.string().min(1).max(64)
@@ -86,5 +87,6 @@ export function createSyncIpc(core: Core): SyncIpcApi {
     discardPendingChanges: async (...a) => s.discardPendingChanges(parseArgs(z.tuple([uuid]), a)[0]),
     listSyncPending: async (...a) => s.listSyncPending(parseArgs(z.tuple([uuid]), a)[0]),
     listSyncActivity: async (...a) => s.listSyncActivity(parseArgs(z.tuple([uuid]), a)[0]),
+    listWorkspaceMembers: async (...a) => s.listWorkspaceMembers(parseArgs(z.tuple([uuid]), a)[0]),
   }
 }

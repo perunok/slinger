@@ -421,6 +421,8 @@ const versionLine = (v: CollectionVersion) => ({
   folders: v.folderCount,
   requests: v.requestCount,
   created: new Date(v.createdAt * 1000).toISOString(),
+  // Who saved it (the Slinger Cloud account, or the one signed in on this device); null = unknown (older version, or made while signed out).
+  created_by: v.createdBy ? { name: v.createdBy.name, id: v.createdBy.id } : null,
 })
 
 // ---- trees ------------------------------------------------------------------------------------------------------

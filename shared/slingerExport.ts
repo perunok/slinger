@@ -32,6 +32,8 @@ export interface SlingerExportedVersion {
   createdAt: string
   folderCount: number
   requestCount: number
+  /** Who created the version (optional: files from older Slinger versions and versions of unknown author omit it). */
+  createdBy?: { id?: string | null; name: string }
   /** The version's frozen content. Omitted when the export was made without snapshots. */
   snapshot?: CollectionSnapshot
 }

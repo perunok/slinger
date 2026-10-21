@@ -94,6 +94,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
 
   const misc = createMiscApi()
   const sync = createSyncApi(state, options.cloud)
+  state.versionAuthor = sync.versionAuthor
   const mcp = createMcpApi()
   const mcpClient = createMcpClientApi(state)
   const mockServers = createMockServersApi()

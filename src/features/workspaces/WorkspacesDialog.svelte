@@ -12,6 +12,8 @@
   import { mockServers } from '../mockServers/mockServers.svelte'
   import { tabsStore } from '../requests/tabs.svelte'
   import { runsStore } from '../runner/runs.svelte'
+  import { sync } from '../sync/syncStore.svelte'
+  import { isTeamWorkspace, membersLabel } from '../team/team'
 
   type Sub = { t: 'create' } | { t: 'rename'; ws: Workspace } | { t: 'delete'; ws: Workspace } | { t: 'switch'; ws: Workspace; warning: string }
   let sub = $state<Sub | null>(null)
@@ -51,7 +53,10 @@
     {#each app.workspaces as w (w.id)}
       <li class="flex items-center gap-2 px-3 py-2">
         <span class="min-w-0 flex-1 truncate">{w.name}</span>
-        {#if w.workspaceType === 'team'}<span class="rounded bg-raised px-1.5 text-xs text-muted">team</span>{/if}
+        {#if isTeamWorkspace(w, sync.statusOf(w.id))}
+          {@const members = sync.statusOf(w.id)?.members ?? null}
+          <span class="rounded bg-raised px-1.5 text-xs text-muted" data-testid="team-badge">team{members !== null ? ` · ${membersLabel(members)}` : ''}</span>
+        {/if}
         {#if w.id === app.workspaceId}<span class="rounded bg-accent-soft px-1.5 text-xs">current</span>{/if}
         {#if w.id !== app.workspaceId}<Button size="sm" onclick={() => openWorkspace(w)}>Open</Button>{/if}
         <IconButton icon="edit" label="Rename {w.name}" onclick={() => (sub = { t: 'rename', ws: w })} />

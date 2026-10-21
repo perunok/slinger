@@ -3,6 +3,7 @@ import type {
   ApiRequest,
   Collection,
   CollectionVersion,
+  CollectionVersionAuthor,
   CollectionSnapshot,
   Environment,
   HistoryEntry,
@@ -72,6 +73,11 @@ export interface MockState {
   oauth2Tokens: Record<string, MockOAuth2Token>
   /** ADDED (workflows): live rows only (a delete removes the row). */
   workflows: Workflow[]
+  /**
+   * ADDED (version authors): the signed-in mock cloud user as the creator of versions made now (wired by mockBackend
+   * to the mock sync session; not part of `emptyState`, so a reset keeps it). Unset or null: the author is unknown.
+   */
+  versionAuthor?: () => CollectionVersionAuthor | null
 }
 
 export function emptyState(): MockState {

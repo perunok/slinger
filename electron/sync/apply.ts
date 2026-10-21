@@ -63,17 +63,68 @@ function note(ctx: ApplyCtx, type: SyncEntityType, id: string, change: ChangeKin
 const isSentOp = (db: Db, opId: string) => db.prepare('SELECT 1 FROM sync_sent_ops WHERE op_id = ?').get(opId) !== undefined
 const dropSentOp = (db: Db, opId: string) => void db.prepare('DELETE FROM sync_sent_ops WHERE op_id = ?').run(opId)
 
+/** The creator of a collection version as the server reports it (`created_by`, sync feature `version_authors`). */
+export interface RemoteAuthor {
+  id: string | null
+  name: string
+}
+
+/**
+ * Splits the server-owned `created_by` off a remote `collection_version` payload. It runs at EVERY entry point of
+ * remote payloads (pulled ops, snapshot entities, rejection `current_payload`), before anything is compared or
+ * stored: the author is not part of the synced content (`toWire` never produces it), so a payload that still had it
+ * would differ from every local copy (an immutable clash for every version) and end up in `base_payload` and in
+ * conflict copies. `author` is null when the server sent none, `null` (a legacy version) or something malformed.
+ * Other types are returned unchanged.
+ */
+export function splitAuthor(type: SyncEntityType, payload: Payload): { payload: Payload; author: RemoteAuthor | null } {
+  if (type !== 'collection_version' || !('created_by' in payload)) return { payload, author: null }
+  const { created_by: raw, ...rest } = payload
+  const c = raw as { id?: unknown; display_name?: unknown } | null | undefined
+  const name = c && typeof c === 'object' && typeof c.display_name === 'string' ? c.display_name.trim() : ''
+  return { payload: rest, author: name ? { id: typeof c!.id === 'string' && c!.id ? c!.id : null, name: name.slice(0, 200) } : null }
+}
+
+/**
+ * Writes the server's author to the local version row: the server's value wins; no author from the server (legacy
+ * version, older server) keeps what is local. Skipped for a version that just became an immutable clash (the local
+ * copy is not the server's). Touches only the author columns, which no sync trigger watches, so the row never
+ * becomes dirty.
+ */
+function storeAuthor(ctx: ApplyCtx, type: SyncEntityType, id: string, author: RemoteAuthor | null): void {
+  if (type !== 'collection_version' || !author) return
+  const { db } = ctx
+  if (getEntity(db, type, id)?.state === 'conflict' || ctx.touched.has(k(type, id))) {
+    // The cloud's copy of a version that clashes by id (an immutable clash) is not the local row: its author waits
+    // in the conflict, and "keep cloud" gives it to the re-created row (conflicts.ts `takeRemoteVersion`).
+    const c = findOpenConflict(db, type, id)
+    if (c?.kind === 'immutable_clash' && c.remote_json) {
+      db.prepare('UPDATE sync_conflicts SET remote_author = ? WHERE id = ?').run(JSON.stringify({ id: author.id, name: author.name }), c.id)
+    }
+    return
+  }
+  const res = db
+    .prepare('UPDATE collection_versions SET created_by_id = ?, created_by_name = ? WHERE id = ? AND (created_by_id IS NOT ? OR created_by_name IS NOT ?)')
+    .run(author.id, author.name, id, author.id, author.name)
+  if (res.changes > 0 && !ctx.changed.has(k(type, id))) note(ctx, type, id, 'upsert')
+}
+
 export function applyRemoteOp(ctx: ApplyCtx, op: PullOp): void {
   // A type this device does not know, or whose feature is off for this link, is not ours to apply.
   if (!(op.resource_type in TABLE) || !typeSynced(op.resource_type, ctx.features)) return
-  if (op.op === 'upsert') applyUpsert(ctx, op.resource_type, op.resource_id, op.resulting_version, op.payload ?? {}, op.operation_id)
-  else applyDelete(ctx, op.resource_type, op.resource_id, op.operation_id)
+  if (op.op === 'upsert') {
+    const { payload, author } = splitAuthor(op.resource_type, op.payload ?? {})
+    applyUpsert(ctx, op.resource_type, op.resource_id, op.resulting_version, payload, op.operation_id)
+    storeAuthor(ctx, op.resource_type, op.resource_id, author)
+  } else applyDelete(ctx, op.resource_type, op.resource_id, op.operation_id)
 }
 
 /** Snapshot entities are applied exactly like a pulled upsert (no operation id). */
 export function applySnapshotEntity(ctx: ApplyCtx, e: SnapshotEntity): void {
   if (!(e.resource_type in TABLE) || !typeSynced(e.resource_type, ctx.features)) return
-  applyUpsert(ctx, e.resource_type, e.resource_id, e.version, e.payload ?? {}, null)
+  const { payload, author } = splitAuthor(e.resource_type, e.payload ?? {})
+  applyUpsert(ctx, e.resource_type, e.resource_id, e.version, payload, null)
+  storeAuthor(ctx, e.resource_type, e.resource_id, author)
 }
 
 /**
@@ -88,6 +139,8 @@ export function applySnapshotEntity(ctx: ApplyCtx, e: SnapshotEntity): void {
 export function applyRemoteState(ctx: ApplyCtx, type: SyncEntityType, id: string, version: number, payload: Payload, rejectedOpId: string): boolean {
   const { db } = ctx
   const E = getEntity(db, type, id)
+  const split = splitAuthor(type, payload)
+  payload = split.payload
   if (!E || E.remote_version <= 0 || !E.base_payload || version <= E.remote_version) return false
   const otherInFlight = db
     .prepare('SELECT 1 FROM sync_sent_ops WHERE entity_type = ? AND entity_id = ? AND op_id != ?')
@@ -95,6 +148,7 @@ export function applyRemoteState(ctx: ApplyCtx, type: SyncEntityType, id: string
   if (otherInFlight) return false
   if (parentRefs(type, payload).some((r) => !loadRow(db, r.type, r.id))) return false
   applyUpsert(ctx, type, id, version, payload, null)
+  storeAuthor(ctx, type, id, split.author)
   return true
 }
 
@@ -284,11 +338,11 @@ function openConflict(
   type: SyncEntityType,
   id: string,
   kind: Parameters<typeof upsertOpenConflict>[2]['kind'],
-  f: { groups?: string[]; base: Payload | null; local: Payload | null; remote: Payload | null; remoteVersion: number; message: string },
+  f: { groups?: string[]; base: Payload | null; local: Payload | null; remote: Payload | null; remoteVersion: number; remoteAuthor?: RemoteAuthor | null; message: string },
 ): void {
   upsertOpenConflict(ctx.db, ctx.nowS, {
     workspaceId: ctx.workspaceId, type, id, kind, groups: f.groups, base: f.base, local: f.local, remote: f.remote,
-    remoteVersion: f.remoteVersion, label: labelFor(ctx, type, id, f.local, f.remote, f.base), message: f.message,
+    remoteVersion: f.remoteVersion, remoteAuthor: f.remoteAuthor, label: labelFor(ctx, type, id, f.local, f.remote, f.base), message: f.message,
   })
   ctx.touched.add(k(type, id))
 }
@@ -408,6 +462,13 @@ function versionLabelClash(ctx: ApplyCtx, id: string, payload: Payload): boolean
 export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow, sameId?: { remote: Payload; remoteVersion: number }): void {
   const { db } = ctx
   const cid = clash.id as string
+  // The server's copy is kept in the conflict without its author (not content); a caller may hand it in unsplit.
+  let remoteAuthor: RemoteAuthor | null = null
+  if (sameId) {
+    const split = splitAuthor('collection_version', sameId.remote)
+    remoteAuthor = split.author
+    sameId = { ...sameId, remote: split.payload }
+  }
   const wire = toWire('collection_version', clash, ctx.features)
   softDeleteRow(ctx, 'collection_version', cid)
   const e = getEntity(db, 'collection_version', cid)
@@ -416,7 +477,7 @@ export function hideClashingVersion(ctx: ApplyCtx, clash: AnyRow, sameId?: { rem
   })
   clearDirty(db, 'collection_version', cid)
   openConflict(ctx, 'collection_version', cid, 'immutable_clash', {
-    base: null, local: wire, remote: sameId?.remote ?? null, remoteVersion: sameId?.remoteVersion ?? 0,
+    base: null, local: wire, remote: sameId?.remote ?? null, remoteVersion: sameId?.remoteVersion ?? 0, remoteAuthor,
     message: sameId
       ? `Version ${String(wire.semver)} in the cloud has different content than this device's copy (versions cannot change).`
       : `Version ${String(wire.semver)} already exists in the cloud for this collection (created on another device).`,

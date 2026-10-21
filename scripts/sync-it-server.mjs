@@ -5,6 +5,7 @@
 //
 // prints {"baseUrl": "...", "adminEmail": "...", "adminPassword": "..."} and keeps running until SIGINT.
 // SLINGER_SYNC_IT_DATABASE_URL uses an existing database instead of starting `postgres:16-alpine` in Docker.
+// Its secret-plaintext dump then runs pg_dump inside the Docker container named by SLINGER_SYNC_IT_DB_CONTAINER.
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -103,8 +104,13 @@ export async function startSyncItServer(opts = {}) {
     log: () => log,
     /** Full database dump as text (only with the Docker database): to assert that no secret plaintext is stored. */
     dump() {
-      if (!container) throw new Error('dump() needs the Docker database')
-      return execFileSync('docker', ['exec', container, 'pg_dump', '-U', 'postgres', 'slinger', '--data-only'], { maxBuffer: 256 * 1024 * 1024 }).toString('utf8')
+      if (container) return execFileSync('docker', ['exec', container, 'pg_dump', '-U', 'postgres', 'slinger', '--data-only'], { maxBuffer: 256 * 1024 * 1024 }).toString('utf8')
+      // An existing database (SLINGER_SYNC_IT_DATABASE_URL): dump it with pg_dump inside the Docker container named by
+      // SLINGER_SYNC_IT_DB_CONTAINER (e.g. a host-network `slinger-test-pg`, for machines where Docker's bridge is broken).
+      const via = process.env.SLINGER_SYNC_IT_DB_CONTAINER
+      if (!via) throw new Error('dump() needs the Docker database or SLINGER_SYNC_IT_DB_CONTAINER')
+      const u = new URL(databaseUrl)
+      return execFileSync('docker', ['exec', '-e', `PGPASSWORD=${decodeURIComponent(u.password)}`, via, 'pg_dump', '-h', u.hostname, '-p', u.port || '5432', '-U', decodeURIComponent(u.username), u.pathname.slice(1), '--data-only'], { maxBuffer: 256 * 1024 * 1024 }).toString('utf8')
     },
     async stop() {
       child.kill('SIGTERM')

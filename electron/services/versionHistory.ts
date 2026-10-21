@@ -34,6 +34,11 @@ const versionSchema = z.object({
   folderCount: count,
   requestCount: count,
   snapshot: snapshotSchema.nullish(),
+  // Added later (docs/ARCHITECTURE.md, versioned export): files without it, or with a malformed one, import with an unknown author.
+  createdBy: z
+    .object({ id: z.string().max(200).nullish(), name: z.string().trim().min(1).max(200) })
+    .nullish()
+    .catch(undefined),
 })
 
 const blockSchema = z.object({
@@ -161,8 +166,9 @@ export function restoreVersionHistory(db: Db, collectionId: string, raw: unknown
       const taken = new Set(existing.keys())
       const insert = db.prepare(
         `INSERT INTO collection_versions (id, workspace_id, collection_id, version, version_major, version_minor,
-           version_patch, version_prerelease, notes, snapshot_json, folder_count, request_count, deleted, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+           version_patch, version_prerelease, notes, snapshot_json, folder_count, request_count, deleted, created_at,
+           created_by_id, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       )
       const seenInFile = new Set<string>()
       for (const v of [...withSnapshot].sort((a, b) => compare(a.version, b.version))) {
@@ -198,6 +204,7 @@ export function restoreVersionHistory(db: Db, collectionId: string, raw: unknown
           newId(), collection.workspace_id, collection.id, label, semver.major, semver.minor, semver.patch,
           semver.prerelease.length ? semver.prerelease.join('.') : null, notes, snapshotJson,
           snapshot.folders.length, snapshot.requests.length, v.createdAt,
+          v.createdBy ? (v.createdBy.id ?? null) : null, v.createdBy ? v.createdBy.name : null,
         )
         taken.add(label)
         result.restored++

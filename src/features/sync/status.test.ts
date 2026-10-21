@@ -6,7 +6,7 @@ const NOW = 1_000_000
 const base: SyncStatus = {
   workspaceId: 'w', linked: true, state: 'idle', apiBaseUrl: 'https://x', remoteWorkspaceId: 'r', remoteName: 'Team', role: 'editor',
   readOnly: false, autoSync: true, pendingChanges: 0, openConflicts: 0, initialSyncPending: false, lastSyncedAt: NOW - 120,
-  lastError: null, nextRetryAt: null, progress: null,
+  lastError: null, nextRetryAt: null, progress: null, members: null,
 }
 const signedIn: CloudSession = { apiBaseUrl: 'https://x', status: 'signedIn', user: null, offline: false }
 const chip = (s: Partial<SyncStatus>, session: CloudSession | null = signedIn) => deriveChip({ ...base, ...s }, session, NOW)

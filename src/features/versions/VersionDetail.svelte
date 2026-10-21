@@ -3,7 +3,8 @@
   import Button from '../../components/ui/Button.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import Tabs from '../../components/ui/Tabs.svelte'
-  import { formatCreated, isPrerelease } from './helpers'
+  import { sync } from '../sync/syncStore.svelte'
+  import { detailByline, isPrerelease } from './helpers'
   import SnapshotTree from './SnapshotTree.svelte'
   import VersionCompare from './VersionCompare.svelte'
 
@@ -36,7 +37,7 @@
         {#if isPrerelease(summary.version)}<span class="text-[10px] font-normal uppercase text-warning">pre-release</span>{/if}
       </h3>
       <p class="text-xs text-muted">
-        Created {formatCreated(summary.createdAt)} &middot; {summary.requestCount} request{summary.requestCount === 1 ? '' : 's'},
+        <span data-testid="version-created">{detailByline(summary, sync.session?.user?.id)}</span> &middot; {summary.requestCount} request{summary.requestCount === 1 ? '' : 's'},
         {summary.folderCount} folder{summary.folderCount === 1 ? '' : 's'} &middot; immutable
       </p>
       {#if summary.notes}<p class="mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-sm">{summary.notes}</p>{/if}

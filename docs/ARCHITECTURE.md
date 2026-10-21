@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0010_workflows.sql
+  migrations/        0001_init.sql ... 0014_conflict_remote_author.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -195,6 +195,10 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0008_variables` | `collection_variables` (per collection, never secret) and `global_variables` (per workspace, secrets like environment variables): key, value, enabled, description, `sort_order`, unique live key per owner; read-only triggers for viewers |
 | `0009_sync_local_only` | capture triggers for collection/folder `scripts_json` / `description` / `description_type` and for `collection_variables` / `global_variables`; `global_variables.secret_missing`; `cloud_links.sync_features`; the globals read-only trigger lets a viewer set a secret's local value (sync design section 21) |
 | `0010_workflows` | `workflows` (per workspace: name, `graph_json`, soft delete, version); local-only: no capture or read-only triggers |
+| `0011_history_source` | `history.kind` (send / edit), `history.source` (NULL = user, `mcp`) and `history.detail`; History shows MCP edits and an "AI assistant" badge |
+| `0012_version_authors` | nullable `collection_versions.created_by_id` / `created_by_name` (the author, see Collection versioning); not in the immutability trigger and not watched by any sync trigger |
+| `0013_member_count` | nullable `cloud_links.member_count` (active members of the linked cloud workspace as last read; display only, Team badge) |
+| `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -338,6 +342,20 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   a global created elsewhere has `secretMissing` until this device sets a value (keychain `slinger:global-var:<id>`). Equal
   never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
   `source_postman_id` (0007) stays device-local.
+- **Version authors** (feature `version_authors`, design section 21): the server records who created every collection version
+  and sends `created_by: {id|null, display_name} | null` on `collection_version` payloads to clients that declared the feature
+  (`CLIENT_FEATURES`). The desktop never sends it and it is not part of `toWire`. `apply.ts` `splitAuthor` removes it at EVERY
+  entry point of remote payloads (`applyRemoteOp`, `applySnapshotEntity`, `applyRemoteState` for `current_payload`, and
+  `hideClashingVersion` for an `immutable` rejection) BEFORE anything is compared or stored, so `samePayload` against `toWire`,
+  `base_payload`, conflict copies and the immutable-clash check never see it (otherwise every existing version would be an
+  immutable clash). The author is then written to `collection_versions.created_by_id/_name` (`storeAuthor`): the server's value
+  wins, a `null` keeps the local one, a version that just became an `immutable_clash` is skipped (its cloud author waits in `sync_conflicts.remote_author`, migration 0014, outside `remote_json`, and "keep cloud" gives it to the re-created row; "duplicate" copies the local version's author, read before the row is replaced). Only the author columns are
+  touched, which no trigger watches, so the row never becomes dirty; the change is reported in the `applied` log so the Versions
+  list refreshes. Nothing is re-based or uploaded when the feature appears (`features.ts`), but the authors of versions this device already
+  holds are backfilled: when `version_authors` first becomes active on a link that has a checkpoint and live versions without an
+  author, `SyncEngine.pull` rewinds the checkpoint to 0 once and replays the log (idempotent: `applyUpsert` reconciles, then
+  `storeAuthor` runs; the loop keeps pulling instead of stopping at the end of the first page). Versions the server created before
+  it recorded authors stay unknown.
 - **Activity** (`sync/activity.ts`, IPC `listSyncPending` / `listSyncActivity`, `sync:event` `activity`): every `runCycle`
   opens a `SyncRun` (trigger manual/auto, `initial` for the first download) in `SyncEngine.activity`, in memory only (the
   latest `SYNC_ACTIVITY_RUNS` = 50 per workspace since start; nothing stored or synced). Downloads come from the ChangeLog of
@@ -349,6 +367,16 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   else updated. Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
   (refetched when the pending count changes or a run ends while the dialog is open), `features/sync/SyncActivityDialog.svelte`
   opened from the chip's popover and Ctrl+K. The protocol has no author per operation, so "who" is not shown.
+- **Team** (members of the linked cloud workspace): `CloudApi.listMembers` (`GET /v1/workspaces/{id}/members`, paginated, active only,
+  at most `MAX_MEMBERS` = 500). `SyncEngine.refreshMembers(workspaceId, force)` runs in every cycle right after `refreshRole`,
+  throttled to at most once per `MEMBER_CHECK_INTERVAL_MS` = 60 s (cycles run every 60 s with the window focused and every 5 min when blurred, so a new member can take up to 5 min to show; forced by a manual Sync now, the first cycle after link/publish, and opening Team) and never
+  throws: a failed read keeps the stored value. The count lives in `cloud_links.member_count` (migration 0013) and is
+  `SyncStatus.members` (`null` unlinked / never read); a change emits a `status` event. `fetchMembers` is the unthrottled read
+  behind IPC `listWorkspaceMembers` (`SyncService`): it decorates each member with `isYou` (`user_id` equals
+  `CloudAuth.currentUserId()`), also stores the count, and lets cloud errors through (`toIpcError`). A workspace is shown as a team
+  when `workspaceType === 'team'` (downloaded) or `members > 1` (published, then shared): `features/team/team.ts isTeamWorkspace`,
+  used by the workspace picker, the Workspaces dialog and `TeamDialog.svelte` (`ui.teamOpen`, mounted by `SyncHost`; opened from
+  the sync chip popover and Ctrl+K; the Cloud panel shows the count). The stored `workspaceType` never changes.
 - **Cycle** (`engine.ts`, one per workspace at a time): register client (refuses servers below protocol v2), re-read the role,
   snapshot download for a new link, then up to 4 rounds of pull (apply pages in one transaction each; the checkpoint only advances
   with the applied page) -> build ops from the dirty set (`outbox.buildOps`: no-op elimination, limits quarantine, cascade pruning,
@@ -605,11 +633,19 @@ or globals) into `snapshot_json` and records the counts. Restore (replace and co
 a snapshot without the field restores to none.
 Semver is strict 2.0.0 (`services/semver.ts`): optional prerelease, no build metadata, no leading `v`, no leading zeros. A
 version label is unique per collection among live rows (`invalid_input`, `reason: 'duplicate_version'`); a SQLite trigger
-aborts any UPDATE other than the `deleted` flag. `listCollectionVersions` sorts newest first by semver precedence (parsed
+aborts any UPDATE of the content columns (only `deleted` and the author columns may change). `listCollectionVersions` sorts newest first by semver precedence (parsed
 major/minor/patch/prerelease columns), not by creation time. Restore modes: `copy` creates a new collection named
 `"<name> (v<version>)"`; `replace` soft-deletes the live folders/requests and recreates the snapshot in one transaction with
 **new ids** (the renderer refetches and closes affected tabs). Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
 runs in the renderer on snapshots.
+
+**Who created a version.** `CollectionVersion.createdBy = {id: string | null, name: string} | null` (migration 0012). A version made
+on this device gets the signed-in cloud user (`Core.versionAuthor()` in `services/core.ts`, from `CloudAuth.snapshot().user`;
+`null` when signed out), passed by the IPC layer (`createCollectionVersion`, the safety version of `replaceCollectionFromPostman`)
+to the service as its last argument; the renderer and MCP never supply it. Versions that arrive through sync get the server's author
+(see Sync), versions restored from an export keep the file's. `id` is `null` when the account no longer exists. The author is not part
+of the snapshot or of the sync payload. UI: `versions/helpers.ts` (`listByline`, `detailByline`, `compareSide`, `isYou` against
+`sync.session.user.id`); an unknown author shows the date only.
 
 **cURL import (renderer only).** `lib/curl.ts` `parseCurl(text)` turns one or more curl commands into `ParsedCurl` (method,
 URL, headers, a `BodyDraft`, basic/bearer auth, timeout, and `warnings` for what was not imported). It tokenizes like bash
@@ -664,7 +700,8 @@ Every Postman collection export (built in the renderer: `lib/postman.ts` + `lib/
                     "folderCount": 2, "requestCount": 4, "snapshot": { /* CollectionSnapshot, the snapshot_json shape */ } } ] }
   ```
 
-  `versions` are oldest semver first; `createdAt` is ISO-8601 with whole seconds (lossless for the stored epoch seconds);
+  `versions` are oldest semver first; `createdAt` is ISO-8601 with whole seconds (lossless for the stored epoch seconds); an
+  optional `createdBy: {id?, name}` is the author (omitted when unknown; an importer ignores a missing or malformed one; in a workspace linked to Slinger Cloud the server records the uploader and its value wins once the import is pushed, design section 21.5);
   `snapshot` is omitted when the user unticks "Include version history snapshots" (`includesSnapshots: false`). Snapshots
   hold folders/requests/scripts/descriptions/collection variables only: no environment values, no globals, no secrets (tested).
 
@@ -674,7 +711,7 @@ Every Postman collection export (built in the renderer: `lib/postman.ts` + `lib/
 stripped) plus structural checks (unique ids, known parents, no folder cycles, requests in existing folders, <= 10k folders /
 50k requests, <= 8 MB per snapshot, the cloud sync limit). Any failure or a newer `formatVersion` ignores the whole block with a
 note and the collection still imports; inserts run in a savepoint, so an unexpected error rolls back only the history. Versions
-are inserted oldest first with the original semver, notes, `created_at` and snapshot (counts recomputed from the snapshot), so
+are inserted oldest first with the original semver, notes, `created_at`, author (`createdBy`) and snapshot (counts recomputed from the snapshot), so
 they list, compare and restore like local ones and sync as ordinary `collection_version` rows. Metadata-only entries are skipped
 (a version must be restorable); a semver listed twice keeps the first; an existing semver with identical snapshot + notes is
 skipped, a different one is kept as `<v>-imported[.N]` (`<v>.imported[.N]` for prereleases). The result is reported in
@@ -745,7 +782,8 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   `set_active_environment`, `import_postman`, `open_in_app`) and sending (`send_request`, optionally `save_as_example`;
   `run_collection`). Examples are addressed by index or exact name and edited through `parseExample` / `serializeExample`
   (unedited fields stay byte-identical), in any workspace. Versions: `create_version` takes a number or a bump
-  (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`;
+  (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`; version lines carry `created` (ISO time) and `created_by`
+  (`{name, id}` or null);
   `restore_version` replace carries expanded folders and clean open tabs over (`mapRestored`), like the Versions panel.
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`

@@ -609,7 +609,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     replaceCollectionFromPostman: async (...a) => {
       const [id, contents, sourceName] = parseArgs(z.tuple([uuid, postmanFile, z.string().max(1024).nullish()]), a)
-      return replaceCollectionFromPostman(core.db, id, contents, sourceName)
+      return replaceCollectionFromPostman(core.db, id, contents, sourceName, core.versionAuthor())
     },
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {
@@ -638,7 +638,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     listCollectionVersions: async (...a) => versions.listCollectionVersions(core.db, parseArgs(z.tuple([uuid]), a)[0]),
     getCollectionVersion: async (...a) => versions.getCollectionVersion(core.db, parseArgs(z.tuple([uuid]), a)[0]),
     createCollectionVersion: async (...a) =>
-      versions.createCollectionVersion(core.db, parseArgs(z.tuple([createVersionInput]), a)[0]),
+      versions.createCollectionVersion(core.db, parseArgs(z.tuple([createVersionInput]), a)[0], core.versionAuthor()),
     restoreCollectionVersion: async (...a) => {
       const [id, mode] = parseArgs(z.tuple([uuid, z.enum(['replace', 'copy'])]), a)
       return versions.restoreCollectionVersion(core.db, id, mode)

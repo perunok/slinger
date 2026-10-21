@@ -2,7 +2,7 @@
  * SyncService: the 18 cloud-account/sync IPC methods over the engine, the cloud client and the scheduler
  * (docs/SYNC_DESIGN.md sections 11, 12). No Electron imports.
  */
-import type { CloudConfig, CloudSession, CloudSignInStart, LinkRemoteWorkspaceInput, RemoteWorkspace, RemoteWorkspaceCounts, RemoteWorkspacePreview, ResolveSyncConflictInput, SyncActivityItem, SyncConflict, SyncEvent, SyncRun, SyncStatus, Workspace } from '../../shared/types'
+import type { CloudConfig, CloudSession, CloudSignInStart, LinkRemoteWorkspaceInput, RemoteWorkspace, RemoteWorkspaceCounts, RemoteWorkspacePreview, ResolveSyncConflictInput, SyncActivityItem, SyncConflict, SyncEvent, SyncRun, SyncStatus, Workspace, WorkspaceMember } from '../../shared/types'
 import { CloudApi, type CloudGateway } from '../cloud/api'
 import { CloudAuth } from '../cloud/auth'
 import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
@@ -303,6 +303,17 @@ export class SyncService {
 
   /** The latest sync runs of the workspace since Slinger started, newest first. */
   listSyncActivity = async (workspaceId: string): Promise<SyncRun[]> => this.engine.activity.list(workspaceId)
+
+  /** The people in the cloud workspace this workspace is linked to (live fetch); also refreshes `SyncStatus.members`. */
+  listWorkspaceMembers = async (workspaceId: string): Promise<WorkspaceMember[]> => {
+    if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
+    this.requireSignedIn()
+    try {
+      return await this.engine.fetchMembers(workspaceId)
+    } catch (err) {
+      throw toIpcError(err)
+    }
+  }
 
   discardPendingChanges = async (workspaceId: string): Promise<SyncStatus> => {
     if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
