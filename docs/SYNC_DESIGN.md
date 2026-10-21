@@ -985,3 +985,35 @@ diffed, with its format), `details` ("Enabled & description"); paths are `Collec
 
 Tests: fake server and real server share the wire contract (`wireContract.ts` `checkLocalOnlyContract`), the convergence fuzzer edits
 scripts, docs, collection variables and globals on both devices, unit tests cover mapping/merge/apply/fold/activation.
+
+### 21.5 `version_authors`: who created a collection version (server 0.4.0, desktop 0.21)
+
+A fifth capability flag, `version_authors`, advertised and declared like the four above. It adds ONE read-only field to
+`collection_version` payloads:
+
+```
+created_by: { id: string | null, display_name: string } | null
+```
+
+- The server stores the author of every collection version it creates (`collection_versions.created_by_user_id` FK users ON DELETE
+  SET NULL, and `created_by_name`, the display name at creation): the authenticated user performing the write, whether it is a sync
+  push or the REST create. A client can never supply or change it (a `created_by` in a pushed payload is ignored; the desktop never
+  sends one). `null` = a legacy version created before the server recorded authors; `id` is `null` when the account was deleted
+  afterwards (the name stays).
+- It is shaped by the declaration like the other extensions: only clients that declared `version_authors` get `created_by` in pull
+  pages, snapshot entities and `current_payload` of rejections (the log carries it from write time); others see the payload as before.
+  The REST version objects always include it.
+- It is NOT content: it must never take part in a comparison. The desktop splits it off every remote `collection_version` payload
+  at the entry points (pulled ops, snapshot entities, `current_payload` incl. the `immutable` rejection) before `samePayload`,
+  `base_payload` or a conflict copy is made, and writes it to the local row's `created_by_id` / `created_by_name` (migration 0012;
+  `toWire` never produces it). The server's value wins; a `null` keeps what is local; a version that just became an
+  `immutable_clash` is not touched. A local version created while signed in already has the same author, so the server's echo changes
+  nothing; one created without a known user gets the server's author when the engine pulls its own operation back. Nothing needs
+  re-uploading when the feature appears, and a server without the feature leaves authors as they are locally. Versions this device
+  already holds when the feature first becomes active on its link (first pull after the app update against a 0.4 server) are
+  backfilled by rewinding the pull checkpoint to 0 once and replaying the log (idempotent); this only happens when live versions
+  without an author exist. The cloud author of an `immutable_clash` (same id, different content) is kept next to the conflict
+  (`sync_conflicts.remote_author`) so "keep cloud" restores it, and "duplicate" keeps the local creator.
+  On the server a pushed `created_at` is capped at the server's clock and the REST create ignores it.
+- Tests: `wireContract.ts` `checkVersionAuthorsContract` (fake and real server), `sync/versionAuthors.test.ts` (two devices, older
+  server and its upgrade, deleted account, no false immutable clash, base/conflict copies free of the field).

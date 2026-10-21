@@ -1,4 +1,4 @@
-import type { ApiFolder, ApiRequest, Collection, CollectionSnapshot } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, CollectionSnapshot, CollectionVersionAuthor } from '../../../shared/types'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import { compareSemver, validateVersion } from '../../lib/semver'
 import { addCollection, must, removeCollectionContents, touch, type MockState, type VersionRow } from './store'
@@ -47,7 +47,13 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
   }
 }
 
-export function addVersion(s: MockState, collectionId: string, version: string, notes: string | null): VersionRow {
+export function addVersion(
+  s: MockState,
+  collectionId: string,
+  version: string,
+  notes: string | null,
+  createdBy: CollectionVersionAuthor | null = s.versionAuthor?.() ?? null,
+): VersionRow {
   const collection = must(s.collections, collectionId, 'Collection')
   const snapshot = takeSnapshot(s, collectionId)
   const row: VersionRow = {
@@ -59,6 +65,7 @@ export function addVersion(s: MockState, collectionId: string, version: string, 
     folderCount: snapshot.folders.length,
     requestCount: snapshot.requests.length,
     createdAt: nowSec(),
+    createdBy,
     snapshot,
   }
   s.versions.push(row)

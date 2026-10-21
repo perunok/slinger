@@ -269,7 +269,7 @@ export function seedState(s: MockState): void {
   importPostman(s, personal.id, JSON.stringify(PETSTORE))
   seedEnvironments(s, personal.id)
   seedHistory(s, personal.id)
-  addVersion(s, demoId, '1.0.0', 'Initial release of the demo API collection.')
+  addVersion(s, demoId, '1.0.0', 'Initial release of the demo API collection.', { id: 'user-1', name: 'Ana Silva' })
 
   const shared = addCollection(s, team.id, 'Team Endpoints')
   addRequest(s, {

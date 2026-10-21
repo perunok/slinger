@@ -15,8 +15,8 @@ export type AnyRow = Record<string, string | number | null>
  * sync call. A link's effective set (`cloud_links.sync_features`) gates the wire mapping: fields and types of a
  * feature that is off are not part of the payload at all, so they stay local-only with an older server.
  */
-export type SyncFeature = 'folder_scripts' | 'docs' | 'collection_variables' | 'globals'
-export const CLIENT_FEATURES: readonly SyncFeature[] = ['folder_scripts', 'docs', 'collection_variables', 'globals']
+export type SyncFeature = 'folder_scripts' | 'docs' | 'collection_variables' | 'globals' | 'version_authors'
+export const CLIENT_FEATURES: readonly SyncFeature[] = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors']
 export type Features = ReadonlySet<string>
 export const NO_FEATURES: Features = new Set()
 export const ALL_FEATURES: Features = new Set(CLIENT_FEATURES)

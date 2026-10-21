@@ -13,6 +13,8 @@ class UiState {
   updateOpen = $state(false)
   /** ADDED (sync activity): the Sync activity dialog of the open workspace. */
   syncActivityOpen = $state(false)
+  /** ADDED (team): the Team dialog (members of the cloud workspace) of the open workspace. */
+  teamOpen = $state(false)
   /** Publish-to-cloud flow for the current workspace. */
   publishOpen = $state(false)
   /** Link-a-cloud-workspace flow; `remoteId` pre-selects one from the list. */

@@ -790,15 +790,26 @@ variables restores the collection without any).
 
 - **Create version:** enter `MAJOR.MINOR.PATCH` (optionally `-prerelease`, e.g. `1.2.0` or `2.0.0-beta.1`; no leading `v`, no
   build metadata) and optional notes; buttons suggest the next patch, minor and major. A label can be used once per collection.
-- The list is ordered newest first by semantic-version precedence and shows folder and request counts.
+- The list is ordered newest first by semantic-version precedence and shows folder and request counts. Each row also says who
+  created the version and when (`Ana Silva · 3 h ago`; after a week the date). The detail view shows `Created by <name> · <date and
+  time>`, with `(you)` after your own name. The author is the Slinger Cloud account you are signed in with when the version is made
+  (also for the automatic snapshot before a Postman re-import, and for versions an AI assistant saves for you). Versions made
+  while signed out, versions that were created before Slinger recorded authors and versions of an older server show the date only;
+  authors from teammates need Slinger Cloud 0.4.0 or newer (an older cloud server does not send them).
+  In a shared workspace everyone sees who created each version: the name comes from the cloud, so it is also right for versions
+  made on another computer or by a teammate (an author whose account was deleted keeps their name).
 - **Compare:** pick a version and compare it against another version or the current collection to see added, removed and changed
-  requests and folders.
+  requests and folders. The two sides are headed with their version, author and date.
 - **Restore:** *as a new collection* named `<name> (vX.Y.Z)` (the live collection is untouched), or *replace the live collection*
   (asks for confirmation; suggests creating a version first). Replacing gives requests new ids, so open tabs for them are closed.
 - **Delete** removes a version (it cannot be edited).
 - **Versions travel with exports:** exporting a collection writes its version history into the file, and importing that file
   into Slinger (on this or another machine) restores every version with its number, notes, date and snapshot, so you can
   compare and restore them there. This works for any collection, including ones originally imported from Postman. See below.
+  The author of each version is written into the file as well (name and cloud user id) and restored on import; files from an older
+  Slinger simply have no authors. The author from a file is kept in a workspace that is not linked to Slinger Cloud; once a
+  workspace syncs, the cloud records whoever uploaded the version and replaces it, so a teammate's imported file shows you as the
+  creator after the next sync.
 
 ## Documentation (Markdown)
 
@@ -974,6 +985,15 @@ sign-in, every few minutes and when you switch back to the window). **Open** dow
 keeps it in sync and switches to it; **Not now** hides the banner on this device (it stays under **Your cloud workspaces** in the
 cloud panel, where **Link…** opens it later). When several arrive at once, **Show** opens that list.
 
+**Team.** A workspace you shared (people added in the Slinger Cloud dashboard), or one that was shared with you, shows as a team:
+the workspace picker adds **(team)** to its name, and the **Workspaces** dialog shows **team · N members** next to it. The sync
+chip's menu has **Team (N)…** (also Ctrl+K > *Team members*), which opens the member list of the cloud workspace: name (and
+**You**), email, role (Owner, Admin, Editor or Viewer) and when they joined, owners first. The list is read from the cloud each
+time you open it (**Refresh** reads it again; offline you get a message). The **Cloud** panel shows the size under **Team**. People
+are added, removed and given a role by owners and admins in the Slinger Cloud dashboard, not in Slinger. The member count is checked
+at most once a minute, with each sync (every minute while Slinger is in front, every 5 minutes otherwise), and is remembered, so
+the label is right when Slinger starts offline. **Sync now** or opening **Team** updates it immediately.
+
 **What syncs.** Collections, folders and requests (with their scripts, docs and saved examples), collection- and folder-level scripts
 and documentation, collection variables, environments and their variables, globals, and collection versions. Secret values
 (secret environment variables and secret globals) never leave the device: the cloud and other devices only learn the name, and a
@@ -982,7 +1002,8 @@ app settings and cloud tokens never sync. If the same variable was added on two 
 importing the same Postman collection on both), identical ones become one; different ones are both kept and yours is renamed
 `<name>_conflict` (noted in the conflict history). An older cloud server that does not know collection/folder scripts and docs,
 collection variables or globals simply leaves them on each device (nothing is reported); they upload by themselves once the
-server is updated.
+server is updated. Version authors need Slinger Cloud 0.4.0 or newer: an older server does not send them, so versions then show
+the date only.
 
 **Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing (with what it is doing: *Uploading
 3/12*, *Downloading 40 changes*), Offline (edits are kept and upload later), Sync error (with a Retry toast), conflicts,

@@ -2,7 +2,7 @@
  * The sync engine: cycle (pull then push), status model, backoff, snapshot phase, role handling
  * (docs/SYNC_DESIGN.md sections 7, 10). No Electron imports: fetch, clock, timers and events are injected.
  */
-import type { CloudRole, SyncEntityType, SyncEvent, SyncRun, SyncState, SyncStatus } from '../../shared/types'
+import type { CloudRole, SyncEntityType, SyncEvent, SyncRun, SyncState, SyncStatus, WorkspaceMember } from '../../shared/types'
 import { SyncActivity } from './activity'
 import type { CloudAuth } from '../cloud/auth'
 import type { CloudGateway } from '../cloud/api'
@@ -13,7 +13,7 @@ import type { SecretStore } from '../services/secrets'
 import { applyRemoteOp, applySnapshotEntity, fixFolderCycles, makeApplyCtx, type ApplyCtx } from './apply'
 import { recordAutoResolved } from './conflictStore'
 import { reevaluateOpenConflicts } from './conflicts'
-import { updateLinkFeatures } from './features'
+import { hasUnattributedVersions, updateLinkFeatures } from './features'
 import { dedupeEnvironments } from './linking'
 import {
   MAX_BYTES_PER_PUSH,
@@ -43,6 +43,8 @@ const PULL_LIMIT = 200
 const SNAPSHOT_LIMIT = 200
 const MAX_ROUNDS = 4
 const ROLE_CHECK_INTERVAL_MS = 30_000
+/** The member count is read at most this often by cycles (a manual sync, link, publish and the Team dialog force it). */
+export const MEMBER_CHECK_INTERVAL_MS = 60_000
 const SENT_OPS_TTL_S = 14 * 24 * 3600
 const BACKOFF_BASE_MS = 5_000
 const BACKOFF_MAX_MS = 5 * 60_000
@@ -67,6 +69,7 @@ interface Runtime {
   nextRetryAtMs: number | null
   lastCycleAtMs: number
   lastRoleCheckMs: number
+  lastMemberCheckMs: number
   dirtySince: number | null
   debounce: unknown
   /** Counts last announced in a status event (the scheduler's watcher announces local edits). */
@@ -92,7 +95,7 @@ export class SyncEngine {
   rt(workspaceId: string): Runtime {
     let r = this.rts.get(workspaceId)
     if (!r) {
-      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, dirtySince: null, debounce: null, announced: null, run: null }
+      r = { running: null, progress: null, state: 'idle', failures: 0, nextRetryAtMs: null, lastCycleAtMs: 0, lastRoleCheckMs: 0, lastMemberCheckMs: 0, dirtySince: null, debounce: null, announced: null, run: null }
       this.rts.set(workspaceId, r)
     }
     return r
@@ -111,7 +114,7 @@ export class SyncEngine {
       return {
         workspaceId, linked: false, state: 'unlinked', apiBaseUrl: null, remoteWorkspaceId: null, remoteName: null, role: null,
         readOnly: false, autoSync: false, pendingChanges: 0, openConflicts: 0, initialSyncPending: false, lastSyncedAt: null,
-        lastError: null, nextRetryAt: null, progress: null,
+        lastError: null, nextRetryAt: null, progress: null, members: null,
       }
     }
     const rt = this.rt(workspaceId)
@@ -140,6 +143,7 @@ export class SyncEngine {
       lastError: link.last_error_code ? { code: link.last_error_code, message: link.last_error_message ?? '' } : null,
       nextRetryAt: rt.nextRetryAtMs && !rt.running ? Math.ceil(rt.nextRetryAtMs / 1000) : null,
       progress: rt.running ? rt.progress : null,
+      members: link.member_count,
     }
   }
 
@@ -218,6 +222,7 @@ export class SyncEngine {
 
     const clientId = await this.ensureClient(link.api_base_url, workspaceId)
     await this.refreshRole(workspaceId, manual)
+    await this.refreshMembers(workspaceId, manual || link.link_state === 'initial')
     link = getLink(db, workspaceId)!
 
     db.prepare('DELETE FROM sync_sent_ops WHERE sent_at < ?').run(Math.floor(clock.now() / 1000) - SENT_OPS_TTL_S)
@@ -415,6 +420,37 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * Counts the active members of the cloud workspace (all pages, at most 500) into `cloud_links.member_count` and
+   * announces a changed count. Throttled to once per MEMBER_CHECK_INTERVAL_MS unless `force`. Never throws: a failed
+   * fetch keeps the old value (the Team badge must not flicker away because the network blinked).
+   */
+  async refreshMembers(workspaceId: string, force: boolean): Promise<void> {
+    const rt = this.rt(workspaceId)
+    if (!force && this.deps.clock.now() - rt.lastMemberCheckMs < MEMBER_CHECK_INTERVAL_MS) return
+    try {
+      await this.fetchMembers(workspaceId)
+    } catch {
+      /* keep the old count; the next cycle tries again */
+    }
+  }
+
+  /** Live fetch of the members; stores and announces the count. Rejects on cloud errors (callers map them). */
+  async fetchMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+    const { db, cloud, clock, auth } = this.deps
+    const rt = this.rt(workspaceId)
+    const link = getLink(db, workspaceId)!
+    rt.lastMemberCheckMs = clock.now()
+    const { members } = await cloud.listMembers(link.remote_workspace_id)
+    const current = getLink(db, workspaceId)
+    if (current && current.member_count !== members.length) {
+      updateLink(db, workspaceId, { member_count: members.length })
+      this.emitStatus(workspaceId)
+    }
+    const me = auth.currentUserId()
+    return members.map((m) => ({ ...m, isYou: me !== null && m.userId === me }))
+  }
+
   // ---- pull --------------------------------------------------------------------------------------------------------
 
   /** Pulls and applies every page after the stored checkpoint; returns the number of operations applied. */
@@ -425,21 +461,27 @@ export class SyncEngine {
     for (;;) {
       const link = getLink(db, workspaceId)!
       const res = await this.withClient(workspaceId, clientId, (cid) => cloud.pull(link.remote_workspace_id, cid, link.sync_checkpoint, PULL_LIMIT))
+      let replay = false
       this.runApply(workspaceId, (ctx) => {
         // Server features first: they decide the wire shape the page is compared in (design section 21).
+        const hadAuthors = ctx.features.has('version_authors')
         updateLinkFeatures(ctx, res.features)
+        // `version_authors` first appears on this link (this app updated against a server that already has it, or the
+        // server upgraded): only the ops after the checkpoint carry authors, so the log is replayed once for the
+        // versions that are already here. The replay is idempotent (design section 21.5).
+        replay = !hadAuthors && ctx.features.has('version_authors') && link.sync_checkpoint > 0 && hasUnattributedVersions(db, workspaceId)
         for (const op of res.operations) {
           if (op.workspace_id && op.workspace_id !== link.remote_workspace_id) continue
           this.applyGuarded(ctx, () => applyRemoteOp(ctx, op), op.resource_type, op.resource_id)
         }
         fixFolderCycles(ctx)
-        // The checkpoint advances ONLY here, with the transaction that applied the ops.
-        updateLink(db, workspaceId, { sync_checkpoint: Math.max(link.sync_checkpoint, res.checkpoint) })
+        // The checkpoint advances ONLY here, with the transaction that applied the ops (back to 0 for the one-time replay).
+        updateLink(db, workspaceId, { sync_checkpoint: replay ? 0 : Math.max(link.sync_checkpoint, res.checkpoint) })
       })
       total += res.operations.length
       rt.progress = { phase: 'pull', done: total, total: null }
       this.emitStatus(workspaceId)
-      if (!res.has_more) {
+      if (!res.has_more && !replay) {
         this.runApply(workspaceId, (ctx) => reevaluateOpenConflicts(ctx))
         return total
       }

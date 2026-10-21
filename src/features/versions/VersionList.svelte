@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { CollectionVersion } from '../../../shared/types'
   import { latestRelease } from '../../lib/semver'
-  import { formatCreated, isPrerelease, truncate } from './helpers'
+  import { sync } from '../sync/syncStore.svelte'
+  import { detailByline, isPrerelease, listByline, truncate } from './helpers'
 
   interface Props {
     versions: CollectionVersion[]
@@ -11,6 +12,8 @@
   let { versions, selectedId, onselect }: Props = $props()
 
   const latest = $derived(latestRelease(versions.map((v) => v.version)))
+  /** The 15 s tick of the sync store re-renders the relative dates; the wall clock keeps it right before the first tick. */
+  const now = $derived(Math.max(sync.now, Math.floor(Date.now() / 1000)))
 
   function onkeydown(e: KeyboardEvent) {
     const i = versions.findIndex((v) => v.id === selectedId)
@@ -45,7 +48,7 @@
         {#if isPrerelease(v.version)}<span class="text-[10px] uppercase text-warning">pre-release</span>{/if}
         {#if v.version === latest}<span class="rounded-full bg-success-soft px-1.5 text-[10px] leading-4 text-success">latest</span>{/if}
       </div>
-      <div class="mt-0.5 text-xs text-muted">{formatCreated(v.createdAt)}</div>
+      <div class="mt-0.5 text-xs text-muted" title={detailByline(v, sync.session?.user?.id)} data-testid="version-byline">{listByline(v, sync.session?.user?.id, now)}</div>
       {#if v.notes}<div class="mt-0.5 text-xs text-fg">{truncate(v.notes, 70)}</div>{/if}
       <div class="mt-0.5 text-[11px] text-faint">{v.requestCount} request{v.requestCount === 1 ? '' : 's'}, {v.folderCount} folder{v.folderCount === 1 ? '' : 's'}</div>
     </li>

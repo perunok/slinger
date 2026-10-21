@@ -240,6 +240,31 @@ describe('collection versions', () => {
   })
 })
 
+describe('collection version authors', () => {
+  it('list_versions / create_version / get_version say when and by whom a version was saved', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    // The seeded 1.0.0 was made by the mock user; one made while signed out has no known author.
+    const signedOut = (await call('create_version', { collection_id: demo.id, bump: 'minor' })).created
+    expect(signedOut.created_by).toBeNull()
+    expect(signedOut.created).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+
+    await b.startCloudSignIn()
+    b.cloud.approveSignIn()
+    const mine = (await call('create_version', { collection_id: demo.id, bump: 'patch', notes: 'by me' })).created
+    expect(mine.created_by).toEqual({ name: 'Ana Silva', id: 'user-1' })
+
+    const listed = await call('list_versions', { collection_id: demo.id })
+    expect(listed.versions.map((v: any) => [v.version, v.created_by?.name ?? null])).toEqual([
+      ['1.1.1', 'Ana Silva'],
+      ['1.1.0', null],
+      ['1.0.0', 'Ana Silva'],
+    ])
+    const one = await call('get_version', { collection_id: demo.id, version: '1.0.0' })
+    expect(one.created_by).toEqual({ name: 'Ana Silva', id: 'user-1' })
+    expect(one.created).toMatch(/^\d{4}-/)
+  })
+})
+
 describe('history', () => {
   it('records what an assistant changed and sent, flagged; the History panel shows it', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!

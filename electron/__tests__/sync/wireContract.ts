@@ -289,3 +289,70 @@ export async function checkLocalOnlyContract(t: ContractTarget): Promise<void> {
   const vpull = await call('GET', `/v1/workspaces/${ws}/sync/pull?client_id=${vreg.json.client.client_id}&features=${ALL.join(',')}`, viewer)
   expect(vpull.status).toBe(200)
 }
+
+/**
+ * Wire contract of the `version_authors` extension (docs/SYNC_DESIGN.md section 21): the server records who created
+ * a collection version (the authenticated user, never a client-sent value) and reports it as `created_by` to clients
+ * that declared the feature. Runs against the fake (sync/versionAuthors.test.ts) and the real server (sync-it).
+ */
+export async function checkVersionAuthorsContract(t: ContractTarget): Promise<void> {
+  const call = async (method: string, path: string, token: string, body?: unknown): Promise<{ status: number; json: J }> => {
+    const res = await fetch(t.baseUrl + path, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    const text = await res.text()
+    return { status: res.status, json: text ? (JSON.parse(text) as J) : {} }
+  }
+  const FEATURES = ['version_authors']
+  const me = await call('GET', '/v1/me', t.ownerToken)
+  expect(me.status).toBe(200)
+  const author = { id: me.json.user.id as string, display_name: me.json.user.display_name as string }
+
+  const reg = await call('POST', '/v1/sync/clients/register', t.ownerToken, { client_name: 'contract', device_name: 'contract', features: FEATURES })
+  expect(reg.status).toBe(201)
+  expect(reg.json.features).toEqual(expect.arrayContaining(FEATURES))
+  const clientId = reg.json.client.client_id as string
+  const pub = await call('POST', '/v1/workspaces/publish', t.ownerToken, {
+    local_workspace: { name: `ContractV ${randomUUID().slice(0, 8)}` }, publish_mode: 'create', client: { client_id: clientId },
+  })
+  const ws = pub.json.workspace.id as string
+  const push = async (op: { resource_type: string; resource_id: string; payload: J }, features: string[] | null = FEATURES): Promise<J> => {
+    const r = await call('POST', `/v1/workspaces/${ws}/sync/push`, t.ownerToken, {
+      client_id: clientId, ...(features ? { features } : {}), operations: [{ operation_id: randomUUID(), op: 'upsert', base_version: 0, ...op }],
+    })
+    expect(r.status, JSON.stringify(r.json)).toBe(200)
+    return r.json
+  }
+  const pull = async (features: string | null) =>
+    (await call('GET', `/v1/workspaces/${ws}/sync/pull?client_id=${clientId}&after_checkpoint=0&limit=500${features === null ? '' : `&features=${features}`}`, t.ownerToken)).json
+  const snapshot = async (features: string | null) =>
+    (await call('GET', `/v1/workspaces/${ws}/sync/snapshot?client_id=${clientId}&limit=500${features === null ? '' : `&features=${features}`}`, t.ownerToken)).json
+
+  const col = randomUUID()
+  const v1 = randomUUID()
+  expect((await push({ resource_type: 'collection', resource_id: col, payload: { name: 'C' } }, null)).rejected).toEqual([])
+  const version = { collection_id: col, semver: '1.0.0', notes: 'first', snapshot_json: '{}', folder_count: 0, request_count: 0, created_at: '2026-01-02T03:04:05.000Z' }
+  // A client-supplied created_by is ignored: the author is the authenticated user.
+  const created = await push({ resource_type: 'collection_version', resource_id: v1, payload: { ...version, created_by: { id: randomUUID(), display_name: 'Mallory' } } })
+  expect(created.rejected, JSON.stringify(created.rejected)).toEqual([])
+
+  const versionOp = (j: J) => (j.operations as J[]).find((o) => o.resource_id === v1 && o.op === 'upsert')!
+  // Declared: the pulled payload and the snapshot entity carry created_by; everything else is unchanged.
+  expect(versionOp(await pull(FEATURES.join(','))).payload).toEqual({ ...version, created_by: author })
+  const snapDeclared = ((await snapshot(FEATURES.join(','))).entities as J[]).find((e) => e.resource_id === v1)!
+  expect(snapDeclared.payload).toEqual({ ...version, created_by: author })
+  // Not declared: the field is absent (the wire of before).
+  expect(versionOp(await pull(null)).payload).toEqual(version)
+  expect(((await snapshot(null)).entities as J[]).find((e) => e.resource_id === v1)!.payload).toEqual(version)
+  // Other types never get it.
+  expect(((await pull(FEATURES.join(','))).operations as J[]).find((o) => o.resource_id === col)!.payload).not.toHaveProperty('created_by')
+
+  // An identical re-send (without created_by) is an idempotent success; a changed one is refused with the author in current_payload only when declared.
+  expect((await push({ resource_type: 'collection_version', resource_id: v1, payload: version })).rejected).toEqual([])
+  const clash = await push({ resource_type: 'collection_version', resource_id: v1, payload: { ...version, notes: 'changed' } })
+  expect(clash.rejected[0]).toMatchObject({ reason: 'immutable', current_payload: { ...version, created_by: author } })
+  const clashOld = await push({ resource_type: 'collection_version', resource_id: v1, payload: { ...version, notes: 'changed' } }, null)
+  expect(clashOld.rejected[0].current_payload).toEqual(version)
+}

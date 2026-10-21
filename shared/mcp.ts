@@ -197,8 +197,8 @@ export const MCP_TOOLS = {
   list_versions: {
     title: 'Collection versions',
     description:
-      'Saved versions (immutable snapshots, semantic version numbers) of a collection, newest first, with the next patch / ' +
-      'minor / major number to use.',
+      'Saved versions (immutable snapshots, semantic version numbers) of a collection, newest first, each with when it was ' +
+      'created and by whom (created_by: name and Slinger Cloud user id; null when unknown), plus the next patch / minor / major number to use.',
     input: z.object({ collection_id: id }),
     readOnly: true,
   },
@@ -206,7 +206,8 @@ export const MCP_TOOLS = {
     title: 'Save a collection version',
     description:
       'Saves the collection as it is now as a new version (like Versions > Create). Give version (e.g. "1.4.0" or ' +
-      '"2.0.0-beta.1") or bump (default patch, from the latest release).',
+      '"2.0.0-beta.1") or bump (default patch, from the latest release). The version records who saved it: the Slinger Cloud ' +
+      'account signed in on this device (created_by in the result; null when not signed in).',
     input: z.object({
       collection_id: id,
       version: z.string().min(1).max(128).optional().describe('Semantic version, no leading "v"; must be new for this collection.'),
@@ -217,8 +218,8 @@ export const MCP_TOOLS = {
   get_version: {
     title: 'Read a collection version',
     description:
-      'What a saved version contains (folders and requests) and how the live collection differs from it (added, removed, ' +
-      'changed requests).',
+      'What a saved version contains (folders and requests), when and by whom it was created (created, created_by), and how ' +
+      'the live collection differs from it (added, removed, changed requests).',
     input: z.object({ collection_id: id, version: z.string().min(1).max(128).describe('The version number, e.g. "1.4.0".') }),
     readOnly: true,
   },

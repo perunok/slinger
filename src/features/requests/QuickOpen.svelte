@@ -26,7 +26,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload' | 'help' | 'history' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left'
+    icon?: 'download' | 'upload' | 'help' | 'history' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left' | 'user'
     current: () => boolean
     run: () => void
   }
@@ -151,6 +151,15 @@
           icon: 'history' as const,
           current: () => false,
           run: () => void (ui.syncActivityOpen = true),
+        },
+        {
+          key: 'team-members',
+          label: 'Team members…',
+          hint: 'who is in this cloud workspace, and their roles',
+          swatch: {},
+          icon: 'user' as const,
+          current: () => false,
+          run: () => void (ui.teamOpen = true),
         }]
       : []),
     // Read-only or revoked workspaces cannot import (the toolbar button is disabled too).

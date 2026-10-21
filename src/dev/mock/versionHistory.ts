@@ -3,7 +3,7 @@
  * notes for the common cases (valid block, metadata only, duplicates, malformed block), with lighter validation.
  */
 import type { VersionHistoryImportResult } from '../../../shared/slingerExport'
-import type { CollectionSnapshot } from '../../../shared/types'
+import type { CollectionSnapshot, CollectionVersionAuthor } from '../../../shared/types'
 import { compareSemver, parseSemver } from '../../lib/semver'
 import type { MockState } from './store'
 import { clone, uuid } from './util'
@@ -15,6 +15,7 @@ interface Entry {
   version: string
   notes: string | null
   createdAt: number
+  createdBy: CollectionVersionAuthor | null
   snapshot: CollectionSnapshot | null
 }
 
@@ -37,6 +38,11 @@ function parse(raw: unknown): { ok: true; entries: Entry[] } | { ok: false; reas
       version: v.version,
       notes: typeof v.notes === 'string' && v.notes.trim() ? v.notes.trim() : null,
       createdAt: Math.floor(created / 1000),
+      // Optional, and tolerant: a malformed value means an unknown author, never a failed import.
+      createdBy:
+        isObj(v.createdBy) && typeof v.createdBy.name === 'string' && v.createdBy.name.trim()
+          ? { id: typeof v.createdBy.id === 'string' ? v.createdBy.id : null, name: v.createdBy.name.trim() }
+          : null,
       snapshot: v.snapshot ? clone(v.snapshot as CollectionSnapshot) : null,
     })
   }
@@ -94,6 +100,7 @@ export function restoreVersionHistoryMock(s: MockState, collectionId: string, ra
       folderCount: snapshot.folders.length,
       requestCount: snapshot.requests.length,
       createdAt: e.createdAt,
+      createdBy: e.createdBy,
       snapshot,
     })
     taken.add(label)

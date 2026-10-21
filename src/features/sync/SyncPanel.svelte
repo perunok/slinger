@@ -4,6 +4,7 @@
   import { ui } from '../../app/ui.svelte'
   import Button from '../../components/ui/Button.svelte'
   import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
+  import { membersLabel } from '../team/team'
   import { formatAgo } from './status'
   import { sync } from './syncStore.svelte'
 
@@ -50,6 +51,10 @@
           <dd data-testid="sync-state">{chip.label}<span class="text-muted"> - {chip.detail}</span></dd>
           <dt class="text-muted">Last synced</dt>
           <dd>{formatAgo(status.lastSyncedAt, sync.now)}</dd>
+          {#if status.members !== null}
+            <dt class="text-muted">Team</dt>
+            <dd data-testid="sync-members">{membersLabel(status.members)}</dd>
+          {/if}
           <dt class="text-muted">Waiting to upload</dt>
           <dd>{status.pendingChanges} change{status.pendingChanges === 1 ? '' : 's'}</dd>
           {#if status.lastError}

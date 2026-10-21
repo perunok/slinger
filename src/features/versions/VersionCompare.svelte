@@ -3,8 +3,10 @@
   import { app } from '../../app/state.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { api, errorInfo } from '../../lib/ipc'
+  import { sync } from '../sync/syncStore.svelte'
   import { diffSnapshots, snapshotFromCollection } from '../../lib/versionDiff'
   import DiffView from './DiffView.svelte'
+  import { compareSide } from './helpers'
 
   interface Props {
     detail: CollectionVersionDetail
@@ -61,6 +63,10 @@
     return other ? { snapshot: other.snapshot, label: `v${other.version}` } : null
   })
   const diff = $derived(target ? diffSnapshots(detail.snapshot, target.snapshot) : null)
+  const userId = $derived(sync.session?.user?.id)
+  /** Who made each side and when; the live collection has no author. */
+  const fromHeading = $derived(compareSide(detail, userId))
+  const toHeading = $derived(against === 'current' ? 'Current collection' : other ? compareSide(other, userId) : null)
 </script>
 
 <div class="flex flex-col gap-3">
@@ -83,6 +89,12 @@
   {/if}
   <InlineError message={error} />
   {#if diff && target}
+    <dl class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs" aria-label="Compared versions" data-testid="compare-headings">
+      <dt class="text-muted">From</dt>
+      <dd class="min-w-0 break-words text-fg">{fromHeading}</dd>
+      <dt class="text-muted">To</dt>
+      <dd class="min-w-0 break-words text-fg">{toHeading}</dd>
+    </dl>
     <DiffView {diff} fromLabel="v{detail.version}" toLabel={target.label} />
   {:else if !loading && !error && against === 'current'}
     <p class="text-sm text-muted">The live collection could not be found.</p>

@@ -16,6 +16,8 @@ export interface ConflictRow {
   local_json: string | null
   remote_json: string | null
   remote_version: number
+  /** JSON `{ id, name }`: the cloud's author of the remote side (immutable_clash of a version), not part of `remote_json`. */
+  remote_author: string | null
   label: string
   message: string
   status: 'open' | 'resolved' | 'auto_resolved'
@@ -34,6 +36,7 @@ export interface ConflictInput {
   local?: Payload | null
   remote?: Payload | null
   remoteVersion?: number
+  remoteAuthor?: { id: string | null; name: string } | null
   label: string
   message?: string
 }
@@ -60,22 +63,23 @@ export function upsertOpenConflict(db: Db, nowS: number, c: ConflictInput): Conf
     local_json: json(c.local),
     remote_json: json(c.remote),
     remote_version: c.remoteVersion ?? 0,
+    remote_author: c.remoteAuthor ? JSON.stringify({ id: c.remoteAuthor.id, name: c.remoteAuthor.name }) : null,
     label: c.label,
     message: c.message ?? '',
   }
   if (existing) {
     db.prepare(
       `UPDATE sync_conflicts SET kind = @kind, groups = @groups, base_json = @base_json, local_json = @local_json,
-         remote_json = @remote_json, remote_version = @remote_version, label = @label, message = @message WHERE id = @id`,
+         remote_json = @remote_json, remote_version = @remote_version, remote_author = @remote_author, label = @label, message = @message WHERE id = @id`,
     ).run({ ...values, id: existing.id })
     return getConflict(db, existing.id)!
   }
   const id = newId()
   db.prepare(
     `INSERT INTO sync_conflicts (id, workspace_id, entity_type, entity_id, kind, groups, base_json, local_json, remote_json,
-       remote_version, label, message, status, created_at)
+       remote_version, remote_author, label, message, status, created_at)
      VALUES (@id, @workspace_id, @entity_type, @entity_id, @kind, @groups, @base_json, @local_json, @remote_json,
-       @remote_version, @label, @message, 'open', @created_at)`,
+       @remote_version, @remote_author, @label, @message, 'open', @created_at)`,
   ).run({ ...values, id, workspace_id: c.workspaceId, entity_type: c.type, entity_id: c.id, created_at: nowS })
   return getConflict(db, id)!
 }

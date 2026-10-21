@@ -7,6 +7,7 @@
   import LinkDialog from './LinkDialog.svelte'
   import PublishDialog from './PublishDialog.svelte'
   import SyncActivityDialog from './SyncActivityDialog.svelte'
+  import TeamDialog from '../team/TeamDialog.svelte'
   import { sync } from './syncStore.svelte'
 
   onMount(() => void sync.init())
@@ -42,5 +43,6 @@
 
 {#if ui.conflictsOpen}<ConflictsDialog />{/if}
 {#if ui.syncActivityOpen}<SyncActivityDialog />{/if}
+{#if ui.teamOpen}<TeamDialog />{/if}
 {#if ui.publishOpen}<PublishDialog />{/if}
 {#if ui.linkOpen}<LinkDialog />{/if}

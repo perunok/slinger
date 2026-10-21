@@ -90,6 +90,9 @@
       <div class="flex flex-wrap gap-1 border-t border-border pt-2">
         {#if status?.linked}
           <Button size="sm" variant="ghost" icon="history" onclick={() => (close(false), (ui.syncActivityOpen = true))}>Sync activity…</Button>
+          {#if status.members !== null}
+            <Button size="sm" variant="ghost" icon="user" onclick={() => (close(false), (ui.teamOpen = true))}>Team ({status.members})…</Button>
+          {/if}
         {/if}
         <Button size="sm" variant="ghost" icon="cloud" onclick={() => (close(false), (ui.cloudOpen = true))}>{status?.linked ? 'Cloud settings…' : 'Cloud…'}</Button>
       </div>

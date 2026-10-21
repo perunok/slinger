@@ -6,6 +6,8 @@
   import IconButton from '../../components/ui/IconButton.svelte'
   import { errorInfo } from '../../lib/ipc'
   import { runsStore } from '../runner/runs.svelte'
+  import { sync } from '../sync/syncStore.svelte'
+  import { isTeamWorkspace } from '../team/team'
 
   /** A workspace to switch to once the user confirmed that its collection runs stop. */
   let pending = $state<string | null>(null)
@@ -34,7 +36,7 @@
 <div class="flex items-center gap-1">
   <label for="ws-select" class="sr-only">Workspace</label>
   <select id="ws-select" class="h-7 max-w-48 py-0" value={app.workspaceId ?? ''} onchange={(e) => change(e.currentTarget.value, e.currentTarget)}>
-    {#each app.workspaces as w (w.id)}<option value={w.id}>{w.name}{w.workspaceType === 'team' ? ' (team)' : ''}</option>{/each}
+    {#each app.workspaces as w (w.id)}<option value={w.id}>{w.name}{isTeamWorkspace(w, sync.statusOf(w.id)) ? ' (team)' : ''}</option>{/each}
   </select>
   <IconButton icon="settings" label="Manage workspaces" onclick={() => (ui.workspacesOpen = true)} />
 </div>

@@ -215,16 +215,19 @@ export function resolveConflict(ctx: ApplyCtx, c: ConflictRow, input: ResolveSyn
     case 'rejected':
       discardLocalChange(ctx, type, id)
       break
-    case 'immutable_clash':
+    case 'immutable_clash': {
+      // Read BEFORE the local copy is replaced: the re-created duplicate keeps the creator of the local version.
+      const localAuthor = db.prepare('SELECT created_by_id, created_by_name FROM collection_versions WHERE id = ?').get(id) as VersionAuthorCols | undefined
       if (remote && c.remote_version > 0 && loadRow(db, 'collection', String(remote.collection_id ?? ''))?.deleted === 0) {
         // Same id, different content in the cloud (`immutable` rejection): this device takes the cloud's copy.
-        takeRemoteVersion(ctx, id, remote, c.remote_version)
+        takeRemoteVersion(ctx, id, remote, c.remote_version, parseAuthor(c.remote_author))
       } else {
         db.prepare('DELETE FROM sync_entities WHERE entity_type = ? AND entity_id = ?').run(type, id)
       }
       clearDirty(db, type, id)
-      if (input.resolution === 'duplicate') recreateVersion(ctx, c, input.newVersion)
+      if (input.resolution === 'duplicate') recreateVersion(ctx, c, input.newVersion, localAuthor)
       break
+    }
     case 'duplicate_key':
       break
   }
@@ -390,16 +393,33 @@ export function discardLocalChange(ctx: ApplyCtx, type: SyncEntityType, id: stri
 }
 
 /** Replaces the (hidden) local copy of a collection version with the cloud's content under the same id. */
-function takeRemoteVersion(ctx: ApplyCtx, id: string, remote: Payload, version: number): void {
+function takeRemoteVersion(ctx: ApplyCtx, id: string, remote: Payload, version: number, author: { id: string | null; name: string } | null): void {
   const { db } = ctx
   // Versions are immutable in SQLite (only `deleted` may change), so the local copy is replaced, not updated.
   db.prepare('DELETE FROM collection_versions WHERE id = ?').run(id)
   insertFromPayload(ctx, 'collection_version', id, ctx.workspaceId, remote)
+  // The cloud's author was kept next to the conflict (it is not part of `remote`); none = a legacy version.
+  if (author) db.prepare('UPDATE collection_versions SET created_by_id = ?, created_by_name = ? WHERE id = ?').run(author.id, author.name, id)
   syncedTo(ctx, 'collection_version', id, version, remote)
   noteChange(ctx, 'collection_version', id, 'upsert')
 }
 
-function recreateVersion(ctx: ApplyCtx, c: ConflictRow, newVersion: string | undefined): void {
+interface VersionAuthorCols {
+  created_by_id: string | null
+  created_by_name: string | null
+}
+
+function parseAuthor(raw: string | null): { id: string | null; name: string } | null {
+  if (!raw) return null
+  try {
+    const a = JSON.parse(raw) as { id?: unknown; name?: unknown }
+    return typeof a.name === 'string' && a.name ? { id: typeof a.id === 'string' ? a.id : null, name: a.name } : null
+  } catch {
+    return null
+  }
+}
+
+function recreateVersion(ctx: ApplyCtx, c: ConflictRow, newVersion: string | undefined, localAuthor: VersionAuthorCols | undefined): void {
   const { db } = ctx
   if (!newVersion || !parseSemver(newVersion)) throw invalidInput('newVersion must be a valid semantic version like 1.2.3')
   const local = parsePayload(c.local_json)!
@@ -409,6 +429,9 @@ function recreateVersion(ctx: ApplyCtx, c: ConflictRow, newVersion: string | und
   if (clash) throw invalidInput(`version ${newVersion} already exists for this collection`)
   const id = newId()
   insertFromPayload(ctx, 'collection_version', id, ctx.workspaceId, { ...local, semver: newVersion, created_at: new Date(ctx.nowS * 1000).toISOString() })
+  // The author is not part of the payload: the new label keeps the creator of the version it was made from.
+  // `localAuthor` was read before "keep cloud" replaced the row of `c.entity_id` with the cloud's copy.
+  db.prepare('UPDATE collection_versions SET created_by_id = ?, created_by_name = ? WHERE id = ?').run(localAuthor?.created_by_id ?? null, localAuthor?.created_by_name ?? null, id)
   markDirty(db, 'collection_version', id, ctx.workspaceId)
   noteChange(ctx, 'collection_version', id, 'upsert')
 }

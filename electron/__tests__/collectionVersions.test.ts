@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CollectionVersion } from '../../shared/types'
+import { createCollectionVersion, getCollectionVersion, listCollectionVersions } from '../services/collectionVersions'
+import { replaceCollectionFromPostman } from '../services/postmanImport'
 import { DOC, makeEnv, scaffold, type TestEnv } from './helpers'
 
 let env: TestEnv
@@ -238,3 +240,38 @@ describe('restoreCollectionVersion', () => {
     expect(env.core.db.prepare('SELECT deleted FROM collection_versions WHERE id = ?').get(v.id)).toEqual({ deleted: 1 })
   })
 })
+
+describe('version author', () => {
+  it('is unknown without a signed-in cloud user (Core.versionAuthor() is null)', async () => {
+    expect(env.core.versionAuthor()).toBeNull()
+    const v = await create('1.0.0')
+    expect(v.createdBy).toBeNull()
+    expect((await env.api.getCollectionVersion(v.id)).createdBy).toBeNull()
+    expect(env.core.db.prepare('SELECT created_by_id, created_by_name FROM collection_versions WHERE id = ?').get(v.id)).toEqual({ created_by_id: null, created_by_name: null })
+  })
+
+  it('is stored with the version when the service is given the signed-in user', () => {
+    const v = createCollectionVersion(env.core.db, { collectionId: colId, version: '1.0.0' }, { id: 'user-1', name: 'Ana Silva' })
+    expect(v.createdBy).toEqual({ id: 'user-1', name: 'Ana Silva' })
+    expect(getCollectionVersion(env.core.db, v.id).createdBy).toEqual({ id: 'user-1', name: 'Ana Silva' })
+    expect(listCollectionVersions(env.core.db, colId)[0]!.createdBy).toEqual({ id: 'user-1', name: 'Ana Silva' })
+    const gone = createCollectionVersion(env.core.db, { collectionId: colId, version: '1.1.0' }, { id: null, name: 'Former member' })
+    expect(gone.createdBy).toEqual({ id: null, name: 'Former member' })
+  })
+
+  it('the author columns do not break immutability of the content, and are no part of the snapshot', () => {
+    const v = createCollectionVersion(env.core.db, { collectionId: colId, version: '1.0.0' }, { id: 'u', name: 'N' })
+    expect(() => env.core.db.prepare("UPDATE collection_versions SET notes = 'x' WHERE id = ?").run(v.id)).toThrow(/immutable/)
+    env.core.db.prepare("UPDATE collection_versions SET created_by_name = 'Renamed' WHERE id = ?").run(v.id)
+    expect(getCollectionVersion(env.core.db, v.id).createdBy).toEqual({ id: 'u', name: 'Renamed' })
+    const raw = (env.core.db.prepare('SELECT snapshot_json FROM collection_versions WHERE id = ?').get(v.id) as { snapshot_json: string }).snapshot_json
+    expect(raw).not.toContain('created_by')
+  })
+
+  it('the automatic safety version of a re-import is made by the same author', async () => {
+    const json = JSON.stringify({ info: { name: 'X', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' }, item: [{ name: 'R', request: { method: 'GET', url: 'http://x' } }] })
+    const res = replaceCollectionFromPostman(env.core.db, colId, json, 'x.json', { id: 'u1', name: 'Una' })
+    expect(res.safetyVersion.createdBy).toEqual({ id: 'u1', name: 'Una' })
+  })
+})
+

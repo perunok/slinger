@@ -1,5 +1,5 @@
 /** Typed cloud API calls used by sync (paths and shapes: slinger-admin server routes + docs/SYNC_DESIGN.md section 14). */
-import type { CloudRole } from '../../shared/types'
+import type { CloudRole, WorkspaceMember } from '../../shared/types'
 import { CLIENT_FEATURES } from '../sync/mapping'
 import type { PullResponse, PushResponse, SnapshotResponse, WireOp } from '../sync/types'
 import type { CloudAuth } from './auth'
@@ -19,6 +19,14 @@ export interface RegisterResult {
   protocolVersion: number
   features: string[]
 }
+/** A member as the cloud lists it (`isYou` is decided by the engine, which knows the signed-in user). */
+export type RemoteMember = Omit<WorkspaceMember, 'isYou'>
+/** The most members one listing returns (the Team dialog and the count); `truncated` when there were more. */
+export const MAX_MEMBERS = 500
+export interface MemberList {
+  members: RemoteMember[]
+  truncated: boolean
+}
 export interface PublishResult {
   workspace: RemoteWorkspaceInfo
   role: CloudRole
@@ -31,6 +39,8 @@ export interface CloudGateway {
   registerClient(deviceName: string, clientVersion: string): Promise<RegisterResult>
   listWorkspaces(): Promise<RemoteWorkspaceInfo[]>
   getWorkspace(id: string): Promise<RemoteWorkspaceInfo>
+  /** Active members of a workspace, all pages (at most MAX_MEMBERS). */
+  listMembers(id: string): Promise<MemberList>
   publish(name: string, clientId: string, deviceName: string): Promise<PublishResult>
   push(workspaceId: string, clientId: string, baseCheckpoint: number, operations: WireOp[]): Promise<PushResponse>
   pull(workspaceId: string, clientId: string, afterCheckpoint: number, limit: number): Promise<PullResponse>
@@ -43,6 +53,15 @@ interface WorkspaceWire {
   slug: string
   role?: CloudRole
   added_by?: { id: string; display_name: string } | null
+}
+interface MemberWire {
+  id: string
+  user_id: string
+  email: string
+  display_name: string
+  role: CloudRole
+  status?: string
+  joined_at?: string
 }
 
 export class CloudApi implements CloudGateway {
@@ -90,6 +109,26 @@ export class CloudApi implements CloudGateway {
   async getWorkspace(id: string): Promise<RemoteWorkspaceInfo> {
     const res = await this.call<{ workspace: WorkspaceWire; membership: { role: CloudRole } | null }>('GET', `/v1/workspaces/${encodeURIComponent(id)}`)
     return { id: res.workspace.id, name: res.workspace.name, slug: res.workspace.slug, role: res.membership?.role ?? null }
+  }
+
+  async listMembers(id: string): Promise<MemberList> {
+    const members: RemoteMember[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < 50; page++) {
+      const res = await this.call<{ items: MemberWire[]; page?: { next_cursor: string | null; has_more: boolean } }>('GET', `/v1/workspaces/${encodeURIComponent(id)}/members`, {
+        query: { limit: 100, cursor },
+      })
+      for (const m of res.items ?? []) {
+        if (m.status && m.status !== 'active') continue
+        const joined = m.joined_at ? Date.parse(m.joined_at) : NaN
+        members.push({ id: m.id, userId: m.user_id, email: m.email, displayName: m.display_name, role: m.role, joinedAt: Number.isFinite(joined) ? Math.floor(joined / 1000) : 0 })
+      }
+      const more = !!res.page?.has_more && !!res.page.next_cursor
+      if (members.length >= MAX_MEMBERS) return { members: members.slice(0, MAX_MEMBERS), truncated: more || members.length > MAX_MEMBERS }
+      if (!more) return { members, truncated: false }
+      cursor = res.page!.next_cursor!
+    }
+    return { members, truncated: true }
   }
 
   async publish(name: string, clientId: string, deviceName: string): Promise<PublishResult> {

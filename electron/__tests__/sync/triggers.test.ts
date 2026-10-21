@@ -269,8 +269,9 @@ describe('schema drift guard', () => {
       requests: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environments: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       environment_variables: ['id', 'secret_ref', 'secret_missing', 'version', 'created_at', 'updated_at'],
-      // immutable content columns: covered by the immutability trigger + the INSERT trigger
-      collection_versions: ['id', 'workspace_id', 'collection_id', 'version', 'version_major', 'version_minor', 'version_patch', 'version_prerelease', 'notes', 'snapshot_json', 'folder_count', 'request_count', 'created_at'],
+      // immutable content columns: covered by the immutability trigger + the INSERT trigger; created_by_* (0012): the author,
+      // never part of the wire payload and written by the app / the engine without marking the row dirty
+      collection_versions: ['id', 'workspace_id', 'collection_id', 'version', 'version_major', 'version_minor', 'version_patch', 'version_prerelease', 'notes', 'snapshot_json', 'folder_count', 'request_count', 'created_at', 'created_by_id', 'created_by_name'],
       collection_variables: ['id', 'workspace_id', 'version', 'created_at', 'updated_at'],
       global_variables: ['id', 'workspace_id', 'secret_ref', 'secret_missing', 'version', 'created_at', 'updated_at'],
     }

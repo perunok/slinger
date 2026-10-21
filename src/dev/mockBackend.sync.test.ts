@@ -417,3 +417,40 @@ describe('local edits of a linked workspace while offline of conflicts', () => {
     expect(b.cloud.remoteEntities(rid).some((e) => e.id === req.id)).toBe(false)
   })
 })
+
+describe('version authors (mock)', () => {
+  beforeEach(() => {
+    b = createMockBackend({ latencyMs: 0 })
+  })
+  it('a version made while signed in records the mock user, otherwise the author is unknown', async () => {
+    const ws = await personal()
+    const col = (await b.listCollections(ws.id)).find((c) => c.name === 'Demo API')!
+    expect((await b.createCollectionVersion({ collectionId: col.id, version: '2.0.0' })).createdBy).toBeNull()
+    await signIn()
+    const v = await b.createCollectionVersion({ collectionId: col.id, version: '2.1.0' })
+    expect(v.createdBy).toEqual({ id: 'user-1', name: 'Ana Silva' })
+    expect((await b.getCollectionVersion(v.id)).createdBy).toEqual(v.createdBy)
+    expect((await b.listCollectionVersions(col.id)).map((x) => [x.version, x.createdBy?.name ?? null])).toEqual([
+      ['2.1.0', 'Ana Silva'], ['2.0.0', null], ['1.0.0', 'Ana Silva'],
+    ])
+  })
+  it('a re-import safety version has the same author, and imported versions keep the exported one', async () => {
+    const ws = await personal()
+    await signIn()
+    const col = (await b.listCollections(ws.id)).find((c) => c.name === 'Demo API')!
+    const file = JSON.stringify({
+      info: {
+        name: 'X', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        _slinger: { formatVersion: 1, versions: [{
+          version: '3.0.0', notes: null, createdAt: '2026-01-01T00:00:00.000Z', folderCount: 0, requestCount: 1,
+          createdBy: { id: 'user-9', name: 'Bruno Costa' }, snapshot: { collectionName: 'X', folders: [], requests: [{ id: 'r', folderId: null, name: 'R', method: 'GET', url: 'u', documentJson: '{}', sortOrder: 0 }] },
+        }] },
+      },
+      item: [{ name: 'R', request: { method: 'GET', url: 'http://x' } }],
+    })
+    const r = await b.replaceCollectionFromPostman(col.id, file, 'x.json')
+    expect(r.safetyVersion.createdBy).toEqual({ id: 'user-1', name: 'Ana Silva' })
+    expect((await b.listCollectionVersions(col.id)).find((v) => v.version === '3.0.0')!.createdBy).toEqual({ id: 'user-9', name: 'Bruno Costa' })
+  })
+})
+

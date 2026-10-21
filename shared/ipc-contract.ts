@@ -86,6 +86,7 @@ import type {
   VariableEntryInput,
   SyncActivityItem,
   SyncRun,
+  WorkspaceMember,
   UpdateInstallState,
 } from './types'
 import type { MenuCommand } from './menu'
@@ -303,6 +304,11 @@ export interface SlingerIpcApi {
   listSyncPending(workspaceId: string): Promise<SyncActivityItem[]>
   /** ADDED (sync activity): the latest sync runs of the workspace since Slinger started, newest first. */
   listSyncActivity(workspaceId: string): Promise<SyncRun[]>
+  /**
+   * ADDED (team): the active members of the cloud workspace this workspace is linked to (live fetch of all pages, at most 500).
+   * Also refreshes `SyncStatus.members` and emits a status event. `sync_blocked` when the workspace is not linked.
+   */
+  listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]>
 
   /** Push channel (main -> renderer). Returns an unsubscribe function. Implemented in preload with ipcRenderer.on('sync:event'). */
   onSyncEvent(listener: (event: SyncEvent) => void): () => void
@@ -496,6 +502,7 @@ export const IPC_CHANNELS = [
   'discardPendingChanges',
   'listSyncPending',
   'listSyncActivity',
+  'listWorkspaceMembers',
   'grantedFiles',
   'listCollectionVariables',
   'upsertCollectionVariable',

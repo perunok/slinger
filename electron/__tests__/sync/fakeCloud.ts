@@ -5,7 +5,7 @@
  *
  * Real HTTP on 127.0.0.1 so the whole desktop path (CloudHttp, CloudAuth, CloudApi) is exercised.
  * Endpoints: auth (device flow, refresh with single-use rotation + reuse detection, logout), /v1/me,
- * workspaces (list/get/publish), sync client registration, push, pull, snapshot.
+ * workspaces (list/get/publish), members (paginated, active only), sync client registration, push, pull, snapshot.
  * Section 21 extensions (scripts/docs fields, collection_variable, global_variable) are on by default; with
  * `extensions: false` it behaves like a server from before them (no `features` in pull/snapshot, unknown types refused).
  */
@@ -20,7 +20,7 @@ type Payload = Record<string, unknown>
 
 const TYPE_ORDER: ResourceType[] = ['collection', 'environment', 'folder', 'request', 'environment_variable', 'collection_version', 'collection_variable', 'global_variable']
 const BASE_FEATURES = ['sort_order', 'snapshot', 'collection_version', 'secret_metadata', 'op_reasons', 'request_move']
-const EXTENSIONS = ['folder_scripts', 'docs', 'collection_variables', 'globals']
+const EXTENSIONS = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors']
 /** Declared-feature gating, exactly like the server's services/syncFeatures.ts. */
 const TYPE_FEATURE: Partial<Record<ResourceType, string>> = { collection_variable: 'collection_variables', global_variable: 'globals' }
 const FIELD_FEATURE: Record<string, string> = { scripts_json: 'folder_scripts', description: 'docs', description_type: 'docs' }
@@ -36,12 +36,19 @@ function shape(type: ResourceType, p: Payload, f: Set<string>): Payload {
 const METHOD_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 
+/** Who created a collection version (the server's `created_by_user_id` + `created_by_name`); null = legacy row. */
+interface Author {
+  id: string
+  name: string
+}
 interface Entity {
   type: ResourceType
   id: string
   ws: string
   version: number
   data: Payload
+  /** Collection versions only (feature `version_authors`); kept outside `data`, so it is never part of the content. */
+  author?: Author | null
 }
 interface LogOp {
   operation_id: string
@@ -54,6 +61,8 @@ interface LogOp {
   occurred_at: string
   checkpoint: number
   client_id: string | null
+  /** Collection versions: the author at write time (`version_authors`); undefined/null = legacy. */
+  author?: Author | null
 }
 interface Workspace {
   id: string
@@ -64,6 +73,8 @@ interface Workspace {
   members: Map<string, Role>
   /** member user id -> who added them (like the server's `memberships.addedByUserId`). */
   addedBy: Map<string, string>
+  /** member user id -> when they joined (ISO), for the members listing. */
+  joined?: Map<string, string>
   seen: Map<string, LogOp> // operation_id -> log entry (idempotency)
 }
 interface User {
@@ -124,6 +135,8 @@ export interface FakeCloudOptions {
   protocolVersion?: number
   /** Section 21 extensions (default true); false = a server from before them. */
   extensions?: boolean
+  /** Feature `version_authors` (default true); false = a server before it. */
+  versionAuthors?: boolean
   pushBodyLimit?: number
   accessTtlMs?: number
 }
@@ -137,6 +150,8 @@ export class FakeCloud {
   protocolVersion: number
   /** Can be flipped at runtime to simulate a server upgrade/downgrade. */
   extensions: boolean
+  /** Feature `version_authors` (default true; needs `extensions`): the server records and reports who created a version. Can be flipped at runtime. */
+  versionAuthors = true
   /** Servers before slinger-admin 9ce4b08 reported a folder missing from the workspace as `invalid`, not `not_found`. */
   legacyMissingFolder = false
   pushBodyLimit: number
@@ -154,6 +169,7 @@ export class FakeCloud {
   constructor(opts: FakeCloudOptions = {}) {
     this.protocolVersion = opts.protocolVersion ?? 2
     this.extensions = opts.extensions ?? true
+    this.versionAuthors = opts.versionAuthors ?? true
     this.pushBodyLimit = opts.pushBodyLimit ?? 8 * 1024 * 1024
     this.accessTtlMs = opts.accessTtlMs ?? 15 * 60_000
   }
@@ -187,6 +203,7 @@ export class FakeCloud {
   createWorkspace(name: string, ownerId: string): Workspace {
     const w: Workspace = { id: randomUUID(), name, slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${this.workspaces.size}`, checkpoint: 0, log: [], members: new Map([[ownerId, 'owner']]), addedBy: new Map(), seen: new Map() }
     this.workspaces.set(w.id, w)
+    w.joined = new Map([[ownerId, new Date().toISOString()]])
     return w
   }
   /** `addedById`: the member who added them (reported to them as `added_by` in their workspace list). */
@@ -194,6 +211,9 @@ export class FakeCloud {
     const w = this.workspaces.get(wsId)!
     if (role) w.members.set(userId, role)
     else w.members.delete(userId)
+    if (!w.joined) w.joined = new Map()
+    if (role && !w.joined.has(userId)) w.joined.set(userId, new Date().toISOString())
+    if (!role) w.joined.delete(userId)
     if (role && addedById) w.addedBy.set(userId, addedById)
     if (!role) w.addedBy.delete(userId)
   }
@@ -218,13 +238,14 @@ export class FakeCloud {
     return this.entities.get(id)
   }
   /** Simulates another writer (dashboard/REST) editing an entity: bumps the version and logs an upsert. */
-  restUpsert(wsId: string, type: ResourceType, id: string, data: Payload): number {
+  restUpsert(wsId: string, type: ResourceType, id: string, data: Payload, author: Author | null = null): number {
     const w = this.workspaces.get(wsId)!
     const cur = this.entities.get(id)
     const merged = { ...(cur?.data ?? {}), ...data }
     const version = (cur?.version ?? 0) + 1
-    this.entities.set(id, { type, id, ws: wsId, version, data: merged })
-    this.record(w, null, randomUUID(), type, id, 'upsert', version, this.wire(this.entities.get(id)!))
+    // `author`: who created a collection version through REST (null = a legacy row without a recorded author).
+    this.entities.set(id, { type, id, ws: wsId, version, data: merged, ...(type === 'collection_version' ? { author } : {}) })
+    this.record(w, null, randomUUID(), type, id, 'upsert', version, this.wire(this.entities.get(id)!), author)
     return version
   }
   restDelete(wsId: string, type: ResourceType, id: string): void {
@@ -369,7 +390,7 @@ export class FakeCloud {
       const w = this.createWorkspace(name, userId)
       return { status: 201, body: { workspace: this.wsDto(w, userId), membership: { role: 'owner' }, sync_bootstrap: { client_id: client ?? 'cl_new', checkpoint: w.checkpoint } } }
     }
-    const m = /^\/v1\/workspaces\/([^/]+)(?:\/(sync\/(?:push|pull|snapshot)))?$/.exec(path)
+    const m = /^\/v1\/workspaces\/([^/]+)(?:\/(sync\/(?:push|pull|snapshot)|members))?$/.exec(path)
     if (m) {
       const w = this.workspaces.get(decodeURIComponent(m[1]!))
       if (w && m[2] === 'sync/push' && method === 'POST' && this.beforePush) {
@@ -386,6 +407,7 @@ export class FakeCloud {
         }
         return { body: this.push(w, userId, body) }
       }
+      if (m[2] === 'members' && method === 'GET') return { body: this.listMembers(w, url.searchParams) }
       if (m[2] === 'sync/pull' && method === 'GET') return { body: this.pull(w, userId, url.searchParams) }
       if (m[2] === 'sync/snapshot' && method === 'GET') return { body: this.snapshot(w, userId, url.searchParams) }
     }
@@ -393,7 +415,46 @@ export class FakeCloud {
   }
 
   serverFeatures(): string[] {
-    return this.extensions ? [...BASE_FEATURES, ...EXTENSIONS] : [...BASE_FEATURES]
+    return this.extensions ? [...BASE_FEATURES, ...EXTENSIONS.filter((f) => f !== 'version_authors' || this.versionAuthors)] : [...BASE_FEATURES]
+  }
+
+  /** The features a client declared that this server honours. */
+  private declaredBy(raw: unknown): Set<string> {
+    if (!this.extensions) return new Set()
+    const f = declared(raw)
+    if (!this.versionAuthors) f.delete('version_authors')
+    return f
+  }
+
+  /**
+   * Adds `created_by` to a collection_version payload for a client that declared `version_authors`
+   * (`{id, display_name}`; null for a legacy version; `id` null when the account was deleted afterwards).
+   */
+  private authored(type: ResourceType, p: Payload, f: Set<string>, author: Author | null | undefined): Payload {
+    if (type !== 'collection_version' || !f.has('version_authors')) return p
+    return { ...p, created_by: author ? { id: this.users.has(author.id) ? author.id : null, display_name: author.name } : null }
+  }
+
+  /** Test helper: sets (or, with null, clears = a legacy version) the author of a collection version, in the entity and in its log entries. */
+  setVersionAuthor(versionId: string, author: { id: string; name: string } | null): void {
+    const e = this.entities.get(versionId)
+    if (e) e.author = author
+    for (const w of this.workspaces.values()) for (const o of w.log) if (o.resource_id === versionId && o.resource_type === 'collection_version') o.author = author
+  }
+
+  /** GET /v1/workspaces/{id}/members: active members, keyset pagination (`cursor` = index here, `limit` <= 100). */
+  private listMembers(w: Workspace, q: URLSearchParams) {
+    const limit = Math.min(100, Math.max(1, Number(q.get('limit') ?? 20)))
+    const start = q.get('cursor') ? Number(Buffer.from(q.get('cursor')!, 'base64url').toString('utf8')) : 0
+    const all = [...w.members.entries()]
+    const slice = all.slice(start, start + limit)
+    const items = slice.map(([uid, role]) => {
+      const u = this.users.get(uid)
+      const at = w.joined?.get(uid) ?? '2026-01-01T00:00:00.000Z'
+      return { id: `mem_${w.id}_${uid}`, workspace_id: w.id, user_id: uid, email: u?.email ?? '', display_name: u?.displayName ?? '', role, status: 'active', joined_at: at, created_at: at, updated_at: at, version: 1 }
+    })
+    const hasMore = start + limit < all.length
+    return { items, page: { next_cursor: hasMore ? Buffer.from(String(start + limit), 'utf8').toString('base64url') : null, has_more: hasMore } }
   }
 
   private wsDto(w: Workspace, userId: string) {
@@ -415,7 +476,7 @@ export class FakeCloud {
     if (ops.some((o) => !TYPE_ORDER.includes(o.resource_type as ResourceType) || (!this.extensions && TYPE_FEATURE[o.resource_type as ResourceType]))) {
       throw new HttpError(400, 'invalid_request', 'operations.resource_type: Invalid enum value')
     }
-    const features = this.extensions ? declared(body.features) : new Set<string>()
+    const features = this.declaredBy(body.features)
     const accepted: Array<{ operation_id: string; resource_id: string; resulting_version: number }> = []
     const rejected: Array<{ operation_id: string; resource_id: string; code: string; reason: string; message: string; current_version: number | null; current_payload: Payload | null; conflicting_resource_id: string | null }> = []
     for (const op of ops) {
@@ -438,7 +499,7 @@ export class FakeCloud {
         const current = withState ? this.findIn(w, op.resource_type as ResourceType, rid) : undefined
         rejected.push({
           operation_id: opId, resource_id: rid, code: err.code, reason: err.reason, message: err.message, current_version: err.currentVersion,
-          current_payload: current ? shape(current.type, this.wire(current), features) : null, conflicting_resource_id: err.conflictingResourceId,
+          current_payload: current ? this.authored(current.type, shape(current.type, this.wire(current), features), features, current.author) : null, conflicting_resource_id: err.conflictingResourceId,
         })
       }
     }
@@ -451,9 +512,9 @@ export class FakeCloud {
     return e && e.ws === w.id && e.type === type ? e : undefined
   }
 
-  private record(w: Workspace, clientId: string | null, opId: string, type: ResourceType, id: string, op: 'upsert' | 'delete', version: number, payload: Payload): void {
+  private record(w: Workspace, clientId: string | null, opId: string, type: ResourceType, id: string, op: 'upsert' | 'delete', version: number, payload: Payload, author?: Author | null): void {
     w.checkpoint += 1
-    const entry: LogOp = { operation_id: opId, workspace_id: w.id, resource_type: type, resource_id: id, op, resulting_version: version, payload, occurred_at: new Date().toISOString(), checkpoint: w.checkpoint, client_id: clientId }
+    const entry: LogOp = { operation_id: opId, workspace_id: w.id, resource_type: type, resource_id: id, op, resulting_version: version, payload, occurred_at: new Date().toISOString(), checkpoint: w.checkpoint, client_id: clientId, author }
     w.log.push(entry)
     w.seen.set(opId, entry)
   }
@@ -602,7 +663,12 @@ export class FakeCloud {
       this.cascadeDelete(w, cur, clientId, op.operation_id)
       return cur.version
     }
-    const p = this.extensions ? op.payload : shape(op.resource_type, op.payload, new Set()) // an older server's zod drops unknown keys
+    let p = this.extensions ? op.payload : shape(op.resource_type, op.payload, new Set()) // an older server's zod drops unknown keys
+    if ('created_by' in p) {
+      // Never client-supplied: the author is the authenticated user (a real server's zod strips the unknown key).
+      const { created_by: _ignored, ...rest } = p
+      p = rest
+    }
     if (op.resource_type === 'global_variable' && (p.is_secret ?? cur?.data.is_secret) === true && p.value != null) {
       throw new Reject('invalid_request', 'secret values must not be synced: send value null with is_secret true', null, 'invalid')
     }
@@ -622,9 +688,12 @@ export class FakeCloud {
     const stored: Entity = { type: op.resource_type, id, ws: w.id, version: 1, data: this.normalize(op.resource_type, p) }
     if (op.resource_type === 'collection_version') {
       // Immutable: identical replays are idempotent successes elsewhere; here: label clash with another id.
+      // The author is the authenticated user performing the write, whatever the client sent.
+      const user = this.users.get(this.clients.get(clientId) ?? '')
+      stored.author = user && this.versionAuthors ? { id: user.id, name: user.displayName } : null
     }
     this.entities.set(id, stored)
-    this.record(w, clientId, op.operation_id, op.resource_type, id, 'upsert', 1, this.wire(stored))
+    this.record(w, clientId, op.operation_id, op.resource_type, id, 'upsert', 1, this.wire(stored), stored.author)
     return 1
   }
 
@@ -750,10 +819,10 @@ export class FakeCloud {
     const rows = w.log.filter((o) => o.checkpoint > after).slice(0, limit + 1)
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
-    const f = this.extensions ? declared(q.get('features')) : new Set<string>()
+    const f = this.declaredBy(q.get('features'))
     return {
       // Undeclared types are skipped, but the checkpoint still moves past them.
-      operations: page.filter((o) => typeVisible(o.resource_type, f)).map(({ client_id: _c, ...op }) => ({ ...op, payload: shape(op.resource_type, op.payload, f) })),
+      operations: page.filter((o) => typeVisible(o.resource_type, f)).map(({ client_id: _c, author, ...op }) => ({ ...op, payload: this.authored(op.resource_type, shape(op.resource_type, op.payload, f), f, author) })),
       checkpoint: page.length ? page[page.length - 1]!.checkpoint : after,
       has_more: hasMore,
       ...(this.extensions ? { features: this.serverFeatures() } : {}),
@@ -770,7 +839,7 @@ export class FakeCloud {
     let t = cursor.t
     let after = cursor.a
     let next: string | null = null
-    const f = this.extensions ? declared(q.get('features')) : new Set<string>()
+    const f = this.declaredBy(q.get('features'))
     outer: for (; t < TYPE_ORDER.length; t++) {
       if (!typeVisible(TYPE_ORDER[t]!, f)) continue
       const rows = this.live(w.id, TYPE_ORDER[t]).filter((e) => e.id > after)
@@ -780,7 +849,7 @@ export class FakeCloud {
           next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: last.resource_id })).toString('base64url')
           break outer
         }
-        entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: shape(e.type, this.wire(e), f) })
+        entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: this.authored(e.type, shape(e.type, this.wire(e), f), f, e.author) })
       }
       after = ''
     }

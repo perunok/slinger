@@ -16,7 +16,7 @@ import { OAuth2Service } from './oauth2'
 import { ScriptService } from './scriptService'
 import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
-import type { MockServerEvent, SyncEvent } from '../../shared/types'
+import type { CollectionVersionAuthor, MockServerEvent, SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
 import { McpService, type McpServiceDeps } from '../mcp/service'
 import { McpClientService, type McpClientApi, type McpClientDeps } from '../mcpClient/types'
@@ -71,6 +71,8 @@ export interface Core {
   mcpClient: McpClientApi
   /** ADDED (mock servers): local HTTP servers answering with a collection's saved examples; in memory only. */
   mockServers: MockServers
+  /** ADDED (version authors): the signed-in cloud user as the creator of versions made now; `null` when not signed in. */
+  versionAuthor(): CollectionVersionAuthor | null
 }
 
 export function createCore(deps: CoreDeps): Core {
@@ -126,6 +128,10 @@ export function createCore(deps: CoreDeps): Core {
       appVersion: deps.mcpClient?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
     mockServers: new MockServers({ emit: deps.mockServerEvents }),
+    versionAuthor: () => {
+      const user = core.sync.auth.snapshot().user
+      return user ? { id: user.id, name: user.displayName || user.email } : null
+    },
   }
   // First launch: make sure there is always a workspace to work in.
   core.workspaces.ensureDefault()

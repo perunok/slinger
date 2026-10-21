@@ -28,7 +28,9 @@ import {
   type SyncRun,
   SYNC_ACTIVITY_ITEMS,
   SYNC_ACTIVITY_RUNS,
+  type CollectionVersionAuthor,
   type Workspace,
+  type WorkspaceMember,
 } from '../../../shared/types'
 import {
   addFolder,
@@ -78,6 +80,7 @@ type SyncApi = Pick<
   | 'discardPendingChanges'
   | 'listSyncPending'
   | 'listSyncActivity'
+  | 'listWorkspaceMembers'
   | 'onSyncEvent'
 >
 
@@ -98,11 +101,20 @@ interface RemoteEntity {
   version: number
   payload: Wire
 }
+interface RemoteMember {
+  id: string
+  name: string
+  email: string
+  role: CloudRole
+  joinedAt: number
+}
 interface RemoteWs {
   id: string
   name: string
   slug: string
   role: CloudRole
+  /** Active members of the cloud workspace, you included (the Team dialog and the member count). */
+  members: RemoteMember[]
   /** Display name of who added you (null: you created it). */
   addedBy: string | null
   entities: Map<string, RemoteEntity>
@@ -148,6 +160,8 @@ interface Link {
   lastError: { code: string; message: string } | null
   nextRetryAt: number | null
   progress: SyncProgress | null
+  /** Member count as last read from the cloud; null until the first cycle (like main). */
+  members: number | null
   running: Promise<void> | null
   timer: ReturnType<typeof setTimeout> | null
   /** Ids created locally that the "server" holds elsewhere are reported once per key. */
@@ -163,6 +177,8 @@ export interface MockCloudControls {
   setOffline(offline: boolean): void
   setServerProtocol(version: number): void
   setRole(remoteId: string, role: CloudRole): void
+  /** Replaces who is in a cloud workspace (you are whoever has the signed-in email); updates the member count of a linked workspace and pushes a status event. */
+  setMembers(remoteId: string, members: Array<{ name: string; email: string; role: CloudRole }>): void
   revokeAccess(remoteId: string): void
   /** Someone adds you to a new cloud workspace (with one collection); returns its id. */
   shareWorkspace(name: string, role: CloudRole, addedBy: string): string
@@ -197,7 +213,7 @@ const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 export function createSyncApi(
   s: MockState,
   options: CloudOptions = {},
-): { api: SyncApi; controls: MockCloudControls; beforeWrite(method: string, args: unknown[]): string | null; afterWrite(workspaceId: string | null): void; reset(): void } {
+): { api: SyncApi; controls: MockCloudControls; beforeWrite(method: string, args: unknown[]): string | null; afterWrite(workspaceId: string | null): void; reset(): void; versionAuthor(): CollectionVersionAuthor | null } {
   const autoCycleMs = options.autoCycleMs ?? 0
   const stepMs = options.stepMs ?? 0
   const autoApproveMs = options.autoApproveMs ?? null
@@ -355,6 +371,7 @@ export function createSyncApi(
       lastError: null,
       nextRetryAt: null,
       progress: null,
+      members: null,
     }
   }
   function statusOf(workspaceId: string): SyncStatus {
@@ -377,6 +394,7 @@ export function createSyncApi(
       lastError: l.lastError,
       nextRetryAt: l.nextRetryAt,
       progress: l.progress,
+      members: l.members,
     }
   }
   function emitStatus(l: Link) {
@@ -791,6 +809,7 @@ export function createSyncApi(
         }
         l.role = r.role
         l.remoteName = r.name
+        l.members = r.members.length
         l.lastError = null
         l.progress = { phase: 'pull', done: 0, total: null }
         emitStatus(l)
@@ -929,7 +948,11 @@ export function createSyncApi(
   // ---- remote seed ---------------------------------------------------------------
 
   function newRemote(name: string, role: CloudRole, addedBy: string | null = role === 'owner' ? null : 'Sam Lee'): RemoteWs {
-    const r: RemoteWs = { id: uuid(), name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), role, addedBy, entities: new Map(), tombstones: new Set(), revoked: false, deleted: false }
+    const now = nowSec()
+    // You, plus the person who added you (the owner) when it is not your own workspace.
+    const members: RemoteMember[] = [{ id: uuid(), name: user.displayName, email: user.email, role, joinedAt: now }]
+    if (addedBy) members.unshift({ id: uuid(), name: addedBy, email: `${addedBy.toLowerCase().replace(/\W+/g, '.')}@example.com`, role: 'owner', joinedAt: now - 30 * 86400 })
+    const r: RemoteWs = { id: uuid(), name, slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), role, members, addedBy, entities: new Map(), tombstones: new Set(), revoked: false, deleted: false }
     remotes.set(r.id, r)
     return r
   }
@@ -991,7 +1014,7 @@ export function createSyncApi(
   function makeLink(workspaceId: string, r: RemoteWs): Link {
     const l: Link = {
       workspaceId, remoteId: r.id, remoteName: r.name, role: r.role, autoSync: true, lastSyncedAt: null, base: new Map(), conflicts: [],
-      linkState: 'initial', accessState: 'ok', lastError: null, nextRetryAt: null, progress: null, running: null, timer: null, apiBaseUrl: base(),
+      linkState: 'initial', accessState: 'ok', lastError: null, nextRetryAt: null, progress: null, members: null, running: null, timer: null, apiBaseUrl: base(),
     }
     links.set(workspaceId, l)
     return l
@@ -1212,6 +1235,19 @@ export function createSyncApi(
         .sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
         .slice(0, SYNC_ACTIVITY_ITEMS)
     },
+    async listWorkspaceMembers(workspaceId) {
+      const l = links.get(workspaceId)
+      if (!l) fail('sync_blocked', 'This workspace is not linked to the cloud')
+      requireSignedIn()
+      requireOnline()
+      const r = remotes.get(l.remoteId)
+      if (!r || r.deleted || r.revoked) fail('sync_blocked', 'You no longer have access to this cloud workspace.')
+      if (l.members !== r.members.length) {
+        l.members = r.members.length
+        emitStatus(l)
+      }
+      return r.members.map<WorkspaceMember>((m) => ({ id: m.id, userId: `user-${m.email}`, email: m.email, displayName: m.name, role: m.role, joinedAt: m.joinedAt, isYou: m.email === user.email }))
+    },
     async listSyncActivity(workspaceId) {
       return [...(activity.get(workspaceId) ?? [])].reverse().map((r) => ({ ...r, uploaded: [...r.uploaded], downloaded: [...r.downloaded] }))
     },
@@ -1363,7 +1399,23 @@ export function createSyncApi(
       for (const l of links.values()) emitStatus(l)
     },
     setRole(remoteId, role) {
-      remote(remoteId).role = role
+      const r = remote(remoteId)
+      r.role = role
+      const me = r.members.find((m) => m.email === user.email)
+      if (me) me.role = role
+    },
+    setMembers(remoteId, members) {
+      const r = remote(remoteId)
+      const now = nowSec()
+      r.members = members.map((m) => {
+        const known = r.members.find((x) => x.email === m.email)
+        return { id: known?.id ?? uuid(), name: m.name, email: m.email, role: m.role, joinedAt: known?.joinedAt ?? now }
+      })
+      const l = links.get(remoteLinkedTo(remoteId) ?? '')
+      if (l) {
+        l.members = r.members.length
+        emitStatus(l)
+      }
     },
     revokeAccess(remoteId) {
       remote(remoteId).revoked = true
@@ -1472,5 +1524,7 @@ export function createSyncApi(
     },
   }
 
-  return { api, controls, beforeWrite, afterWrite, reset }
+  /** The signed-in mock user as the creator of versions made now (like main's `Core.versionAuthor()`); null when signed out. */
+  const versionAuthor = (): CollectionVersionAuthor | null => (isSignedIn() ? { id: user.id, name: user.displayName || user.email } : null)
+  return { api, controls, beforeWrite, afterWrite, reset, versionAuthor }
 }

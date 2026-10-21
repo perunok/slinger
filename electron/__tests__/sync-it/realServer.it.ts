@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
-import { checkLocalOnlyContract, checkRejectionContract } from '../sync/wireContract'
+import { checkLocalOnlyContract, checkRejectionContract, checkVersionAuthorsContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
 
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
@@ -265,6 +265,191 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
         await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
         return cloud.login(email, PASSWORD)
       },
+    })
+  })
+
+  it('speaks the version_authors extension (created_by on collection versions) exactly as the fake server does', async () => {
+    await checkVersionAuthorsContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken,
+      viewerToken: async () => {
+        throw new Error('not needed')
+      },
+    })
+  })
+
+  describe('version authors (feature version_authors) against the real server', () => {
+    const me = async (token: string) => ((await cloud.call('GET', '/v1/me', { token })).json.user as Json)
+    const serverVersions = async (remoteId: string, colId: string, token = ownerToken) => {
+      const res = await cloud.call('GET', `/v1/workspaces/${remoteId}/collections/${colId}/versions`, { token })
+      expect(res.status, res.text).toBe(200)
+      return res.json.items as Json[]
+    }
+    const noConflicts = async (d: Device, ws: string) => {
+      expect(await d.api.listSyncConflicts(ws)).toEqual([])
+      expect(await d.api.getSyncStatus(ws)).toMatchObject({ openConflicts: 0, pendingChanges: 0, state: 'idle' })
+    }
+
+    it("a version made on device A shows A's user as its author on device B, with no clash or conflict on either side", async () => {
+      const a = await device(emails.owner)
+      const ws = a.workspace.id
+      const owner = await me(ownerToken)
+      const col = await a.api.createCollection(ws, 'Versioned')
+      const v = await a.api.createCollectionVersion({ collectionId: col.id, version: '1.0.0', notes: 'first' })
+      // Made while signed in: the author is known locally at once.
+      expect(v.createdBy).toEqual({ id: owner.id, name: owner.display_name })
+      await a.api.publishWorkspace(ws)
+      const sa = await a.core.sync.syncNow(ws)
+      expect(sa.state).toBe('idle')
+      await noConflicts(a, ws)
+      // The server recorded the same author (REST view).
+      expect(await serverVersions(sa.remoteWorkspaceId!, col.id)).toEqual([
+        expect.objectContaining({ id: v.id, semver: '1.0.0', created_by: { id: owner.id, display_name: owner.display_name } }),
+      ])
+      expect((await a.api.getCollectionVersion(v.id)).createdBy).toEqual({ id: owner.id, name: owner.display_name })
+
+      // Device B (same user) links and downloads: the version arrives with its author.
+      const b = await device(emails.owner)
+      const link = await b.api.linkRemoteWorkspace({ remoteWorkspaceId: sa.remoteWorkspaceId!, localWorkspaceId: null })
+      const wsB = link.workspace.id
+      await b.core.sync.syncNow(wsB)
+      const got = await b.api.listCollectionVersions(col.id)
+      expect(got.map((x) => [x.id, x.version, x.notes, x.createdBy])).toEqual([[v.id, '1.0.0', 'first', { id: owner.id, name: owner.display_name }]])
+      await noConflicts(b, wsB)
+      // Another round trip on both sides stays quiet (no immutable clash, nothing to upload).
+      await b.core.sync.syncNow(wsB)
+      await a.core.sync.syncNow(ws)
+      await noConflicts(a, ws)
+      await noConflicts(b, wsB)
+      expect(await a.api.listCollectionVersions(col.id)).toHaveLength(1)
+      expect(await b.api.listCollectionVersions(col.id)).toHaveLength(1)
+
+      // A version B makes later travels back with B's author.
+      const v2 = await b.api.createCollectionVersion({ collectionId: col.id, version: '1.1.0' })
+      await b.core.sync.syncNow(wsB)
+      await a.core.sync.syncNow(ws)
+      expect((await a.api.getCollectionVersion(v2.id)).createdBy).toEqual({ id: owner.id, name: owner.display_name })
+      await noConflicts(a, ws)
+      await noConflicts(b, wsB)
+    })
+
+    it("a version made by another member shows that member's name on the owner's device, for sync pushes and REST creates", async () => {
+      const { a, ws, col, remoteId } = await published('Authors')
+      await cloud.addMember(remoteId, ownerToken, emails.editor, PASSWORD, 'editor')
+      const editorToken = await cloud.login(emails.editor, PASSWORD)
+      const editor = await me(editorToken)
+      const e = await device(emails.editor)
+      const el = await e.api.linkRemoteWorkspace({ remoteWorkspaceId: remoteId, localWorkspaceId: null })
+      await e.core.sync.syncNow(el.workspace.id)
+      const ev = await e.api.createCollectionVersion({ collectionId: col.id, version: '2.0.0', notes: 'by editor' })
+      expect(ev.createdBy).toEqual({ id: editor.id, name: editor.display_name })
+      await e.core.sync.syncNow(el.workspace.id)
+      await a.core.sync.syncNow(ws)
+      expect((await a.api.getCollectionVersion(ev.id)).createdBy).toEqual({ id: editor.id, name: editor.display_name })
+      await noConflicts(a, ws)
+      await noConflicts(e, el.workspace.id)
+      // REST creates (dashboard/API) are attributed as well, and reach the desktop with the author.
+      const rest = await cloud.call('POST', `/v1/workspaces/${remoteId}/collections/${col.id}/versions`, {
+        token: editorToken,
+        body: { semver: '2.1.0', snapshot_json: JSON.stringify({ collectionName: 'Shared', folders: [], requests: [] }), notes: 'via rest' },
+      })
+      expect(rest.status, rest.text).toBe(201)
+      expect(rest.json.version.created_by).toEqual({ id: editor.id, display_name: editor.display_name })
+      await a.core.sync.syncNow(ws)
+      const restVersion = (await a.api.listCollectionVersions(col.id)).find((x) => x.version === '2.1.0')!
+      expect(restVersion.createdBy).toEqual({ id: editor.id, name: editor.display_name })
+      await noConflicts(a, ws)
+    })
+
+    it("the server's created_by is applied to a version whose local author was already set, without a conflict", async () => {
+      const a = await device(emails.owner)
+      const ws = a.workspace.id
+      const owner = await me(ownerToken)
+      const col = await a.api.createCollection(ws, 'Stale')
+      const v = await a.api.createCollectionVersion({ collectionId: col.id, version: '1.0.0' })
+      expect(v.createdBy).toEqual({ id: owner.id, name: owner.display_name })
+      // The local author column is out of date (e.g. a display name changed afterwards on the device).
+      a.db.prepare("UPDATE collection_versions SET created_by_id = ?, created_by_name = 'Stale Name' WHERE id = ?").run(owner.id, v.id)
+      await a.api.publishWorkspace(ws)
+      const sa = await a.core.sync.syncNow(ws)
+      await noConflicts(a, ws)
+      const server = (await serverVersions(sa.remoteWorkspaceId!, col.id))[0]!
+      expect(server.created_by).toEqual({ id: owner.id, display_name: owner.display_name }) // the server never trusts the client
+      // (A's own push is not echoed back, so its stale local value only changes when the server redelivers the version.)
+      // A device that downloads it sees the server's value, never the stale local one.
+      const b = await device(emails.owner)
+      const link = await b.api.linkRemoteWorkspace({ remoteWorkspaceId: sa.remoteWorkspaceId!, localWorkspaceId: null })
+      await b.core.sync.syncNow(link.workspace.id)
+      expect((await b.api.getCollectionVersion(v.id)).createdBy).toEqual({ id: owner.id, name: owner.display_name })
+      // Re-linking A (a fresh snapshot of the same workspace) delivers the server's author over A's stale one, with no clash.
+      await a.api.unlinkWorkspace(ws)
+      const relink = await a.api.linkRemoteWorkspace({ remoteWorkspaceId: sa.remoteWorkspaceId!, localWorkspaceId: ws })
+      await a.core.sync.syncNow(relink.workspace.id)
+      const after = await a.api.getCollectionVersion(v.id)
+      expect(after.createdBy).toEqual({ id: owner.id, name: owner.display_name })
+      expect(await a.api.listCollectionVersions(col.id)).toHaveLength(1)
+      await noConflicts(a, relink.workspace.id)
+    })
+
+    it('an account that only has a legacy-style (no author) local version keeps working: unknown author, no conflict', async () => {
+      // Not signed in when the version is made: no local author. The server attributes it to whoever pushes it.
+      const a = await device(emails.owner)
+      const ws = a.workspace.id
+      const owner = await me(ownerToken)
+      const col = await a.api.createCollection(ws, 'NoAuthor')
+      const v = await a.api.createCollectionVersion({ collectionId: col.id, version: '1.0.0' })
+      a.db.prepare('UPDATE collection_versions SET created_by_id = NULL, created_by_name = NULL WHERE id = ?').run(v.id)
+      expect((await a.api.getCollectionVersion(v.id)).createdBy).toBeNull()
+      await a.api.publishWorkspace(ws)
+      const sa = await a.core.sync.syncNow(ws)
+      await noConflicts(a, ws)
+      expect((await serverVersions(sa.remoteWorkspaceId!, col.id))[0]!.created_by).toEqual({ id: owner.id, display_name: owner.display_name })
+      const b = await device(emails.owner)
+      const link = await b.api.linkRemoteWorkspace({ remoteWorkspaceId: sa.remoteWorkspaceId!, localWorkspaceId: null })
+      await b.core.sync.syncNow(link.workspace.id)
+      expect((await b.api.getCollectionVersion(v.id)).createdBy).toEqual({ id: owner.id, name: owner.display_name })
+    })
+  })
+
+  describe('team: members of the linked workspace (GET /v1/workspaces/{id}/members)', () => {
+    it('listWorkspaceMembers and status.members follow the members the owner adds and removes through the REST API', async () => {
+      const { a, ws, remoteId } = await published('Members')
+      const owner = (await cloud.call('GET', '/v1/me', { token: ownerToken })).json.user as Json
+      expect((await a.api.getSyncStatus(ws)).members).toBe(1)
+      const alone = await a.api.listWorkspaceMembers(ws)
+      expect(alone).toHaveLength(1)
+      expect(alone[0]).toMatchObject({ userId: owner.id, email: emails.owner, displayName: owner.display_name, role: 'owner', isYou: true })
+
+      const added = await cloud.addMember(remoteId, ownerToken, emails.editor, PASSWORD, 'editor')
+      a.events.length = 0
+      const list = await a.api.listWorkspaceMembers(ws)
+      expect(list).toHaveLength(2)
+      expect(list.filter((m) => m.isYou)).toHaveLength(1)
+      expect(list.find((m) => m.isYou)).toMatchObject({ userId: owner.id, email: emails.owner, role: 'owner' })
+      const other = list.find((m) => !m.isYou)!
+      expect(other).toMatchObject({ userId: added.userId, email: emails.editor, displayName: 'editor', role: 'editor' })
+      expect(other.id).toBe(added.memberId)
+      expect(other.joinedAt).toBeGreaterThan(1_700_000_000)
+      expect(Math.abs(other.joinedAt - Date.now() / 1000)).toBeLessThan(3600)
+      expect((await a.api.getSyncStatus(ws)).members).toBe(2)
+      expect(a.statusEvents().at(-1)!.members).toBe(2)
+
+      // A manual sync recounts as well (forced, not throttled) after the owner removes the member again.
+      await cloud.removeMember(remoteId, ownerToken, emails.editor)
+      expect((await a.core.sync.syncNow(ws)).members).toBe(1)
+      expect(await a.api.listWorkspaceMembers(ws)).toHaveLength(1)
+    })
+
+    it('the added account sees both members too, with isYou on its own row, and a viewer may read the list', async () => {
+      const { a, ws, remoteId } = await published('Members2')
+      await cloud.addMember(remoteId, ownerToken, emails.viewer, PASSWORD, 'viewer')
+      expect((await a.core.sync.syncNow(ws)).members).toBe(2)
+      const v = await device(emails.viewer)
+      const link = await v.api.linkRemoteWorkspace({ remoteWorkspaceId: remoteId, localWorkspaceId: null })
+      const st = await v.core.sync.syncNow(link.workspace.id)
+      expect(st).toMatchObject({ members: 2, role: 'viewer' })
+      const list = await v.api.listWorkspaceMembers(link.workspace.id)
+      expect(list.map((m) => [m.email, m.role, m.isYou]).sort()).toEqual([[emails.owner, 'owner', false], [emails.viewer, 'viewer', true]].sort())
     })
   })
 

@@ -43,6 +43,7 @@ export function buildSlingerBlock(input: SlingerBlockInput): SlingerExportBlock 
         folderCount: v.folderCount,
         requestCount: v.requestCount,
       }
+      if (v.createdBy) out.createdBy = v.createdBy.id ? { id: v.createdBy.id, name: v.createdBy.name } : { name: v.createdBy.name }
       if (input.includeSnapshots) {
         if (!v.snapshot) throw new Error(`The snapshot of version ${v.version} is not loaded`)
         out.snapshot = stripOAuth2TokensFromSnapshot(v.snapshot)

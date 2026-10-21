@@ -4,6 +4,7 @@ import type {
   Collection,
   CollectionSnapshot,
   CollectionVersion,
+  CollectionVersionAuthor,
   CollectionVersionDetail,
   CreateCollectionVersionInput,
   RestoreCollectionVersionMode,
@@ -37,6 +38,8 @@ interface VersionRow {
   folder_count: number
   request_count: number
   created_at: number
+  created_by_id: string | null
+  created_by_name: string | null
 }
 
 /** Stored snapshot shape; also validates snapshots arriving in an exported file (services/versionHistory.ts). */
@@ -94,6 +97,7 @@ const toVersion = (r: VersionRow): CollectionVersion => ({
   folderCount: r.folder_count,
   requestCount: r.request_count,
   createdAt: r.created_at,
+  createdBy: r.created_by_name == null ? null : { id: r.created_by_id, name: r.created_by_name },
 })
 
 function requireVersionRow(db: Db, versionId: string): VersionRow {
@@ -152,7 +156,12 @@ function restoreVariables(db: Db, collectionId: string, snapshot: CollectionSnap
  * Freezes the collection's current live folders, requests, scripts, descriptions and collection variables into a
  * new immutable version. Never environments, globals or secret values.
  */
-export function createCollectionVersion(db: Db, input: CreateCollectionVersionInput): CollectionVersion {
+export function createCollectionVersion(
+  db: Db,
+  input: CreateCollectionVersionInput,
+  /** The signed-in cloud user (`Core.versionAuthor()`); `null` / omitted = not signed in, the author stays unknown. */
+  author: CollectionVersionAuthor | null = null,
+): CollectionVersion {
   const collection = requireCollection(db, input.collectionId)
   const semver = parse(input.version)
   if (!semver) {
@@ -215,12 +224,13 @@ export function createCollectionVersion(db: Db, input: CreateCollectionVersionIn
     const id = newId()
     db.prepare(
       `INSERT INTO collection_versions (id, workspace_id, collection_id, version, version_major, version_minor,
-         version_patch, version_prerelease, notes, snapshot_json, folder_count, request_count, deleted, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+         version_patch, version_prerelease, notes, snapshot_json, folder_count, request_count, deleted, created_at,
+         created_by_id, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     ).run(
       id, collection.workspace_id, collection.id, input.version, semver.major, semver.minor, semver.patch,
       semver.prerelease.length ? semver.prerelease.join('.') : null, notes, JSON.stringify(snapshot),
-      folders.length, requests.length, nowSeconds(),
+      folders.length, requests.length, nowSeconds(), author?.id ?? null, author ? author.name : null,
     )
     return toVersion(db.prepare('SELECT * FROM collection_versions WHERE id = ?').get(id) as VersionRow)
   })()
