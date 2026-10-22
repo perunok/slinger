@@ -4,6 +4,7 @@
  */
 import type { Clock, Timers } from '../lib/clock'
 import type { SyncEngine } from './engine'
+import { pendingCount } from './pending'
 import { hasDirty } from './store'
 import type { Db } from '../db/database'
 
@@ -76,7 +77,7 @@ export class SyncScheduler {
     for (const l of this.engine.activeLinks()) {
       const rt = this.engine.rt(l.workspace_id)
       if (rt.running) continue
-      const pending = (this.db.prepare('SELECT COUNT(*) AS n FROM sync_dirty WHERE workspace_id = ?').get(l.workspace_id) as { n: number }).n
+      const pending = pendingCount(this.db, l.workspace_id)
       const open = (this.db.prepare("SELECT COUNT(*) AS n FROM sync_conflicts WHERE workspace_id = ? AND status = 'open'").get(l.workspace_id) as { n: number }).n
       if (!rt.announced) rt.announced = { pending, open } // first sight: nothing to announce
       else if (rt.announced.pending !== pending || rt.announced.open !== open) this.engine.emitStatus(l.workspace_id)

@@ -1012,7 +1012,10 @@ cloud changes regularly and uploads your edits shortly after you save) and **Syn
 
 **Sync activity** (the chip's menu, or Ctrl+K > *Sync activity*) shows what syncs, for the open workspace:
 - **Waiting to upload:** every change on this device the cloud does not have yet, marked **New**, **Edited** or **Deleted**,
-  with its place (`Collection / Folder / Request`, `Environment / variable`, `Globals / variable`). It updates as you edit.
+  with its place (`Collection / Folder / Request`, `Environment / variable`, `Globals / variable`). It updates as you edit and
+  matches the **N pending** number on the chip: that number is what the next sync would really upload, so it goes back down
+  when you delete something that never reached the cloud, change an edit back, or delete a whole collection (one change, not
+  one per request inside it).
 - **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
   started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
   why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other

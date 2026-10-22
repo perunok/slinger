@@ -293,8 +293,34 @@ export function createSyncApi(
     for (const key of l.base.keys()) if (!seen.has(key)) deletes.push(key)
     return { upserts: upserts.sort(byType), deletes: deletes.sort((a, b) => byType(b, a)) }
   }
-  const pendingCount = (l: Link) => {
+  /**
+   * What the next push would send (as electron/sync/pending.ts): the cloud removes a deleted collection's, folder's or
+   * environment's children together with it, so their own deletes are not separate changes.
+   */
+  function pendingDirty(l: Link): { upserts: string[]; deletes: string[] } {
     const d = dirtyKeys(l)
+    const gone = new Set(d.deletes)
+    const parentFolder = (folderKey: string): string | null => {
+      const pid = l.base.get(folderKey)?.payload.parent_folder_id
+      return typeof pid === 'string' ? `folder:${pid}` : null
+    }
+    const covered = (key: string): boolean => {
+      const p = l.base.get(key)?.payload
+      if (!p) return false
+      if (typeof p.collection_id === 'string' && gone.has(`collection:${p.collection_id}`)) return true
+      if (typeof p.environment_id === 'string' && gone.has(`environment:${p.environment_id}`)) return true
+      const { type } = splitKey(key)
+      let cur: string | null = type === 'folder' ? (typeof p.parent_folder_id === 'string' ? `folder:${p.parent_folder_id}` : null) : typeof p.folder_id === 'string' ? `folder:${p.folder_id}` : null
+      for (let depth = 0; cur && depth < 1000; depth++) {
+        if (gone.has(cur)) return true
+        cur = parentFolder(cur)
+      }
+      return false
+    }
+    return { upserts: d.upserts, deletes: d.deletes.filter((k) => !covered(k)) }
+  }
+  const pendingCount = (l: Link) => {
+    const d = pendingDirty(l)
     return d.upserts.length + d.deletes.length
   }
 
@@ -1223,7 +1249,7 @@ export function createSyncApi(
     async listSyncPending(workspaceId) {
       const l = links.get(workspaceId)
       if (!l) return []
-      const d = dirtyKeys(l)
+      const d = pendingDirty(l)
       const item = (k: string, change: SyncActivityItem['change']) => {
         const { type, id } = splitKey(k)
         return itemOf(l, type, id, change)

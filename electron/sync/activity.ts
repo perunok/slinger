@@ -10,6 +10,7 @@ import { SYNC_ACTIVITY_ITEMS, SYNC_ACTIVITY_RUNS, type SyncActivityItem, type Sy
 import type { Db } from '../db/database'
 import { pathOf } from './conflicts'
 import { loadRow, payloadLabel, toWire } from './mapping'
+import { pendingOps } from './pending'
 import { getEntity } from './store'
 import type { ChangeLog } from './types'
 
@@ -108,24 +109,12 @@ function copy(run: SyncRun): SyncRun {
 }
 
 /**
- * Local changes waiting to be uploaded: dirty entities (not frozen in a conflict), labelled, in sidebar-like order.
- * Deleted locally -> deleted; never acknowledged by the cloud -> created; otherwise updated.
+ * Local changes waiting to be uploaded: exactly the operations the next push would send (`pendingOps`: not what was created
+ * and deleted again, not edits changed back, not the children the cloud removes with their container), labelled, in
+ * sidebar-like order.
  */
 export function pendingItems(db: Db, workspaceId: string): SyncActivityItem[] {
-  const rows = db
-    .prepare(
-      `SELECT d.entity_type AS type, d.entity_id AS id, e.remote_version AS remoteVersion, COALESCE(e.state, 'synced') AS state
-       FROM sync_dirty d LEFT JOIN sync_entities e ON e.entity_type = d.entity_type AND e.entity_id = d.entity_id
-       WHERE d.workspace_id = ?`,
-    )
-    .all(workspaceId) as Array<{ type: SyncEntityType; id: string; remoteVersion: number | null; state: string }>
-  const items = rows
-    .filter((r) => r.state !== 'conflict')
-    .map((r) => {
-      const row = loadRow(db, r.type, r.id) as { deleted?: number } | undefined
-      const change: SyncActivityItem['change'] = !row || row.deleted === 1 ? 'deleted' : !r.remoteVersion ? 'created' : 'updated'
-      return describeItem(db, r.type, r.id, change)
-    })
+  const items = pendingOps(db, workspaceId).map((o) => describeItem(db, o.type, o.id, o.kind))
   items.sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
   return items.slice(0, SYNC_ACTIVITY_ITEMS)
 }

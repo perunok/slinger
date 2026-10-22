@@ -4,6 +4,7 @@
  */
 import type { CloudRole, SyncEntityType, SyncEvent, SyncRun, SyncState, SyncStatus, WorkspaceMember } from '../../shared/types'
 import { SyncActivity } from './activity'
+import { pendingCount } from './pending'
 import type { CloudAuth } from '../cloud/auth'
 import type { CloudGateway } from '../cloud/api'
 import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
@@ -29,7 +30,6 @@ import {
 import {
   applyTx,
   deleteSetting,
-  dirtyCount,
   getLink,
   getSetting,
   listLinks,
@@ -136,7 +136,7 @@ export class SyncEngine {
       role: (link.remote_role as CloudRole | null) ?? null,
       readOnly: link.read_only === 1,
       autoSync: link.auto_sync === 1,
-      pendingChanges: dirtyCount(db, workspaceId),
+      pendingChanges: pendingCount(db, workspaceId),
       openConflicts: openConflictCount(db, workspaceId),
       initialSyncPending: link.link_state === 'initial',
       lastSyncedAt: link.last_synced_at,

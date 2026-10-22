@@ -363,8 +363,13 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   version is 1 is *created*), uploads from `PushOutcome.acceptedOps` (`base_version` 0 -> created; covered child deletes
   included), conflicts from the open-conflict count rising; `finish` records the error message. Items are labelled with
   `pathOf` from the local rows (deleted rows keep their names), at most `SYNC_ACTIVITY_ITEMS` = 500 per direction (counts are
-  exact). `pendingItems` lists `sync_dirty` minus conflict-frozen entities: deleted row -> deleted, no cloud version -> created,
-  else updated. Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
+  exact). `pendingItems` and `SyncStatus.pendingChanges` (the chip badge) both come from `electron/sync/pending.ts`
+  (`pendingOps`/`pendingCount`), a read-only mirror of the `buildOps` rules over `sync_dirty`: conflict-frozen entities, rows that
+  are gone, and rows deleted before they ever had a cloud version are not pending; a delete covered by a pending delete of its
+  collection/folder/environment is not pending (judged by the cloud's copy in `base_payload`, like `serverCascades`); a live
+  row whose wire payload equals `base_payload` is not pending (checked for at most 100 edits, beyond that all count). Otherwise
+  deleted -> deleted, no cloud version -> created, else updated. `pending.test.ts` checks the count against `buildOps` on random
+  edits. The browser mock (`src/dev/mock/sync.ts`) mirrors it. Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
   (refetched when the pending count changes or a run ends while the dialog is open), `features/sync/SyncActivityDialog.svelte`
   opened from the chip's popover and Ctrl+K. The protocol has no author per operation, so "who" is not shown.
 - **Team** (members of the linked cloud workspace): `CloudApi.listMembers` (`GET /v1/workspaces/{id}/members`, paginated, active only,
