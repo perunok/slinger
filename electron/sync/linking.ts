@@ -6,7 +6,8 @@ import { envVarSecretKey } from '../services/secrets'
 import type { ApplyCtx } from './apply'
 import { closeConflict, recordAutoResolved } from './conflictStore'
 import { discardLocalChange } from './conflicts'
-import { softDeleteRow } from './rows'
+import { loadRow } from './mapping'
+import { serverCascades, softDeleteRow } from './rows'
 import { clearDirty, getEntity, markDirty } from './store'
 
 export interface NewLink {
@@ -91,6 +92,60 @@ export function discardAllPending(ctx: ApplyCtx): number {
     closeConflict(db, c.id, ctx.nowS, 'auto_resolved')
   }
   return entities.size
+}
+
+const CONTAINERS: readonly SyncEntityType[] = ['collection', 'folder', 'environment']
+
+/** Is `child` (as it is stored now) inside `container`? Walks the folder chain; used for containers that never reached the cloud. */
+function insideNow(db: Db, container: { type: SyncEntityType; id: string }, child: { type: SyncEntityType; id: string }): boolean {
+  const row = loadRow(db, child.type, child.id)
+  if (!row) return false
+  if (container.type === 'collection') return row.collection_id === container.id
+  if (container.type === 'environment') return row.environment_id === container.id
+  let cur = (child.type === 'folder' ? row.parent_folder_id : row.folder_id) as string | null | undefined
+  for (let depth = 0; cur && depth < 1000; depth++) {
+    if (cur === container.id) return true
+    cur = loadRow(db, 'folder', cur)?.parent_folder_id as string | null | undefined
+  }
+  return false
+}
+
+/**
+ * Discards the local change of the chosen entities (only those that really are waiting to upload): each goes back to the
+ * cloud's copy, or is deleted when it never reached the cloud. A container goes together with what its change carried:
+ * discarding the delete of a collection/folder/environment brings back what the server would have removed with it, and
+ * discarding a container that was only created here drops what was created inside it (an item moved in from the cloud
+ * goes back to where it was). Returns how many entities were reverted.
+ */
+export function discardPendingItems(ctx: ApplyCtx, items: Array<{ type: SyncEntityType; id: string }>): number {
+  const { db, workspaceId } = ctx
+  const dirty = (db.prepare('SELECT entity_type, entity_id FROM sync_dirty WHERE workspace_id = ?').all(workspaceId) as Array<{ entity_type: SyncEntityType; entity_id: string }>).map((r) => ({
+    type: r.entity_type,
+    id: r.entity_id,
+  }))
+  const isDirty = new Set(dirty.map((d) => `${d.type}:${d.id}`))
+  const chosen = new Map<string, { type: SyncEntityType; id: string }>()
+  const removedContainers: Array<{ type: SyncEntityType; id: string }> = []
+  const createdContainers: Array<{ type: SyncEntityType; id: string }> = []
+  for (const it of items) {
+    const k = `${it.type}:${it.id}`
+    if (!isDirty.has(k) || chosen.has(k)) continue
+    chosen.set(k, it)
+    if (!CONTAINERS.includes(it.type)) continue
+    const row = loadRow(db, it.type, it.id)
+    const remoteVersion = getEntity(db, it.type, it.id)?.remote_version ?? 0
+    if (row?.deleted === 1 && remoteVersion > 0) removedContainers.push(it)
+    else if (row?.deleted === 0 && remoteVersion === 0) createdContainers.push(it)
+  }
+  if (removedContainers.length || createdContainers.length) {
+    for (const d of dirty) {
+      const k = `${d.type}:${d.id}`
+      if (chosen.has(k)) continue
+      if (removedContainers.some((c) => serverCascades(db, c, d)) || createdContainers.some((c) => insideNow(db, c, d))) chosen.set(k, d)
+    }
+  }
+  for (const e of chosen.values()) discardLocalChange(ctx, e.type, e.id)
+  return chosen.size
 }
 
 /**

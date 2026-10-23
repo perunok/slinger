@@ -78,6 +78,7 @@ type SyncApi = Pick<
   | 'listSyncConflicts'
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
+  | 'discardPendingItems'
   | 'listSyncPending'
   | 'listSyncActivity'
   | 'listWorkspaceMembers'
@@ -297,27 +298,28 @@ export function createSyncApi(
    * What the next push would send (as electron/sync/pending.ts): the cloud removes a deleted collection's, folder's or
    * environment's children together with it, so their own deletes are not separate changes.
    */
-  function pendingDirty(l: Link): { upserts: string[]; deletes: string[] } {
-    const d = dirtyKeys(l)
-    const gone = new Set(d.deletes)
+  /** Does the cloud remove this entity together with one of the deleted containers in `gone`? (judged by the cloud's copy) */
+  function coveredBy(l: Link, gone: Set<string>, key: string): boolean {
     const parentFolder = (folderKey: string): string | null => {
       const pid = l.base.get(folderKey)?.payload.parent_folder_id
       return typeof pid === 'string' ? `folder:${pid}` : null
     }
-    const covered = (key: string): boolean => {
-      const p = l.base.get(key)?.payload
-      if (!p) return false
-      if (typeof p.collection_id === 'string' && gone.has(`collection:${p.collection_id}`)) return true
-      if (typeof p.environment_id === 'string' && gone.has(`environment:${p.environment_id}`)) return true
-      const { type } = splitKey(key)
-      let cur: string | null = type === 'folder' ? (typeof p.parent_folder_id === 'string' ? `folder:${p.parent_folder_id}` : null) : typeof p.folder_id === 'string' ? `folder:${p.folder_id}` : null
-      for (let depth = 0; cur && depth < 1000; depth++) {
-        if (gone.has(cur)) return true
-        cur = parentFolder(cur)
-      }
-      return false
+    const p = l.base.get(key)?.payload
+    if (!p) return false
+    if (typeof p.collection_id === 'string' && gone.has(`collection:${p.collection_id}`)) return true
+    if (typeof p.environment_id === 'string' && gone.has(`environment:${p.environment_id}`)) return true
+    const { type } = splitKey(key)
+    let cur: string | null = type === 'folder' ? (typeof p.parent_folder_id === 'string' ? `folder:${p.parent_folder_id}` : null) : typeof p.folder_id === 'string' ? `folder:${p.folder_id}` : null
+    for (let depth = 0; cur && depth < 1000; depth++) {
+      if (gone.has(cur)) return true
+      cur = parentFolder(cur)
     }
-    return { upserts: d.upserts, deletes: d.deletes.filter((k) => !covered(k)) }
+    return false
+  }
+  function pendingDirty(l: Link): { upserts: string[]; deletes: string[] } {
+    const d = dirtyKeys(l)
+    const gone = new Set(d.deletes)
+    return { upserts: d.upserts, deletes: d.deletes.filter((k) => !coveredBy(l, gone, k)) }
   }
   const pendingCount = (l: Link) => {
     const d = pendingDirty(l)
@@ -1371,6 +1373,53 @@ export function createSyncApi(
       for (const c of l.conflicts) if (c.status === 'open') close(c, 'keep_remote')
       if (ch.changed.length > 0) emit({ type: 'applied', workspaceId, changed: ch.changed.slice(0, 500), truncated: ch.changed.length > 500 })
       emit({ type: 'conflicts', workspaceId, open: 0 })
+      emitStatus(l)
+      return statusOf(workspaceId)
+    },
+    async discardPendingItems(workspaceId, items) {
+      const l = links.get(workspaceId)
+      if (!l) fail('sync_blocked', 'This workspace is not linked to the cloud.')
+      const d = dirtyKeys(l)
+      const dirty = new Set([...d.upserts, ...d.deletes])
+      const chosen = new Set<string>()
+      for (const it of items) {
+        const k = `${it.entityType}:${it.entityId}`
+        if (dirty.has(k)) chosen.add(k)
+      }
+      // A container goes with what its change carried (as electron/sync/linking.ts discardPendingItems).
+      const removed = new Set([...chosen].filter((k) => d.deletes.includes(k)))
+      const created = [...chosen].filter((k) => d.upserts.includes(k) && !l.base.has(k))
+      const insideNow = (container: string, key: string): boolean => {
+        const { type: ct } = splitKey(container)
+        const { type, id } = splitKey(key)
+        const p = toWire(s, type, id) as Record<string, unknown> | null
+        if (!p) return false
+        if (ct === 'collection') return p.collection_id === container.slice(ct.length + 1)
+        if (ct === 'environment') return p.environment_id === container.slice(ct.length + 1)
+        if (ct !== 'folder') return false
+        let cur = type === 'folder' ? p.parent_folder_id : p.folder_id
+        for (let depth = 0; typeof cur === 'string' && depth < 1000; depth++) {
+          if (`folder:${cur}` === container) return true
+          cur = (toWire(s, 'folder', cur) as Record<string, unknown> | null)?.parent_folder_id
+        }
+        return false
+      }
+      const containers = (k: string) => ['collection', 'folder', 'environment'].includes(splitKey(k).type)
+      const removedC = new Set([...removed].filter(containers))
+      const createdC = created.filter(containers)
+      for (const k of dirty) {
+        if (chosen.has(k)) continue
+        if ((removedC.size && coveredBy(l, removedC, k)) || createdC.some((c) => insideNow(c, k))) chosen.add(k)
+      }
+      const ch: Changes = { changed: [] }
+      for (const k of chosen) {
+        const { type, id } = splitKey(k)
+        const b = l.base.get(k)
+        if (b) applyWire(l.workspaceId, type, id, b.payload)
+        else deleteLocal(type, id)
+        ch.changed.push({ entityType: type, entityId: id, change: b ? 'upsert' : 'delete' })
+      }
+      if (ch.changed.length > 0) emit({ type: 'applied', workspaceId, changed: ch.changed.slice(0, 500), truncated: ch.changed.length > 500 })
       emitStatus(l)
       return statusOf(workspaceId)
     },

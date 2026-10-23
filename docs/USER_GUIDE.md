@@ -1016,6 +1016,10 @@ cloud changes regularly and uploads your edits shortly after you save) and **Syn
   matches the **N pending** number on the chip: that number is what the next sync would really upload, so it goes back down
   when you delete something that never reached the cloud, change an edit back, or delete a whole collection (one change, not
   one per request inside it).
+  **Cancel** next to a waiting change keeps it from ever uploading: an edit goes back to the cloud's version, a new item is
+  removed (with everything created inside it), and **Restore** on a deleted item brings it back (a collection or folder returns
+  with what was inside it). **Cancel all** (shown when two or more wait) does it for every listed change. A confirmation
+  comes first because it cannot be undone. This also works in a read-only workspace, where nothing can be uploaded anyway.
 - **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
   started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
   why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other

@@ -26,6 +26,7 @@ type SyncIpcMethod =
   | 'listSyncConflicts'
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
+  | 'discardPendingItems'
   | 'listSyncPending'
   | 'listSyncActivity'
   | 'listWorkspaceMembers'
@@ -46,6 +47,14 @@ const resolveInput = z.object({
     .optional(),
   newVersion: z.string().min(1).max(128).optional(),
 })
+const discardItems = z
+  .array(
+    z.object({
+      entityType: z.enum(['collection', 'folder', 'request', 'environment', 'environment_variable', 'collection_version', 'collection_variable', 'global_variable']),
+      entityId: z.string().min(1).max(64),
+    }),
+  )
+  .max(5000)
 const linkInput = z.object({ remoteWorkspaceId: remoteId, localWorkspaceId: uuid.nullable() })
 
 /** Validation boundary + delegation to `core.sync`; cloud failures are mapped to the IPC error vocabulary. */
@@ -85,6 +94,10 @@ export function createSyncIpc(core: Core): SyncIpcApi {
     },
     resolveSyncConflict: async (...a) => s.resolveSyncConflict(parseArgs(z.tuple([resolveInput]), a)[0]),
     discardPendingChanges: async (...a) => s.discardPendingChanges(parseArgs(z.tuple([uuid]), a)[0]),
+    discardPendingItems: async (...a) => {
+      const [workspaceId, items] = parseArgs(z.tuple([uuid, discardItems]), a)
+      return s.discardPendingItems(workspaceId, items)
+    },
     listSyncPending: async (...a) => s.listSyncPending(parseArgs(z.tuple([uuid]), a)[0]),
     listSyncActivity: async (...a) => s.listSyncActivity(parseArgs(z.tuple([uuid]), a)[0]),
     listWorkspaceMembers: async (...a) => s.listWorkspaceMembers(parseArgs(z.tuple([uuid]), a)[0]),

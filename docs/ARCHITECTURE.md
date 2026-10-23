@@ -369,7 +369,13 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   collection/folder/environment is not pending (judged by the cloud's copy in `base_payload`, like `serverCascades`); a live
   row whose wire payload equals `base_payload` is not pending (checked for at most 100 edits, beyond that all count). Otherwise
   deleted -> deleted, no cloud version -> created, else updated. `pending.test.ts` checks the count against `buildOps` on random
-  edits. The browser mock (`src/dev/mock/sync.ts`) mirrors it. Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
+  edits. The browser mock (`src/dev/mock/sync.ts`) mirrors it.
+  **Cancelling pending changes**: `discardPendingItems(workspaceId, [{entityType, entityId}])` (IPC; `linking.ts`
+  `discardPendingItems`) runs `discardLocalChange` on the chosen entities that are really in `sync_dirty` (others are ignored),
+  inside `runApply` so the renderer gets the usual `applied` event. A deleted container whose cloud copy exists also reverts
+  the dirty entities the server would have cascaded with it (`serverCascades`, the same rule the count uses to hide them); a
+  container created here also reverts the dirty entities now inside it (a cloud item moved into it goes back to its base
+  place). Renderer: `syncStore.discardItems`, buttons in `SyncActivityDialog.svelte` (per row and Cancel all). Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
   (refetched when the pending count changes or a run ends while the dialog is open), `features/sync/SyncActivityDialog.svelte`
   opened from the chip's popover and Ctrl+K. The protocol has no author per operation, so "who" is not shown.
 - **Team** (members of the linked cloud workspace): `CloudApi.listMembers` (`GET /v1/workspaces/{id}/members`, paginated, active only,
