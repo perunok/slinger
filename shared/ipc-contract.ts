@@ -16,6 +16,7 @@ import type {
   AssistantEditInput,
   ApiRequest,
   CloudFetchInput,
+  SyncEntityType,
   Collection,
   CollectionVersion,
   CollectionVersionDetail,
@@ -300,6 +301,8 @@ export interface SlingerIpcApi {
   listSyncConflicts(workspaceId: string, includeResolved?: boolean): Promise<SyncConflict[]>
   resolveSyncConflict(input: ResolveSyncConflictInput): Promise<SyncStatus>
   discardPendingChanges(workspaceId: string): Promise<SyncStatus>
+  /** ADDED (discard pending): cancels chosen waiting changes (back to the cloud's copy, or removed when never uploaded). */
+  discardPendingItems(workspaceId: string, items: Array<{ entityType: SyncEntityType; entityId: string }>): Promise<SyncStatus>
   /** ADDED (sync activity): local changes waiting to be uploaded, newest first (at most SYNC_ACTIVITY_ITEMS). */
   listSyncPending(workspaceId: string): Promise<SyncActivityItem[]>
   /** ADDED (sync activity): the latest sync runs of the workspace since Slinger started, newest first. */
@@ -500,6 +503,7 @@ export const IPC_CHANNELS = [
   'listSyncConflicts',
   'resolveSyncConflict',
   'discardPendingChanges',
+  'discardPendingItems',
   'listSyncPending',
   'listSyncActivity',
   'listWorkspaceMembers',

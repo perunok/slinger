@@ -2,7 +2,7 @@
  * SyncService: the 18 cloud-account/sync IPC methods over the engine, the cloud client and the scheduler
  * (docs/SYNC_DESIGN.md sections 11, 12). No Electron imports.
  */
-import type { CloudConfig, CloudSession, CloudSignInStart, LinkRemoteWorkspaceInput, RemoteWorkspace, RemoteWorkspaceCounts, RemoteWorkspacePreview, ResolveSyncConflictInput, SyncActivityItem, SyncConflict, SyncEvent, SyncRun, SyncStatus, Workspace, WorkspaceMember } from '../../shared/types'
+import type { CloudConfig, CloudSession, CloudSignInStart, LinkRemoteWorkspaceInput, RemoteWorkspace, RemoteWorkspaceCounts, RemoteWorkspacePreview, ResolveSyncConflictInput, SyncActivityItem, SyncConflict, SyncEntityType, SyncEvent, SyncRun, SyncStatus, Workspace, WorkspaceMember } from '../../shared/types'
 import { CloudApi, type CloudGateway } from '../cloud/api'
 import { CloudAuth } from '../cloud/auth'
 import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
@@ -18,7 +18,7 @@ import { resolveConflict, toSyncConflict } from './conflicts'
 import { detachSync } from './detach'
 import { pendingItems } from './activity'
 import { SyncEngine } from './engine'
-import { createLocalWorkspace, discardAllPending, hasLiveContent, insertLink, markAllLiveDirty } from './linking'
+import { createLocalWorkspace, discardAllPending, discardPendingItems, hasLiveContent, insertLink, markAllLiveDirty } from './linking'
 import { SyncScheduler } from './scheduler'
 import { applyTx, getLink, listLinks, updateLink } from './store'
 import type { ConflictRow } from './conflictStore'
@@ -318,6 +318,14 @@ export class SyncService {
   discardPendingChanges = async (workspaceId: string): Promise<SyncStatus> => {
     if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
     this.engine.runApply(workspaceId, (ctx) => discardAllPending(ctx))
+    this.engine.emitStatus(workspaceId)
+    return this.engine.status(workspaceId)
+  }
+
+  /** Cancels chosen local changes (back to the cloud's copy, or removed when never uploaded) so they are not uploaded. */
+  discardPendingItems = async (workspaceId: string, items: Array<{ entityType: SyncEntityType; entityId: string }>): Promise<SyncStatus> => {
+    if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
+    this.engine.runApply(workspaceId, (ctx) => discardPendingItems(ctx, items.map((i) => ({ type: i.entityType, id: i.entityId }))))
     this.engine.emitStatus(workspaceId)
     return this.engine.status(workspaceId)
   }

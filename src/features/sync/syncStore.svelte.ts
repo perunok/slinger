@@ -495,6 +495,22 @@ export class SyncStore {
     }
   }
 
+  /** Cancels chosen waiting changes so they are not uploaded: back to the cloud's copy, or removed when never uploaded. */
+  async discardItems(workspaceId: string, items: SyncActivityItem[]): Promise<boolean> {
+    try {
+      this.#store(await this.#busy(workspaceId, 'discard', () => api().discardPendingItems(workspaceId, items.map((i) => ({ entityType: i.entityType, entityId: i.entityId })))))
+      if (workspaceId === app.workspaceId) {
+        await app.reloadCollections()
+        await app.reloadEnvironments()
+        this.pending = await api().listSyncPending(workspaceId)
+      }
+      return true
+    } catch (e) {
+      toast.error('Could not discard the changes', errorInfo(e).message)
+      return false
+    }
+  }
+
   async discardPending(workspaceId: string): Promise<boolean> {
     try {
       this.#store(await this.#busy(workspaceId, 'discard', () => api().discardPendingChanges(workspaceId)))

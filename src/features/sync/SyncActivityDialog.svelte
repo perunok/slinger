@@ -9,6 +9,7 @@
   import { app } from '../../app/state.svelte'
   import { ui } from '../../app/ui.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import InfoTip from '../../components/ui/InfoTip.svelte'
@@ -48,6 +49,22 @@
     close()
   }
 
+  /** What the user is about to cancel: one waiting change, or all that are listed. */
+  let discarding = $state<SyncActivityItem | 'all' | null>(null)
+  function discardMessage(target: SyncActivityItem | 'all'): string {
+    if (target === 'all') return `Cancel all ${sync.pending.length} waiting changes? Edits go back to the cloud's version, new items are removed and deleted items come back. Nothing is uploaded. This cannot be undone.`
+    const name = `${TYPE_LABEL[target.entityType].toLowerCase()} "${target.path.at(-1)}"`
+    const container = target.entityType === 'collection' || target.entityType === 'folder' || target.entityType === 'environment'
+    if (target.change === 'created') return `Remove the new ${name}${container ? ' and everything created in it' : ''}? It has not been uploaded, so it will be gone. This cannot be undone.`
+    if (target.change === 'deleted') return `Bring back the deleted ${name}${container ? ' with what was inside it' : ''}? The cloud keeps it.`
+    return `Cancel the change to ${name}? It goes back to the cloud's version and your edit is lost. This cannot be undone.`
+  }
+  async function confirmDiscard() {
+    const target = discarding
+    if (!target || !ws) return
+    await sync.discardItems(ws.id, target === 'all' ? sync.pending : [target])
+  }
+
   const tone = { created: 'bg-success-soft text-success', updated: 'bg-accent-soft text-fg', deleted: 'bg-danger-soft text-danger' } as const
   const resultTone = (run: SyncRun) => (run.result === 'error' ? 'text-danger' : run.result === 'running' ? 'text-accent-text' : run.conflicts ? 'text-warning' : 'text-muted')
 </script>
@@ -62,7 +79,7 @@
         <Button size="sm" icon="refresh" loading={chip.busy} disabled={status.state === 'signedOut' || status.state === 'accessRevoked' || status.state === 'serverUnsupported'} onclick={() => ws && sync.syncNow(ws.id)}>Sync now</Button>
       {/if}
       <InfoTip label="About sync activity">
-        Waiting to upload: changes made on this device that the cloud does not have yet; they go up with the next sync. Recent syncs: what each
+        Waiting to upload: changes made on this device that the cloud does not have yet; they go up with the next sync. Cancel one (or all) to keep it from going up: an edit goes back to the cloud's version, a new item is removed, a deleted item comes back. Recent syncs: what each
         sync since Slinger started sent and received, item by item (the list is not kept after Slinger quits). Changes from other people or devices
         arrive as downloads; who made them is not shown yet. Secret values never sync.
       </InfoTip>
@@ -71,13 +88,16 @@
     <section aria-labelledby="sync-pending-h" class="flex flex-col gap-1.5">
       <h3 id="sync-pending-h" class="text-xs font-semibold text-muted">
         Waiting to upload{sync.pending.length ? ` (${sync.pending.length}: ${pendingSummary(sync.pending)})` : ''}
+        {#if sync.pending.length > 1}
+          <button type="button" class="ml-2 font-normal text-danger hover:underline disabled:opacity-50" data-testid="sync-discard-all" disabled={!!sync.busy[ws?.id ?? '']} onclick={() => (discarding = 'all')}>Cancel all</button>
+        {/if}
       </h3>
       {#if sync.pending.length === 0}
         <p class="text-xs text-muted" data-testid="sync-pending-empty">{sync.activityLoading ? 'Loading…' : 'Nothing: everything on this device is in the cloud.'}</p>
       {:else}
         <ul class="max-h-48 overflow-auto rounded border border-border" data-testid="sync-pending">
           {#each sync.pending as item (`${item.entityType}:${item.entityId}`)}
-            <li class="border-b border-border last:border-b-0">{@render itemRow(item)}</li>
+            <li class="border-b border-border last:border-b-0">{@render itemRow(item, true)}</li>
           {/each}
         </ul>
       {/if}
@@ -123,6 +143,17 @@
   {/snippet}
 </Dialog>
 
+{#if discarding}
+  <ConfirmDialog
+    title={discarding === 'all' ? 'Cancel all waiting changes' : discarding.change === 'deleted' ? 'Bring back deleted item' : 'Cancel change'}
+    message={discardMessage(discarding)}
+    confirmLabel={discarding !== 'all' && discarding.change === 'deleted' ? 'Bring back' : 'Cancel change'}
+    danger={discarding === 'all' || discarding.change !== 'deleted'}
+    onconfirm={confirmDiscard}
+    oncancel={() => (discarding = null)}
+  />
+{/if}
+
 {#snippet itemList(title: string, icon: 'upload' | 'download', list: SyncActivityItem[], count: number)}
   <div>
     <p class="mb-0.5 flex items-center gap-1 text-xs font-medium"><Icon name={icon} size={12} />{title} ({count})</p>
@@ -135,7 +166,7 @@
   </div>
 {/snippet}
 
-{#snippet itemRow(item: SyncActivityItem)}
+{#snippet itemRow(item: SyncActivityItem, cancellable = false)}
   <div class="flex min-w-0 items-center gap-2 px-2 py-1 text-xs" data-testid="sync-item">
     <span class="w-14 shrink-0 rounded px-1 text-center text-[10px] font-medium {tone[item.change]}">{CHANGE_LABEL[item.change]}</span>
     <span class="w-24 shrink-0 truncate text-muted">{TYPE_LABEL[item.entityType]}</span>
@@ -145,6 +176,17 @@
       </button>
     {:else}
       <span class="min-w-0 truncate" title={item.path.join(' / ')}>{@render pathText(item.path)}</span>
+    {/if}
+    {#if cancellable}
+      <span class="flex-1"></span>
+      <button
+        type="button"
+        class="shrink-0 rounded px-1.5 py-0.5 text-muted hover:bg-hover hover:text-danger disabled:opacity-50"
+        title={item.change === 'deleted' ? 'Bring it back; the cloud keeps it' : item.change === 'created' ? 'Remove it; it was never uploaded' : 'Go back to the cloud version'}
+        data-testid="sync-discard"
+        disabled={!!sync.busy[ws?.id ?? '']}
+        onclick={() => (discarding = item)}
+      >{item.change === 'deleted' ? 'Restore' : 'Cancel'}</button>
     {/if}
   </div>
 {/snippet}

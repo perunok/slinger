@@ -28,7 +28,7 @@ async function publishPersonal() {
   return id
 }
 const remoteId = async (ws: string) => (await b.getSyncStatus(ws)).remoteWorkspaceId!
-const rows = (el: HTMLElement) => within(el).getAllByTestId('sync-item').map((r) => r.textContent?.replace(/\s+/g, ' ').trim())
+const rows = (el: HTMLElement) => within(el).getAllByTestId('sync-item').map((r) => r.textContent?.replace(/\s+/g, ' ').replace(/ (Cancel|Restore)$/, '').trim())
 
 async function openDialog() {
   ui.syncActivityOpen = true
