@@ -10,7 +10,7 @@ import { SYNC_ACTIVITY_ITEMS, SYNC_ACTIVITY_RUNS, type SyncActivityItem, type Sy
 import type { Db } from '../db/database'
 import { pathOf } from './conflicts'
 import { loadRow, payloadLabel, toWire } from './mapping'
-import { pendingOps } from './pending'
+import { changeOps } from './pending'
 import { getEntity } from './store'
 import type { ChangeLog } from './types'
 
@@ -114,7 +114,16 @@ function copy(run: SyncRun): SyncRun {
  * sidebar-like order.
  */
 export function pendingItems(db: Db, workspaceId: string): SyncActivityItem[] {
-  const items = pendingOps(db, workspaceId).map((o) => describeItem(db, o.type, o.id, o.kind))
+  return listed(db, changeOps(db, workspaceId).pending)
+}
+
+/** Changes kept on this device (not uploaded until the user uploads them again), in the same shape and order. */
+export function keptItems(db: Db, workspaceId: string): SyncActivityItem[] {
+  return listed(db, changeOps(db, workspaceId).kept)
+}
+
+function listed(db: Db, ops: ReturnType<typeof changeOps>['pending']): SyncActivityItem[] {
+  const items = ops.map((o) => describeItem(db, o.type, o.id, o.kind))
   items.sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
   return items.slice(0, SYNC_ACTIVITY_ITEMS)
 }

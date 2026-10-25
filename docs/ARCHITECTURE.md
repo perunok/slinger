@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0014_conflict_remote_author.sql
+  migrations/        0001_init.sql ... 0015_sync_kept.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -199,6 +199,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0012_version_authors` | nullable `collection_versions.created_by_id` / `created_by_name` (the author, see Collection versioning); not in the immutability trigger and not watched by any sync trigger |
 | `0013_member_count` | nullable `cloud_links.member_count` (active members of the linked cloud workspace as last read; display only, Team badge) |
 | `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
+| `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -375,7 +376,19 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   inside `runApply` so the renderer gets the usual `applied` event. A deleted container whose cloud copy exists also reverts
   the dirty entities the server would have cascaded with it (`serverCascades`, the same rule the count uses to hide them); a
   container created here also reverts the dirty entities now inside it (a cloud item moved into it goes back to its base
-  place). Renderer: `syncStore.discardItems`, buttons in `SyncActivityDialog.svelte` (per row and Cancel all). Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
+  place). Renderer: `syncStore.discardItems`, buttons in `SyncActivityDialog.svelte` (per row and Cancel all).
+  **Keep on this device**: table `sync_kept` (migration 0015, local only) lists entities the user holds back
+  (`setSyncKept(workspaceId, items, kept)`, only entities in `sync_dirty`; `listSyncKept` lists them like `listSyncPending`).
+  `kept.ts` `heldKeys` adds what depends on them (fixpoint): a live dirty entity whose current parent is held and has no cloud
+  version, and a dirty delete the server would cascade from a held container delete (`serverCascades`). `buildOps` leaves held
+  entities dirty and sends nothing for them (after its no-op checks, so a kept edit changed back is still cleared);
+  `pending.ts` `changeOps` returns `{pending, kept}` with the same classification, so the badge excludes kept changes, and the
+  scheduler arms its debounced push only when `pendingCount > 0` (kept or conflict-frozen rows never loop). A kept row ends
+  with its dirty row (trigger `sync_kept_ends_with_dirty`) and on unlink (`detachSync`). A remote change to a kept entity is a
+  normal conflict (the entity is dirty). `kept.test.ts` checks count == built ops and held never sent over random edits and
+  keeps; the browser mock (`heldOf`) mirrors it. Renderer: `syncStore.kept` / `keepItems`, Keep here / Upload buttons and the
+  "Kept on this device" list in the dialog.
+  Each change of a run is pushed (start, every page/chunk, end). Renderer: `syncStore.activity` / `.pending`
   (refetched when the pending count changes or a run ends while the dialog is open), `features/sync/SyncActivityDialog.svelte`
   opened from the chip's popover and Ctrl+K. The protocol has no author per operation, so "who" is not shown.
 - **Team** (members of the linked cloud workspace): `CloudApi.listMembers` (`GET /v1/workspaces/{id}/members`, paginated, active only,

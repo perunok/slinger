@@ -46,6 +46,26 @@ describe('auto sync scheduling', () => {
     expect(d.core.sync.engine.status(ws).pendingChanges).toBe(0)
   })
 
+  it('a change kept on this device does not keep triggering syncs; releasing it uploads it', async () => {
+    d.core.sync.start()
+    d.timers.advance(2_000)
+    await idle()
+    const col = await d.api.createCollection(ws, 'Kept here')
+    await d.api.setSyncKept(ws, [{ entityType: 'collection', entityId: col.id }], true)
+    cloud.clearRecorded()
+    for (let i = 0; i < 10; i++) {
+      d.timers.advance(5_000)
+      await idle()
+    }
+    expect(cycles()).toBe(0) // 50 s: only the periodic cycle (60 s) may run, no debounced pushes
+    expect(cloud.live(d.core.sync.engine.status(ws).remoteWorkspaceId!, 'collection')).toHaveLength(0)
+    await d.api.setSyncKept(ws, [{ entityType: 'collection', entityId: col.id }], false)
+    d.timers.advance(5_000)
+    d.timers.advance(1_500)
+    await idle()
+    expect(cloud.live(d.core.sync.engine.status(ws).remoteWorkspaceId!, 'collection')).toHaveLength(1)
+  })
+
   it('runs a full pull cycle every 60 s while focused and every 5 min while blurred', async () => {
     d.core.sync.start()
     d.timers.advance(2_000) // the start-up cycle

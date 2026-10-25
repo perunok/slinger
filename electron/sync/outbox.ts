@@ -9,6 +9,7 @@ import { newId } from '../lib/ids'
 import { applyRemoteState, hideClashingVersion, type ApplyCtx } from './apply'
 import { closeConflict, findOpenConflict, recordAutoResolved, upsertOpenConflict } from './conflictStore'
 import { linkFeatures } from './features'
+import { heldKeys } from './kept'
 import { TABLE, canonicalJson, checkLimits, loadRow, parentRefs, parsePayload, payloadLabel, samePayload, toWire, typeSynced } from './mapping'
 import { parentOf, serverCascades, type EntityRef } from './rows'
 import { clearDirty, getEntity, isDirty, markDirty, putEntity, setEntityState } from './store'
@@ -71,6 +72,8 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
   return db.transaction((): BuildResult => {
     const nowS = Math.floor(nowMs / 1000)
     const features = linkFeatures(db, workspaceId)
+    // Changes the user keeps on this device (and what depends on them) stay dirty and are not sent.
+    const held = heldKeys(db, workspaceId)
     const rows = db
       .prepare(
         `SELECT d.entity_type, d.entity_id, d.change_seq, d.op_id, e.remote_version, e.base_payload, e.state, e.remote_deleted
@@ -117,6 +120,7 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
           cleared++
           continue
         }
+        if (held.has(`${type}:${id}`)) continue // kept on this device
         kind = 'delete'
         payload = {}
       } else {
@@ -126,6 +130,7 @@ export function buildOps(db: Db, workspaceId: string, nowMs: number): BuildResul
           cleared++
           continue
         }
+        if (held.has(`${type}:${id}`)) continue // kept on this device
         kind = 'upsert'
         const problem = checkLimits(type, payload)
         if (problem) {

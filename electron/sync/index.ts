@@ -16,7 +16,8 @@ import type { SecretStore } from '../services/secrets'
 import { getConflict } from './conflictStore'
 import { resolveConflict, toSyncConflict } from './conflicts'
 import { detachSync } from './detach'
-import { pendingItems } from './activity'
+import { keptItems, pendingItems } from './activity'
+import { setKept } from './kept'
 import { SyncEngine } from './engine'
 import { createLocalWorkspace, discardAllPending, discardPendingItems, hasLiveContent, insertLink, markAllLiveDirty } from './linking'
 import { SyncScheduler } from './scheduler'
@@ -318,6 +319,17 @@ export class SyncService {
   discardPendingChanges = async (workspaceId: string): Promise<SyncStatus> => {
     if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
     this.engine.runApply(workspaceId, (ctx) => discardAllPending(ctx))
+    this.engine.emitStatus(workspaceId)
+    return this.engine.status(workspaceId)
+  }
+
+  /** Changes kept on this device (empty when the workspace is not linked). */
+  listSyncKept = async (workspaceId: string): Promise<SyncActivityItem[]> => (getLink(this.db, workspaceId) ? keptItems(this.db, workspaceId) : [])
+
+  /** Keeps chosen waiting changes on this device (`kept`), or lets them upload again (auto sync picks them up). */
+  setSyncKept = async (workspaceId: string, items: Array<{ entityType: SyncEntityType; entityId: string }>, kept: boolean): Promise<SyncStatus> => {
+    if (!getLink(this.db, workspaceId)) throw new IpcError({ code: 'sync_blocked', message: 'This workspace is not linked to the cloud' })
+    setKept(this.db, workspaceId, items.map((i) => ({ type: i.entityType, id: i.entityId })), kept, Math.floor(Date.now() / 1000))
     this.engine.emitStatus(workspaceId)
     return this.engine.status(workspaceId)
   }

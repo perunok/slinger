@@ -1020,6 +1020,12 @@ cloud changes regularly and uploads your edits shortly after you save) and **Syn
   removed (with everything created inside it), and **Restore** on a deleted item brings it back (a collection or folder returns
   with what was inside it). **Cancel all** (shown when two or more wait) does it for every listed change. A confirmation
   comes first because it cannot be undone. This also works in a read-only workspace, where nothing can be uploaded anyway.
+  **Keep here** holds a change on this device instead: it stays as you made it but is not uploaded, and it no longer counts
+  in the chip's pending number. It moves to **Kept on this device** below, with **Upload** (it goes up with the next sync;
+  **Upload all** for every kept change) and **Cancel**. Keeping a new collection, folder or environment keeps everything
+  created in it too (also what you add later), and keeping a deleted collection or folder keeps the cloud's copy of its
+  contents. If someone changes a kept item in the cloud, you get the usual conflict and choose which version to keep. Kept
+  changes stay kept across restarts; editing a kept item back to the cloud's version ends it.
 - **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
   started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
   why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other

@@ -94,14 +94,14 @@ export class SyncScheduler {
       if (rt.nextRetryAtMs && now < rt.nextRetryAtMs) continue
       if (hasDirty(this.db, l.workspace_id)) {
         rt.dirtySince ??= now
-        if (!rt.debounce && !this.onlyFrozen(l.workspace_id)) {
+        if (!rt.debounce && !this.nothingToUpload(l.workspace_id)) {
           rt.debounce = this.timers.setTimeout(() => {
             rt.debounce = null
             rt.dirtySince = null
             void this.engine.runCycle(l.workspace_id)
           }, DEBOUNCE_MS)
         }
-        if (!this.onlyFrozen(l.workspace_id)) continue
+        if (!this.nothingToUpload(l.workspace_id)) continue
       } else {
         rt.dirtySince = null
       }
@@ -110,15 +110,11 @@ export class SyncScheduler {
     }
   }
 
-  /** Dirty rows that are all frozen in conflicts must not keep triggering cycles. */
-  private onlyFrozen(workspaceId: string): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT 1 FROM sync_dirty d LEFT JOIN sync_entities e ON e.entity_type = d.entity_type AND e.entity_id = d.entity_id
-           WHERE d.workspace_id = ? AND COALESCE(e.state, 'synced') != 'conflict' LIMIT 1`,
-        )
-        .get(workspaceId) === undefined
-    )
+  /**
+   * Dirty rows with nothing to upload must not keep triggering cycles: rows frozen in conflicts, changes kept on this
+   * device (and what depends on them), edits changed back. The periodic cycle still runs (and clears what it can).
+   */
+  private nothingToUpload(workspaceId: string): boolean {
+    return pendingCount(this.db, workspaceId) === 0
   }
 }

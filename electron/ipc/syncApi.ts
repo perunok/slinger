@@ -27,6 +27,8 @@ type SyncIpcMethod =
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
   | 'discardPendingItems'
+  | 'listSyncKept'
+  | 'setSyncKept'
   | 'listSyncPending'
   | 'listSyncActivity'
   | 'listWorkspaceMembers'
@@ -97,6 +99,11 @@ export function createSyncIpc(core: Core): SyncIpcApi {
     discardPendingItems: async (...a) => {
       const [workspaceId, items] = parseArgs(z.tuple([uuid, discardItems]), a)
       return s.discardPendingItems(workspaceId, items)
+    },
+    listSyncKept: async (...a) => s.listSyncKept(parseArgs(z.tuple([uuid]), a)[0]),
+    setSyncKept: async (...a) => {
+      const [workspaceId, items, kept] = parseArgs(z.tuple([uuid, discardItems, z.boolean()]), a)
+      return s.setSyncKept(workspaceId, items, kept)
     },
     listSyncPending: async (...a) => s.listSyncPending(parseArgs(z.tuple([uuid]), a)[0]),
     listSyncActivity: async (...a) => s.listSyncActivity(parseArgs(z.tuple([uuid]), a)[0]),
