@@ -133,6 +133,27 @@ describe('OpenAPI', () => {
     expect(Object.keys(doc.paths['/pets/{petId}']!).sort()).toEqual(['delete', 'get'])
   })
 
+  it('updates the collection from a new version of the document (review, then apply)', async () => {
+    const v2 = readFileSync(join(__dirname, '../electron/__tests__/openapi/fixtures/shop-3.0-v2.yaml'), 'utf8')
+    await tree().getByRole('treeitem', { name: /^Shop API/ }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'OpenAPI…' }).click()
+    const dialog = page.getByTestId('openapi-dialog')
+    await dialog.getByTestId('openapi-link').waitFor()
+    await page.getByRole('button', { name: 'Update from source' }).click()
+    // The document was pasted: Slinger asks for the new version.
+    await dialog.getByRole('radio', { name: 'Paste' }).check()
+    await dialog.getByLabel('Document text').fill(v2)
+    await page.getByRole('button', { name: 'Review changes' }).click()
+    await page.getByRole('button', { name: 'Apply' }).waitFor()
+    expect(await dialog.textContent()).toContain('Adjust stock')
+    await page.getByRole('button', { name: 'Apply' }).click()
+    await dialog.getByTestId('openapi-result').waitFor()
+    expect(await dialog.getByTestId('openapi-result').textContent()).toMatch(/\d+ added/)
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'detached' })
+    await tree().getByRole('treeitem', { name: /^stock/ }).waitFor()
+  })
+
   it('logged no page errors', () => {
     expect(ctx.problems).toEqual([])
   })
