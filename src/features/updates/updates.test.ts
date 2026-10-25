@@ -72,12 +72,15 @@ describe('update notice', () => {
     expect(toast.items).toHaveLength(0)
   })
 
-  it('schedules the first check after startup, then at most once a day, and only while on', async () => {
+  it('checks at every start (even right after a check), then at most once a day, and only while on', async () => {
     vi.useFakeTimers()
+    // A check a minute ago (an earlier run of Slinger) does not stop the startup check.
+    localStorage.setItem(UPDATES_STORAGE_KEY, JSON.stringify({ auto: true, lastCheckedAt: Math.floor(Date.now() / 1000) - 60, latest: null, notified: null }))
+    updates.resetForTests()
     const stop = updates.start()
-    await vi.advanceTimersByTimeAsync(7000)
-    expect(checks()).toBe(0)
     await vi.advanceTimersByTimeAsync(2000)
+    expect(checks()).toBe(0)
+    await vi.advanceTimersByTimeAsync(1500)
     expect(checks()).toBe(1)
     // Hourly ticks within the day do not ask again.
     await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000)
@@ -89,5 +92,26 @@ describe('update notice', () => {
     await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000)
     expect(checks()).toBe(2)
     stop()
+    // Off: a start does not check either.
+    const stop2 = updates.start()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(checks()).toBe(2)
+    stop2()
+  })
+
+  it('a start reminds of a newer version already announced; up to date stays silent', async () => {
+    backend.setLatestRelease('1.0.0')
+    await updates.check('auto')
+    expect(toast.items).toHaveLength(1)
+    toast.items = []
+    updates.resetForTests()
+    await updates.check('startup')
+    expect(toast.items.map((t) => t.title)).toEqual(['Slinger 1.0.0 is available'])
+    toast.items = []
+    await updates.check('auto') // the daily check during the same run does not repeat it
+    expect(toast.items).toHaveLength(0)
+    backend.setLatestRelease(null) // no newer release (the mock app is 0.0.0-dev)
+    await updates.check('startup')
+    expect(toast.items).toHaveLength(0)
   })
 })

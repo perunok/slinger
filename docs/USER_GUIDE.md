@@ -1,7 +1,7 @@
 # Slinger user guide
 
 Slinger is a local-first API client. Everything is stored on your computer; nothing leaves it except the requests you send (plus, unless you turn it off, a
-daily check with GitHub for a new Slinger release, see [Updates](#updates)).
+check with GitHub for a new Slinger release at each start and once a day, see [Updates](#updates)).
 On Windows/Linux the shortcut modifier is Ctrl; on macOS Cmd works as well.
 
 ## Layout
@@ -1307,8 +1307,9 @@ eye on what it does to important collections (a collection version is a good bac
 
 ## Updates
 
-Once a day Slinger asks GitHub which version is the latest release of Slinger. When there is a newer one than yours, a
-notification says so (once per version) with **Update now**. The request carries nothing about you or your data, and nothing is
+Each time Slinger starts (a few seconds after its window opens) and once a day while it runs, it asks GitHub in the background
+which version is the latest release of Slinger. When there is a newer one than yours, a notification says so with **Update
+now**: at every start while you have not installed it, and once per version during the day. The request carries nothing about you or your data, and nothing is
 downloaded until you click.
 
 - **Update now** opens **Update Slinger**: it downloads the new version for your system from GitHub with a progress bar (size,

@@ -1117,8 +1117,9 @@ place and `open`s it. Then `app.quit()` runs the normal quit (assistant calls fi
 `SLINGER_UPDATE_FEED_URL` (http/https) replaces the GitHub URL (tests, e2e). Automated runs (`SLINGER_SMOKE_TEST`,
 `SLINGER_HIDE_WINDOW`) without it never call out: `checkForUpdates` answers `io_error` there.
 
-Renderer: `src/features/updates/updates.svelte.ts` schedules it (first check 8 s after startup, then an hourly tick that only
-checks when the last successful check is a day old, while the setting is on), via `src/lib/updates.ts` (pure:
+Renderer: `src/features/updates/updates.svelte.ts` schedules it (while the setting is on: a `startup` check 3 s after every
+start, whatever the last check was, which announces a newer version again even if it was before; then an hourly tick that
+only checks when the last successful check is a day old and announces each version once), via `src/lib/updates.ts` (pure:
 `localStorage['slinger.updates']` = `{ auto, lastCheckedAt, latest, notified }`, `isCheckDue`, `shouldNotify`). A newer
 version shows one persistent info toast per version ("Slinger X is available", **Update now** -> `updates.updateNow()`, which
 opens `UpdateDialog.svelte` and starts `downloadUpdate`; **View release** -> `openExternalUrl` where the installation cannot
