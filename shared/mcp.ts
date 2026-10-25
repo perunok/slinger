@@ -314,6 +314,20 @@ export const MCP_TOOLS = {
     description: 'Imports a Postman v2.0/v2.1 collection given as JSON text into a new collection.',
     input: z.object({ collection_json: z.string().min(2).max(50_000_000), workspace_id: optWorkspace }),
   },
+  import_openapi: {
+    title: 'Import an OpenAPI document',
+    description:
+      'Imports an OpenAPI 3.0/3.1 or Swagger 2.0 document (JSON or YAML text, or a URL Slinger downloads) as a new collection: one request per operation, in folders by tag, with saved examples for the documented responses. The collection stays linked to the document (responses are checked against it).',
+    input: z
+      .object({
+        document: z.string().min(2).max(50_000_000).optional(),
+        url: z.string().url().max(4096).optional(),
+        folders: z.enum(['tags', 'paths', 'none']).optional(),
+        name: z.string().min(1).max(200).optional(),
+        workspace_id: optWorkspace,
+      })
+      .refine((a) => !!a.document !== !!a.url, { message: 'Give either document or url' }),
+  },
   open_in_app: {
     title: 'Show in Slinger',
     description: 'Opens a request in a tab of the Slinger window so the user sees it.',

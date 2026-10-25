@@ -69,6 +69,41 @@ export function countScripts(event: unknown): number {
   return n
 }
 
+/**
+ * The request a Postman request item becomes (name, method, url and the stored document), or null when the item has no
+ * `request`. `inheritedAuth` is the nearest folder/collection auth. Shared by the importer and OpenAPI updates
+ * (electron/openapi/update.ts), so an updated request is shaped exactly like an imported one.
+ */
+export function requestFromPostmanItem(item: Json, inheritedAuth: unknown): { name: string; method: string; url: string; document: Json } | null {
+  if (!isObject(item.request)) return null
+  const request = item.request
+  const name = str(item.name) ?? 'Untitled Request'
+  // A Slinger MCP request (see src/lib/postman.ts): its configuration comes back from the item's `_slinger_mcp`.
+  const mcp = isObject(item._slinger_mcp) ? item._slinger_mcp : null
+  const method = mcp ? MCP_METHOD : (str(request.method) ?? 'GET').toUpperCase()
+  const url = postmanUrlToString(request.url)
+  // A request imported from an OpenAPI document (electron/openapi/toCollection.ts): its operation key and hashes.
+  const openapi = isObject(item._slinger_openapi) && typeof item._slinger_openapi.key === 'string' ? item._slinger_openapi : null
+  const { _slinger_mcp: _mcp, _slinger_openapi: _openapi, ...sourceItem } = item
+  const document: Json = {
+    name,
+    method,
+    url,
+    description: request.description ?? null,
+    headers: Array.isArray(request.header) ? request.header : [],
+    body: mcp ? null : (request.body ?? null),
+    // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
+    // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
+    auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
+    scripts: Array.isArray(item.event) ? item.event : [],
+    responses: Array.isArray(item.response) ? item.response : [],
+    source: stripOAuth2TokensFromItem(sourceItem),
+  }
+  if (mcp) Object.assign(document, { params: [], mcp })
+  if (openapi) document.openapi = openapi
+  return { name, method, url, document }
+}
+
 function collect(
   items: unknown[],
   parentTempId: number | null,
@@ -89,31 +124,10 @@ function collect(
       collect(item.item, tempId, item.auth ?? inheritedAuth, depth + 1, out)
       continue
     }
-    if (!isObject(item.request)) continue
-    const request = item.request
-    const name = str(item.name) ?? 'Untitled Request'
-    // A Slinger MCP request (see src/lib/postman.ts): its configuration comes back from the item's `_slinger_mcp`.
-    const mcp = isObject(item._slinger_mcp) ? item._slinger_mcp : null
-    const method = mcp ? MCP_METHOD : (str(request.method) ?? 'GET').toUpperCase()
-    const url = postmanUrlToString(request.url)
+    const request = requestFromPostmanItem(item, inheritedAuth)
+    if (!request) continue
     out.scriptCount += countScripts(item.event)
-    const { _slinger_mcp: _mcp, ...sourceItem } = item
-    const document: Json = {
-      name,
-      method,
-      url,
-      description: request.description ?? null,
-      headers: Array.isArray(request.header) ? request.header : [],
-      body: mcp ? null : (request.body ?? null),
-      // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
-      // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
-      auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
-      scripts: Array.isArray(item.event) ? item.event : [],
-      responses: Array.isArray(item.response) ? item.response : [],
-      source: stripOAuth2TokensFromItem(sourceItem),
-    }
-    if (mcp) Object.assign(document, { params: [], mcp })
-    out.requests.push({ folderTempId: parentTempId, name, method, url, sortOrder: requestOrder++, document })
+    out.requests.push({ folderTempId: parentTempId, ...request, sortOrder: requestOrder++ })
   }
 }
 

@@ -1,5 +1,13 @@
+<script lang="ts" module>
+  import type { OpenApiValidation } from '../../../shared/types'
+
+  /** Spec checks by response, so switching back to a tab does not check its response again. */
+  const specChecks = new WeakMap<object, OpenApiValidation | null>()
+</script>
+
 <script lang="ts">
   /** What sits under the request editor: empty state, progress, inline error or the response viewer. */
+  import { untrack } from 'svelte'
   import { scopeStore } from '../../app/scope.svelte'
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
@@ -11,8 +19,37 @@
   import ResponseViewer from './ResponseViewer.svelte'
   import SendingStatus from './SendingStatus.svelte'
   import ConsoleView from '../scripts/ConsoleView.svelte'
+  import { checkResponseAgainstSpec } from '../openapi/openapiStore.svelte'
+  import SpecChip from '../openapi/SpecChip.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
+
+  /** How the shown response compares with the collection's OpenAPI document (null: not checked / nothing to check). */
+  let spec = $state.raw<{ for: unknown; result: OpenApiValidation } | null>(null)
+  const SPEC_DEBOUNCE_MS = 150
+  $effect(() => {
+    const response = tab.response
+    const collectionId = tab.collectionId
+    if (!response || !collectionId || tab.sending) return
+    if (specChecks.has(response)) {
+      const known = specChecks.get(response)
+      spec = known ? { for: response, result: known } : null
+      return
+    }
+    // The request as it was sent (later edits to the draft do not re-check this response).
+    const target = untrack(() => ({ collectionId, requestId: tab.requestId, method: tab.draft.method, url: tab.draft.url }))
+    let stale = false
+    const timer = setTimeout(async () => {
+      const result = await checkResponseAgainstSpec(target, response.data)
+      specChecks.set(response, result)
+      if (!stale) spec = result ? { for: response, result } : null
+    }, SPEC_DEBOUNCE_MS)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  })
+  const specResult = $derived(spec && spec.for === tab.response ? spec.result : null)
 
   let naming = $state(false)
   const saveTitle = $derived(
@@ -71,6 +108,9 @@
         scripts={tab.scriptOutput}
         onclearconsole={() => tab.scriptOutput && (tab.scriptOutput = { ...tab.scriptOutput, console: [] })}
       >
+        {#snippet chips()}
+          {#if specResult}<SpecChip result={specResult} />{/if}
+        {/snippet}
         {#snippet actions()}
           <Button size="sm" icon="save" class="mr-1" disabled={sync.blocked || !tab.requestId} title={saveTitle} onclick={() => (naming = true)}>Save as example</Button>
         {/snippet}

@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: Shop API
+  version: 1.4.0
+  description: Orders and pets for the test shop.
+  contact: { name: Shop team, email: team@example.com }
+servers:
+  - url: https://{region}.shop.example.com/v1
+    variables:
+      region: { default: eu, enum: [eu, us], description: Data centre }
+tags:
+  - name: pets
+    description: Everything about pets
+  - name: orders
+security:
+  - bearerAuth: []
+paths:
+  /pets:
+    get:
+      tags: [pets]
+      summary: List pets
+      operationId: listPets
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: status, in: query, required: true, schema: { type: string, enum: [available, sold] } }
+        - { name: X-Request-Id, in: header, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: A page of pets
+          headers:
+            X-Total: { schema: { type: integer }, example: 42 }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Pet' } }
+                  next: { type: string, nullable: true }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [pets]
+      summary: Create a pet
+      operationId: createPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewPet' }
+            examples:
+              cat: { summary: A cat, value: { name: Tom, kind: cat } }
+              dog: { summary: A dog, value: { name: Rex, kind: dog } }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '422': { $ref: '#/components/responses/Error' }
+  /pets/{petId}:
+    parameters:
+      - { name: petId, in: path, required: true, schema: { type: integer, format: int64 }, example: 7 }
+    get:
+      tags: [pets]
+      summary: Get a pet
+      operationId: getPet
+      responses:
+        '200':
+          description: The pet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pet' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [pets]
+      operationId: deletePet
+      deprecated: true
+      responses:
+        '204': { description: Deleted }
+  /pets/{petId}/photo:
+    put:
+      tags: [pets]
+      summary: Upload a photo
+      parameters:
+        - { name: petId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                caption: { type: string }
+      responses:
+        '200':
+          description: The photo
+          content:
+            image/png: { schema: { type: string, format: binary } }
+  /orders:
+    post:
+      tags: [orders]
+      summary: Place an order
+      security:
+        - apiKey: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [petId]
+              properties:
+                petId: { type: integer }
+                note: { type: string, example: leave at the door }
+      responses:
+        '2XX':
+          description: Placed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain: { example: ok }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    apiKey: { type: apiKey, in: header, name: X-API-Key }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    NewPet:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [cat, dog, bird] }
+        id: { type: integer, readOnly: true }
+    Pet:
+      allOf:
+        - $ref: '#/components/schemas/NewPet'
+        - type: object
+          required: [id]
+          properties:
+            id: { type: integer, example: 7 }
+            createdAt: { type: string, format: date-time }
+            owner: { $ref: '#/components/schemas/Owner' }
+            tags: { type: array, items: { type: string }, minItems: 2 }
+    Owner:
+      type: object
+      properties:
+        name: { type: string }
+        pets:
+          type: array
+          items: { $ref: '#/components/schemas/Pet' }
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { oneOf: [ { type: string, enum: [placed, shipped] }, { type: 'null' } ] }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer }
+        message: { type: string }

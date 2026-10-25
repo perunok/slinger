@@ -134,6 +134,16 @@ describe('editing requests', () => {
     expect(await failure('create_request', { collection_id: created.id, name: 'x' })).toContain('Invalid arguments')
     expect(await failure('format_disk')).toContain('Unknown tool')
   })
+
+  it('imports an OpenAPI document (YAML text) as a linked collection; needs exactly one of document and url', async () => {
+    const yaml = ['openapi: 3.0.3', 'info: {title: Assistant API, version: "1"}', 'servers: [{url: "https://a.example"}]', 'paths:', '  /ping:', '    get:', '      tags: [health]', "      responses: {'200': {description: ok}}"].join('\n')
+    const { imported, warnings } = await call('import_openapi', { document: yaml })
+    expect(imported).toMatchObject({ name: 'Assistant API', folders: 1, requests: 1, openapi: '3.0' })
+    expect(warnings).toEqual([])
+    expect(app.collections.some((c) => c.id === imported.collection_id)).toBe(true)
+    expect(await window.slinger.getOpenApiLink(imported.collection_id)).toMatchObject({ title: 'Assistant API' })
+    expect(await failure('import_openapi', {})).toContain('Give either document or url')
+  })
 })
 
 describe('saved examples', () => {

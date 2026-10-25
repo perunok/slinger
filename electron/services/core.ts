@@ -19,6 +19,7 @@ import type { SecretStore } from './secrets'
 import type { CollectionVersionAuthor, MockServerEvent, SyncEvent } from '../../shared/types'
 import { createSyncService, type SyncService, type SyncServiceDeps } from '../sync'
 import { McpService, type McpServiceDeps } from '../mcp/service'
+import { OpenApiService } from '../openapi/service'
 import { McpClientService, type McpClientApi, type McpClientDeps } from '../mcpClient/types'
 
 export interface CoreDeps {
@@ -41,6 +42,8 @@ export interface CoreDeps {
   mcpClient?: Partial<Omit<McpClientDeps, 'db'>>
   /** Receives every MockServerEvent (main forwards them to the renderer). */
   mockServerEvents?: (event: MockServerEvent) => void
+  /** Fetches OpenAPI documents by URL (Electron's net.fetch in the app; global fetch by default). */
+  openapiFetch?: typeof fetch
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -71,6 +74,8 @@ export interface Core {
   mcpClient: McpClientApi
   /** ADDED (mock servers): local HTTP servers answering with a collection's saved examples; in memory only. */
   mockServers: MockServers
+  /** ADDED (OpenAPI): import, the collection's link to its document, validation and updates. */
+  openapi: OpenApiService
   /** ADDED (version authors): the signed-in cloud user as the creator of versions made now; `null` when not signed in. */
   versionAuthor(): CollectionVersionAuthor | null
 }
@@ -128,6 +133,7 @@ export function createCore(deps: CoreDeps): Core {
       appVersion: deps.mcpClient?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
     mockServers: new MockServers({ emit: deps.mockServerEvents }),
+    openapi: new OpenApiService({ db, fetchImpl: deps.openapiFetch }),
     versionAuthor: () => {
       const user = core.sync.auth.snapshot().user
       return user ? { id: user.id, name: user.displayName || user.email } : null

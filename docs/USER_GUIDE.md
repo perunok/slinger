@@ -856,6 +856,73 @@ collections keep theirs).
   "Plain text"; they stay plain text when edited and exported.
 - **Read-only workspaces:** docs are view-only (Preview) for viewers of a shared cloud workspace.
 
+## OpenAPI
+
+Slinger reads API descriptions in **OpenAPI 3.0 / 3.1** and **Swagger 2.0** (JSON or YAML) and keeps a collection in step with
+one.
+
+**Importing.** Open **Import** (the sidebar's import button, or File > Import) and drop or choose a `.yaml`, `.yml` or `.json`
+file, paste the document, or enter its URL under **Or an OpenAPI document from a URL** and click **Load** (pasting a link that
+ends in .json/.yaml or mentions openapi/swagger/api-docs works too; Slinger downloads it, not the window). The preview shows the
+API's title and version, the OpenAPI version, how many operations it has, its tags, servers, auth schemes and anything that
+could not be read (a reference to another file, webhooks). Choose **Folders** (by tag, by the first path segment, or none) and the
+collection name, then **Import API**. The new collection opens with its overview:
+
+- one request per operation, named after its summary (else its operationId, else `GET /path`), deprecated ones marked;
+- URLs on `{{baseUrl}}` (a collection variable set to the first server URL; server variables such as `{region}` become
+  collection variables too), path parameters as `:petId` with an example value, query and header parameters (the required ones
+  enabled, the others present but disabled), cookie parameters as a `Cookie` header;
+- the body as JSON (the document's first example, else one generated from the schema), a url-encoded form or a multipart form
+  (file fields for binary properties), with `Content-Type` and `Accept` headers;
+- auth from the document's security schemes: bearer (`{{bearerToken}}`), basic (`{{username}}`/`{{password}}`), API key in a
+  header or the query (`{{apiKey}}`), OAuth 2.0 (authorization code with PKCE, client credentials or password, with the
+  document's URLs and scopes and `{{clientId}}`); the variables are added empty, set them in the collection's variables;
+- one **saved example per documented response** (several when the document names several examples), filled from the
+  document's examples or generated from its schemas, so a [mock server](#mock-servers) answers right away.
+
+Generated values are always the same for the same document (no random data), and an assistant can import too (MCP tool
+`import_openapi`).
+
+**Checking responses against the spec.** When a collection has an OpenAPI document linked on this device, every response
+gets a **Spec** chip next to its status, time and size. **Matches spec** means the status, content type and JSON body are as
+documented. **N spec errors** opens a list of the problems, each with where it is in the body (`$.items[0].price`) and what is
+wrong, plus the operation and documented response used. A request imported from the document is matched by its operation; any
+other request is matched by method and URL path. Requests that are not operations of the document show no chip. Bodies over
+5 MB are not checked. In the collection runner, **Check responses against the OpenAPI spec** (on by default for linked
+collections) adds a "Response matches the OpenAPI spec" test to each request that is an operation; it fails with the first
+five problems and counts like a script test. In scripts, `pm.response.to.have.jsonSchema(schema[, ajvOptions])` checks the
+JSON body against any JSON Schema (draft-07, as in Postman).
+
+**Updating a collection from its document.** Right-click a collection > **OpenAPI…** to see the document it is linked to
+(title, version, format, source, number of operations and import time). **Update from source** fetches a linked URL again;
+for a file or a pasted document, choose the file or paste the new version. Slinger then lists what differs:
+
+- **Added** operations are added (into the folder for their tag, created when missing) unless you choose *Skip*;
+- **Changed** requests you have not edited since the import are updated unless you choose *Keep*;
+- **Changed here and in the spec** requests are kept unless you choose *Take spec*;
+- **Removed** operations keep their request unless you choose *Delete*;
+- collection notes: a new server URL (baseUrl is updated only while it still has the old generated value), new folders and
+  variables.
+
+An update replaces only what the document defines: method, URL and query parameters, headers, body and generated examples;
+auth and description only while they are still the generated ones. Your own headers, query parameters, examples, scripts,
+renamed names, folder and position are kept. **Apply** first saves an automatic version (restore it under Versions… to undo),
+then links the collection to the new document. Read-only workspaces can review an update but not apply it.
+
+**Linking.** A collection without a link (made by hand, or imported on another device: the link is stored on this device only,
+not synced) shows **Link a spec…**: paste a document, choose a file or enter a URL, and choose how added requests are put in
+folders. Linking changes no request; the review that follows matches requests by the operation they came from, else by method
+and path (`{{baseUrl}}/pets/:id` matches `GET /pets/{petId}`). **Unlink** forgets the document; the requests stay.
+
+**Export as OpenAPI.** Choose **OpenAPI 3.1 (.yaml)** or **OpenAPI 3.1 (.json)** in the Export dialog (or **Export as
+OpenAPI…** in the OpenAPI dialog) to save the collection as `<collection>.openapi.yaml` / `.openapi.json`. Each saved request
+becomes an operation: the server comes from the `baseUrl` collection variable (or the URL's scheme and host), `:id` and
+`{{id}}` path segments become path parameters, query/header/cookie rows become parameters, the body becomes a request body,
+auth becomes a security scheme, and the top-level folder becomes the tag. Saved examples become the responses, with JSON
+Schemas inferred from their JSON; a request without examples gets a `default` response. Requests with the same method and path
+are merged into one operation. Requests imported from an OpenAPI document keep their operationId and required parameters. MCP
+requests, scripts, tests and versions are not exported, and `{{variables}}` stay as written.
+
 ## Import and export (Slinger and Postman)
 
 - **Import:** open the **Import** dialog with the upload button in the Collections header (*Import collection or

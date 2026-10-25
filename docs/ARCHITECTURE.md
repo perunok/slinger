@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0015_sync_kept.sql
+  migrations/        0001_init.sql ... 0016_collection_openapi.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -200,6 +200,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0013_member_count` | nullable `cloud_links.member_count` (active members of the linked cloud workspace as last read; display only, Team badge) |
 | `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
 | `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
+| `0016_collection_openapi` | `collection_openapi`: the OpenAPI document a collection is linked to on this device (source, text, hash, title, versions, folder mode, operation count); local only, see [OpenAPI](#openapi) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -661,6 +662,72 @@ with an example's own `Vary`; an example's own `Access-Control-*` headers win). 
   `e2e/mockServers.e2e.test.ts` (the real app), `src/lib/mockServers.test.ts`, `src/features/mockServers/mockServers.test.ts` (store, dialog,
   status bar against the browser mock, whose `__slingerMock.mockServers.hit(collectionId, {method, path, headers})` plays
   requests through the same matcher).
+
+## OpenAPI
+
+Import, response validation, updates and export of OpenAPI 3.0/3.1 and Swagger 2.0 documents. No server or sync change:
+requests carry their operation in the (synced, opaque) request document; the document itself is linked per device.
+
+- **Reading** (`shared/openapi/load.ts`, pure, also used by the browser mock): JSON or YAML (`js-yaml` with the JSON schema,
+  so custom tags never run); Swagger 2.0 converted to the OpenAPI 3 shape on the way in (servers from host/basePath/schemes,
+  `in: body`/`in: formData` to request bodies, `produces` + response `schema`/`examples` to content, `definitions` to
+  `components.schemas` with refs rewritten, security definitions to schemes). `loadSpec` lists operations
+  (`SpecOperation`: key `"GET /pets/{petId}"`, path-level and operation parameters merged, request body and responses with
+  local `$ref`s followed, cycle-safe; remote refs reported in `warnings`). Problems are `OpenApiError`, turned into
+  `invalid_input` by main and the mock.
+- **Samples** (`sample.ts`): example > examples[0] > default > const > enum, `allOf` merged, `oneOf/anyOf` first non-null,
+  readOnly left out of requests and writeOnly of responses, formats, depth 8, cycles stop. Deterministic on purpose, so an
+  update only reports real changes.
+- **Conversion** (`toCollection.ts`): the document becomes a Postman v2.1 collection written by the existing importer
+  (`parsePostmanCollection`/`insertContent`): folders by tag/path/none, `{{baseUrl}}` URLs, parameters, bodies (JSON > `+json`
+  > url-encoded > multipart > text), auth from security schemes (set on the collection when every operation shares it),
+  examples per response (`2XX` -> 200, `default` -> 500, generated ones marked `_slinger_openapi: true`). Each item carries
+  `_slinger_openapi` (`OpenApiRequestMeta`: key, operationId, specHash, itemHash, examplesHash), which both importers keep as
+  the request document's `openapi` (and the Postman export writes back).
+- **Identity** (`fingerprint.ts`): `itemHash` is the semantic fingerprint (method, URL, headers, body by mode, the auth fields an
+  import sets, description) of what the import generated; the same fingerprint of the stored document tells "unchanged since
+  import" from "edited here" even after the renderer re-serialised it. Pure-JS 128-bit hash (main and browser alike).
+- **Link** (migration `0016_collection_openapi`, local only, no capture triggers): `collection_openapi` (collection, source
+  kind url/file/text + value, document text and hash, title, versions, folder mode, operation count, times).
+  `electron/openapi/service.ts` (`core.openapi`): `previewOpenApi` (text, or a URL fetched with `net.fetch`: http(s) only, 50 MB,
+  30 s, no credentials), `importOpenApi` (import + link in one transaction), `getOpenApiLink`, `unlinkOpenApi`.
+- **Validation** (`shared/openapi/validate.ts`, pure; `electron/openapi/validate.ts`): operation from the request's
+  `openapi.key`, else method + URL path (after `{{baseUrl}}`, a server URL or scheme+host; `{param}` segments are wildcards and
+  literal segments win); then the response (exact status, `NXX`, `default`) and the media type (exact, `+json` for
+  `application/json`, `type/*`, `*/*`). The document's schemas are converted once: 3.0 and Swagger to draft-07 (`nullable`,
+  boolean exclusive bounds, OpenAPI-only keywords dropped), 3.1 kept as 2020-12, then added to ajv 8 (package alias `ajv8`,
+  loaded on the first check; the plain `ajv` stays 6.15 for the script sandbox) as one schema with local refs made absolute, so
+  cycles resolve. Formats are checked by own rules. Compiled validators are cached per (spec hash, operation, response, media
+  type) in a 200-entry LRU. IPC `validateOpenApiResponse` reads the link hash first and keeps parsed documents per hash; bodies
+  over 5 MB return "Too large to check". Renderer: `features/openapi/openapiStore.svelte.ts` caches links per collection
+  (`invalidateOpenApiLink` after import/link/apply/unlink), `SpecChip.svelte` in the response viewer (checked 150 ms after a
+  response arrives), runner option `checkOpenApi` adding a "Response matches the OpenAPI spec" test. Scripts:
+  `pm.response.to.have.jsonSchema` (sandbox ajv 6).
+- **Updates** (`shared/openapi/update.ts`, pure, also used by the mock; `electron/openapi/update.ts`):
+  `planOpenApiUpdate` regenerates the new document's items (`generatedItems`, folder mode from the link) and compares them
+  with the live requests matched by `openapi.key`, else by method + path template: `changed` when the new `itemHash` or
+  `examplesHash` differs from the stored one, `editedHere` when the request's fingerprint differs from both the stored and the
+  new `itemHash`; collection notes for baseUrl, new tag folders and variables. Plans stay in main memory for 10 minutes,
+  stamped with the live requests' (id, version) and the baseUrl. `applyOpenApiUpdate` re-checks the stamp in one transaction,
+  writes a safety version, then adds (`requestFromPostmanItem`, the importer's mapping), in-place merges of the spec-owned parts
+  (`version + 1`, so sync picks them up; user headers/params/examples, scripts, renamed names kept), soft deletes and
+  variables, then `saveLink`. `linkOpenApi` stores a link only. UI: `features/openapi/OpenApiDialog.svelte` (lazy, collection
+  menu **OpenAPI…**).
+- **Export** (`src/lib/openapiExport.ts` + `src/lib/schemaInfer.ts`, renderer only, pure, written with `writeExportFile`):
+  walks `buildTree`, reads each request with `parseDocument` and its examples with `parseExample`, and accumulates operations by
+  method + path (merging duplicates). The server comes from `baseUrl` (other host `{{vars}}` become server variables), paths
+  are templated from `:p`/`{{p}}`, and parameters are `required` only when an OpenAPI import enabled them. Bodies and examples
+  get JSON Schema 2020-12 inferred from their JSON (first 50 array elements; formats date-time/date/email/uuid/uri; merging
+  takes the union of properties and the intersection of required). Auth goes to `components.securitySchemes` (document-wide
+  `security` when uniform); operationIds are unique, an import's `openapi.operationId` wins. MCP requests and non-OAS methods
+  are skipped and counted. YAML via js-yaml `dump`, loaded only with the lazy Export dialog chunk.
+- **Import UI**: `features/importexport/ImportDialog.svelte` recognises documents (`openapiDetect.ts`: a top-level
+  `openapi`/`swagger` key with a 2.x/3.x version, a pasted spec URL), shows `OpenApiImportPreview.svelte`; MCP tool
+  `import_openapi`.
+- **Tests**: `electron/__tests__/openapi/{import,validate,update}.test.ts` (fixtures: shop 3.0 YAML and its v2, petstore
+  Swagger 2.0 JSON, a 3.1 document), `src/lib/openapiExport.test.ts`, `schemaInfer.test.ts`, `openapiRoundTrip.test.ts`
+  (import -> export -> import keeps operations, parameters, bodies, responses, tags), dialog/chip/runner tests, and
+  `e2e/openapi.e2e.test.ts` (import a pasted YAML -> mock server -> Spec chip -> export -> update from a new version).
 
 ## Collection versioning
 

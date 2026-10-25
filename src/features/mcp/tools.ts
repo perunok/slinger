@@ -926,6 +926,24 @@ const tools: Impls = {
     return done({ imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length } })
   },
 
+  async import_openapi(a) {
+    const ws = workspaceOf(a.workspace_id)
+    const preview = await api().previewOpenApi(a.url ? { url: a.url } : { text: a.document })
+    const res = await api().importOpenApi({
+      workspaceId: ws,
+      text: preview.text,
+      source: a.url ? { kind: 'url', value: a.url } : { kind: 'text', value: null },
+      folders: a.folders ?? (preview.tags.length ? 'tags' : 'paths'),
+      ...(a.name ? { name: a.name } : {}),
+    })
+    await refresh(ws)
+    await logEdit(ws, `Imported API ${q(res.collection.name)} from an OpenAPI document (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
+    return done({
+      imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length, openapi: preview.oasVersion },
+      warnings: res.warnings,
+    })
+  },
+
   async open_in_app(a) {
     const r = await findRequest(a.request_id)
     if (r.workspaceId !== app.workspaceId) await app.selectWorkspace(r.workspaceId)

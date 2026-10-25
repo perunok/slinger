@@ -1,0 +1,92 @@
+openapi: 3.0.3
+info: { title: Validation, version: '1' }
+servers:
+  - url: https://api.example.com/v2
+paths:
+  /items/{id}:
+    get:
+      parameters: [ { name: id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: An item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        4XX:
+          description: Client error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /items/mine:
+    get:
+      responses:
+        '200':
+          description: My items
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Item' } }
+  /tree:
+    get:
+      responses:
+        '200':
+          description: A tree
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Node' }
+  /text:
+    get:
+      responses:
+        '200':
+          description: Text
+          content:
+            text/plain:
+              schema: { type: string }
+            application/xml:
+              schema: { type: object }
+  /anything:
+    get:
+      responses:
+        default:
+          description: Anything
+          content:
+            '*/*':
+              schema: { type: object, required: [ok], properties: { ok: { type: boolean } } }
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id, price, password]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        created: { type: string, format: date-time }
+        day: { type: string, format: date }
+        at: { type: string, format: time }
+        email: { type: string, format: email }
+        site: { type: string, format: uri }
+        ip4: { type: string, format: ipv4 }
+        ip6: { type: string, format: ipv6 }
+        data: { type: string, format: byte }
+        count: { type: integer, format: int32 }
+        big: { type: integer, format: int64 }
+        price: { type: number, minimum: 0, exclusiveMinimum: true, example: 9.5 }
+        note: { type: string, nullable: true }
+        kind: { type: string, enum: [a, b], nullable: true }
+        password: { type: string, writeOnly: true }
+        secret: { type: string, readOnly: true }
+        xml: { type: string }
+    Problem:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+    Node:
+      type: object
+      required: [name]
+      discriminator: { propertyName: name }
+      properties:
+        name: { type: string }
+        children: { type: array, items: { $ref: '#/components/schemas/Node' } }
+        parent:
+          nullable: true
+          allOf: [ { $ref: '#/components/schemas/Node' } ]

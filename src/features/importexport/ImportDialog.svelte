@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
    * Import dialog: Slinger or Postman collections, environments and globals, from a file (drop / choose) or pasted JSON
-   * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar), and cURL commands
-   * (added as requests to a collection the user picks; lib/curl.ts parses them, curlImport.ts places them).
+   * (the paste area, Ctrl+V anywhere in the dialog, or JSON pasted into a request's URL bar, see UrlBar), cURL commands
+   * (added as requests to a collection the user picks; lib/curl.ts parses them, curlImport.ts places them), and OpenAPI /
+   * Swagger documents (JSON or YAML, also by URL: main reads and fetches them, see electron/openapi).
    * Whichever was provided last is imported.
    */
   import { tick } from 'svelte'
@@ -26,6 +27,10 @@
   import { containsCurl, curlRequestName, parseCurl, type ParsedCurl } from '../../lib/curl'
   import { methodColor } from '../requests/method'
   import { addCurlRequests, defaultCurlTarget, folderChoices, NEW_COLLECTION_NAME, type CurlTarget } from './curlImport'
+  import type { OpenApiFolderMode, OpenApiPreview } from '../../../shared/types'
+  import { looksLikeOpenApi, specUrlOf } from './openapiDetect'
+  import OpenApiImportPreview from './OpenApiImportPreview.svelte'
+  import { invalidateOpenApiLink } from '../openapi/openapiStore.svelte'
 
   interface Props {
     open: boolean
@@ -42,8 +47,8 @@
   const PASTE_SOURCE_LABEL = 'pasted JSON'
 
   let fileName = $state<string | null>(null)
-  /** Where `text` came from: the last file chosen/dropped or the last paste. */
-  let source = $state<'file' | 'paste' | null>(null)
+  /** Where `text` came from: the last file chosen/dropped, the last paste, or a URL (OpenAPI documents). */
+  let source = $state<'file' | 'paste' | 'url' | null>(null)
   let text = $state.raw('')
   /** Length of the pasted text (chars), for the size indicator. */
   let pasteSize = $state(0)
@@ -68,11 +73,72 @@
   let curlNames = $state<string[]>([])
   let curlTarget = $state<CurlTarget>({ collectionId: null, newName: NEW_COLLECTION_NAME, folderId: null })
   const curlFolders = $derived(curlTarget.collectionId ? folderChoices(app.foldersOf(curlTarget.collectionId)) : [])
+  /** An OpenAPI/Swagger document read by main (its `text` is what gets imported), and its options. */
+  let openapi = $state.raw<OpenApiPreview | null>(null)
+  let openapiFolders = $state<OpenApiFolderMode>('tags')
+  let openapiName = $state('')
+  /** The URL field, and the URL the current document came from. */
+  let urlInput = $state('')
+  let specUrl = $state<string | null>(null)
+  let previewing = $state(false)
+  /** Bumped per parse so a slow preview of older text never wins. */
+  let previewSeq = 0
+
+  /** Asks main to read an OpenAPI document (pasted/file text, or fetched from a URL) and shows what it contains. */
+  async function previewSpec(input: { text?: string; url?: string }) {
+    const seq = ++previewSeq
+    previewing = true
+    error = null
+    try {
+      const p = await api().previewOpenApi(input)
+      if (seq !== previewSeq) return
+      openapi = p
+      openapiName = p.title
+      openapiFolders = p.tags.length > 0 ? 'tags' : 'paths'
+      if (input.url) {
+        specUrl = input.url
+        text = p.text
+      }
+    } catch (e) {
+      if (seq === previewSeq) error = errorInfo(e).message
+    } finally {
+      if (seq === previewSeq) previewing = false
+    }
+  }
+
+  function loadUrl() {
+    const url = urlInput.trim()
+    if (!url || busy) return
+    clearTimeout(pasteTimer)
+    if (source === 'file' && input) input.value = ''
+    fileName = null
+    note = null
+    parsed = null
+    curl = null
+    openapi = null
+    source = 'url'
+    void previewSpec({ url })
+  }
 
   /** Parses `t` as a cURL command (text that is not JSON and has `curl` in it) or an export. */
   function parseText(t: string) {
     parsed = null
     curl = null
+    openapi = null
+    specUrl = null
+    previewSeq++
+    previewing = false
+    // A pasted link to a document: fetch it like the URL field.
+    const pastedUrl = source === 'paste' ? specUrlOf(t) : null
+    if (pastedUrl) {
+      urlInput = pastedUrl
+      void previewSpec({ url: pastedUrl })
+      return
+    }
+    if (looksLikeOpenApi(t)) {
+      void previewSpec({ text: t })
+      return
+    }
     if (!t.trimStart().startsWith('{') && containsCurl(t)) {
       const r = parseCurl(t)
       if (!r.ok) {
@@ -108,6 +174,13 @@
       targetId = null
       curl = null
       curlNames = []
+      openapi = null
+      openapiFolders = 'tags'
+      openapiName = ''
+      urlInput = ''
+      specUrl = null
+      previewSeq++
+      previewing = false
       return
     }
     const t = initialText
@@ -134,6 +207,7 @@
         text = ''
         parsed = null
         curl = null
+        openapi = null
         error = null
       }
       return
@@ -345,7 +419,38 @@
     }
   }
 
+  /** Imports the previewed OpenAPI document as a new collection (linked to it), then shows its overview. */
+  async function submitOpenApi(p: OpenApiPreview) {
+    const ws = app.workspaceId
+    if (!ws || busy) return
+    busy = true
+    error = null
+    try {
+      const name = openapiName.trim()
+      const result = await api().importOpenApi({
+        workspaceId: ws,
+        text: p.text,
+        source: specUrl ? { kind: 'url', value: specUrl } : source === 'file' ? { kind: 'file', value: fileName } : { kind: 'text', value: null },
+        folders: openapiFolders,
+        ...(name && name !== p.title ? { name } : {}),
+      })
+      invalidateOpenApiLink(result.collection.id)
+      await app.reloadCollections()
+      expandedStore.set(`collection:${result.collection.id}`, true)
+      tabsStore.openOverview({ kind: 'collection', id: result.collection.id })
+      const n = result.requests.length
+      toast.success('API imported', `${result.collection.name}: ${n} request${n === 1 ? '' : 's'}${result.folders.length ? ` in ${result.folders.length} folder${result.folders.length === 1 ? '' : 's'}` : ''}`)
+      if (result.warnings.length) toast.info('Imported with notes', result.warnings.slice(0, 3).join(' '))
+      onclose()
+    } catch (e) {
+      error = errorInfo(e).message
+    } finally {
+      busy = false
+    }
+  }
+
   async function submit() {
+    if (openapi) return submitOpenApi(openapi)
     if (curl) return submitCurl(curl)
     const file = parsed
     const ws = app.workspaceId
@@ -413,7 +518,7 @@
 {#if open}
   <Dialog title="Import" {onclose} {busy} size="md">
     <div class="flex flex-col gap-3 text-sm">
-      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections, environments and globals (JSON), or cURL commands</p>
+      <p class="-mt-1 text-xs text-muted" data-testid="import-subtitle">Slinger or Postman collections, environments and globals (JSON), OpenAPI or Swagger documents (JSON or YAML), or cURL commands</p>
       {#if note}
         <p class="rounded border border-accent bg-accent-soft px-2 py-1.5 text-xs" role="status" data-testid="import-note">{note}</p>
       {/if}
@@ -427,7 +532,7 @@
         ondragleave={() => (dragging = false)}
         {ondrop}
       >
-        <p class="text-muted">Drop a collection or environment .json here (Slinger export or Postman v2.x)</p>
+        <p class="text-muted">Drop a collection or environment .json (Slinger export or Postman v2.x), or an OpenAPI .yaml / .json here</p>
         <input
           bind:this={input}
           id="pm-file"
@@ -470,9 +575,31 @@
         ></textarea>
       </div>
 
+      <div class="flex flex-col gap-1">
+        <label for="import-url" class="text-xs font-medium">Or an OpenAPI document from a URL</label>
+        <form class="flex gap-2" onsubmit={(e) => (e.preventDefault(), loadUrl())}>
+          <input id="import-url" class="min-w-0 flex-1 font-mono text-xs {source === 'url' ? 'ring-1 ring-accent' : ''}" placeholder="https://api.example.com/openapi.json" bind:value={urlInput} disabled={busy} spellcheck="false" autocomplete="off" />
+          <Button type="submit" disabled={busy || !urlInput.trim()} loading={previewing && source === 'url'}>Load</Button>
+        </form>
+      </div>
+
       <InlineError message={error} />
 
-      {#if curl}
+      {#if previewing}
+        <p class="text-xs text-muted" role="status" data-testid="openapi-reading">Reading the API description…</p>
+      {/if}
+
+      {#if openapi}
+        <OpenApiImportPreview
+          preview={openapi}
+          folders={openapiFolders}
+          name={openapiName}
+          existingName={app.collections.find((c) => c.name === openapi?.title)?.name ?? null}
+          disabled={busy}
+          onfolders={(m) => (openapiFolders = m)}
+          onname={(n) => (openapiName = n)}
+        />
+      {:else if curl}
         {@render curlPreview(curl)}
       {:else if parsed?.kind === 'collection'}
         <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded border border-border p-3" aria-label="Import preview">
@@ -597,8 +724,8 @@
     </div>
     {#snippet footer()}
       <Button onclick={onclose} disabled={busy}>Cancel</Button>
-      <Button variant="primary" loading={busy} disabled={curl ? sync.blocked : !parsed} onclick={submit}>
-        {curl ? (curl.length === 1 ? 'Add request' : `Add ${curl.length} requests`) : choice === 'replace' ? 'Replace' : choice === 'copy' ? 'Import as copy' : 'Import'}
+      <Button variant="primary" loading={busy} disabled={openapi ? sync.blocked || !openapiName.trim() : curl ? sync.blocked : !parsed} onclick={submit}>
+        {openapi ? 'Import API' : curl ? (curl.length === 1 ? 'Add request' : `Add ${curl.length} requests`) : choice === 'replace' ? 'Replace' : choice === 'copy' ? 'Import as copy' : 'Import'}
       </Button>
     {/snippet}
   </Dialog>

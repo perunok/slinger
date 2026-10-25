@@ -74,6 +74,8 @@ export interface PostmanItem {
   response?: unknown[]
   /** MCP requests only: the document's `mcp` object (wire format of mcpRequest.ts), lifted back by the importers. */
   _slinger_mcp?: Json
+  /** Requests imported from an OpenAPI document: the document's `openapi` object (operation key and hashes). */
+  _slinger_openapi?: Json
 }
 
 /** Item key of an MCP request's configuration in a Postman export. */
@@ -354,6 +356,7 @@ function requestItem(request: ApiRequest): PostmanItem {
     delete req.body
     item._slinger_mcp = doc.mcp
   }
+  if (isObj(doc.openapi)) item._slinger_openapi = doc.openapi
   if (Array.isArray(doc.scripts) && doc.scripts.length > 0) item.event = doc.scripts
   if (Array.isArray(doc.responses) && doc.responses.length > 0) item.response = doc.responses
   return item

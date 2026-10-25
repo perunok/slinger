@@ -941,6 +941,9 @@ export function createSyncApi(
       case 'importPostmanCollection':
         ws = String(a0(args))
         break
+      case 'importOpenApi':
+        ws = String((a0(args) as { workspaceId?: unknown } | undefined)?.workspaceId)
+        break
       case 'renameCollection':
       case 'deleteCollection':
       case 'replaceCollectionFromPostman':
@@ -981,6 +984,7 @@ export function createSyncApi(
         ws = wsOfEnv(s.variables.find((v) => v.id === a0(args))?.environmentId ?? '')
         break
       case 'createCollectionVersion':
+      case 'applyOpenApiUpdate': // OpenAPI updates
         ws = wsOfCollection(a0(args).collectionId)
         break
       case 'restoreCollectionVersion':

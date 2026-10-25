@@ -15,6 +15,9 @@ export const COLLECTION_EXPORT_EXT = '.slinger_collection.json'
 export const ENVIRONMENT_EXPORT_EXT = '.slinger_environment.json'
 /** A collection exported as a JetBrains HTTP Client / VS Code REST Client file. */
 export const HTTP_FILE_EXPORT_EXT = '.http'
+/** A collection exported as an OpenAPI 3.1 document (no version in the name: it is the document's `info.version`). */
+export const OPENAPI_YAML_EXPORT_EXT = '.openapi.yaml'
+export const OPENAPI_JSON_EXPORT_EXT = '.openapi.json'
 
 /** `accept` for import file pickers: Slinger and Postman exports, and any other .json. */
 export const IMPORT_FILE_ACCEPT = [
@@ -25,6 +28,10 @@ export const IMPORT_FILE_ACCEPT = [
   '.postman_globals.json',
   '.json',
   'application/json',
+  // OpenAPI / Swagger documents.
+  '.yaml',
+  '.yml',
+  'application/yaml',
   // A text file with cURL commands.
   '.sh',
   '.curl',
