@@ -207,8 +207,8 @@
               Check for new releases automatically
             </label>
             <InfoTip label="About update checks">
-              Once a day Slinger asks GitHub which version of Slinger is the latest release (github.com/perunok/slinger) and shows a
-              notification when there is a newer one. The request sends nothing about you or your data. Nothing is downloaded
+              Each time it starts, and once a day while it runs, Slinger asks GitHub in the background which version of Slinger is
+              the latest release (github.com/perunok/slinger) and shows a notification when there is a newer one. The request sends nothing about you or your data. Nothing is downloaded
               until you click Update now; then Slinger downloads the installer from GitHub, checks it, and installs it when you
               restart. Help &gt; Check for Updates… checks right away.
             </InfoTip>

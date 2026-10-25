@@ -1,7 +1,8 @@
 /**
- * New-release notice. The main process asks GitHub (checkForUpdates); this store decides when (once a day while
- * "Check for new releases automatically" is on, plus Help > Check for Updates… and Settings > Check now) and shows one
- * notification per new version. Its "Update now" opens the Update Slinger dialog: the main process downloads the installer
+ * New-release notice. The main process asks GitHub (checkForUpdates); this store decides when (in the background each
+ * time Slinger starts and then once a day while "Check for new releases automatically" is on, plus Help > Check for
+ * Updates… and Settings > Check now). A new version is announced once; at each start it is shown again while it is
+ * still not installed. Its "Update now" opens the Update Slinger dialog: the main process downloads the installer
  * (progress pushed on `update:state`), verifies it, and installs it on "Restart to update" (services/updateInstall.ts).
  * Installations that cannot update themselves (development builds, ...) get "View release" instead.
  */
@@ -11,12 +12,15 @@ import { ui } from '../../app/ui.svelte'
 import { api, errorInfo } from '../../lib/ipc'
 import { isCheckDue, isNewer, loadUpdatePrefs, shouldNotify, UPDATES_STORAGE_KEY, type UpdatePrefs } from '../../lib/updates'
 
-/** First automatic check this long after startup (startup work goes first), then re-checked hourly whether one is due. */
-const STARTUP_DELAY_MS = 8000
+/** The startup check runs this long after startup (startup work goes first); then hourly ticks check when one is due. */
+const STARTUP_DELAY_MS = 3000
 const POLL_MS = 60 * 60 * 1000
 
-/** `auto`: silent unless a new version; `menu`: always answers with a notification; `settings`: answers inline. */
-export type CheckSource = 'auto' | 'menu' | 'settings'
+/**
+ * `startup`: every launch, silent unless a newer version (announced again even when it was before); `auto`: the daily
+ * check, silent unless a version not announced yet; `menu`: always answers with a notification; `settings`: answers inline.
+ */
+export type CheckSource = 'startup' | 'auto' | 'menu' | 'settings'
 
 function readPrefs(): UpdatePrefs {
   try {
@@ -54,7 +58,10 @@ class UpdatesStore {
     const tick = () => {
       if (!stopped && isCheckDue(this.#prefs, Date.now())) void this.check('auto')
     }
-    const first = setTimeout(tick, STARTUP_DELAY_MS)
+    // Every start checks (in the background, while automatic checks are on), whatever the last check was.
+    const first = setTimeout(() => {
+      if (!stopped && this.#prefs.auto) void this.check('startup')
+    }, STARTUP_DELAY_MS)
     const poll = setInterval(tick, POLL_MS)
     void this.#loadVersion()
     const off = api().onUpdateState?.((s) => (this.install = s)) ?? null
@@ -78,7 +85,8 @@ class UpdatesStore {
       this.latest = result.latest
       this.lastCheckedAt = result.checkedAt
       this.error = null
-      const notify = source === 'menu' ? isNewer(result.latest, result.currentVersion) : shouldNotify(this.#prefs, result.latest, result.currentVersion)
+      const notify =
+        source === 'menu' || source === 'startup' ? isNewer(result.latest, result.currentVersion) : shouldNotify(this.#prefs, result.latest, result.currentVersion)
       this.#save({ lastCheckedAt: result.checkedAt, latest: result.latest, notified: isNewer(result.latest, result.currentVersion) ? result.latest!.version : this.#prefs.notified })
       // Settings shows the answer itself; the notification is for the automatic check and the menu.
       if (notify && source !== 'settings') this.#notify(result.latest!, result.currentVersion)
