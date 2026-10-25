@@ -256,7 +256,8 @@ array under the key `scripts` (the key the importer has always used, so existing
    environment, `app/scope.svelte.ts`; disabled variables do not resolve), fails early on unresolved names (the message names the
    scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
-   reported), generates built-ins (`$guid`, `$timestamp`, ...), drops disabled rows, and moves an API key with `addTo: 'query'`
+   reported), generates built-ins (the dynamic variables of `shared/dynamicVariables.ts`, also used by script `replaceIn` and
+   mock servers; one value per name per send), drops disabled rows, and moves an API key with `addTo: 'query'`
    into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
    the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
    calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
@@ -637,8 +638,8 @@ with an example's own `Vary`; an example's own `Access-Control-*` headers win). 
   (`Content-Length`, `Transfer-Encoding`, `Content-Encoding`, `Connection`, ...; repeated names such as `Set-Cookie` are sent as
   separate lines; a name Node refuses is skipped, a value it refuses is dropped while the other values of that name are
   sent), the body as UTF-8 or decoded base64, with an exact `Content-Length`; 204 and 304 send neither a body nor a length,
-  205 `Content-Length: 0` (else Node frames it chunked), HEAD the length without the body. Postman dynamic variables
-  (`shared/dynamicVariables.ts`: `{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}`, ... from built-in word lists) in text bodies
+  205 `Content-Length: 0` (else Node frames it chunked), HEAD the length without the body. Dynamic variables
+  (`shared/dynamicVariables.ts`, the app's one list: `{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}`, ...) in text bodies
   and header values get a fresh value per answer; other `{{variables}}` are sent as written. The log's body preview is cut
   at a UTF-8 character boundary within `MOCK_LOG_BODY_LIMIT` bytes.
 - **Log:** every request becomes a `MockServerLogEntry` (seq, time, method, path+query, status, `kind` example / notFound /

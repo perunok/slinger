@@ -6,7 +6,8 @@
  * parsed with the host's own JSON.parse, type-checked and size-limited; scope state lives in Maps, so a
  * script-chosen key such as "__proto__" can never reach an object prototype on this side.
  */
-import { randomBytes, randomInt, randomUUID } from 'node:crypto'
+import { generateDynamic } from '../../shared/dynamicVariables'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type {
   ResolvedAuth,
   ResolvedBody,
@@ -122,37 +123,9 @@ function makeStore(snapshot: PersistedScopeSnapshot | null | undefined, record: 
   return { entries, ops: [], persist: !!snapshot, api, label }
 }
 
-function randomString(n: number, alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'): string {
-  let s = ''
-  for (let i = 0; i < n; i++) s += alphabet[randomInt(alphabet.length)]
-  return s
-}
-
-/** Built-in dynamic variables (same names as the renderer's template.ts), from a CSPRNG. */
+/** Dynamic variables (the shared list, also used by requests and mock servers), from a CSPRNG. */
 export function builtinValue(name: string, now: Date): string | null {
-  switch (name) {
-    case '$guid':
-    case '$randomUUID':
-      return randomUUID()
-    case '$timestamp':
-      return String(Math.floor(now.getTime() / 1000))
-    case '$isoTimestamp':
-      return now.toISOString()
-    case '$date':
-      return now.toISOString().slice(0, 10)
-    case '$time':
-      return now.toISOString().slice(11, 19)
-    case '$randomInt':
-      return String(randomInt(1_000_000))
-    case '$randomString':
-      return randomString(12)
-    case '$randomBoolean':
-      return randomInt(2) === 1 ? 'true' : 'false'
-    case '$randomEmail':
-      return `user_${randomString(8, 'abcdefghijklmnopqrstuvwxyz0123456789')}@example.com`
-    default:
-      return null
-  }
+  return generateDynamic(name, { now })
 }
 
 function kvList(v: unknown, what: string, max: number): ScriptKeyValue[] {

@@ -3,6 +3,7 @@
  * Used by TemplateInput, the CodeMirror template extension and the send pipeline
  * so behaviour is identical everywhere.
  */
+import { DYNAMIC_VARIABLE_LIST, generateDynamic, isDynamicVariable, type DynamicVariableInfo } from '../../shared/dynamicVariables'
 
 export interface TemplateToken {
   /** Offset of the opening `{{`. */
@@ -32,73 +33,23 @@ export function parseTokens(text: string): TemplateToken[] {
 // Built-in dynamic variables
 // ---------------------------------------------------------------------------
 
-export interface BuiltinVariable {
-  name: string
-  description: string
-  example: string
-}
+/** A dynamic variable (`$guid`, `$timestamp`, `$randomEmail`, ...): the list lives in shared/dynamicVariables.ts. */
+export type BuiltinVariable = DynamicVariableInfo
 
-export const BUILTIN_VARIABLES: BuiltinVariable[] = [
-  { name: '$guid', description: 'Random UUID v4', example: '7b9f4c6e-2a62-4f29-a97f-36a2f61c24d2' },
-  { name: '$randomUUID', description: 'Alias of $guid', example: '7b9f4c6e-2a62-4f29-a97f-36a2f61c24d2' },
-  { name: '$timestamp', description: 'Unix time in seconds', example: '1717432480' },
-  { name: '$isoTimestamp', description: 'Current ISO 8601 time', example: '2026-06-03T16:00:00.000Z' },
-  { name: '$date', description: 'Current UTC date', example: '2026-06-03' },
-  { name: '$time', description: 'Current UTC time', example: '16:00:00' },
-  { name: '$randomInt', description: 'Random integer 0-999999', example: '482391' },
-  { name: '$randomString', description: 'Random alphanumeric string', example: 'k9x2qp7m' },
-  { name: '$randomBoolean', description: 'Random true or false', example: 'true' },
-  { name: '$randomEmail', description: 'Random example.com email', example: 'user_ab12cd34@example.com' },
-]
-
-const BUILTIN_NAMES = new Set(BUILTIN_VARIABLES.map((b) => b.name))
+export const BUILTIN_VARIABLES: readonly BuiltinVariable[] = DYNAMIC_VARIABLE_LIST
 
 export function isBuiltin(name: string): boolean {
-  return BUILTIN_NAMES.has(name)
-}
-
-function randomString(length: number): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  const bytes = new Uint32Array(length)
-  crypto.getRandomValues(bytes)
-  let s = ''
-  for (const b of bytes) s += alphabet[b % alphabet.length]
-  return s
+  return isDynamicVariable(name)
 }
 
 export function uuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
-  })
+  return generateDynamic('$guid')!
 }
 
 /** Generates a fresh value for a built-in, or null when `name` is not a built-in. */
 export function generateBuiltin(name: string, now = new Date()): string | null {
-  switch (name) {
-    case '$guid':
-    case '$randomUUID':
-      return uuid()
-    case '$timestamp':
-      return String(Math.floor(now.getTime() / 1000))
-    case '$isoTimestamp':
-      return now.toISOString()
-    case '$date':
-      return now.toISOString().slice(0, 10)
-    case '$time':
-      return now.toISOString().slice(11, 19)
-    case '$randomInt':
-      return String(Math.floor(Math.random() * 1_000_000))
-    case '$randomString':
-      return randomString(12)
-    case '$randomBoolean':
-      return Math.random() >= 0.5 ? 'true' : 'false'
-    case '$randomEmail':
-      return `user_${randomString(8).toLowerCase()}@example.com`
-    default:
-      return null
-  }
+  return generateDynamic(name, { now })
 }
 
 // ---------------------------------------------------------------------------
