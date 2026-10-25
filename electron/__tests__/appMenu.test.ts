@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { MENU_COMMANDS, menuCommandSchema, parseMenuCommand, type MenuCommand } from '../../shared/menu'
+import { MENU_COMMANDS, parseMenuCommand, type MenuCommand } from '../../shared/menu'
 import { MENU_COMMAND_CHANNEL, IPC_EVENT_CHANNELS } from '../../shared/ipc-contract'
 import { buildAppMenuTemplate, deliverMenuCommand, HELP_URLS, nextZoomLevel, type AppMenuOptions, type MenuCommandTarget } from '../lib/appMenu'
 
@@ -162,11 +162,10 @@ describe('menu commands', () => {
     expect(IPC_EVENT_CHANNELS).toContain('menu:command')
   })
 
-  it('zod accepts the known names and rejects anything else', () => {
+  it('accepts the known names and rejects anything else', () => {
     for (const c of MENU_COMMANDS) expect(parseMenuCommand(c)).toBe(c)
     for (const junk of ['quit', 'openDevTools', '', 'NEWREQUEST', null, undefined, 42, {}, ['about']]) {
       expect(parseMenuCommand(junk), String(junk)).toBeNull()
-      expect(menuCommandSchema.safeParse(junk).success).toBe(false)
     }
   })
 
