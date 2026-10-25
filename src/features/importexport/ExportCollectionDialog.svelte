@@ -12,16 +12,19 @@
   import Spinner from '../../components/ui/Spinner.svelte'
   import { buildHttpClientEnv, exportHttpFile, HTTP_CLIENT_ENV_FILE, HTTP_CLIENT_PRIVATE_ENV_FILE } from '../../lib/httpFile'
   import { api, errorInfo } from '../../lib/ipc'
+  import { buildOpenApiExport, openApiToJson, openApiToYaml } from '../../lib/openapiExport'
   import { exportPostmanCollection } from '../../lib/postman'
   import { formatBytes } from '../../lib/response'
   import { buildSlingerBlock, latestVersion } from '../../lib/slingerExport'
   import { HTTP_OAUTH2_TOKEN_VARIABLE } from '../../lib/snippets'
-  import { collectionExportFileName, COLLECTION_EXPORT_EXT, HTTP_FILE_EXPORT_EXT } from './fileName'
+  import { collectionExportFileName, COLLECTION_EXPORT_EXT, HTTP_FILE_EXPORT_EXT, OPENAPI_JSON_EXPORT_EXT, OPENAPI_YAML_EXPORT_EXT } from './fileName'
 
   const PREVIEW_LINES = 40
   const FORMATS = [
     { id: 'postman', label: 'Postman Collection v2.1 (.json)' },
     { id: 'http', label: 'HTTP file (.http)' },
+    { id: 'openapi-yaml', label: 'OpenAPI 3.1 (.yaml)' },
+    { id: 'openapi-json', label: 'OpenAPI 3.1 (.json)' },
   ] as const
   type ExportFormat = (typeof FORMATS)[number]['id']
 
@@ -65,7 +68,15 @@
   })
 
   const latest = $derived(versions ? latestVersion(versions) : null)
-  const fileName = $derived(collection ? collectionExportFileName(collection.name, latest, format === 'http' ? HTTP_FILE_EXPORT_EXT : COLLECTION_EXPORT_EXT) : '')
+  const isPostman = $derived(format === 'postman')
+  const isOpenApi = $derived(format === 'openapi-yaml' || format === 'openapi-json')
+  // OpenAPI file names carry no version: it is the document's info.version.
+  const fileName = $derived.by(() => {
+    if (!collection) return ''
+    if (format === 'openapi-yaml') return collectionExportFileName(collection.name, null, OPENAPI_YAML_EXPORT_EXT)
+    if (format === 'openapi-json') return collectionExportFileName(collection.name, null, OPENAPI_JSON_EXPORT_EXT)
+    return collectionExportFileName(collection.name, latest, format === 'http' ? HTTP_FILE_EXPORT_EXT : COLLECTION_EXPORT_EXT)
+  })
 
   function build(withSnapshots: boolean): string {
     if (!collection) return ''
@@ -80,15 +91,32 @@
   // .http: built from the saved requests with {{variables}} unresolved; the env files hold non-secret values only.
   const http = $derived(collection && format === 'http' ? exportHttpFile({ collectionName: collection.name, folders, requests }) : null)
   const envFiles = $derived(http && collection ? buildHttpClientEnv(scopeStore.scopeFor(collection.id), { oauth2: http.usesOAuth2 }) : null)
-  const contents = $derived(http ? http.text : json)
+  // OpenAPI 3.1: built from the saved requests; info.version is the latest collection version once the history loaded.
+  const openapi = $derived(
+    collection && isOpenApi
+      ? buildOpenApiExport({ collection, folders, requests, variables: app.collectionVariables[collection.id] ?? [], latestVersion: latest })
+      : null,
+  )
+  const openapiText = $derived(openapi ? (format === 'openapi-json' ? openApiToJson(openapi.document) : openApiToYaml(openapi.document)) : null)
+  const contents = $derived(http ? http.text : (openapiText ?? json))
 
   const size = (text: string) => new TextEncoder().encode(text).length
   const bytes = $derived(size(contents))
   const snapshotBytes = $derived(size(fullJson) - size(metadataJson))
   // The preview never shows snapshots (they would fill it); the saved file has them when the box is ticked.
-  const lines = $derived((http ? http.text : metadataJson).split('\n'))
+  const lines = $derived((http ? http.text : (openapiText ?? metadataJson)).split('\n'))
   const preview = $derived(lines.slice(0, PREVIEW_LINES).join('\n'))
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const openapiSkipped = $derived(
+    openapi
+      ? [
+          openapi.skippedMcp > 0 ? `${plural(openapi.skippedMcp, 'MCP request')} left out: OpenAPI describes HTTP APIs.` : '',
+          openapi.skippedMethods > 0 ? `${plural(openapi.skippedMethods, 'request')} left out: OpenAPI 3.1 has no field for their method.` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : '',
+  )
 
   let busy = $state(false)
   let error = $state<string | null>(null)
@@ -165,13 +193,33 @@
               part of a .http file.
             </span>
           </InfoTip>
+        {:else if isOpenApi}
+          <InfoTip label="About the OpenAPI export">
+            <span>
+              Each saved request becomes an operation: the server comes from the <code>baseUrl</code> collection variable (or the
+              URL's scheme and host), <code>:id</code> and <code>{'{{id}}'}</code> path segments become path parameters, query and
+              header rows parameters, the body a request body, and auth a security scheme.
+            </span>
+            <span>
+              Saved examples become the responses, with JSON Schemas inferred from their JSON. Requests with the same method and
+              path are merged into one operation. Other <code>{'{{variables}}'}</code> stay as written.
+            </span>
+          </InfoTip>
         {/if}
       </div>
+      {#if isOpenApi}
+        <p class="text-xs text-muted" data-testid="export-openapi-note">
+          OpenAPI 3.1 describes the requests, parameters, bodies, auth and saved examples; scripts, tests and versions are not exported.
+        </p>
+      {/if}
       <p class="text-xs text-muted">Only saved requests are exported. Unsaved edits in open tabs are not included.</p>
       {#if http && http.skippedMcp > 0}
         <p class="text-xs text-muted" data-testid="export-skipped-mcp">
           {plural(http.skippedMcp, 'MCP request')} left out: a .http file holds HTTP requests only.
         </p>
+      {/if}
+      {#if openapiSkipped}
+        <p class="text-xs text-muted" data-testid="export-skipped-openapi">{openapiSkipped}</p>
       {/if}
       <InlineError message={loadError ?? error} />
       {#if !versions && !loadError}
@@ -194,7 +242,7 @@
             <span>Both are saved next to the .http file and replace files of the same name in that folder.</span>
           </InfoTip>
         </div>
-      {:else if versions}
+      {:else if versions && isPostman}
         <div class="rounded border border-border p-2" data-testid="export-history">
           {#if versions.length === 0}
             <p class="text-xs text-muted">This collection has no versions yet, so the file name has no version number.</p>
@@ -222,10 +270,10 @@
       {/if}
       <p class="text-xs text-muted">File: <span class="font-mono text-fg" data-testid="export-file-name">{fileName}</span></p>
       <pre class="max-h-72 overflow-auto rounded border border-border bg-raised p-2 font-mono text-xs" aria-label="Export preview">{preview}</pre>
-      {#if lines.length > PREVIEW_LINES || (!http && includeSnapshots && versions && versions.length > 0)}
+      {#if lines.length > PREVIEW_LINES || (isPostman && includeSnapshots && versions && versions.length > 0)}
         <p class="text-xs text-faint">
           {#if lines.length > PREVIEW_LINES}Showing the first {PREVIEW_LINES} of {lines.length} lines.{/if}
-          {#if !http && includeSnapshots && versions && versions.length > 0}Version snapshots are not shown in the preview.{/if}
+          {#if isPostman && includeSnapshots && versions && versions.length > 0}Version snapshots are not shown in the preview.{/if}
         </p>
       {/if}
     </div>

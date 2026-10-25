@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { load } from 'js-yaml'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
@@ -172,6 +173,55 @@ describe('ExportCollectionDialog', () => {
       await fireEvent.click(button)
       await waitFor(() => expect(writeText).toHaveBeenCalled())
       expect(writeText.mock.calls[0][0]).toContain('### Users / List users')
+    })
+  })
+  describe('as OpenAPI 3.1', () => {
+    it('previews YAML, names the file <collection>.openapi.yaml and saves the document', async () => {
+      const mock = await setup(['1.2.0'])
+      await mock.createRequest({
+        workspaceId: app.workspaceId!,
+        collectionId: ui.exportCollectionId!,
+        name: 'Tools',
+        method: 'MCP',
+        url: 'https://mcp.test/mcp',
+        documentJson: JSON.stringify({ method: 'MCP', url: 'https://mcp.test/mcp', mcp: { transport: 'http' } }),
+      })
+      await app.reloadCollections()
+      await fireEvent.change(await screen.findByLabelText('Format'), { target: { value: 'openapi-yaml' } })
+      const pre = await screen.findByLabelText('Export preview')
+      await waitFor(() => expect(pre.textContent).toMatch(/^openapi: 3\.1\.0\ninfo:\n {2}title: My Demo API\n {2}version: 1\.2\.0\n/))
+      expect(screen.getByTestId('export-file-name')).toHaveTextContent('My Demo API.openapi.yaml')
+      expect(screen.getByTestId('export-openapi-note')).toHaveTextContent(/scripts, tests and versions are not exported/)
+      expect(screen.getByTestId('export-skipped-openapi')).toHaveTextContent('1 MCP request left out')
+      expect(screen.queryByTestId('export-history')).toBeNull()
+      expect(screen.getByRole('button', { name: 'About the OpenAPI export' })).toBeInTheDocument()
+      await fireEvent.click(await saveButton())
+      await waitFor(() => expect(ui.exportCollectionId).toBeNull())
+      const writes = mock.calls.filter((c) => c.method === 'writeExportFile')
+      expect(writes.map((c) => c.args[0])).toEqual(['My Demo API.openapi.yaml'])
+      const doc = load(writes[0].args[1] as string) as Record<string, any>
+      expect(doc.openapi).toBe('3.1.0')
+      expect(doc.info).toEqual({ title: 'My Demo API', version: '1.2.0' })
+      expect(doc.tags).toEqual([{ name: 'Users' }])
+      expect(doc.paths['/users'].get).toMatchObject({ tags: ['Users'], summary: 'List users', operationId: 'listUsers', security: [{ bearerAuth: [] }] })
+      expect(doc.paths['/health'].get.responses).toEqual({ default: { description: 'Response' } })
+      expect(doc.components.securitySchemes).toEqual({ bearerAuth: { type: 'http', scheme: 'bearer' } })
+      expect(JSON.stringify(doc)).not.toContain('mcp.test')
+      expect(toast.items.some((t) => t.kind === 'success' && t.detail?.includes('My Demo API.openapi.yaml'))).toBe(true)
+    })
+
+    it('saves JSON as <collection>.openapi.json', async () => {
+      const mock = await setup()
+      await fireEvent.change(await screen.findByLabelText('Format'), { target: { value: 'openapi-json' } })
+      await waitFor(() => expect(screen.getByTestId('export-file-name')).toHaveTextContent('My Demo API.openapi.json'))
+      expect(screen.queryByTestId('export-skipped-openapi')).toBeNull()
+      await fireEvent.click(await saveButton())
+      await waitFor(() => expect(ui.exportCollectionId).toBeNull())
+      const write = mock.calls.find((c) => c.method === 'writeExportFile')!
+      expect(write.args[0]).toBe('My Demo API.openapi.json')
+      const doc = JSON.parse(write.args[1] as string)
+      expect(doc).toMatchObject({ openapi: '3.1.0', info: { title: 'My Demo API', version: '1.0.0' } })
+      expect(Object.keys(doc.paths)).toEqual(['/users', '/health'])
     })
   })
 })
