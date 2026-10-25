@@ -3,8 +3,9 @@
  * request per operation in folders by tag, URLs on `{{baseUrl}}`, parameters, bodies and auth, and saved examples for every
  * documented response (mock servers serve them at once). Mapping details: docs/ARCHITECTURE.md, "OpenAPI".
  *
- * Every item carries `_slinger_openapi` ({ key, operationId, specHash, itemHash }), which the importer keeps as the request
- * document's `openapi`; generated examples are marked `_slinger_openapi: true` so an update can tell them from the user's.
+ * Every item carries `_slinger_openapi` ({ key, operationId, specHash, itemHash, examplesHash }), which the importer keeps
+ * as the request document's `openapi`; generated examples are marked `_slinger_openapi: true` so an update can tell them
+ * from the user's.
  */
 import { fingerprintDocument, stableHash } from './fingerprint'
 import { deref, isObj, type Json, type LoadedSpec, type MediaType, type ResolvedParameter, type SpecOperation } from './load'
@@ -17,6 +18,14 @@ export interface OpenApiItemMeta {
   operationId: string | null
   specHash: string
   itemHash: string
+  /** Hash of the generated examples (name, status, headers, body): an update notices example-only changes. */
+  examplesHash: string
+}
+
+/** The `examplesHash` of a list of saved examples: only generated ones (`_slinger_openapi: true`) count. */
+export function examplesHash(responses: unknown): string {
+  const list = Array.isArray(responses) ? responses.filter((r): r is Json => isObj(r) && r._slinger_openapi === true) : []
+  return stableHash(list.map((r) => ({ name: r.name ?? null, code: r.code ?? null, header: r.header ?? null, body: r.body ?? null })))
 }
 
 /** Collection variables the conversion adds (value, description). */
@@ -269,7 +278,7 @@ function itemFor(op: SpecOperation, spec: LoadedSpec, vars: Vars, specHash: stri
     op.method,
     raw,
   )
-  const meta: OpenApiItemMeta = { key: op.key, operationId: op.operationId, specHash, itemHash }
+  const meta: OpenApiItemMeta = { key: op.key, operationId: op.operationId, specHash, itemHash, examplesHash: examplesHash(responses) }
   return { item: { name, request, response: responses, _slinger_openapi: meta }, auth }
 }
 
@@ -364,8 +373,11 @@ export function openApiToPostman(spec: LoadedSpec, opts: { folders: FolderMode; 
 }
 
 /** Generated items by operation key (for updates: what the spec says each request should be now). */
-export function generatedItems(spec: LoadedSpec, opts: { folders: FolderMode; specText: string }): { byKey: Map<string, { item: Json; folder: string | null }>; collection: Json } {
-  const { collection } = openApiToPostman(spec, opts)
+export function generatedItems(
+  spec: LoadedSpec,
+  opts: { folders: FolderMode; specText: string },
+): { byKey: Map<string, { item: Json; folder: string | null }>; collection: Json; warnings: string[] } {
+  const { collection, warnings } = openApiToPostman(spec, opts)
   const byKey = new Map<string, { item: Json; folder: string | null }>()
   const walk = (items: unknown, folder: string | null) => {
     for (const it of Array.isArray(items) ? items : []) {
@@ -375,5 +387,5 @@ export function generatedItems(spec: LoadedSpec, opts: { folders: FolderMode; sp
     }
   }
   walk(collection.item, null)
-  return { byKey, collection }
+  return { byKey, collection, warnings }
 }

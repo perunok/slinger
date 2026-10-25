@@ -8,6 +8,7 @@ import { assertExternalUrl } from '../services/externalUrl'
 import { hasUnresolvedPlaceholder } from '../services/httpExecutor'
 import { importPostmanCollection, replaceCollectionFromPostman } from '../services/postmanImport'
 import { extractFolderToCollection } from '../services/extractFolder'
+import { applyUpdate, linkSpec, planUpdateFrom } from '../openapi/update'
 import * as versions from '../services/collectionVersions'
 import { assertGenericSecureKey } from '../services/secrets'
 import { OAUTH2_GRANT_TYPES } from '../../shared/oauth2'
@@ -39,6 +40,18 @@ const openApiPreviewInput = z.object({ text: postmanFile.nullish(), url: z.strin
 const openApiImportInput = z
   .object({ workspaceId: uuid, text: postmanFile, source: openApiSource, folders: openApiFolders, name: z.string().min(1).max(200).optional() })
   .strict()
+// OpenAPI updates
+const openApiPlanInput = z
+  .object({ collectionId: uuid, text: postmanFile.nullish(), url: z.string().max(4096).nullish(), source: openApiSource.optional() })
+  .strict()
+const openApiApplyInput = z
+  .object({
+    collectionId: uuid,
+    planId: uuid,
+    choices: z.record(z.string().max(4200), z.enum(['apply', 'keep', 'delete', 'skip'])).refine((c) => Object.keys(c).length <= 20_000, { message: 'too many choices' }),
+  })
+  .strict()
+const openApiLinkInput = z.object({ collectionId: uuid, text: postmanFile, source: openApiSource, folders: openApiFolders }).strict()
 
 const pickFileOptions = z
   .object({
@@ -625,6 +638,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     importOpenApi: async (...a) => core.openapi.import(parseArgs(z.tuple([openApiImportInput]), a)[0]),
     getOpenApiLink: async (...a) => core.openapi.getLink(parseArgs(z.tuple([uuid]), a)[0]),
     unlinkOpenApi: async (...a) => core.openapi.unlink(parseArgs(z.tuple([uuid]), a)[0]),
+    // OpenAPI updates
+    planOpenApiUpdate: async (...a) => planUpdateFrom(core.db, core.openapi, parseArgs(z.tuple([openApiPlanInput]), a)[0]),
+    applyOpenApiUpdate: async (...a) => applyUpdate(core.db, core.openapi, parseArgs(z.tuple([openApiApplyInput]), a)[0], core.versionAuthor()),
+    linkOpenApi: async (...a) => linkSpec(core.db, core.openapi, parseArgs(z.tuple([openApiLinkInput]), a)[0]),
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {
       const [fileName, contents, encoding] = parseArgs(

@@ -33,6 +33,8 @@ class UiState {
   mockServerFor = $state<string | null>(null)
   saveAsTabId = $state<string | null>(null)
   exportCollectionId = $state<string | null>(null)
+  /** ADDED (OpenAPI updates): the OpenAPI dialog of this collection (link, update from the document, export). */
+  openApiFor = $state<string | null>(null)
   exportEnvironmentId = $state<string | null>(null)
   importOpen = $state(false)
   /** Text pasted elsewhere (the URL bar) that the Import dialog opens with; null for a plain open. */

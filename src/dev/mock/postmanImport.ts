@@ -48,6 +48,15 @@ function requestDocument(item: Json, request: Json, name: string, method: string
   return doc
 }
 
+/** The request one Postman item becomes, as the mock importer writes it (OpenAPI updates reuse it); null without `request`. */
+export function requestFromItem(item: Json): { name: string; method: string; url: string; document: Json } | null {
+  if (!isObj(item.request)) return null
+  const name = trimmedOr(item.name, 'Untitled Request')
+  const method = mcpOf(item) ? MCP_METHOD : trimmedOr(item.request.method, 'GET').toUpperCase()
+  const url = postmanUrlToString(item.request.url)
+  return { name, method, url, document: requestDocument(item, item.request, name, method, url) }
+}
+
 interface Parsed {
   name: string
   postmanId: string | null
