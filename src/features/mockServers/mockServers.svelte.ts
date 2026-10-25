@@ -176,6 +176,7 @@ class MockServersStore {
     }
     this.busy = { ...this.busy, [collectionId]: true }
     this.errors = { ...this.errors, [collectionId]: null }
+    this.#starting.set(collectionId, workspaceId)
     try {
       const { key, examples } = this.#examples(collectionId, collection.name)
       const options = this.settingsFor(collectionId).options
@@ -183,18 +184,26 @@ class MockServersStore {
       this.#started(info, key)
       return true
     } catch (e) {
-      this.errors = { ...this.errors, [collectionId]: errorInfo(e).message }
+      // Stopped (collection or workspace deleted) while starting: not an error.
+      const err = errorInfo(e)
+      if ((err.details as { reason?: unknown } | undefined)?.reason !== 'stopped') this.errors = { ...this.errors, [collectionId]: err.message }
       return false
     } finally {
+      this.#starting.delete(collectionId)
       this.busy = { ...this.busy, [collectionId]: false }
     }
   }
 
+  /** Collections whose start is in flight, with their workspace (a delete meanwhile must cancel it in main). */
+  #starting = new Map<string, string>()
+
   #started(info: MockServerInfo, key: string): void {
     const id = info.collectionId
+    // The same server given new examples (main keeps its log) vs a new server (on another port: a fresh log).
+    const same = this.servers[id]?.port === info.port
     this.#sent.set(id, key)
     this.servers = { ...this.servers, [id]: info }
-    this.logs = { ...this.logs, [id]: [] }
+    if (!same) this.logs = { ...this.logs, [id]: [] }
     this.#remember((s) =>
       withRunning(withCollectionSettings(s, id, { port: info.port, options: info.options }), { collectionId: id, workspaceId: info.workspaceId }, true),
     )
@@ -242,12 +251,15 @@ class MockServersStore {
   /** The collection is being deleted: stops its server quietly and forgets its settings. */
   async stopIfRunning(collectionId: string): Promise<void> {
     if (this.servers[collectionId]) await this.stop(collectionId)
+    else if (this.#starting.has(collectionId)) await api().stopMockServer(collectionId).catch(() => {}) // cancels the start
     this.#remember((s) => withoutCollection(s, collectionId))
   }
 
   /** The workspace is being deleted: stops its servers and drops them from the running list. */
   async stopWorkspace(workspaceId: string): Promise<void> {
     await Promise.all(this.list.filter((s) => s.workspaceId === workspaceId).map((s) => this.stop(s.collectionId)))
+    const starting = [...this.#starting].filter(([, ws]) => ws === workspaceId).map(([id]) => id)
+    await Promise.all(starting.map((id) => api().stopMockServer(id).catch(() => {}))) // cancels those starts
     this.#remember((s) => ({ ...s, running: s.running.filter((r) => r.workspaceId !== workspaceId) }))
   }
 

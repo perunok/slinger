@@ -467,14 +467,28 @@ before it exists. It runs inside Slinger on your computer and listens on `127.0.
   variable such as `{{baseUrl}}` and a trailing slash are ignored. `:id` and `{{id}}` path segments match any value; an exact
   path wins over such a wildcard (`/users/me` before `/users/:id`). HEAD requests use GET examples.
 - **Several examples for one path** (e.g. *200 OK* and *404 Not found*), in this order:
-  - the request can pick one with the header `x-mock-response-name: <example name>` or `x-mock-response-code: 404` (Postman's
-    convention);
+  - the request can pick one with the header `x-mock-response-name: <example name>`, `x-mock-response-code: 404` or
+    `x-mock-response-id: <example id>` (Postman's convention);
+  - `x-mock-match-request-headers: X-Api-Version, Tenant` keeps only examples whose saved request has those headers with the
+    request's values (a `{{variable}}` saved value matches any), and `x-mock-match-request-body: true` only those whose saved
+    request body equals the request's; when none is left the answer is a 404 that says so;
   - **query parameters:** an example saved with `?page=2` answers requests that have `page=2`; a request without it, or with
     another page, gets an example without that parameter. A `{{variable}}` or empty value in the saved URL matches any value;
   - **request body:** when examples were saved with different request bodies (a login with the right and the wrong password),
-    the one whose body equals the request's answers (JSON is compared by value, so spacing and key order do not matter);
+    the one whose body equals the request's answers (JSON is compared by value, so spacing and key order do not matter; form
+    fields, url-encoded or multipart, are compared by field in any order);
   - otherwise the first in the collection.
-- **Answer:** the example's status, headers and body (binary examples are sent as bytes; *204* and *304* examples send no body).
+- **Answer:** the example's status, headers and body (binary examples are sent as bytes; *204*, *205* and *304* examples send
+  no body). **Dynamic values** in an example's body and header values get a fresh value for every answer, with Postman's names:
+  `{{$guid}}` / `{{$randomUUID}}`, `{{$timestamp}}` (Unix seconds), `{{$isoTimestamp}}`, `{{$randomInt}}` (0-1000),
+  `{{$randomBoolean}}`, `{{$randomFirstName}}`, `{{$randomLastName}}`, `{{$randomFullName}}`, `{{$randomUserName}}`,
+  `{{$randomEmail}}`, `{{$randomPhoneNumber}}`, `{{$randomCity}}`, `{{$randomCountry}}`, `{{$randomCountryCode}}`,
+  `{{$randomStreetAddress}}`, `{{$randomCompanyName}}`, `{{$randomJobTitle}}`, `{{$randomUrl}}`, `{{$randomDomainName}}`,
+  `{{$randomIP}}`, `{{$randomIPV6}}`, `{{$randomMACAddress}}`, `{{$randomPassword}}`, `{{$randomHexColor}}`, `{{$randomColor}}`,
+  `{{$randomPrice}}`, `{{$randomCurrencyCode}}`, `{{$randomWord}}`, `{{$randomWords}}`, `{{$randomLoremWord}}`,
+  `{{$randomLoremSentence}}`, `{{$randomLoremParagraph}}`, `{{$randomDatePast}}`, `{{$randomDateFuture}}`,
+  `{{$randomDateRecent}}`, `{{$randomSemver}}` and a few more. Write `"id": "{{$guid}}"` for a string, `"count": {{$randomInt}}`
+  for a number.
   An example without a `Content-Type` header gets one from its body type. When nothing matches, the answer is a 404 with a
   short JSON explanation.
 - **Web apps in a browser (CORS):** a page you run on this computer (`http://localhost:5173`, `http://127.0.0.1:3000`, ...) can
@@ -494,7 +508,8 @@ before it exists. It runs inside Slinger on your computer and listens on `127.0.
 - **Start again when Slinger starts** (on by default): mock servers that were running when Slinger quit start again, on the same
   port and with the same settings, the next time it starts. Stopping one yourself turns this off for it until you start it again.
   If its port is taken by then, Slinger says so.
-- Example bodies are sent as stored: `{{variables}}` in them are not resolved.
+- Other `{{variables}}` in examples (environment, collection) are sent as written. An example over 12 MB, or beyond 200 MB of
+  examples in one collection, is left out; the rest are still served.
 
 ## Workflows
 

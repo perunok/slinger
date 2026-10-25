@@ -104,6 +104,26 @@ describe('mockServers store', () => {
     expect(mockServers.suggestedPort(ids.col)).toBe(6000)
   })
 
+  it('a collection deleted while its server is starting does not stay served', async () => {
+    mockServers.init()
+    const stop = vi.spyOn(mock, 'stopMockServer')
+    const starting = mockServers.start(ids.col, 4011)
+    await mockServers.stopIfRunning(ids.col) // nothing in the running list yet: the start in flight is cancelled in main
+    expect(stop).toHaveBeenCalledWith(ids.col)
+    await starting
+    await waitFor(() => expect(mockServers.running(ids.col)).toBeNull())
+    expect(mockServers.errors[ids.col] ?? null).toBeNull()
+  })
+
+  it('a restart on the same port keeps the log (main keeps it too)', async () => {
+    mockServers.init()
+    expect(await mockServers.start(ids.col, 4012)).toBe(true)
+    mock.mockServers.hit(ids.col, { path: '/users/me' })
+    await waitFor(() => expect(mockServers.logs[ids.col]).toHaveLength(1))
+    expect(await mockServers.start(ids.col, 4012)).toBe(true)
+    expect(mockServers.logs[ids.col]).toHaveLength(1)
+  })
+
   it('reports a busy port and keeps nothing running', async () => {
     mockServers.init()
     mock.mockServers.occupyPort(4010)

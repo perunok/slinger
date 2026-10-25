@@ -10,8 +10,10 @@
  * Empty segments are ignored, so `/users/` and `/users` are the same path.
  *
  * Choosing among the examples that match the method (HEAD falls back to GET) and path:
- *  1. Postman's selection headers narrow the list: `x-mock-response-id`, `x-mock-response-name` (case-insensitive) and
- *     `x-mock-response-code`. When they leave nothing, the answer is a 404 that says so.
+ *  1. Postman's selection headers narrow the list: `x-mock-response-id`, `x-mock-response-name` (case-insensitive),
+ *     `x-mock-response-code`, `x-mock-match-request-headers: A, B` (the example's saved request must have headers A and B
+ *     with the request's values; a `{{var}}` value matches any) and `x-mock-match-request-body: true` (its saved body must
+ *     equal the request's). When they leave nothing, the answer is a 404 that says so.
  *  2. The most specific path wins: compared segment by segment from the left, literal > mixed > wildcard
  *     (`/users/me` beats `/users/:id`).
  *  3. Query parameters: an example whose saved parameters all appear in the request with the same values (a `{{var}}`,
@@ -49,6 +51,8 @@ export interface MockRouteSource {
   id?: string | null
   /** Raw body of the example's saved request (tie-breaker, see the header comment). */
   requestBody?: string | null
+  /** Headers of the example's saved request (for `x-mock-match-request-headers`). */
+  requestHeaders?: ReadonlyArray<{ key: string; value: string }> | null
 }
 
 export interface MockRequestInfo {
@@ -104,9 +108,11 @@ export function compileMockPath(path: string): MockSegment[] {
       if (/^:./.test(raw)) return { kind: 'wildcard' }
       const templates = raw.match(TEMPLATE)
       if (!templates) return { kind: 'literal', value: decode(raw) }
-      if (templates.length === 1 && templates[0] === raw) return { kind: 'wildcard' }
-      const parts = raw.split(TEMPLATE).map((p) => escapeRegExp(decode(p)))
-      return { kind: 'mixed', re: new RegExp(`^${parts.join('.+?')}$`) }
+      const parts = raw.split(TEMPLATE)
+      // Only templates (`{{id}}`, `{{a}}{{b}}`): any one segment.
+      if (parts.every((p) => p === '')) return { kind: 'wildcard' }
+      // Text and templates (`v{{n}}`, `{{id}}.json`): the template parts match any text, also none (`v`).
+      return { kind: 'mixed', re: new RegExp(`^${parts.map((p) => escapeRegExp(decode(p))).join('.*?')}$`) }
     })
 }
 
@@ -166,6 +172,62 @@ function queryScore(saved: MockQueryParam[], query: Map<string, string[]>): numb
   return score
 }
 
+/**
+ * Form fields as a comparable string: pairs sorted by name then value, so field order and `+` vs `%20` do not matter.
+ * Null when the text is not form-shaped.
+ */
+function formKey(pairs: Array<[string, string]>): string | null {
+  if (pairs.length === 0) return null
+  return JSON.stringify([...pairs].sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : a[0] < b[0] ? -1 : 1)))
+}
+
+function urlEncodedPairs(text: string): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  for (const pair of text.trim().split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    out.push([decode((eq < 0 ? pair : pair.slice(0, eq)).replace(/\+/g, ' ')), eq < 0 ? '' : decode(pair.slice(eq + 1).replace(/\+/g, ' '))])
+  }
+  return out
+}
+
+/** The text fields of a multipart/form-data body (file parts are left out, as the saved form keeps text fields only). */
+function multipartPairs(text: string, contentType: string): Array<[string, string]> {
+  const m = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType)
+  const boundary = m?.[1] ?? m?.[2]
+  if (!boundary) return []
+  const out: Array<[string, string]> = []
+  for (const part of text.split(`--${boundary}`)) {
+    const split = part.indexOf('\r\n\r\n')
+    if (split < 0) continue
+    const head = part.slice(0, split)
+    const name = /content-disposition:[^\r\n]*\bname="([^"]*)"/i.exec(head)?.[1]
+    if (name === undefined || /\bfilename\*?=/i.test(head)) continue
+    out.push([name, part.slice(split + 4).replace(/\r\n$/, '')])
+  }
+  return out
+}
+
+/** The incoming body in comparable form, and whether it is a form (then saved bodies are read as forms too). */
+function incomingBody(text: string | undefined, contentType: string | undefined): { value: string; form: boolean } | null {
+  const ct = (contentType ?? '').toLowerCase()
+  if (text && ct.includes('application/x-www-form-urlencoded')) {
+    const key = formKey(urlEncodedPairs(text))
+    return key === null ? null : { value: key, form: true }
+  }
+  if (text && ct.includes('multipart/form-data')) {
+    const key = formKey(multipartPairs(text, contentType ?? ''))
+    return key === null ? null : { value: key, form: true }
+  }
+  const value = normalizeBody(text)
+  return value === null ? null : { value, form: false }
+}
+
+/** A saved request body (forms are saved as `a=1&b=2`) in the same comparable form. */
+function savedBody(text: string | null | undefined, form: boolean): string | null {
+  return form ? formKey(urlEncodedPairs(text ?? '')) : normalizeBody(text)
+}
+
 /** A body in comparable form: JSON by value (key order ignored), anything else trimmed. */
 function normalizeBody(text: string | null | undefined): string | null {
   const t = (text ?? '').trim()
@@ -187,8 +249,10 @@ function sortKeys(value: unknown): unknown {
 
 /** Path of an incoming request as segments (query dropped, percent-decoded, empty segments ignored). */
 export function requestSegments(path: string): string[] {
-  const q = path.search(/[?#]/)
-  return (q >= 0 ? path.slice(0, q) : path)
+  // A request target in absolute form (`GET http://127.0.0.1:4010/users`, as proxies send it): only its path counts.
+  const target = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path) ? path.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#]*/, '') || '/' : path
+  const q = target.search(/[?#]/)
+  return (q >= 0 ? target.slice(0, q) : target)
     .split('/')
     .filter((s) => s !== '')
     .map(decode)
@@ -254,22 +318,45 @@ export function matchMockRequest<T extends MockRouteSource>(routes: readonly Moc
     candidates = narrowed
   }
   if (codeText) {
-    const narrowed = candidates.filter((r) => String(r.example.code ?? 200) === codeText)
+    // Compared with the status the example is really answered with (an out-of-range code is sent as 200).
+    const narrowed = candidates.filter((r) => String(mockStatus(r.example.code)) === codeText)
     if (narrowed.length === 0) {
-      const codes = candidates.map((r) => String(r.example.code ?? 200))
+      const codes = candidates.map((r) => String(mockStatus(r.example.code)))
       return { route: null, reason: `No example with status ${codeText} matches ${display} (statuses: ${[...new Set(codes)].join(', ')}).` }
     }
     candidates = narrowed
   }
+  const matchHeaders = (req.header('x-mock-match-request-headers') ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h && !h.startsWith('x-mock-'))
+  if (matchHeaders.length > 0) {
+    const narrowed = candidates.filter((r) => matchHeaders.every((h) => savedHeaderMatches(r.example.requestHeaders, h, req.header(h))))
+    if (narrowed.length === 0) return { route: null, reason: `No example of ${display} has saved request headers matching ${quoteList(matchHeaders)}.` }
+    candidates = narrowed
+  }
+  const body = incomingBody(req.body, req.header('content-type'))
+  const sameBody = (saved: string | null | undefined) => body !== null && savedBody(saved, body.form) === body.value
+  if (req.header('x-mock-match-request-body')?.trim().toLowerCase() === 'true') {
+    const narrowed = candidates.filter((r) => sameBody(r.example.requestBody))
+    if (narrowed.length === 0) return { route: null, reason: `No example of ${display} has a saved request body equal to this one.` }
+    candidates = narrowed
+  }
   const query = requestQuery(req.path)
-  const body = normalizeBody(req.body)
   const ranked = candidates.map((route) => ({
     route,
     query: queryScore(route.query, query),
-    body: body !== null && normalizeBody(route.example.requestBody) === body ? 1 : 0,
+    body: sameBody(route.example.requestBody) ? 1 : 0,
   }))
   ranked.sort((a, b) => pathSpecificity(a.route, b.route) || b.query - a.query || b.body - a.body || a.route.order - b.route.order)
   return { route: ranked[0]!.route, reason: null }
+}
+
+/** Does the saved request have header `name` (lower case) with the incoming value? A `{{var}}` saved value matches any. */
+function savedHeaderMatches(saved: MockRouteSource['requestHeaders'], name: string, incoming: string | undefined): boolean {
+  if (incoming === undefined) return false
+  const values = (saved ?? []).filter((h) => h.key.trim().toLowerCase() === name).map((h) => h.value.trim())
+  return values.some((v) => /^\{\{[^{}]*\}\}$/.test(v) || v === incoming.trim())
 }
 
 /** Response headers that would break the mock's answer: the server sets its own framing, and bodies are stored decoded. */

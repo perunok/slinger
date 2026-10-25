@@ -1271,6 +1271,13 @@ export interface MockExample {
    * request body equals the incoming body (JSON compared by value) answers.
    */
   requestBody: string | null
+  /**
+   * Enabled headers of the example's saved request. Used only when a request asks for header matching with Postman's
+   * `x-mock-match-request-headers: Name, Other`.
+   */
+  requestHeaders?: RequestHeader[]
+  /** The example's Postman id when it has one (`x-mock-response-id` selects it). */
+  id?: string | null
 }
 
 /** How a mock server treats browsers and how fast it answers; changeable while it runs. */
@@ -1286,6 +1293,26 @@ export interface MockServerOptions {
 
 export const DEFAULT_MOCK_OPTIONS: MockServerOptions = { cors: 'local', delayMs: 0 }
 export const MOCK_MAX_DELAY_MS = 60_000
+/**
+ * What one start/update may carry (main validates it; the renderer's collectMockExamples clips to it, so one odd example
+ * never stops a whole collection from being served). Characters, except where noted.
+ */
+export const MOCK_LIMITS = {
+  examples: 20_000,
+  id: 200,
+  name: 500,
+  method: 32,
+  url: 100_000,
+  headers: 500,
+  headerKey: 8192,
+  headerValue: 65_536,
+  /** One response body (base64 text for binary ones). Larger examples are left out. */
+  body: 12 * 1024 * 1024,
+  /** All response bodies of one server together. */
+  totalBody: 200 * 1024 * 1024,
+  /** The saved request body (only a tie-breaker): dropped when larger. */
+  requestBody: 1024 * 1024,
+} as const
 
 export interface StartMockServerInput {
   workspaceId: string

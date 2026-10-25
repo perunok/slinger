@@ -5,12 +5,14 @@
  * resolves the examples from the request documents (opaque to main) and sends them on start and whenever they change
  * (`update`); matching is shared/mockMatch.ts. Plain Node (no Electron import), so tests run real servers.
  */
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, validateHeaderName, validateHeaderValue, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { STATUS_CODES } from 'node:http'
+import { hasDynamicVariables, resolveDynamicVariables } from '../../shared/dynamicVariables'
 import { corsOriginAllowed, compileMockRoutes, isLoopbackHost, matchMockRequest, mockNotFoundBody, mockResponseHeaders, mockStatus, type MockRoute } from '../../shared/mockMatch'
 import {
   DEFAULT_MOCK_OPTIONS,
+  MOCK_LIMITS,
   MOCK_LOG_BODY_LIMIT,
   MOCK_LOG_LIMIT,
   type MockExample,
@@ -23,7 +25,7 @@ import { invalidInput, ioError, notFound } from '../lib/errors'
 
 export const MOCK_HOST = '127.0.0.1'
 /** Upper bound for all example bodies of one server together (characters). */
-export const MOCK_TOTAL_BODY_LIMIT = 200 * 1024 * 1024
+export const MOCK_TOTAL_BODY_LIMIT = MOCK_LIMITS.totalBody
 /** Request bodies are read up to this size for matching and the log; the rest is drained unread. */
 export const MOCK_REQUEST_BODY_LIMIT = 10 * 1024 * 1024
 const PATH_LOG_LIMIT = 2000
@@ -31,6 +33,13 @@ const PATH_LOG_LIMIT = 2000
 const HEADER_LOG_LIMIT = 4096
 /** Statuses that never carry a body (RFC 9110). */
 const NO_BODY_STATUS = new Set([204, 205, 304])
+
+/** A start in progress: a stop cancels it, an update replaces what it will serve. */
+interface PendingStart {
+  cancelled: boolean
+  examples: MockExample[]
+  collectionName: string
+}
 
 interface Running {
   info: MockServerInfo
@@ -55,10 +64,23 @@ function assertBodies(examples: readonly MockExample[]): void {
   if (total > MOCK_TOTAL_BODY_LIMIT) throw invalidInput('The saved examples are too large to serve together (over 200 MB of bodies)')
 }
 
+/** What `update` returns for a server that is still starting. */
+const DEFAULT_PENDING_INFO: MockServerInfo = {
+  workspaceId: '',
+  collectionId: '',
+  collectionName: '',
+  options: { ...DEFAULT_MOCK_OPTIONS },
+  port: 0,
+  url: '',
+  startedAt: 0,
+  exampleCount: 0,
+  requestCount: 0,
+}
+
 export class MockServers {
   private readonly servers = new Map<string, Running>()
-  /** Collections whose start is in progress (a second start for the same collection waits for nothing: it is refused). */
-  private readonly starting = new Set<string>()
+  /** Collections whose start is in progress (a second start for the same collection is refused). */
+  private readonly starting = new Map<string, PendingStart>()
   private readonly emit: (event: MockServerEvent) => void
   private readonly now: () => number
 
@@ -100,7 +122,8 @@ export class MockServers {
       return this.update(input.collectionId, input.examples, input.collectionName)
     }
     if (this.starting.has(input.collectionId)) throw invalidInput('This mock server is already starting')
-    this.starting.add(input.collectionId)
+    const pending: PendingStart = { cancelled: false, examples: input.examples, collectionName: input.collectionName }
+    this.starting.set(input.collectionId, pending)
     try {
       const running: Running = {
         info: {
@@ -130,6 +153,17 @@ export class MockServers {
       // Idle keep-alive connections must not keep a stopped server (or the app) alive for long.
       running.server.keepAliveTimeout = 5000
       await listen(running.server, input.port)
+      if (pending.cancelled) {
+        // Stopped (collection deleted, user, quit) while the port was being bound: never start serving.
+        running.server.close()
+        throw ioError('The mock server was stopped before it started.', { reason: 'stopped' })
+      }
+      // Edits that arrived while binding.
+      if (pending.examples !== input.examples) {
+        running.routes = compileMockRoutes(pending.examples)
+        running.info.exampleCount = pending.examples.length
+      }
+      running.info.collectionName = pending.collectionName
       const port = (running.server.address() as AddressInfo).port
       running.info.port = port
       running.info.url = `http://${MOCK_HOST}:${port}`
@@ -152,8 +186,15 @@ export class MockServers {
   /** Replaces the examples of a running server (edits picked up live), and its collection name when given. */
   update(collectionId: string, examples: MockExample[], collectionName?: string): MockServerInfo {
     const running = this.servers.get(collectionId)
-    if (!running) throw notFound('Mock server')
+    const pending = this.starting.get(collectionId)
+    if (!running && !pending) throw notFound('Mock server')
     assertBodies(examples)
+    // A start in progress (also a move to another port) serves these once it is up.
+    if (pending) {
+      pending.examples = examples
+      if (collectionName !== undefined) pending.collectionName = collectionName
+    }
+    if (!running) return { ...DEFAULT_PENDING_INFO, collectionId, exampleCount: examples.length }
     running.routes = compileMockRoutes(examples)
     running.info.exampleCount = examples.length
     const renamed = collectionName !== undefined && collectionName !== running.info.collectionName
@@ -173,6 +214,10 @@ export class MockServers {
 
   /** Stops the collection's server; nothing happens when it is not running. Open connections are closed. */
   async stop(collectionId: string, reason: string | null = null, by: 'user' | 'quit' | 'replaced' = 'user'): Promise<void> {
+    // A start still binding its port is cancelled (it fails with reason 'stopped'), unless this stop is that start
+    // replacing the collection's previous server.
+    const pending = this.starting.get(collectionId)
+    if (pending && by !== 'replaced') pending.cancelled = true
     const running = this.servers.get(collectionId)
     if (!running) return
     this.servers.delete(collectionId)
@@ -187,6 +232,7 @@ export class MockServers {
 
   /** App quit: stop everything (the renderer starts them again next time when the user chose so). */
   async stopAll(): Promise<void> {
+    for (const pending of this.starting.values()) pending.cancelled = true
     await Promise.all([...this.servers.keys()].map((id) => this.stop(id, 'app quit', 'quit')))
   }
 
@@ -209,6 +255,7 @@ export class MockServers {
     let match: MockServerLogEntry['match'] = null
     let reason: string | null = null
     let send: () => void
+    let served: MockExample | null = null
     const preflight = method === 'OPTIONS' && origin !== undefined && header('access-control-request-method') !== undefined
     if (!isLoopbackHost(header('host'))) {
       kind = 'refused'
@@ -237,6 +284,7 @@ export class MockServers {
       const found = matchMockRequest(running.routes, { method, path, header, body: body.text ?? undefined })
       if (found.route) {
         const example = found.route.example
+        served = example
         kind = 'example'
         status = mockStatus(example.code)
         match = { requestId: example.requestId, exampleIndex: example.exampleIndex, requestName: example.requestName, name: example.name }
@@ -251,7 +299,9 @@ export class MockServers {
     if (cors && origin) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Access-Control-Allow-Credentials', 'true')
-      res.setHeader('Access-Control-Expose-Headers', '*')
+      // `*` is taken literally on credentialed requests, so the example's own header names are listed.
+      const expose = served ? mockResponseHeaders(served.headers).map(([name]) => name).filter((n) => !n.toLowerCase().startsWith('access-control-')) : []
+      if (expose.length) res.setHeader('Access-Control-Expose-Headers', expose.join(', '))
       res.setHeader('Vary', 'Origin')
     }
 
@@ -348,8 +398,8 @@ function readBody(req: IncomingMessage): Promise<ReadBody> {
       if (bytes === 0) return resolve({ text: null, preview: null, encoding: null, bytes: 0 })
       const text = utf8(buf)
       const head = buf.subarray(0, MOCK_LOG_BODY_LIMIT)
-      // A cut in the middle of a multi-byte character still counts as text: drop the partial character at the end.
-      const headText = text !== null ? (utf8(head) ?? utf8(head.subarray(0, head.length - 3)) ?? text.slice(0, MOCK_LOG_BODY_LIMIT)) : null
+      // A cut in the middle of a multi-byte character still counts as text: cut before that character instead.
+      const headText = text !== null ? (utf8(buf.subarray(0, utf8Boundary(buf, MOCK_LOG_BODY_LIMIT))) ?? '') : null
       resolve(headText !== null ? { text, preview: headText, encoding: null, bytes } : { text: null, preview: head.toString('base64'), encoding: 'base64', bytes })
     }
     req.on('data', (chunk: Buffer) => {
@@ -364,6 +414,14 @@ function readBody(req: IncomingMessage): Promise<ReadBody> {
     req.on('error', done)
     req.on('aborted', done)
   })
+}
+
+/** The largest cut at or before `limit` that does not split a UTF-8 character. */
+function utf8Boundary(buf: Buffer, limit: number): number {
+  let end = Math.min(limit, buf.length)
+  if (end === buf.length) return end
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--
+  return end
 }
 
 const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -394,19 +452,41 @@ function responseHeaders(res: ServerResponse): Array<[string, string]> {
   return out
 }
 
-function sendExample(res: ServerResponse, status: number, example: MockExample, head: boolean): void {
-  for (const [key, values] of mockResponseHeaders(example.headers)) {
-    try {
-      res.setHeader(key, values.length === 1 ? values[0]! : values)
-    } catch {
-      // A header name or value Node refuses (control characters, ...) is left out rather than failing the response.
-    }
+/** Header value Node accepts? */
+function validValue(name: string, value: string): boolean {
+  try {
+    validateHeaderValue(name, value)
+    return true
+  } catch {
+    return false
   }
-  const body = example.bodyEncoding === 'base64' ? Buffer.from(example.body, 'base64') : Buffer.from(example.body, 'utf8')
-  // 204, 205 and 304 never carry a body or a length; HEAD sends the length of the body it leaves out.
+}
+
+function sendExample(res: ServerResponse, status: number, example: MockExample, head: boolean): void {
+  for (const [key, raw] of mockResponseHeaders(example.headers)) {
+    try {
+      validateHeaderName(key)
+    } catch {
+      continue // a header name Node refuses is left out rather than failing the response
+    }
+    // Postman's dynamic variables ({{$guid}}, {{$timestamp}}, ...) get a fresh value per answer; a value Node refuses
+    // (control characters, ...) is left out, the other values of the same name are still sent.
+    let values = raw.map((v) => resolveDynamicVariables(v)).filter((v) => validValue(key, v))
+    if (key.toLowerCase() === 'vary') {
+      // CORS already set `Vary: Origin`: keep it next to the example's own.
+      const tokens = new Set([...String(res.getHeader('vary') ?? '').split(','), ...values.flatMap((v) => v.split(','))].map((t) => t.trim()).filter(Boolean))
+      values = tokens.size ? [[...tokens].join(', ')] : []
+    }
+    if (values.length) res.setHeader(key, values.length === 1 ? values[0]! : values)
+  }
+  const text = example.bodyEncoding === 'base64' ? null : hasDynamicVariables(example.body) ? resolveDynamicVariables(example.body) : example.body
+  const body = text === null ? Buffer.from(example.body, 'base64') : Buffer.from(text, 'utf8')
+  // 204 and 304 never carry a body or a length (Node leaves both out); 205 sends `Content-Length: 0` (else Node would
+  // frame it chunked); HEAD sends the length of the body it leaves out.
   const noBody = NO_BODY_STATUS.has(status)
   if (noBody) res.removeHeader('Content-Type')
-  else res.setHeader('Content-Length', body.length)
+  if (status === 205) res.setHeader('Content-Length', 0)
+  else if (!noBody) res.setHeader('Content-Length', body.length)
   try {
     res.writeHead(status, example.status || undefined)
   } catch {
