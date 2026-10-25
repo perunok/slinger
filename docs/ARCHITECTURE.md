@@ -6,7 +6,7 @@ script, and a Svelte 5 renderer that can only reach the outside world through `w
 ## Directory map
 
 ```
-electron/            main process (TypeScript, bundled by esbuild to dist-electron/main.cjs + preload.cjs)
+electron/            main process (TypeScript, bundled by esbuild to dist-electron/main.cjs (boot.ts) + app.cjs (main.ts) + preload.cjs)
   main.ts            lifecycle, single-instance lock, BrowserWindow, app:// protocol + CSP, session hardening, smoke test
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
@@ -1052,6 +1052,11 @@ cloud panel signs in with the device-code flow instead.
 
 The goal is that the first frame already looks like Slinger, in the user's theme, and that nothing flashes:
 
+0. **Code cache** (`electron/boot.ts`, the `main.cjs` entry): runs `app.cjs` (main.ts and everything bundled with it) as a
+   `vm.Script` with V8 code cache `<userData>/code-cache/app-<v8 version>.bin`, so a launch skips compiling ~2 MB of JS. The cache
+   is written once, 10 s after a launch that had none or whose cache V8 rejected (an update); writing is atomic and every error
+   (unreadable, corrupt, read-only disk) only means a normal compile. Before anything of the bundle runs, any failure falls back
+   to a plain `require('./app.cjs')`.
 1. **Main** (`app.whenReady`): reads `<userData>/window-state.json` (`electron/lib/windowState.ts`: last theme background, normal
    bounds, maximised; each field validated on its own, a corrupt file is ignored), opens the database, registers IPC, then
    `createWindow()` with `show: false`, `backgroundColor` = the remembered `--bg` (before the first report: the default light or
@@ -1071,10 +1076,21 @@ The goal is that the first frame already looks like Slinger, in the user's theme
    cross-faded over 150 ms (`pointer-events: none` while fading) and removed. A startup error (`app.fatalError`, or `boot()`
    itself throwing) removes it at once so the error is visible. On close, main stores the window's normal bounds + maximised.
 
+What stays out of the startup path: the preload has no dependencies (`electron/__tests__/preloadBundle.test.ts` keeps it under
+50 KB; `shared/menu.ts` must not import zod), and views/dialogs opened rarely load on first use through
+`components/ui/Lazy.svelte` (App.svelte's `load` map: workflow editor with @xyflow, Settings, Import, Cloud, Versions, Runner, the
+export dialogs, About, Update, Workspaces). The MCP tools (`features/mcp/tools.ts`, with zod and `shared/mcp`) load on the first
+assistant call (`McpHost.svelte`). Measured (median of 6-8 warm launches, hidden window, Linux, before -> after 0.23): main
+`appReady` 288 -> 220 ms, renderer ready 310 -> 244 ms, `ready-to-show` 606 -> 474 ms.
+
 `SLINGER_STARTUP_TIMING=1` prints one `STARTUP_TIMING {main, renderer}` line (main: ms since process start; renderer: ms since
 navigation start, `window.__slingerStartup`, also `performance.mark('slinger:*')`); a renderer built/served with
 `VITE_SLINGER_STARTUP_TIMING=1` logs its part with `console.debug`. Packaged Linux build, hidden window, warm profile: skeleton
-first paint ~140 ms, app mounted ~190 ms, data loaded and skeleton removed ~220 ms (no fade needed). e2e: `launch()` and
+first paint ~140 ms, app mounted ~190 ms, data loaded and skeleton removed ~220 ms (no fade needed). `rows.ts`
+`visibleRowIndexes`: from 300 visible rows the sidebar tree renders only the rows in view (+12 above/below) inside a spacer of
+`rows * 28 px`, plus the focused and the dragged row; before the tree's height is measured a 1200 px view is assumed. With
+5,000 requests expanded: clearing the filter 712 -> 33 ms, opening a request 144 -> 49 ms, no long tasks (`e2e/bigTree.e2e.test.ts`
+checks keyboard, scrolling, filter and click on such a tree). e2e: `launch()` and
 `reloadApp()` wait for `#boot-skeleton` to detach.
 
 ## Renderer

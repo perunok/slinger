@@ -144,3 +144,26 @@ export function buildRows({ collections, folders, requests, expanded, filter }: 
   })
   return rows
 }
+
+/** Height of a tree row (TreeRow is h-7). */
+export const ROW_H = 28
+/** From this many visible rows on, the tree renders only the rows in view. */
+export const VIRTUAL_FROM = 300
+const OVERSCAN = 12
+const ASSUMED_VIEW_H = 1200
+
+/**
+ * The row indexes a big tree renders: those in view (plus OVERSCAN above and below) and the `pinned` ones (focused,
+ * dragged), ascending. Null = render every row (a small tree). Before the tree's height is measured (first render,
+ * tests) a typical height is assumed, so a big tree never renders all of its rows at once.
+ */
+export function visibleRowIndexes(count: number, scrollTop: number, viewHeight: number, pinned: number[] = []): number[] | null {
+  if (count < VIRTUAL_FROM) return null
+  if (viewHeight <= 0) viewHeight = ASSUMED_VIEW_H
+  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
+  const end = Math.min(count, Math.ceil((scrollTop + viewHeight) / ROW_H) + OVERSCAN)
+  const shown = new Set<number>()
+  for (let i = start; i < end; i++) shown.add(i)
+  for (const i of pinned) if (i >= 0 && i < count) shown.add(i)
+  return [...shown].sort((a, b) => a - b)
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ApiFolder, ApiRequest, Collection } from '../../../shared/types'
-import { buildRows } from './rows'
+import { buildRows, ROW_H, VIRTUAL_FROM, visibleRowIndexes } from './rows'
 
 const col = (id: string, name = id): Collection => ({ id, workspaceId: 'w', name, createdAt: 0, updatedAt: 0, version: 1 })
 const fol = (id: string, parent: string | null, order = 0, collectionId = 'c1'): ApiFolder => ({
@@ -56,5 +56,28 @@ describe('buildRows', () => {
     ])
     // A request without examples is a leaf.
     expect(buildRows({ ...data, expanded: new Set(['collection:c1']), filter: '' }).find((r) => r.key === 'request:r1')).toMatchObject({ expandable: false, count: undefined })
+  })
+})
+
+describe('visibleRowIndexes (virtual tree)', () => {
+  it('renders everything for a small tree, and a first screenful of a big one before its height is known', () => {
+    expect(visibleRowIndexes(VIRTUAL_FROM - 1, 0, 600)).toBeNull()
+    const first = visibleRowIndexes(5000, 0, 0)!
+    expect(first[0]).toBe(0)
+    expect(first.length).toBeGreaterThan(40)
+    expect(first.length).toBeLessThan(100)
+  })
+  it('renders the rows in view plus a margin, and the pinned rows', () => {
+    const view = 10 * ROW_H
+    const top = visibleRowIndexes(5000, 0, view)!
+    expect(top[0]).toBe(0)
+    expect(top.length).toBe(10 + 12)
+    const mid = visibleRowIndexes(5000, 1000 * ROW_H, view, [4999, 3])!
+    expect(mid).toContain(1000)
+    expect(mid).toContain(1009)
+    expect(mid[0]).toBe(3)
+    expect(mid.at(-1)).toBe(4999)
+    expect(mid.filter((i) => i >= 988 && i < 1022)).toHaveLength(34)
+    expect(visibleRowIndexes(5000, 4990 * ROW_H, view)!.at(-1)).toBe(4999)
   })
 })
