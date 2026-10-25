@@ -69,6 +69,7 @@ const PASSING: Array<[string, string]> = [
   ['response.to.have.header', `pm.response.to.have.header('Content-Type'); pm.response.to.have.header('content-type', 'application/json')`],
   ['response.to.have.jsonBody', `pm.response.to.have.jsonBody(); pm.response.to.have.jsonBody('user.id'); pm.response.to.have.jsonBody('user.id', 7); pm.response.to.be.json`],
   ['response.to.have.body', `pm.response.to.have.body(); pm.response.to.have.body(/t-123/)`],
+  ['response.to.have.jsonSchema (ajv 6, options)', `pm.response.to.have.jsonSchema({ type: 'object', required: ['token', 'user'], properties: { user: { type: 'object', properties: { id: { type: 'integer' } } } } }); pm.response.to.not.have.jsonSchema({ properties: { token: { type: 'number' } } }); pm.expect({ a: 1 }).to.have.jsonSchema({ properties: { a: { type: 'integer' } } }); pm.response.to.have.jsonSchema({ properties: { items: { maxItems: 3 } } }, { allErrors: false })`],
   ['pm.expect(pm.response).to.have.status', `pm.expect(pm.response).to.have.status(200)`],
   ['cookies from Set-Cookie', `pm.expect(pm.cookies.get('sid')).to.equal('abc'); pm.expect(pm.cookies.has('x')).to.be.false`],
   // expect subset
@@ -100,6 +101,7 @@ describe('pm API (Postman-compatible cases)', () => {
   // [description, failing assertion, expected message]
   const FAILING: Array<[string, string, string]> = [
     ['status', `pm.response.to.have.status(404)`, 'AssertionError: expected response to have status code 404 but got 200'],
+    ['jsonSchema', `pm.response.to.have.jsonSchema({ type: 'object', required: ['missing'], properties: { token: { type: 'number' } } })`, "AssertionError: expected data to satisfy schema but found following errors: \ndata should have required property 'missing', data.token should be number"],
     ['equal', `pm.expect(1).to.equal(2)`, 'AssertionError: expected 1 to equal 2'],
     ['eql', `pm.expect({a: 1}).to.eql({a: 2})`, 'AssertionError: expected { a: 1 } to deeply equal { a: 2 }'],
     ['include', `pm.expect('abc').to.include('z')`, "AssertionError: expected 'abc' to include 'z'"],

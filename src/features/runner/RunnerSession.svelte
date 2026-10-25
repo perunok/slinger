@@ -17,6 +17,7 @@
   import { templateValue, testCounts } from '../../lib/scripts'
   import { collectRunItems, MAX_ITERATIONS, resultsToJson, summarize, type RowStatus, type RunItem, type RunRow, type RunState } from './runner'
   import { runsStore, type RunSession } from './runs.svelte'
+  import { openapiStore } from '../openapi/openapiStore.svelte'
 
   interface Props {
     collectionId: string
@@ -45,6 +46,10 @@
   const delayText = $derived(delayValue === null || delayValue === undefined ? '' : String(delayValue))
   let stopOnFailure = $state(opened?.options.stopOnFailure ?? false)
   let treat3xxAsPass = $state(opened?.options.treat3xxAsPass ?? false)
+  // Offered (on by default) only when the collection has an OpenAPI document linked on this device.
+  let checkOpenApi = $state(opened?.options.checkOpenApi ?? true)
+  void openapiStore.ensure(untrack(() => collectionId))
+  const hasSpec = $derived(!!openapiStore.links[collectionId])
   // Data-driven runs: one iteration per row of the data file (or N plain iterations).
   let dataFile = $state.raw<DataFile | null>(opened?.dataFile ?? null)
   let dataError = $state<string | null>(null)
@@ -87,7 +92,7 @@
       target,
       label: folder?.name ?? collection?.name ?? 'collection',
       items: chosen,
-      options: { delayMs, stopOnFailure, treat3xxAsPass, iterations: iterations ?? 1 },
+      options: { delayMs, stopOnFailure, treat3xxAsPass, iterations: iterations ?? 1, checkOpenApi: hasSpec && checkOpenApi },
       dataFile,
     })
     if (inBackground) toBackground()
@@ -359,6 +364,18 @@
               <span>Treat 3xx as pass also counts a 3xx that redirect-following did not turn into a 2xx as passed.</span>
             </InfoTip>
           </span>
+          {#if hasSpec}
+            <span class="flex items-center gap-1 pb-1.5">
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" bind:checked={checkOpenApi} />
+                Check responses against the OpenAPI spec
+              </label>
+              <InfoTip label="About checking against the spec">
+                <span>Each request that is an operation of the collection's OpenAPI document gets one more test, “Response matches the OpenAPI spec”: its status, content type and JSON body must be documented.</span>
+                <span>A failed check fails the request like a failed script test.</span>
+              </InfoTip>
+            </span>
+          {/if}
         </div>
         <div class="flex flex-col gap-2 rounded border border-border p-2" data-testid="data-file">
           <div class="flex flex-wrap items-end gap-4">

@@ -506,6 +506,20 @@
     if (arguments.length === 1) return this._assert(got.exists, "expected response json to have path '" + path + "'", "expected response json to not have path '" + path + "'")
     return this._assert(got.exists && deepEqual(got.value, value), "expected response json at '" + path + "' to be " + show(value) + (got.exists ? ' but got ' + show(got.value) : ''), "expected response json at '" + path + "' to not be " + show(value))
   })
+  // Postman's jsonSchema: the response's JSON body (or any value, with pm.expect) against a schema, checked by the
+  // sandbox's ajv 6 (draft-07, loaded on first use); `options` go to `new Ajv(...)`.
+  method(['jsonSchema'], function (schema, options) {
+    var data = this._obj
+    if (isResponse(data)) {
+      try { data = parse(data.text()) } catch (e) { return this._assert(false, 'expected response body to be a valid json', 'expected response body to not be a valid json') }
+    }
+    var opts = { allErrors: true, logger: false }
+    if (options && typeof options === 'object') for (var k in options) if (hasOwn.call(options, k)) opts[k] = options[k]
+    var Ajv = requireModule('ajv')
+    var ajv = new Ajv(opts)
+    var valid = ajv.validate(schema, data)
+    return this._assert(valid, 'expected data to satisfy schema but found following errors: \n' + ajv.errorsText(), 'expected data to not satisfy schema')
+  })
   propGetter(['json'], function () {
     var r = needResponse(this, 'json')
     var ok = true

@@ -20,6 +20,8 @@ import type {
   OpenApiImportResult,
   OpenApiLink,
   OpenApiPreview,
+  OpenApiValidation,
+  OpenApiValidationInput,
   SyncEntityType,
   Collection,
   CollectionVersion,
@@ -182,6 +184,11 @@ export interface SlingerIpcApi {
   getOpenApiLink(collectionId: string): Promise<OpenApiLink | null>
   /** ADDED (OpenAPI): forgets the collection's document (requests keep their operation keys). */
   unlinkOpenApi(collectionId: string): Promise<void>
+  /**
+   * ADDED (OpenAPI): checks a response against the collection's linked document (operation from the request's
+   * `openapi.key`, else method + URL). `status: 'no-spec'` without a link; bodies over 5 MB are not checked.
+   */
+  validateOpenApiResponse(input: OpenApiValidationInput): Promise<OpenApiValidation>
   defaultExportPath(fileName: string): Promise<string>
   /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
   writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
@@ -463,6 +470,7 @@ export const IPC_CHANNELS = [
   'importOpenApi',
   'getOpenApiLink',
   'unlinkOpenApi',
+  'validateOpenApiResponse',
   'defaultExportPath',
   'writeExportFile',
   'chooseExportDirectory',
