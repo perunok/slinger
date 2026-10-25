@@ -117,9 +117,11 @@ describe('window', () => {
     await app.close()
     ;({ app, page } = await start())
     expect(await page.evaluate(() => window.slinger.getWindowChrome())).toMatchObject({ titleBar: 'system' })
-    // Already announced: no second notification for the same release after a restart.
-    await page.waitForTimeout(10_000)
-    expect(await page.getByText('Slinger 99.0.0 is available').count()).toBe(0)
+    // Every start checks in the background (although the last check was moments ago) and reminds of the release.
+    const hits = feedHits
+    await page.getByText('Slinger 99.0.0 is available').waitFor({ timeout: 20_000 })
+    expect(feedHits).toBe(hits + 1)
+    expect(await page.getByText('Slinger 99.0.0 is available').count()).toBe(1)
   })
 
   it('Ctrl+B and View > Toggle Sidebar hide and show the sidebar', async () => {
