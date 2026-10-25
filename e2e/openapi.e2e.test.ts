@@ -86,7 +86,31 @@ describe('OpenAPI', () => {
     const pet = await get('/pets/7')
     expect(JSON.parse(pet.body)).toMatchObject({ id: 7 })
     expect((await get('/health')).body).toBe('ok')
-    await dialog.getByRole('button', { name: 'Stop' }).click()
+    await page.keyboard.press('Escape')
+  })
+
+  it('a response from the mock is checked against the document (Spec chip)', async () => {
+    // Point the collection's baseUrl at the mock server, then send "Get a pet".
+    await page.evaluate(async (url) => {
+      const w = (window as unknown as { slinger: Record<string, (...a: unknown[]) => Promise<unknown>> }).slinger
+      const ws = ((await w.listWorkspaces!()) as Array<{ id: string }>)[0]!.id
+      const col = ((await w.listCollections!(ws)) as Array<{ id: string; name: string }>).find((c) => c.name === 'Shop API')!
+      const vars = (await w.listCollectionVariables!(col.id)) as Array<{ key: string; value: string; enabled: boolean; description: string | null }>
+      await w.replaceCollectionVariables!(col.id, vars.map((v) => ({ key: v.key, value: v.key === 'baseUrl' ? url : v.value, enabled: v.enabled, description: v.description })))
+    }, `http://127.0.0.1:${port}`)
+    await page.reload()
+    const pets = tree().getByRole('treeitem', { name: /^pets/ })
+    if ((await pets.getAttribute('aria-expanded')) !== 'true') await pets.click()
+    await tree().getByRole('treeitem', { name: /Get a pet$/ }).click()
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    const chip = page.getByTestId('spec-chip')
+    await chip.waitFor()
+    await expect.poll(() => chip.getAttribute('data-status')).toBe('valid')
+    expect(await chip.textContent()).toContain('Matches spec')
+    // Stop the mock server again.
+    await tree().getByRole('treeitem', { name: /^Shop API/ }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Mock server…' }).click()
+    await page.getByTestId('mock-server-dialog').getByRole('button', { name: 'Stop' }).click()
     await page.keyboard.press('Escape')
   })
 

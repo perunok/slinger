@@ -30,6 +30,7 @@
   import type { OpenApiFolderMode, OpenApiPreview } from '../../../shared/types'
   import { looksLikeOpenApi, specUrlOf } from './openapiDetect'
   import OpenApiImportPreview from './OpenApiImportPreview.svelte'
+  import { invalidateOpenApiLink } from '../openapi/openapiStore.svelte'
 
   interface Props {
     open: boolean
@@ -433,6 +434,7 @@
         folders: openapiFolders,
         ...(name && name !== p.title ? { name } : {}),
       })
+      invalidateOpenApiLink(result.collection.id)
       await app.reloadCollections()
       expandedStore.set(`collection:${result.collection.id}`, true)
       tabsStore.openOverview({ kind: 'collection', id: result.collection.id })
