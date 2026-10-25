@@ -25,6 +25,10 @@ export const IMPORT_FILE_ACCEPT = [
   '.postman_globals.json',
   '.json',
   'application/json',
+  // OpenAPI / Swagger documents.
+  '.yaml',
+  '.yml',
+  'application/yaml',
   // A text file with cURL commands.
   '.sh',
   '.curl',
