@@ -14,7 +14,7 @@ files:
   - dist-electron/**
   - electron/migrations/*.sql
   - "!**/*.map"
-  # main.cjs/preload.cjs inline every pure-JS dependency, and the renderer is bundled by vite, so the
+  # app.cjs/preload.cjs inline every pure-JS dependency, and the renderer is bundled by vite, so the
   # runtime only needs the native addons. Drop the (large) rest of the production dependency tree.
   - "!node_modules/@codemirror/**"
   - "!node_modules/@lezer/**"

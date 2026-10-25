@@ -935,6 +935,11 @@ const tools: Impls = {
   },
 }
 
+/** The tool's display title (the name itself for an unknown tool). */
+export function toolTitle(tool: string): string {
+  return Object.hasOwn(MCP_TOOLS, tool) ? MCP_TOOLS[tool as McpToolName].title : tool
+}
+
 /** Runs one tool call from main. Arguments are validated again here (the renderer trusts no input). */
 export async function runTool(tool: string, args: unknown): Promise<McpCallResult> {
   if (!Object.hasOwn(MCP_TOOLS, tool)) return { ok: false, error: `Unknown tool "${tool}".` }

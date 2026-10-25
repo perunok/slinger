@@ -1,14 +1,20 @@
 <script lang="ts">
-  /** Mounted once by App: runs the tool calls main forwards from MCP clients and sends back the results. */
+  /**
+   * Mounted once by App: runs the tool calls main forwards from MCP clients and sends back the results. The tools (and
+   * zod with their schemas) load on the first call, so a Slinger without assistants never loads them.
+   */
   import { onMount } from 'svelte'
   import { api } from '../../lib/ipc'
   import { mcp } from './mcpStore.svelte'
-  import { runTool } from './tools'
+
+  let tools: Promise<typeof import('./tools')> | null = null
+  const loadTools = () => (tools ??= import('./tools'))
 
   onMount(() => {
     void mcp.load()
     const unsubscribe = api().onMcpCall(async (call) => {
-      mcp.begin(call.tool)
+      const { runTool, toolTitle } = await loadTools()
+      mcp.begin(toolTitle(call.tool))
       try {
         const result = await runTool(call.tool, call.args)
         await api().mcpRespond(call.id, result)
