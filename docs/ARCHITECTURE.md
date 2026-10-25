@@ -576,7 +576,10 @@ workspace) and starts them again.
   `lib/mockServers.ts` `collectMockExamples(folders, requests)` resolves every example in sidebar order into a flat
   `MockExample` (`requestId`, `exampleIndex`, `requestName`, `name`, `method`, `url` with templates unresolved, `code`,
   `status`, enabled `headers` (plus a `Content-Type` from `_postman_previewlanguage` when missing), `body`, `bodyEncoding`,
-  `requestBody` (the saved request's body text, for matching); MCP requests are skipped) and sends the list with
+  `requestBody` (the saved request's body text, for matching), `requestHeaders` (its enabled headers, for
+  `x-mock-match-request-headers`) and `id` (the Postman example id, for `x-mock-response-id`); MCP requests are skipped;
+  everything is clipped to `MOCK_LIMITS` (shared with main's zod schema: oversize names cut, an oversize request body dropped,
+  an example over 12 MB or past 200 MB of bodies left out), so one odd example never fails a whole start) and sends the list with
   `startMockServer` together with the collection name (for the tray) and `MockServerOptions` (`cors: 'local' | 'any'`,
   `delayMs` 0-60 000; `setMockServerOptions` changes them live). Main zod-validates it (20 000 examples, 12 MB per body, 200 MB of bodies per server).
   The alternative, main reading `document_json` itself, would have duplicated the example parsing in main and broken the
@@ -588,13 +591,16 @@ workspace) and starts them again.
   collection deleted by sync keeps serving its last examples until stopped.
 - **Server:** `node:http` on `127.0.0.1` only (`exclusive: true`, keep-alive 5 s). `start` on the port a collection already uses
   swaps its examples; on another port the new server is bound first and the old one stopped afterwards, so a busy port keeps the
-  old one. `EADDRINUSE` is `io_error` with `details.reason: 'port_in_use'`, `EACCES` `'port_denied'`. `stop` closes the listener
+  old one. A start in progress is tracked (`PendingStart`): `stop` (user, collection/workspace deletion via the renderer's
+  `stopIfRunning`/`stopWorkspace`, quit) cancels it, so the bound port is closed and the start fails with `io_error`
+  `details.reason: 'stopped'` (the renderer shows nothing); `update` during a start replaces what it will serve. `EADDRINUSE` is `io_error` with `details.reason: 'port_in_use'`, `EACCES` `'port_denied'`. `stop` closes the listener
   and all open connections (and ends answers waiting for the delay). Requests whose `Host` is not a loopback name (`127.0.0.1`,
   `localhost`, `*.localhost`, `[::1]`) get 403, so a DNS-rebinding web page cannot read the examples. Request bodies are read up to
   10 MB (the rest drained) for matching and the log.
 - **CORS:** `corsOriginAllowed(options.cors, Origin)`: with `'local'` only loopback origins (`http(s)://localhost|127.0.0.1|[::1]|
   *.localhost[:port]`), with `'any'` every origin. Allowed origins get `Access-Control-Allow-Origin: <origin>`, `-Credentials:
-  true`, `-Expose-Headers: *`, `Vary: Origin` (an example's own `Access-Control-*` headers win). A preflight (`OPTIONS` with
+  true`, `-Expose-Headers: <the example's header names>` (`*` would be literal on credentialed requests), `Vary: Origin` (merged
+with an example's own `Vary`; an example's own `Access-Control-*` headers win). A preflight (`OPTIONS` with
   `Origin` and `Access-Control-Request-Method`) is answered by the server itself: 204 echoing the requested method and headers,
   `Max-Age` 600 and, when asked, `Access-Control-Allow-Private-Network`; from an origin that is not allowed it is 403 (logged as
   `refused`, with the reason). Other requests from such origins are answered without CORS headers (the browser then hides them).
@@ -603,16 +609,24 @@ workspace) and starts them again.
   host, or a leading `{{var}}`/host part, query and fragment dropped). Segments compare one by one (percent-decoded, empty ones
   ignored): literal (case-sensitive), wildcard (`:name` or a whole `{{name}}`), or mixed (`v{{n}}.json`, a regex). Candidates are
   the examples with the request's method (HEAD falls back to GET) and a matching path; `x-mock-response-id`,
-  `x-mock-response-name` (case-insensitive) and `x-mock-response-code` narrow them (nothing left: 404 naming what exists). Then
+  `x-mock-response-name` (case-insensitive), `x-mock-response-code` (against the status really sent),
+  `x-mock-match-request-headers` (named headers must equal the saved request's; a `{{var}}` saved value matches any) and
+  `x-mock-match-request-body: true` narrow them (nothing left: 404 naming what exists). A segment of only templates is a
+  wildcard; template parts of a mixed segment may be empty. An absolute-form request target counts by its path. Then
   they are ranked: the most specific path (left to right, literal > mixed > wildcard); then query parameters (`mockQueryOf`: an
   example whose saved parameters all appear with equal values beats one with a missing or different one, then more matched
   parameters win; a `{{var}}`, `:var` or empty saved value matches any value); then the request body (equal to the example's
-  `requestBody`, JSON compared by value with sorted keys, other text trimmed); then collection order. No match: 404 with
+  `requestBody`, JSON compared by value with sorted keys, url-encoded and multipart text fields as sorted pairs when the
+  request's `Content-Type` says form, other text trimmed); then collection order. No match: 404 with
   `{error: 'mockRequestNotFound', message, hint}`.
 - **Response:** the example's status when 200-599 (else 200) and reason phrase, its headers except framing ones
   (`Content-Length`, `Transfer-Encoding`, `Content-Encoding`, `Connection`, ...; repeated names such as `Set-Cookie` are sent as
-  separate lines; a header Node refuses is skipped), the body as UTF-8 or decoded base64, with an exact `Content-Length`; 204,
-  205 and 304 send neither a body nor a length, HEAD the length without the body. `{{variables}}` in bodies are not resolved.
+  separate lines; a name Node refuses is skipped, a value it refuses is dropped while the other values of that name are
+  sent), the body as UTF-8 or decoded base64, with an exact `Content-Length`; 204 and 304 send neither a body nor a length,
+  205 `Content-Length: 0` (else Node frames it chunked), HEAD the length without the body. Postman dynamic variables
+  (`shared/dynamicVariables.ts`: `{{$guid}}`, `{{$timestamp}}`, `{{$randomEmail}}`, ... from built-in word lists) in text bodies
+  and header values get a fresh value per answer; other `{{variables}}` are sent as written. The log's body preview is cut
+  at a UTF-8 character boundary within `MOCK_LOG_BODY_LIMIT` bytes.
 - **Log:** every request becomes a `MockServerLogEntry` (seq, time, method, path+query, status, `kind` example / notFound /
   refused / preflight, matched example or the reason, the request's headers in order (values cut at 4 KB) and body (first
   `MOCK_LOG_BODY_LIMIT` = 64 KB, base64 when not UTF-8, with its full size), the answer's status text, headers and delay, and

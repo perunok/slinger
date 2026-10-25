@@ -155,7 +155,7 @@ export function exampleName(example: unknown): string {
   return n || 'Untitled example'
 }
 
-function exampleId(example: unknown): string | null {
+export function exampleId(example: unknown): string | null {
   return isObj(example) && typeof example.id === 'string' && example.id ? example.id : null
 }
 

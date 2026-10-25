@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { SlingerInvokeApi } from '../../shared/ipc-contract'
 import type { PickFileOptions, TitleBarStyle, UpdateCheckResult, UpdateInstallState, WindowAction, WindowChrome } from '../../shared/types'
-import { MOCK_MAX_DELAY_MS } from '../../shared/types'
+import { MOCK_LIMITS, MOCK_MAX_DELAY_MS } from '../../shared/types'
 import { invalidInput, ioError } from '../lib/errors'
 import { isUuid } from '../lib/ids'
 import { assertExternalUrl } from '../services/externalUrl'
@@ -55,23 +55,26 @@ const requestHeader = z.object({ key: z.string().max(8192), value: z.string().ma
 
 // ---- Mock servers --------------------------------------------------------------
 
+const mockHeader = z.object({ key: z.string().max(MOCK_LIMITS.headerKey), value: z.string().max(MOCK_LIMITS.headerValue) })
 const mockExample = z
   .object({
     requestId: uuid,
     exampleIndex: z.number().int().min(0).max(100_000),
-    requestName: z.string().max(500),
-    name: z.string().max(500),
-    method: z.string().min(1).max(32),
-    url: z.string().max(100_000),
+    requestName: z.string().max(MOCK_LIMITS.name),
+    name: z.string().max(MOCK_LIMITS.name),
+    method: z.string().min(1).max(MOCK_LIMITS.method),
+    url: z.string().max(MOCK_LIMITS.url),
     code: z.number().int().min(100).max(999).nullable(),
-    status: z.string().max(500),
-    headers: z.array(requestHeader).max(500),
-    body: z.string().max(12 * 1024 * 1024),
+    status: z.string().max(MOCK_LIMITS.name),
+    headers: z.array(mockHeader).max(MOCK_LIMITS.headers),
+    body: z.string().max(MOCK_LIMITS.body),
     bodyEncoding: z.enum(['base64']).nullable(),
-    requestBody: z.string().max(1024 * 1024).nullable(),
+    requestBody: z.string().max(MOCK_LIMITS.requestBody).nullable(),
+    requestHeaders: z.array(mockHeader).max(MOCK_LIMITS.headers).optional(),
+    id: z.string().max(MOCK_LIMITS.id).nullable().optional(),
   })
   .strict()
-const mockExamples = z.array(mockExample).max(20_000)
+const mockExamples = z.array(mockExample).max(MOCK_LIMITS.examples)
 const mockServerOptions = z.object({ cors: z.enum(['local', 'any']), delayMs: z.number().int().min(0).max(MOCK_MAX_DELAY_MS) }).strict()
 const collectionName = z.string().max(500)
 const startMockServerInput = z

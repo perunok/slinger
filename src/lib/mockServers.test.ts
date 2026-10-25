@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ApiFolder, ApiRequest } from '../../shared/types'
+import { MOCK_LIMITS, type ApiFolder, type ApiRequest } from '../../shared/types'
 import { compileMockRoutes, matchMockRequest } from '../../shared/mockMatch'
 import {
   DEFAULT_MOCK_PORT,
@@ -50,6 +50,49 @@ function request(id: string, over: Partial<ApiRequest> & { doc?: Record<string, 
     ...rest,
   }
 }
+
+describe('collectMockExamples: ids, saved request headers and the IPC limits', () => {
+  it('sends the example id and the enabled headers of its saved request', () => {
+    const [ex] = collectMockExamples([], [
+      request('r', {
+        doc: {
+          responses: [
+            {
+              id: 'ex-1',
+              name: 'A',
+              originalRequest: { method: 'GET', url: '/a', header: [{ key: 'X-Api-Version', value: '2' }, { key: 'X-Off', value: '1', disabled: true }] },
+              code: 200,
+              body: '{}',
+            },
+          ],
+        },
+      }),
+    ])
+    expect(ex!.id).toBe('ex-1')
+    expect(ex!.requestHeaders).toEqual([{ key: 'X-Api-Version', value: '2' }])
+  })
+
+  it('clips what main would refuse, so one odd example never stops the collection from being served', () => {
+    const big = 'x'.repeat(MOCK_LIMITS.requestBody + 1)
+    const examples = collectMockExamples([], [
+      request('r', {
+        name: 'n'.repeat(MOCK_LIMITS.name + 10),
+        doc: {
+          responses: [
+            { name: 'N'.repeat(MOCK_LIMITS.name + 1), originalRequest: { method: 'POST', url: '/a', body: { mode: 'raw', raw: big } }, code: 200, body: 'ok' },
+            { name: 'too big', originalRequest: { method: 'GET', url: '/b' }, code: 200, body: 'b'.repeat(MOCK_LIMITS.body + 1) },
+            { name: 'fine', originalRequest: { method: 'GET', url: '/c' }, code: 200, body: 'c', id: 'i'.repeat(MOCK_LIMITS.id + 1) },
+          ],
+        },
+      }),
+    ])
+    expect(examples.map((e) => e.url)).toEqual(['/a', '/c'])
+    expect(examples[0]!.name).toHaveLength(MOCK_LIMITS.name)
+    expect(examples[0]!.requestName).toHaveLength(MOCK_LIMITS.name)
+    expect(examples[0]!.requestBody).toBeNull()
+    expect(examples[1]!.id).toBeNull()
+  })
+})
 
 describe('collectMockExamples', () => {
   it('reads every example in collection order with method, URL, status, headers and body', () => {

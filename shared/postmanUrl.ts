@@ -29,7 +29,8 @@ export function postmanUrlToString(url: unknown): string {
   const host = joinParts(url.host, '.')
   const path = joinParts(url.path, '/')
   const port = typeof url.port === 'string' && url.port ? `:${url.port}` : ''
-  let out = host && path ? `${host.replace(/\/+$/, '')}${port}/${path}` : host ? `${host}${port}` : path
+  // No host (`{path: ['users', ':id']}`): a path, so it starts with '/' (else the first segment reads as a host).
+  let out = host && path ? `${host.replace(/\/+$/, '')}${port}/${path}` : host ? `${host}${port}` : path && !path.startsWith('/') ? `/${path}` : path
   if (host && typeof url.protocol === 'string' && url.protocol) out = `${url.protocol.replace(/:?\/*$/, '')}://${out}`
   const query = queryString(url.query)
   if (query) out += `?${query}`

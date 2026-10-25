@@ -6,6 +6,7 @@
  */
 import {
   DEFAULT_MOCK_OPTIONS,
+  MOCK_LIMITS,
   MOCK_MAX_DELAY_MS,
   type ApiFolder,
   type ApiRequest,
@@ -13,7 +14,7 @@ import {
   type MockServerOptions,
   type RequestHeader,
 } from '../../shared/types'
-import { exampleName, mimeForLanguage, parseExample, readExamples } from './examples'
+import { exampleId, exampleName, mimeForLanguage, parseExample, readExamples } from './examples'
 import { dataRows } from './kv'
 import { MCP_METHOD } from './mcpRequest'
 import type { BodyDraft } from './request'
@@ -50,6 +51,12 @@ function isMcpRequest(request: ApiRequest): boolean {
  * url-encoded and form-data fields as `a=1&b=2` (enabled text fields), a GraphQL body as the JSON a client posts. Null when
  * there is none (no body, a file, an empty text).
  */
+/** The saved request body for matching, dropped when larger than main accepts (it is only a tie-breaker). */
+function requestBodyOf(body: BodyDraft): string | null {
+  const text = mockRequestBody(body)
+  return text !== null && text.length > MOCK_LIMITS.requestBody ? null : text
+}
+
 export function mockRequestBody(body: BodyDraft): string | null {
   const form = (rows: BodyDraft['urlEncoded']) => {
     const params = new URLSearchParams()
@@ -97,29 +104,42 @@ function hasHeader(headers: RequestHeader[], name: string): boolean {
  */
 export function collectMockExamples(folders: ApiFolder[], requests: ApiRequest[]): MockExample[] {
   const out: MockExample[] = []
+  let totalBody = 0
+  const clip = (text: string, max: number) => (text.length > max ? text.slice(0, max) : text)
+  const headerRows = (rows: Parameters<typeof dataRows>[0]) =>
+    dataRows(rows)
+      .filter((h) => h.enabled && h.key.trim() && h.key.trim().length <= MOCK_LIMITS.headerKey)
+      .slice(0, MOCK_LIMITS.headers)
+      .map((h) => ({ key: h.key.trim(), value: clip(h.value, MOCK_LIMITS.headerValue) }))
   for (const request of orderedRequests(buildTree(folders, requests))) {
     if (!request.documentJson?.includes('"responses"') || isMcpRequest(request)) continue
     readExamples(request.documentJson).forEach((stored, exampleIndex) => {
       const parsed = parseExample(stored, request)
       const r = parsed.response
-      const headers = dataRows(r.headers)
-        .filter((h) => h.enabled && h.key.trim())
-        .map((h) => ({ key: h.key.trim(), value: h.value }))
+      // Too large to serve (or over the server's total): left out, the others are still served.
+      if (out.length >= MOCK_LIMITS.examples || r.body.length > MOCK_LIMITS.body || totalBody + r.body.length > MOCK_LIMITS.totalBody) return
+      totalBody += r.body.length
+      const headers = headerRows(r.headers)
       const mime = r.bodyEncoding ? '' : mimeForLanguage(r.language)
       if (mime && r.body && !hasHeader(headers, 'content-type')) headers.push({ key: 'Content-Type', value: `${mime}; charset=utf-8` })
       out.push({
         requestId: request.id,
         exampleIndex,
-        requestName: request.name,
-        name: exampleName(stored),
-        method: (parsed.request.method || request.method || 'GET').toUpperCase(),
-        url: parsed.request.url,
+        requestName: clip(request.name, MOCK_LIMITS.name),
+        name: clip(exampleName(stored), MOCK_LIMITS.name),
+        method: clip((parsed.request.method || request.method || 'GET').toUpperCase(), MOCK_LIMITS.method),
+        url: clip(parsed.request.url, MOCK_LIMITS.url),
         code: r.code !== null && r.code >= 100 && r.code <= 999 ? r.code : null,
-        status: r.status,
+        status: clip(r.status, MOCK_LIMITS.name),
         headers,
         body: r.body,
         bodyEncoding: r.bodyEncoding,
-        requestBody: mockRequestBody(parsed.request.body),
+        requestBody: requestBodyOf(parsed.request.body),
+        requestHeaders: headerRows(parsed.request.headers),
+        id: (() => {
+          const id = exampleId(stored)
+          return id && id.length <= MOCK_LIMITS.id ? id : null
+        })(),
       })
     })
   }

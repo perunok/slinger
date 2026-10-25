@@ -5,6 +5,7 @@
  * delay option is recorded in the log entry but not waited for.
  */
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
+import { resolveDynamicVariables } from '../../../shared/dynamicVariables'
 import {
   compileMockRoutes,
   corsOriginAllowed,
@@ -228,8 +229,8 @@ export function createMockServersApi(): { api: MockServersApi; controls: MockSer
           status = mockStatus(example.code)
           statusText = example.status
           match = { requestId: example.requestId, exampleIndex: example.exampleIndex, requestName: example.requestName, name: example.name }
-          for (const [key, values] of mockResponseHeaders(example.headers)) for (const v of values) headers.push([key.toLowerCase(), v])
-          responseBody = example.body
+          for (const [key, values] of mockResponseHeaders(example.headers)) for (const v of values) headers.push([key.toLowerCase(), resolveDynamicVariables(v)])
+          responseBody = example.bodyEncoding === 'base64' ? example.body : resolveDynamicVariables(example.body)
         } else {
           kind = 'notFound'
           status = 404
@@ -240,7 +241,11 @@ export function createMockServersApi(): { api: MockServersApi; controls: MockSer
       }
       statusText ||= statusReason(status)
       if (cors && origin) {
-        headers.push(['access-control-allow-origin', origin], ['access-control-allow-credentials', 'true'], ['access-control-expose-headers', '*'], ['vary', 'Origin'])
+        // As main: the example's own header names are exposed (`*` is literal on credentialed requests).
+        const expose = [...new Set(headers.map(([k]) => k).filter((k) => !k.startsWith('access-control-') && k !== 'content-type'))]
+        headers.push(['access-control-allow-origin', origin], ['access-control-allow-credentials', 'true'])
+        if (expose.length) headers.push(['access-control-expose-headers', expose.join(', ')])
+        headers.push(['vary', 'Origin'])
       }
       const delayMs = kind === 'preflight' || kind === 'refused' ? 0 : r.info.options.delayMs
 
