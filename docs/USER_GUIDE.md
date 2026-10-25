@@ -247,9 +247,26 @@ keep the stored one. Secrets are never written to history, collection exports or
 contains them only if you tick **Include secret values** (see below). If no keychain is available (typical on
 headless Linux without a Secret Service) saving a secret fails with an error while everything else keeps working.
 
-**Built-in dynamic variables** (generated fresh at each send, same value wherever repeated within one send):
-`{{$guid}}` and `{{$randomUUID}}` (UUID v4), `{{$timestamp}}` (Unix seconds), `{{$isoTimestamp}}`, `{{$date}}` (UTC),
-`{{$time}}` (UTC), `{{$randomInt}}` (0-999999), `{{$randomString}}`, `{{$randomBoolean}}`, `{{$randomEmail}}`.
+**Built-in dynamic variables** (generated fresh at each send, same value wherever repeated within one send; type `{{$` in
+any field to pick one, hover one to see an example). Postman's names, plus `$date`, `$time` and `$randomString`:
+
+- ids and time: `{{$guid}}` / `{{$randomUUID}}` (UUID v4), `{{$timestamp}}` (Unix seconds), `{{$isoTimestamp}}`, `{{$date}}`
+  and `{{$time}}` (UTC), `{{$randomDatePast}}`, `{{$randomDateFuture}}`, `{{$randomDateRecent}}`;
+- numbers and text: `{{$randomInt}}` (0-1000), `{{$randomBoolean}}`, `{{$randomString}}` (12 letters and digits),
+  `{{$randomAlphaNumeric}}`, `{{$randomPrice}}`, `{{$randomSemver}}`, `{{$randomWord}}`, `{{$randomWords}}`,
+  `{{$randomLoremWord}}`, `{{$randomLoremWords}}`, `{{$randomLoremSentence}}`, `{{$randomLoremParagraph}}`, `{{$randomLoremSlug}}`;
+- people: `{{$randomFirstName}}`, `{{$randomLastName}}`, `{{$randomFullName}}`, `{{$randomNamePrefix}}`, `{{$randomJobTitle}}`,
+  `{{$randomUserName}}`, `{{$randomEmail}}`, `{{$randomExampleEmail}}` (both at example.com), `{{$randomPassword}}`,
+  `{{$randomPhoneNumber}}`;
+- places and companies: `{{$randomCity}}`, `{{$randomStreetName}}`, `{{$randomStreetAddress}}`, `{{$randomCountry}}`,
+  `{{$randomCountryCode}}`, `{{$randomLatitude}}`, `{{$randomLongitude}}`, `{{$randomCompanyName}}`, `{{$randomCurrencyCode}}`,
+  `{{$randomBankAccount}}`, `{{$randomLocale}}`;
+- internet: `{{$randomUrl}}`, `{{$randomDomainName}}`, `{{$randomDomainWord}}`, `{{$randomIP}}`, `{{$randomIPV6}}`,
+  `{{$randomMACAddress}}`, `{{$randomUserAgent}}`, `{{$randomMimeType}}`, `{{$randomFileName}}`, `{{$randomHexColor}}`,
+  `{{$randomColor}}`, `{{$randomAbbreviation}}`.
+
+A variable you define with the same name wins. Scripts get the same values from `pm.variables.replaceIn('{{$guid}}')`, and
+mock servers fill them into example responses.
 
 ## Reading the response
 

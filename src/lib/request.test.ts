@@ -158,6 +158,25 @@ describe('prepareRequest', () => {
   ])
   const ctx = { workspaceId: 'w', scope, secrets: new Map([['tok', 'S3']]) }
 
+  it('resolves the full dynamic variable list in requests: one value per name per send, a defined variable wins', () => {
+    const d = newDraft({ method: 'post', url: '{{host}}/users?city={{$randomCity}}&again={{$randomCity}}' })
+    d.headers = [newRow({ key: 'X-Name', value: '{{$randomFullName}}' })]
+    d.body = { ...d.body, kind: 'raw', raw: '{"email":"{{$randomEmail}}","price":{{$randomPrice}},"ip":"{{$randomIPV6}}"}' }
+    const res = prepareRequest(d, ctx)
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    const url = new URL(res.input.url)
+    expect(url.searchParams.get('city')).toBe(url.searchParams.get('again'))
+    expect(url.searchParams.get('city')).not.toContain('{{')
+    expect(res.input.headers.find((h) => h.key === 'X-Name')?.value).toMatch(/^\S+ \S+$/)
+    const body = JSON.parse(res.input.body.raw?.content ?? '{}') as { email: string; price: number; ip: string }
+    expect(body.email).toMatch(/@example\.com$/)
+    expect(typeof body.price).toBe('number')
+    expect(body.ip.split(':')).toHaveLength(8)
+    const own = prepareRequest(newDraft({ url: '{{host}}/{{$randomCity}}' }), { ...ctx, scope: makeScope('Dev', [{ key: 'host', value: 'api.test', secret: false }, { key: '$randomCity', value: 'Gondar', secret: false }]) })
+    expect(own.ok && own.input.url).toBe('http://api.test/Gondar')
+  })
+
   it('gives history a URL without secret values or auth query parameters', () => {
     const d = newDraft({ url: '{{host}}/x?k={{tok}}' })
     d.auth = { ...d.auth, kind: 'apiKey', apiKey: { key: 'api_key', value: '{{tok}}', addTo: 'query' } }
