@@ -50,6 +50,8 @@ export interface RunOptions {
   iterations?: number
   /** Data-driven run: row i is iteration i's data scope (`{{column}}`, pm.iterationData). */
   data?: ReadonlyArray<Record<string, unknown>> | null
+  /** Check each response against the collection's OpenAPI document (one more test per request; see runs.svelte.ts). */
+  checkOpenApi?: boolean
 }
 
 /**

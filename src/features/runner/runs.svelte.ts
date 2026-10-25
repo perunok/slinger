@@ -15,7 +15,8 @@ import type { DataFile } from '../../lib/dataFile'
 import { pickLoader, prefersReducedMotion, type LoaderKind } from '../../lib/loader'
 import { parseDocument } from '../../lib/request'
 import { uuid } from '../../lib/template'
-import { cancelRun, executeDraft, newScriptRun } from '../requests/execute'
+import { cancelRun, executeDraft, newScriptRun, type ExecuteOutcome } from '../requests/execute'
+import { checkResponseAgainstSpec, specTestResult } from '../openapi/openapiStore.svelte'
 import { CollectionRun, summarize, type RunItem, type RunOptions, type RunState } from './runner'
 
 export interface RunTarget {
@@ -73,6 +74,14 @@ export function runSummaryText(state: RunState): string {
   return text
 }
 
+/** The run option "Check responses against the OpenAPI spec": one more test result, counted like the script tests. */
+async function withSpecTest(item: RunItem, outcome: ExecuteOutcome): Promise<ExecuteOutcome> {
+  if (!outcome.ok) return outcome
+  const r = item.request
+  const test = specTestResult(await checkResponseAgainstSpec({ collectionId: r.collectionId, requestId: r.id, method: r.method, url: r.url }, outcome.response))
+  return test ? { ...outcome, scripts: { ...outcome.scripts, tests: [...outcome.scripts.tests, test] } } : outcome
+}
+
 class RunsStore {
   sessions = $state.raw<RunSession[]>([])
   /** What the status bar shows: runs going on, and finished ones whose results were not looked at yet. */
@@ -114,7 +123,7 @@ class RunsStore {
       execute: (item, hooks) => {
         scriptRun.iteration = hooks.iteration
         scriptRun.iterationData = hooks.data
-        return executeDraft(parseDocument(item.request), {
+        const sent = executeDraft(parseDocument(item.request), {
           workspaceId,
           requestId: item.request.id,
           collectionId: item.request.collectionId,
@@ -125,6 +134,7 @@ class RunsStore {
           wasCancelled: hooks.wasCancelled,
           ...(input.source ? { source: input.source } : {}),
         })
+        return options.checkOpenApi ? sent.then((outcome) => withSpecTest(item, outcome)) : sent
       },
       cancel: cancelRun,
       onUpdate: (s) => (session.state = s),

@@ -11,6 +11,7 @@ import type { OpenApiFolderMode, OpenApiImportInput, OpenApiImportResult, OpenAp
 import { stableHash } from '../../shared/openapi/fingerprint'
 import { isObj, loadSpec as loadSpecRaw, OpenApiError, type LoadedSpec } from '../../shared/openapi/load'
 import { openApiToPostman } from '../../shared/openapi/toCollection'
+import { OpenApiValidationService } from './validate'
 
 /** loadSpec with document problems as `invalid_input`. */
 export function loadSpec(text: string): LoadedSpec {
@@ -88,11 +89,14 @@ export class OpenApiService {
   private readonly db: Db
   private readonly fetchImpl: typeof fetch
   private readonly now: () => number
+  /** Checks responses against the linked document (validate.ts). */
+  readonly validation: OpenApiValidationService
 
   constructor(deps: OpenApiServiceDeps) {
     this.db = deps.db
     this.fetchImpl = deps.fetchImpl ?? fetch
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000))
+    this.validation = new OpenApiValidationService({ db: deps.db, linkedSpec: (id) => this.linkedSpec(id) })
   }
 
   /** Downloads a document (http/https only, 50 MB, 30 s). */

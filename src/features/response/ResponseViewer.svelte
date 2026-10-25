@@ -32,11 +32,13 @@
     showTiming?: boolean
     /** Extra toolbar content, before the icon buttons. */
     actions?: Snippet
+    /** Extra chips after the size chip (the Spec chip of live responses). */
+    chips?: Snippet
     /** Script results of this response; adds the Tests and Console tabs (live responses only). */
     scripts?: ScriptOutput | null
     onclearconsole?: () => void
   }
-  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions, scripts = null, onclearconsole }: Props = $props()
+  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions, chips, scripts = null, onclearconsole }: Props = $props()
 
   const info = $derived(analyzeResponse(data, mimeHint))
   const cookieCount = $derived(parseSetCookies(data.headers).length)
@@ -109,6 +111,7 @@
     <span class="rounded px-2 py-0.5 text-xs font-semibold {toneClass}" data-testid="status-chip">{data.status} {data.statusText}</span>
     {#if showTiming}<span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="time-chip" title="Time to complete the request">{formatDuration(data.durationMs)}</span>{/if}
     <span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="size-chip" title="Body size">{formatBytes(data.bodyByteLength)}</span>
+    {@render chips?.()}
     {#if info.mime}<span class="hidden rounded bg-raised px-2 py-0.5 text-xs text-faint sm:inline">{info.mime}</span>{/if}
     <div class="ml-auto flex items-center gap-0.5">
       {@render actions?.()}

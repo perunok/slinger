@@ -36,6 +36,19 @@ const postmanImportOptions = z.object({ name: z.string().min(1).max(200).optiona
 const openApiSource = z.object({ kind: z.enum(['url', 'file', 'text']), value: z.string().max(4096).nullable() }).strict()
 const openApiFolders = z.enum(['tags', 'paths', 'none'])
 const openApiPreviewInput = z.object({ text: postmanFile.nullish(), url: z.string().max(4096).nullish() }).strict()
+const openApiValidationInput = z
+  .object({
+    collectionId: uuid,
+    requestId: uuid.nullish(),
+    method: z.string().min(1).max(64),
+    url: z.string().max(65536),
+    status: z.number().int().min(0).max(999),
+    contentType: z.string().max(1024).nullable(),
+    // Bodies over 5 MB are answered "too large to check" by the validator, not rejected here.
+    body: z.string().max(20 * 1024 * 1024),
+    bodyEncoding: z.literal('base64').nullable(),
+  })
+  .strict()
 const openApiImportInput = z
   .object({ workspaceId: uuid, text: postmanFile, source: openApiSource, folders: openApiFolders, name: z.string().min(1).max(200).optional() })
   .strict()
@@ -625,6 +638,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     importOpenApi: async (...a) => core.openapi.import(parseArgs(z.tuple([openApiImportInput]), a)[0]),
     getOpenApiLink: async (...a) => core.openapi.getLink(parseArgs(z.tuple([uuid]), a)[0]),
     unlinkOpenApi: async (...a) => core.openapi.unlink(parseArgs(z.tuple([uuid]), a)[0]),
+    validateOpenApiResponse: async (...a) => core.openapi.validation.validate(parseArgs(z.tuple([openApiValidationInput]), a)[0]),
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {
       const [fileName, contents, encoding] = parseArgs(
