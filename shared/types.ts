@@ -1454,6 +1454,8 @@ export interface OpenApiRequestMeta {
   operationId: string | null
   specHash: string
   itemHash: string
+  /** Hash of the generated examples (absent in documents imported before it existed). */
+  examplesHash?: string
 }
 
 export interface OpenApiValidationInput {

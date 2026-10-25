@@ -49,6 +49,7 @@
     workflow: () => import('../features/workflows/WorkflowView.svelte'),
     collectionExport: () => import('../features/importexport/ExportCollectionDialog.svelte'),
     import: () => import('../features/importexport/ImportDialog.svelte'),
+    openapi: () => import('../features/openapi/OpenApiDialog.svelte'),
     runner: () => import('../features/runner/RunnerDialog.svelte'),
     settings: () => import('../features/settings/SettingsDialog.svelte'),
     shortcuts: () => import('../features/settings/ShortcutsDialog.svelte'),
@@ -191,6 +192,7 @@
 {#if ui.runner}<Lazy load={load.runner} />{/if}
 <ScriptsDialogHost />
 {#if ui.exportCollectionId}<Lazy load={load.collectionExport} />{/if}
+{#if ui.openApiFor}<Lazy load={load.openapi} />{/if}
 {#if ui.exportEnvironmentId}<Lazy load={load.environmentExport} />{/if}
 {#if ui.importOpen}<Lazy load={load.import} props={{ open: true, initialText: ui.importText, onclose: () => ui.closeImport() }} />{/if}
 {#if ui.updateOpen}<Lazy load={load.update} />{/if}

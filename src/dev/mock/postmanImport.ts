@@ -27,7 +27,7 @@ export { postmanUrlToString }
 /** A Slinger MCP request's configuration (item key `_slinger_mcp`, see lib/postman.ts), or null. */
 const mcpOf = (item: Json): Json | null => (isObj(item._slinger_mcp) ? item._slinger_mcp : null)
 
-function requestDocument(item: Json, request: Json, name: string, method: string, url: string): Json {
+function requestDocument(item: Json, request: Json, name: string, method: string, url: string, inheritedAuth: unknown = null): Json {
   const { _slinger_mcp: _mcp, _slinger_openapi: _openapi, ...sourceItem } = item
   const mcp = mcpOf(item)
   const doc: Json = {
@@ -37,7 +37,8 @@ function requestDocument(item: Json, request: Json, name: string, method: string
     description: request.description ?? null,
     headers: request.header ?? [],
     body: mcp ? null : (request.body ?? null),
-    auth: stripOAuth2Tokens(request.auth ?? null),
+    // Requests without their own auth inherit the nearest folder/collection auth, as in main and Postman.
+    auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
     scripts: item.event ?? [],
     responses: item.response ?? [],
     source: stripOAuth2TokensFromItem(sourceItem),
@@ -48,6 +49,15 @@ function requestDocument(item: Json, request: Json, name: string, method: string
   return doc
 }
 
+/** The request one Postman item becomes, as the mock importer writes it (OpenAPI updates reuse it); null without `request`. */
+export function requestFromItem(item: Json, inheritedAuth: unknown = null): { name: string; method: string; url: string; document: Json } | null {
+  if (!isObj(item.request)) return null
+  const name = trimmedOr(item.name, 'Untitled Request')
+  const method = mcpOf(item) ? MCP_METHOD : trimmedOr(item.request.method, 'GET').toUpperCase()
+  const url = postmanUrlToString(item.request.url)
+  return { name, method, url, document: requestDocument(item, item.request, name, method, url, inheritedAuth) }
+}
+
 interface Parsed {
   name: string
   postmanId: string | null
@@ -55,6 +65,8 @@ interface Parsed {
   event: unknown
   items: unknown[]
   variables: CollectionVariableData[]
+  /** The collection's `auth`, inherited by requests without their own. */
+  auth: unknown
 }
 
 function parseFile(fileContents: string): Parsed {
@@ -69,14 +81,14 @@ function parseFile(fileContents: string): Parsed {
   }
   const info = isObj(parsed.info) ? parsed.info : {}
   const id = typeof info._postman_id === 'string' && info._postman_id.trim() ? info._postman_id.trim().toLowerCase() : null
-  return { name: trimmedOr(info.name, 'Imported Collection'), postmanId: id, info, event: parsed.event, items: parsed.item, variables: variablesFromPostman(parsed.variable) }
+  return { name: trimmedOr(info.name, 'Imported Collection'), postmanId: id, info, event: parsed.event, items: parsed.item, variables: variablesFromPostman(parsed.variable), auth: parsed.auth ?? null }
 }
 
 /** Builds the file's tree under `collection` in a scratch state (nothing is kept when it has no requests). */
 function build(s: MockState, collection: Collection, file: Parsed) {
   const scratch: MockState = { ...s, collections: [], folders: [], requests: [] }
   const counter = { scripts: countScripts(file.event) }
-  walk(scratch, collection.workspaceId, collection.id, file.items, null, counter)
+  walk(scratch, collection.workspaceId, collection.id, file.items, null, counter, file.auth)
   if (scratch.requests.length === 0) fail('invalid_input', 'No requests found in Postman collection')
   return { folders: scratch.folders, requests: scratch.requests, scriptCount: counter.scripts }
 }
@@ -121,7 +133,7 @@ export function replaceFromPostman(s: MockState, collectionId: string, fileConte
   return { collection, ...tree, variableCount: file.variables.length, safetyVersion, ...(versionHistory ? { versionHistory } : {}) }
 }
 
-function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }): void {
+function walk(s: MockState, workspaceId: string, collectionId: string, items: unknown[], parentId: string | null, counter: { scripts: number }, inheritedAuth: unknown = null): void {
   for (const raw of items) {
     if (!isObj(raw)) continue
     counter.scripts += countScripts(raw.event)
@@ -134,7 +146,7 @@ function walk(s: MockState, workspaceId: string, collectionId: string, items: un
       })
       folder.scriptsJson = eventJson(raw.event)
       Object.assign(folder, columnsFromPostman(raw.description))
-      walk(s, workspaceId, collectionId, raw.item, folder.id, counter)
+      walk(s, workspaceId, collectionId, raw.item, folder.id, counter, raw.auth ?? inheritedAuth)
       continue
     }
     if (!isObj(raw.request)) continue
@@ -149,7 +161,7 @@ function walk(s: MockState, workspaceId: string, collectionId: string, items: un
       name,
       method,
       url,
-      documentJson: JSON.stringify(requestDocument(raw, request, name, method, url)),
+      documentJson: JSON.stringify(requestDocument(raw, request, name, method, url, inheritedAuth)),
     })
   }
 }

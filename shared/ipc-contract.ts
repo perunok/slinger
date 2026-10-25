@@ -22,6 +22,12 @@ import type {
   OpenApiPreview,
   OpenApiValidation,
   OpenApiValidationInput,
+  // OpenAPI updates
+  OpenApiFolderMode,
+  OpenApiSource,
+  OpenApiUpdateInput,
+  OpenApiUpdatePlan,
+  OpenApiUpdateResult,
   SyncEntityType,
   Collection,
   CollectionVersion,
@@ -189,6 +195,22 @@ export interface SlingerIpcApi {
    * `openapi.key`, else method + URL). `status: 'no-spec'` without a link; bodies over 5 MB are not checked.
    */
   validateOpenApiResponse(input: OpenApiValidationInput): Promise<OpenApiValidation>
+  // ---- OpenAPI updates (begin) ----
+  /**
+   * ADDED (OpenAPI updates): compares a new version of the document with the collection's requests (by `openapi.key`,
+   * else method + path) and keeps the plan in main for 10 minutes. The document comes from `url` (fetched by main),
+   * `text` (pasted / read from a file; `source` says which), or with neither, the linked URL again.
+   */
+  planOpenApiUpdate(input: { collectionId: string; text?: string | null; url?: string | null; source?: OpenApiSource }): Promise<OpenApiUpdatePlan>
+  /**
+   * ADDED (OpenAPI updates): applies a plan with per-operation choices in one transaction after an automatic safety
+   * version, then links the collection to the new document. invalid_input when the plan expired or the collection
+   * changed since it was made ("The collection changed; review the update again").
+   */
+  applyOpenApiUpdate(input: OpenApiUpdateInput): Promise<OpenApiUpdateResult>
+  /** ADDED (OpenAPI updates): links a collection to a document without changing its requests (replaces an existing link). */
+  linkOpenApi(input: { collectionId: string; text: string; source: OpenApiSource; folders: OpenApiFolderMode }): Promise<OpenApiLink>
+  // ---- OpenAPI updates (end) ----
   defaultExportPath(fileName: string): Promise<string>
   /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
   writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
@@ -471,6 +493,10 @@ export const IPC_CHANNELS = [
   'getOpenApiLink',
   'unlinkOpenApi',
   'validateOpenApiResponse',
+  // OpenAPI updates
+  'planOpenApiUpdate',
+  'applyOpenApiUpdate',
+  'linkOpenApi',
   'defaultExportPath',
   'writeExportFile',
   'chooseExportDirectory',

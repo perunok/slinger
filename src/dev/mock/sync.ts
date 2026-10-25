@@ -984,6 +984,7 @@ export function createSyncApi(
         ws = wsOfEnv(s.variables.find((v) => v.id === a0(args))?.environmentId ?? '')
         break
       case 'createCollectionVersion':
+      case 'applyOpenApiUpdate': // OpenAPI updates
         ws = wsOfCollection(a0(args).collectionId)
         break
       case 'restoreCollectionVersion':
