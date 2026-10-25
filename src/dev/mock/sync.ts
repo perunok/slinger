@@ -79,6 +79,8 @@ type SyncApi = Pick<
   | 'resolveSyncConflict'
   | 'discardPendingChanges'
   | 'discardPendingItems'
+  | 'listSyncKept'
+  | 'setSyncKept'
   | 'listSyncPending'
   | 'listSyncActivity'
   | 'listWorkspaceMembers'
@@ -156,6 +158,8 @@ interface Link {
   lastSyncedAt: number | null
   base: Map<string, BaseEntry>
   conflicts: ConflictRow[]
+  /** Changes kept on this device (`type:id`), like main's sync_kept. */
+  kept: Set<string>
   linkState: 'initial' | 'active'
   accessState: 'ok' | 'revoked' | 'remote_deleted'
   lastError: { code: string; message: string } | null
@@ -316,10 +320,50 @@ export function createSyncApi(
     }
     return false
   }
+  /**
+   * Held back from the cloud (as electron/sync/kept.ts heldKeys): the kept changes still waiting, plus items inside a
+   * held container the cloud does not have, plus deletes the cloud would cascade from a held container delete.
+   */
+  function heldOf(l: Link, d = dirtyKeys(l)): Set<string> {
+    const dirty = [...d.upserts, ...d.deletes]
+    const waiting = new Set(dirty)
+    for (const k of [...l.kept]) if (!waiting.has(k)) l.kept.delete(k) // a kept change ends when it stops waiting
+    const held = new Set(l.kept)
+    if (held.size === 0) return held
+    const deletes = new Set(d.deletes)
+    const PARENT_FIELDS: Array<[string, SyncEntityType]> = [['collection_id', 'collection'], ['folder_id', 'folder'], ['parent_folder_id', 'folder'], ['environment_id', 'environment']]
+    for (let changed = true; changed; ) {
+      changed = false
+      const goneHeld = new Set([...held].filter((k) => deletes.has(k) && ['collection', 'folder', 'environment'].includes(splitKey(k).type)))
+      for (const k of dirty) {
+        if (held.has(k)) continue
+        let depends: boolean
+        if (deletes.has(k)) depends = goneHeld.size > 0 && coveredBy(l, goneHeld, k)
+        else {
+          const { type, id } = splitKey(k)
+          const p = (toWire(s, type, id) ?? {}) as Record<string, unknown>
+          depends = PARENT_FIELDS.some(([f, t]) => typeof p[f] === 'string' && held.has(`${t}:${p[f]}`) && !l.base.has(`${t}:${p[f]}`))
+        }
+        if (depends) {
+          held.add(k)
+          changed = true
+        }
+      }
+    }
+    return held
+  }
   function pendingDirty(l: Link): { upserts: string[]; deletes: string[] } {
     const d = dirtyKeys(l)
+    const held = heldOf(l, d)
     const gone = new Set(d.deletes)
-    return { upserts: d.upserts, deletes: d.deletes.filter((k) => !coveredBy(l, gone, k)) }
+    return { upserts: d.upserts.filter((k) => !held.has(k)), deletes: d.deletes.filter((k) => !held.has(k) && !coveredBy(l, gone, k)) }
+  }
+  /** The kept side of pendingDirty. */
+  function keptDirty(l: Link): { upserts: string[]; deletes: string[] } {
+    const d = dirtyKeys(l)
+    const held = heldOf(l, d)
+    const gone = new Set(d.deletes)
+    return { upserts: d.upserts.filter((k) => held.has(k)), deletes: d.deletes.filter((k) => held.has(k) && !coveredBy(l, gone, k)) }
   }
   const pendingCount = (l: Link) => {
     const d = pendingDirty(l)
@@ -751,7 +795,8 @@ export function createSyncApi(
 
   async function push(l: Link, r: RemoteWs): Promise<void> {
     const d = dirtyKeys(l)
-    const ops = [...d.upserts.map((k) => ({ k, del: false })), ...d.deletes.map((k) => ({ k, del: true }))].filter((o) => !isFrozen(l, o.k))
+    const held = heldOf(l, d)
+    const ops = [...d.upserts.map((k) => ({ k, del: false })), ...d.deletes.map((k) => ({ k, del: true }))].filter((o) => !isFrozen(l, o.k) && !held.has(o.k))
     let done = 0
     l.progress = { phase: 'push', done: 0, total: ops.length }
     for (const { k, del } of ops) {
@@ -1041,7 +1086,7 @@ export function createSyncApi(
 
   function makeLink(workspaceId: string, r: RemoteWs): Link {
     const l: Link = {
-      workspaceId, remoteId: r.id, remoteName: r.name, role: r.role, autoSync: true, lastSyncedAt: null, base: new Map(), conflicts: [],
+      workspaceId, remoteId: r.id, remoteName: r.name, role: r.role, autoSync: true, lastSyncedAt: null, base: new Map(), conflicts: [], kept: new Set(),
       linkState: 'initial', accessState: 'ok', lastError: null, nextRetryAt: null, progress: null, members: null, running: null, timer: null, apiBaseUrl: base(),
     }
     links.set(workspaceId, l)
@@ -1262,6 +1307,35 @@ export function createSyncApi(
       ]
         .sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
         .slice(0, SYNC_ACTIVITY_ITEMS)
+    },
+    async listSyncKept(workspaceId) {
+      const l = links.get(workspaceId)
+      if (!l) return []
+      const d = keptDirty(l)
+      const item = (k: string, change: SyncActivityItem['change']) => {
+        const { type, id } = splitKey(k)
+        return itemOf(l, type, id, change)
+      }
+      return [
+        ...d.upserts.filter((k) => !isFrozen(l, k)).map((k) => item(k, l.base.has(k) ? 'updated' : 'created')),
+        ...d.deletes.filter((k) => !isFrozen(l, k)).map((k) => item(k, 'deleted')),
+      ]
+        .sort((a, b) => a.path.join('\u0000').localeCompare(b.path.join('\u0000')))
+        .slice(0, SYNC_ACTIVITY_ITEMS)
+    },
+    async setSyncKept(workspaceId, items, kept) {
+      const l = links.get(workspaceId)
+      if (!l) fail('sync_blocked', 'This workspace is not linked to the cloud.')
+      const d = dirtyKeys(l)
+      const waiting = new Set([...d.upserts, ...d.deletes])
+      for (const it of items) {
+        const k = `${it.entityType}:${it.entityId}`
+        if (!kept) l.kept.delete(k)
+        else if (waiting.has(k)) l.kept.add(k)
+      }
+      emitStatus(l)
+      if (!kept) scheduleCycle(l)
+      return statusOf(workspaceId)
     },
     async listWorkspaceMembers(workspaceId) {
       const l = links.get(workspaceId)

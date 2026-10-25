@@ -17,10 +17,12 @@
  *    judged by the cloud's last copy of the child like `serverCascades`, so a child moved before syncing still counts).
  * The only shortcut: edits are compared with the cloud's copy (which needs the whole row) for at most REVERT_CHECK_LIMIT
  * items; beyond that they all count as pending (the push then drops the unchanged ones).
+ * Changes kept on this device (`kept.ts` heldKeys) are not pending: `changeOps` returns them separately as `kept`.
  */
 import type { SyncEntityType } from '../../shared/types'
 import type { Db } from '../db/database'
 import { linkFeatures } from './features'
+import { heldKeys } from './kept'
 import { loadRow, parsePayload, samePayload, TABLE, toWire, typeSynced } from './mapping'
 
 export interface PendingOp {
@@ -44,7 +46,13 @@ const TYPES = Object.keys(TABLE) as SyncEntityType[]
 const CONTAINER_TYPES: readonly SyncEntityType[] = ['collection', 'folder', 'environment']
 
 export function pendingOps(db: Db, workspaceId: string): PendingOp[] {
+  return changeOps(db, workspaceId).pending
+}
+
+/** What would upload (`pending`) and what is held back on this device (`kept`), classified the same way. */
+export function changeOps(db: Db, workspaceId: string): { pending: PendingOp[]; kept: PendingOp[] } {
   const features = linkFeatures(db, workspaceId)
+  const held = heldKeys(db, workspaceId)
   const rowsOf = new Map<SyncEntityType, Row[]>()
   for (const type of TYPES) {
     if (!typeSynced(type, features)) continue
@@ -106,15 +114,17 @@ export function pendingOps(db: Db, workspaceId: string): PendingOp[] {
   }
 
   const out: PendingOp[] = []
+  const kept: PendingOp[] = []
   const edits: Array<{ type: SyncEntityType; id: string }> = []
   for (const [type, rows] of rowsOf) {
     for (const r of rows) {
+      const isHeld = held.has(`${type}:${r.id}`)
       if (r.deleted === 1) {
         if (r.rv === 0) continue // created and deleted before it ever reached the cloud
         if (covered(type, r)) continue
-        out.push({ type, id: r.id, kind: 'deleted' })
+        ;(isHeld ? kept : out).push({ type, id: r.id, kind: 'deleted' })
       } else if (r.rv === 0) {
-        out.push({ type, id: r.id, kind: 'created' })
+        ;(isHeld ? kept : out).push({ type, id: r.id, kind: 'created' })
       } else {
         edits.push({ type, id: r.id })
       }
@@ -132,9 +142,9 @@ export function pendingOps(db: Db, workspaceId: string): PendingOp[] {
       )
       if (row && base && samePayload(toWire(e.type, row, features), base)) continue
     }
-    out.push({ type: e.type, id: e.id, kind: 'updated' })
+    ;(held.has(`${e.type}:${e.id}`) ? kept : out).push({ type: e.type, id: e.id, kind: 'updated' })
   }
-  return out
+  return { pending: out, kept }
 }
 
 export function pendingCount(db: Db, workspaceId: string): number {

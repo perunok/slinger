@@ -79,7 +79,7 @@
         <Button size="sm" icon="refresh" loading={chip.busy} disabled={status.state === 'signedOut' || status.state === 'accessRevoked' || status.state === 'serverUnsupported'} onclick={() => ws && sync.syncNow(ws.id)}>Sync now</Button>
       {/if}
       <InfoTip label="About sync activity">
-        Waiting to upload: changes made on this device that the cloud does not have yet; they go up with the next sync. Cancel one (or all) to keep it from going up: an edit goes back to the cloud's version, a new item is removed, a deleted item comes back. Recent syncs: what each
+        Waiting to upload: changes made on this device that the cloud does not have yet; they go up with the next sync. Keep here holds a change on this device only (with what depends on it, like the requests in a new collection): it is not uploaded until you upload it again, and if the cloud changes the same item you choose which to keep. Cancel one (or all) to undo it instead: an edit goes back to the cloud's version, a new item is removed, a deleted item comes back. Recent syncs: what each
         sync since Slinger started sent and received, item by item (the list is not kept after Slinger quits). Changes from other people or devices
         arrive as downloads; who made them is not shown yet. Secret values never sync.
       </InfoTip>
@@ -97,11 +97,27 @@
       {:else}
         <ul class="max-h-48 overflow-auto rounded border border-border" data-testid="sync-pending">
           {#each sync.pending as item (`${item.entityType}:${item.entityId}`)}
-            <li class="border-b border-border last:border-b-0">{@render itemRow(item, true)}</li>
+            <li class="border-b border-border last:border-b-0">{@render itemRow(item, 'pending')}</li>
           {/each}
         </ul>
       {/if}
     </section>
+
+    {#if sync.kept.length > 0}
+      <section aria-labelledby="sync-kept-h" class="flex flex-col gap-1.5">
+        <h3 id="sync-kept-h" class="text-xs font-semibold text-muted">
+          Kept on this device ({sync.kept.length}: {pendingSummary(sync.kept)})
+          {#if sync.kept.length > 1}
+            <button type="button" class="ml-2 font-normal text-accent-text hover:underline disabled:opacity-50" data-testid="sync-unkeep-all" disabled={!!sync.busy[ws?.id ?? '']} onclick={() => ws && sync.keepItems(ws.id, sync.kept, false)}>Upload all</button>
+          {/if}
+        </h3>
+        <ul class="max-h-40 overflow-auto rounded border border-border" data-testid="sync-kept">
+          {#each sync.kept as item (`${item.entityType}:${item.entityId}`)}
+            <li class="border-b border-border last:border-b-0">{@render itemRow(item, 'kept')}</li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
 
     <section aria-labelledby="sync-runs-h" class="flex min-h-0 flex-col gap-1.5">
       <h3 id="sync-runs-h" class="text-xs font-semibold text-muted">Recent syncs</h3>
@@ -166,7 +182,7 @@
   </div>
 {/snippet}
 
-{#snippet itemRow(item: SyncActivityItem, cancellable = false)}
+{#snippet itemRow(item: SyncActivityItem, list: 'pending' | 'kept' | null = null)}
   <div class="flex min-w-0 items-center gap-2 px-2 py-1 text-xs" data-testid="sync-item">
     <span class="w-14 shrink-0 rounded px-1 text-center text-[10px] font-medium {tone[item.change]}">{CHANGE_LABEL[item.change]}</span>
     <span class="w-24 shrink-0 truncate text-muted">{TYPE_LABEL[item.entityType]}</span>
@@ -177,8 +193,27 @@
     {:else}
       <span class="min-w-0 truncate" title={item.path.join(' / ')}>{@render pathText(item.path)}</span>
     {/if}
-    {#if cancellable}
+    {#if list}
       <span class="flex-1"></span>
+      {#if list === 'pending'}
+        <button
+          type="button"
+          class="shrink-0 rounded px-1.5 py-0.5 text-muted hover:bg-hover hover:text-fg disabled:opacity-50"
+          title="Keep this change on this device only: it is not uploaded until you upload it again"
+          data-testid="sync-keep"
+          disabled={!!sync.busy[ws?.id ?? '']}
+          onclick={() => ws && sync.keepItems(ws.id, [item], true)}
+        >Keep here</button>
+      {:else}
+        <button
+          type="button"
+          class="shrink-0 rounded px-1.5 py-0.5 text-muted hover:bg-hover hover:text-fg disabled:opacity-50"
+          title="Upload this change with the next sync"
+          data-testid="sync-unkeep"
+          disabled={!!sync.busy[ws?.id ?? '']}
+          onclick={() => ws && sync.keepItems(ws.id, [item], false)}
+        >Upload</button>
+      {/if}
       <button
         type="button"
         class="shrink-0 rounded px-1.5 py-0.5 text-muted hover:bg-hover hover:text-danger disabled:opacity-50"

@@ -57,6 +57,8 @@ export class SyncStore {
   /** ADDED (sync activity): runs of the open workspace, newest first (live from `activity` events), and what waits to upload. */
   activity = $state<SyncRun[]>([])
   pending = $state<SyncActivityItem[]>([])
+  /** ADDED (keep on this device): changes held back from the cloud, same shape as `pending`. */
+  kept = $state<SyncActivityItem[]>([])
   activityLoading = $state(false)
   #pendingTimer: ReturnType<typeof setTimeout> | null = null
   /** Legacy renderer-side links found in localStorage: names only, shown once as a hint. */
@@ -134,6 +136,7 @@ export class SyncStore {
     this.conflicts = []
     this.activity = []
     this.pending = []
+    this.kept = []
     this.legacyLinks = []
     this.busy = {}
     this.dismissedShares = loadDismissed()
@@ -502,13 +505,33 @@ export class SyncStore {
       if (workspaceId === app.workspaceId) {
         await app.reloadCollections()
         await app.reloadEnvironments()
-        this.pending = await api().listSyncPending(workspaceId)
+        await this.#loadLists(workspaceId)
       }
       return true
     } catch (e) {
       toast.error('Could not discard the changes', errorInfo(e).message)
       return false
     }
+  }
+
+  /** Keeps waiting changes on this device (`keep`), or lets kept ones upload again. */
+  async keepItems(workspaceId: string, items: SyncActivityItem[], keep: boolean): Promise<boolean> {
+    try {
+      this.#store(await this.#busy(workspaceId, 'keep', () => api().setSyncKept(workspaceId, items.map((i) => ({ entityType: i.entityType, entityId: i.entityId })), keep)))
+      if (workspaceId === app.workspaceId) await this.#loadLists(workspaceId)
+      return true
+    } catch (e) {
+      toast.error(keep ? 'Could not keep the changes on this device' : 'Could not upload the changes', errorInfo(e).message)
+      return false
+    }
+  }
+
+  /** The waiting and kept lists of a workspace (the open one). */
+  async #loadLists(ws: string): Promise<void> {
+    const [pending, kept] = await Promise.all([api().listSyncPending(ws), api().listSyncKept(ws)])
+    if (ws !== app.workspaceId) return
+    this.pending = pending
+    this.kept = kept
   }
 
   async discardPending(workspaceId: string): Promise<boolean> {
@@ -545,10 +568,9 @@ export class SyncStore {
     if (!ws) return
     this.activityLoading = true
     try {
-      const [runs, pending] = await Promise.all([api().listSyncActivity(ws), api().listSyncPending(ws)])
+      const [runs] = await Promise.all([api().listSyncActivity(ws), this.#loadLists(ws)])
       if (ws !== app.workspaceId) return
       this.activity = runs
-      this.pending = pending
     } catch (e) {
       toast.error('Could not load the sync activity', errorInfo(e).message)
     } finally {
@@ -563,12 +585,7 @@ export class SyncStore {
       this.#pendingTimer = null
       const ws = app.workspaceId
       if (!ws || !ui.syncActivityOpen) return
-      api()
-        .listSyncPending(ws)
-        .then((p) => {
-          if (ws === app.workspaceId) this.pending = p
-        })
-        .catch(() => {})
+      this.#loadLists(ws).catch(() => {})
     }, 300)
   }
 
