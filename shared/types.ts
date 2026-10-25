@@ -1389,3 +1389,141 @@ export type MockServerEvent =
 
 /** Log entries kept per mock server (main and renderer). */
 export const MOCK_LOG_LIMIT = 200
+
+// ---------------------------------------------------------------------------
+// OpenAPI (import, link, validation, update; docs/ARCHITECTURE.md "OpenAPI")
+// ---------------------------------------------------------------------------
+
+export type OpenApiFolderMode = 'tags' | 'paths' | 'none'
+export type OpenApiSourceKind = 'url' | 'file' | 'text'
+
+/** Where a document came from: a URL (fetched by main), a file path, or pasted text (value null). */
+export interface OpenApiSource {
+  kind: OpenApiSourceKind
+  value: string | null
+}
+
+/** What an OpenAPI/Swagger document contains, before importing it. */
+export interface OpenApiPreview {
+  title: string
+  specVersion: string
+  /** '2.0' (Swagger), '3.0' or '3.1'. */
+  oasVersion: '2.0' | '3.0' | '3.1'
+  operationCount: number
+  tags: Array<{ name: string; count: number }>
+  untaggedCount: number
+  servers: string[]
+  securitySchemes: string[]
+  warnings: string[]
+  /** The document text (fetched for a URL): import exactly what was previewed. */
+  text: string
+}
+
+export interface OpenApiImportInput {
+  workspaceId: string
+  text: string
+  source: OpenApiSource
+  folders: OpenApiFolderMode
+  /** Collection name instead of the document's title. */
+  name?: string
+}
+
+/** The document a collection is linked to (local to this device). */
+export interface OpenApiLink {
+  collectionId: string
+  sourceKind: OpenApiSourceKind
+  source: string | null
+  title: string
+  specVersion: string
+  oasVersion: '2.0' | '3.0' | '3.1'
+  folders: OpenApiFolderMode
+  operationCount: number
+  importedAt: number
+  updatedAt: number
+}
+
+export interface OpenApiImportResult extends PostmanImportResult {
+  openapi: OpenApiLink
+  warnings: string[]
+}
+
+/** The request `openapi` field of a request imported from a document. */
+export interface OpenApiRequestMeta {
+  /** "GET /pets/{petId}" */
+  key: string
+  operationId: string | null
+  specHash: string
+  itemHash: string
+}
+
+export interface OpenApiValidationInput {
+  collectionId: string
+  requestId?: string | null
+  method: string
+  /** The URL as sent (resolved) or as written (`{{baseUrl}}/pets/1`). */
+  url: string
+  status: number
+  contentType: string | null
+  body: string
+  bodyEncoding: 'base64' | null
+}
+
+export interface OpenApiValidation {
+  status: 'valid' | 'invalid' | 'no-spec' | 'no-operation' | 'no-schema' | 'not-json'
+  /** The operation the response was checked against ("GET /pets/{petId}"). */
+  operation: string | null
+  /** The documented response used ("200", "2XX", "default"). */
+  responseKey: string | null
+  /** At most 50; `path` like `$.items[0].price` (`$` for the whole body or a status/content type problem). */
+  errors: Array<{ path: string; message: string }>
+}
+
+export type OpenApiChangeKind = 'added' | 'removed' | 'changed' | 'unchanged'
+
+export interface OpenApiPlannedChange {
+  key: string
+  kind: OpenApiChangeKind
+  /** For 'changed': whether the request's spec-owned parts were edited here since the import. */
+  editedHere: boolean
+  /** Request name (existing request, or what an added one will be called). */
+  name: string
+  requestId: string | null
+  /** Folder an added request goes to (null: collection root). */
+  folder: string | null
+  /** Short human summary of what differs ("URL, body, 2 examples"). */
+  summary: string
+  /** Default choice in the dialog. */
+  defaultChoice: 'apply' | 'keep' | 'delete' | 'skip'
+}
+
+export interface OpenApiUpdatePlan {
+  planId: string
+  collectionId: string
+  title: string
+  specVersion: string
+  previousSpecVersion: string | null
+  changes: OpenApiPlannedChange[]
+  /** Collection-level changes ("Server URL: https://a -> https://b", "New folder: Orders"). */
+  notes: string[]
+  warnings: string[]
+  /** The new document text (kept for apply). */
+  text: string
+  source: OpenApiSource
+}
+
+export interface OpenApiUpdateInput {
+  collectionId: string
+  planId: string
+  /** Per operation key; keys left out use the plan's default choice. */
+  choices: Record<string, 'apply' | 'keep' | 'delete' | 'skip'>
+}
+
+export interface OpenApiUpdateResult {
+  added: number
+  updated: number
+  deleted: number
+  kept: number
+  /** Automatic snapshot before the update (restore it to undo). */
+  safetyVersion: CollectionVersion | null
+  link: OpenApiLink
+}

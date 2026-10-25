@@ -97,7 +97,9 @@ function collect(
     const method = mcp ? MCP_METHOD : (str(request.method) ?? 'GET').toUpperCase()
     const url = postmanUrlToString(request.url)
     out.scriptCount += countScripts(item.event)
-    const { _slinger_mcp: _mcp, ...sourceItem } = item
+    // A request imported from an OpenAPI document (electron/openapi/toCollection.ts): its operation key and hashes.
+    const openapi = isObject(item._slinger_openapi) && typeof item._slinger_openapi.key === 'string' ? item._slinger_openapi : null
+    const { _slinger_mcp: _mcp, _slinger_openapi: _openapi, ...sourceItem } = item
     const document: Json = {
       name,
       method,
@@ -113,6 +115,7 @@ function collect(
       source: stripOAuth2TokensFromItem(sourceItem),
     }
     if (mcp) Object.assign(document, { params: [], mcp })
+    if (openapi) document.openapi = openapi
     out.requests.push({ folderTempId: parentTempId, name, method, url, sortOrder: requestOrder++, document })
   }
 }

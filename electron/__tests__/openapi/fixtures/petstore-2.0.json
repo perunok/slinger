@@ -1,0 +1,40 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "Petstore Swagger", "version": "1.0.0" },
+  "host": "petstore.example.com",
+  "basePath": "/api",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "basic": { "type": "basic" },
+    "oauth": { "type": "oauth2", "flow": "accessCode", "authorizationUrl": "https://auth.example.com/authorize", "tokenUrl": "https://auth.example.com/token", "scopes": { "read": "Read", "write": "Write" } }
+  },
+  "security": [{ "oauth": ["read"] }],
+  "parameters": { "limit": { "name": "limit", "in": "query", "type": "integer", "default": 10 } },
+  "paths": {
+    "/pets": {
+      "get": {
+        "tags": ["pets"], "operationId": "findPets", "summary": "Find pets",
+        "parameters": [ { "$ref": "#/parameters/limit" }, { "name": "tags", "in": "query", "type": "array", "items": { "type": "string" }, "collectionFormat": "multi" } ],
+        "responses": { "200": { "description": "pets", "schema": { "type": "array", "items": { "$ref": "#/definitions/Pet" } }, "examples": { "application/json": [ { "id": 1, "name": "Kitty" } ] } } }
+      },
+      "post": {
+        "tags": ["pets"], "operationId": "addPet",
+        "parameters": [ { "name": "pet", "in": "body", "required": true, "schema": { "$ref": "#/definitions/Pet" } } ],
+        "responses": { "200": { "description": "pet", "schema": { "$ref": "#/definitions/Pet" } } }
+      }
+    },
+    "/pets/{id}/upload": {
+      "post": {
+        "tags": ["pets"], "operationId": "upload", "consumes": ["multipart/form-data"],
+        "security": [{ "basic": [] }],
+        "parameters": [ { "name": "id", "in": "path", "required": true, "type": "integer" }, { "name": "file", "in": "formData", "type": "file", "required": true }, { "name": "note", "in": "formData", "type": "string" } ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "definitions": {
+    "Pet": { "type": "object", "required": ["name"], "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" } } }
+  }
+}

@@ -28,7 +28,7 @@ export { postmanUrlToString }
 const mcpOf = (item: Json): Json | null => (isObj(item._slinger_mcp) ? item._slinger_mcp : null)
 
 function requestDocument(item: Json, request: Json, name: string, method: string, url: string): Json {
-  const { _slinger_mcp: _mcp, ...sourceItem } = item
+  const { _slinger_mcp: _mcp, _slinger_openapi: _openapi, ...sourceItem } = item
   const mcp = mcpOf(item)
   const doc: Json = {
     name,
@@ -43,6 +43,8 @@ function requestDocument(item: Json, request: Json, name: string, method: string
     source: stripOAuth2TokensFromItem(sourceItem),
   }
   if (mcp) Object.assign(doc, { params: [], mcp })
+  // Imported from an OpenAPI document (as electron/services/postmanImport.ts).
+  if (isObj(item._slinger_openapi) && typeof item._slinger_openapi.key === 'string') doc.openapi = item._slinger_openapi
   return doc
 }
 

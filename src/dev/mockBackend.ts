@@ -21,6 +21,7 @@ import { createVariablesApi } from './mock/variables'
 import { createWorkspaceApi } from './mock/workspaces'
 import { createWorkflowsApi } from './mock/workflows'
 import { createMockServersApi, type MockServerControls } from './mock/mockServers'
+import { createOpenApiApi, type MockOpenApiLink } from './mock/openapi'
 import { clone, sleep } from './mock/util'
 
 export interface MockCall {
@@ -98,6 +99,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const mcp = createMcpApi()
   const mcpClient = createMcpClientApi(state)
   const mockServers = createMockServersApi()
+  /** OpenAPI links by collection id (main's collection_openapi table). */
+  const openapiLinks = new Map<string, MockOpenApiLink>()
   const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
     ...createWorkspaceApi(state),
     ...createTreeApi(state),
@@ -106,6 +109,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createVariablesApi(state),
     ...createWorkflowsApi(state),
     ...mockServers.api,
+    ...createOpenApiApi(state, openapiLinks),
     ...createScriptsApi(),
     ...createOAuth2Api(state, () => latency),
     ...misc,

@@ -33,6 +33,12 @@ const updateWorkflowInput = z
   .object({ workflowId: uuid, expectedVersion: z.number().int().min(1), name: workflowName.optional(), graphJson: graphJson.optional() })
   .strict()
 const postmanImportOptions = z.object({ name: z.string().min(1).max(200).optional() }).strict()
+const openApiSource = z.object({ kind: z.enum(['url', 'file', 'text']), value: z.string().max(4096).nullable() }).strict()
+const openApiFolders = z.enum(['tags', 'paths', 'none'])
+const openApiPreviewInput = z.object({ text: postmanFile.nullish(), url: z.string().max(4096).nullish() }).strict()
+const openApiImportInput = z
+  .object({ workspaceId: uuid, text: postmanFile, source: openApiSource, folders: openApiFolders, name: z.string().min(1).max(200).optional() })
+  .strict()
 
 const pickFileOptions = z
   .object({
@@ -614,6 +620,11 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, contents, sourceName] = parseArgs(z.tuple([uuid, postmanFile, z.string().max(1024).nullish()]), a)
       return replaceCollectionFromPostman(core.db, id, contents, sourceName, core.versionAuthor())
     },
+    // OpenAPI
+    previewOpenApi: async (...a) => core.openapi.preview(parseArgs(z.tuple([openApiPreviewInput]), a)[0]),
+    importOpenApi: async (...a) => core.openapi.import(parseArgs(z.tuple([openApiImportInput]), a)[0]),
+    getOpenApiLink: async (...a) => core.openapi.getLink(parseArgs(z.tuple([uuid]), a)[0]),
+    unlinkOpenApi: async (...a) => core.openapi.unlink(parseArgs(z.tuple([uuid]), a)[0]),
     defaultExportPath: async (...a) => core.exportFiles.pathFor(parseArgs(z.tuple([z.string().max(1024)]), a)[0]),
     writeExportFile: async (...a) => {
       const [fileName, contents, encoding] = parseArgs(

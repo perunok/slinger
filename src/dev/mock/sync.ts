@@ -941,6 +941,9 @@ export function createSyncApi(
       case 'importPostmanCollection':
         ws = String(a0(args))
         break
+      case 'importOpenApi':
+        ws = String((a0(args) as { workspaceId?: unknown } | undefined)?.workspaceId)
+        break
       case 'renameCollection':
       case 'deleteCollection':
       case 'replaceCollectionFromPostman':

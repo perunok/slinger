@@ -16,6 +16,10 @@ import type {
   AssistantEditInput,
   ApiRequest,
   CloudFetchInput,
+  OpenApiImportInput,
+  OpenApiImportResult,
+  OpenApiLink,
+  OpenApiPreview,
   SyncEntityType,
   Collection,
   CollectionVersion,
@@ -170,6 +174,14 @@ export interface SlingerIpcApi {
    * name and versions. `sourceName` (the file name) only labels the safety version's notes.
    */
   replaceCollectionFromPostman(collectionId: string, fileContents: string, sourceName?: string | null): Promise<PostmanReplaceResult>
+  /** ADDED (OpenAPI): reads an OpenAPI 3.x / Swagger 2.0 document (pasted text, or fetched from `url` by main) without importing it. */
+  previewOpenApi(input: { text?: string | null; url?: string | null }): Promise<OpenApiPreview>
+  /** ADDED (OpenAPI): imports a document as a new collection (folders by tag/path, examples) and links the collection to it. */
+  importOpenApi(input: OpenApiImportInput): Promise<OpenApiImportResult>
+  /** ADDED (OpenAPI): the document a collection is linked to on this device (null: none). */
+  getOpenApiLink(collectionId: string): Promise<OpenApiLink | null>
+  /** ADDED (OpenAPI): forgets the collection's document (requests keep their operation keys). */
+  unlinkOpenApi(collectionId: string): Promise<void>
   defaultExportPath(fileName: string): Promise<string>
   /** `encoding` (renderer addition, optional, default 'utf8'): 'base64' means `contents` is base64 of raw bytes (binary response bodies). */
   writeExportFile(fileName: string, contents: string, encoding?: 'utf8' | 'base64'): Promise<void>
@@ -447,6 +459,10 @@ export const IPC_CHANNELS = [
   'cloudFetch',
   'importPostmanCollection',
   'replaceCollectionFromPostman',
+  'previewOpenApi',
+  'importOpenApi',
+  'getOpenApiLink',
+  'unlinkOpenApi',
   'defaultExportPath',
   'writeExportFile',
   'chooseExportDirectory',

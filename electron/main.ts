@@ -620,6 +620,8 @@ if (!app.requestSingleInstanceLock()) {
       secrets: chooseSecretStore({ env: process.env, isPackaged: app.isPackaged, keychain: loadKeychain, warn: (m) => console.warn(m) }),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
       scriptExecutor: scriptExecutor(),
+      // OpenAPI documents by URL: Electron's network stack (system proxy), never the request history.
+      openapiFetch: netFetch,
       sync: {
         // Push channel to the trusted main window only; payloads are plain JSON.
         emit: (event) => {
