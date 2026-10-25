@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { expandedStore } from '../../app/expanded.svelte'
   import { app } from '../../app/state.svelte'
   import { toast } from '../../app/toast.svelte'
@@ -16,7 +17,7 @@
   import ExtractFolderDialog from './ExtractFolderDialog.svelte'
   import * as examples from '../examples/actions'
   import { openCollectionVariables } from '../overview/openVariables'
-  import { buildRows, exampleRowKey, rowKey, type TreeRowModel } from './rows'
+  import { buildRows, exampleRowKey, ROW_H, rowKey, visibleRowIndexes, type TreeRowModel } from './rows'
   import TreeRow, { type DropHint } from './TreeRow.svelte'
 
   const ro = $derived(sync.blocked)
@@ -37,6 +38,18 @@
   let dlg = $state<Dlg | null>(null)
 
   const rows = $derived(buildRows({ collections: app.collections, folders: app.folders, requests: app.requests, expanded, filter }))
+
+  // ---- virtual scrolling ---------------------------------------------------
+  // A big tree (thousands of requests) renders only the rows in view (plus a margin), absolutely positioned in a
+  // spacer as tall as the whole list. The focused row (roving tabindex) and a dragged row are always rendered, so
+  // Tab, the arrow keys and drag-and-drop work as before. Small trees keep the plain list. Rows are a fixed h-7.
+  let scrollTop = $state(0)
+  let viewH = $state(0)
+  const rowIndex = $derived(new Map(rows.map((r, i) => [r.key, i])))
+  const windowed = $derived.by(() => {
+    const pinned = [focusKey, drag ? rowKey(drag.kind, drag.id) : null].map((k) => (k ? rowIndex.get(k) : undefined)).filter((i) => i !== undefined)
+    return visibleRowIndexes(rows.length, scrollTop, viewH, pinned)?.map((i) => ({ i, row: rows[i]! })) ?? null
+  })
   /** Row of the active tab: its request, or its example. */
   const activeKey = $derived.by(() => {
     const t = tabsStore.active
@@ -61,7 +74,8 @@
 
   function focusRow(key: string) {
     focusKey = key
-    queueMicrotask(() => treeEl?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus())
+    // tick: in a big (virtual) tree the row is rendered only once focusKey has updated the window.
+    void tick().then(() => treeEl?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus())
   }
 
   // ---- activation --------------------------------------------------------
@@ -358,12 +372,14 @@
     aria-label="Collections"
     tabindex="-1"
     class="min-h-0 flex-1 overflow-auto py-1"
+    bind:clientHeight={viewH}
+    onscroll={() => (scrollTop = Math.max(0, treeEl.scrollTop - 4))}
     {onkeydown}
     ondragleave={(e) => {
       if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) hint = null
     }}
   >
-    {#each rows as row (row.key)}
+    {#snippet treeRow(row: TreeRowModel)}
       <TreeRow
         {row}
         active={row.key === activeKey}
@@ -385,7 +401,16 @@
         ondragend={endDrag}
         ondragleave={clearExpandTimer}
       />
-    {/each}
+    {/snippet}
+    {#if windowed}
+      <div role="none" class="relative" style="height:{rows.length * ROW_H}px" data-testid="tree-virtual">
+        {#each windowed as v (v.row.key)}
+          <div role="none" class="absolute inset-x-0" style="top:{v.i * ROW_H}px">{@render treeRow(v.row)}</div>
+        {/each}
+      </div>
+    {:else}
+      {#each rows as row (row.key)}{@render treeRow(row)}{/each}
+    {/if}
     {#if app.collections.length === 0 && !app.loading}
       <div class="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted">
         <p>No collections yet.</p>

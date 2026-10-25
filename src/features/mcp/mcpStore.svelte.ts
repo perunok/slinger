@@ -1,6 +1,5 @@
 /** MCP server state for Settings and the status bar; tool calls themselves run in McpHost. */
-import type { McpClientId, McpClientStatus, McpSettings, McpStatus, McpToolName } from '../../../shared/mcp'
-import { MCP_TOOLS } from '../../../shared/mcp'
+import type { McpClientId, McpClientStatus, McpSettings, McpStatus } from '../../../shared/mcp'
 import { api, errorInfo } from '../../lib/ipc'
 
 class McpStore {
@@ -70,10 +69,10 @@ class McpStore {
     return api().revealMcpToken()
   }
 
-  /** McpHost reports each call so the status bar can show activity. */
-  begin(tool: string): void {
+  /** McpHost reports each call (with the tool's title) so the status bar can show activity. */
+  begin(title: string): void {
     this.active++
-    this.lastTool = Object.hasOwn(MCP_TOOLS, tool) ? MCP_TOOLS[tool as McpToolName].title : tool
+    this.lastTool = title
   }
   end(): void {
     this.active = Math.max(0, this.active - 1)

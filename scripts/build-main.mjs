@@ -18,9 +18,18 @@ const common = {
   logLevel: 'info',
 }
 
+// The main process starts in electron/boot.ts (main.cjs), which runs app.cjs (main.ts and everything it imports)
+// with a V8 code cache.
 await build({
   ...common,
-  entryPoints: { main: 'electron/main.ts' },
+  entryPoints: { main: 'electron/boot.ts' },
+  outdir: 'dist-electron',
+  outExtension: { '.js': '.cjs' },
+  external: ['electron'],
+})
+await build({
+  ...common,
+  entryPoints: { app: 'electron/main.ts' },
   outdir: 'dist-electron',
   outExtension: { '.js': '.cjs' },
   external: ['electron', 'better-sqlite3', '@napi-rs/*'],

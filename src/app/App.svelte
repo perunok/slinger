@@ -1,25 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import Lazy from '../components/ui/Lazy.svelte'
   import SplitPane from '../components/ui/SplitPane.svelte'
   import ToastHost from '../components/ui/ToastHost.svelte'
   import Spinner from '../components/ui/Spinner.svelte'
   import Button from '../components/ui/Button.svelte'
-  import AboutDialog from '../features/about/AboutDialog.svelte'
-  import CloudDialog from '../features/cloud/CloudDialog.svelte'
   import SharedWorkspaceBanner from '../features/sync/SharedWorkspaceBanner.svelte'
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
   import McpHost from '../features/mcp/McpHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
-  import EnvironmentExportDialog from '../features/environments/EnvironmentExportDialog.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
-  import WorkflowView from '../features/workflows/WorkflowView.svelte'
   import { openCollectionVariables } from '../features/overview/openVariables'
   import { saveVariableValue } from '../features/environments/editVariable'
   import { sync } from '../features/sync/syncStore.svelte'
-  import ExportCollectionDialog from '../features/importexport/ExportCollectionDialog.svelte'
-  import ImportDialog from '../features/importexport/ImportDialog.svelte'
   import QuickOpen from '../features/requests/QuickOpen.svelte'
   import RequestTabs from '../features/requests/RequestTabs.svelte'
   import RequestView from '../features/requests/RequestView.svelte'
@@ -28,13 +23,8 @@
   import { tabsStore } from '../features/requests/tabs.svelte'
   import { cancelScheduledSave, flushSave, scheduleSave, serializeTabs } from '../features/requests/tabsPersistence'
   import UnsavedDialog from '../features/requests/UnsavedDialog.svelte'
-  import RunnerDialog from '../features/runner/RunnerDialog.svelte'
   import ScriptsDialogHost from '../features/scripts/ScriptsDialogHost.svelte'
-  import SettingsDialog from '../features/settings/SettingsDialog.svelte'
-  import ShortcutsDialog from '../features/settings/ShortcutsDialog.svelte'
-  import VersionsDialog from '../features/versions/VersionsDialog.svelte'
   import MockServersHost from '../features/mockServers/MockServersHost.svelte'
-  import WorkspacesDialog from '../features/workspaces/WorkspacesDialog.svelte'
   import EmptyState from './EmptyState.svelte'
   import StatusBar from '../features/layout/StatusBar.svelte'
   import RightPanel from '../features/layout/RightPanel.svelte'
@@ -48,9 +38,24 @@
   import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
   import { updates } from '../features/updates/updates.svelte'
-  import UpdateDialog from '../features/updates/UpdateDialog.svelte'
   import { windowChrome } from './windowChrome.svelte'
   import { ui } from './ui.svelte'
+
+  // Opened rarely or never in a session: loaded on first use so they do not weigh on startup.
+  const load = {
+    about: () => import('../features/about/AboutDialog.svelte'),
+    cloud: () => import('../features/cloud/CloudDialog.svelte'),
+    environmentExport: () => import('../features/environments/EnvironmentExportDialog.svelte'),
+    workflow: () => import('../features/workflows/WorkflowView.svelte'),
+    collectionExport: () => import('../features/importexport/ExportCollectionDialog.svelte'),
+    import: () => import('../features/importexport/ImportDialog.svelte'),
+    runner: () => import('../features/runner/RunnerDialog.svelte'),
+    settings: () => import('../features/settings/SettingsDialog.svelte'),
+    shortcuts: () => import('../features/settings/ShortcutsDialog.svelte'),
+    versions: () => import('../features/versions/VersionsDialog.svelte'),
+    workspaces: () => import('../features/workspaces/WorkspacesDialog.svelte'),
+    update: () => import('../features/updates/UpdateDialog.svelte'),
+  }
 
   onMount(() => {
     settings.init()
@@ -126,7 +131,7 @@
             {#if tabsStore.active}
               {#key tabsStore.active.id}
                 {#if tabsStore.active.workflowId}
-                  <WorkflowView tab={tabsStore.active} />
+                  <Lazy load={load.workflow} props={{ tab: tabsStore.active }} />
                 {:else if tabsStore.active.overview}
                   <OverviewView tab={tabsStore.active} />
                 {:else if tabsStore.active.example}
@@ -172,23 +177,23 @@
   {/if}
 </div>
 
-{#if ui.settingsOpen}<SettingsDialog />{/if}
-{#if ui.workspacesOpen}<WorkspacesDialog />{/if}
-{#if ui.shortcutsOpen}<ShortcutsDialog />{/if}
+{#if ui.settingsOpen}<Lazy load={load.settings} />{/if}
+{#if ui.workspacesOpen}<Lazy load={load.workspaces} />{/if}
+{#if ui.shortcutsOpen}<Lazy load={load.shortcuts} />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
-{#if ui.aboutOpen}<AboutDialog />{/if}
-<CloudDialog />
+{#if ui.aboutOpen}<Lazy load={load.about} />{/if}
+{#if ui.cloudOpen}<Lazy load={load.cloud} />{/if}
 <SyncHost />
 <McpHost />
 <EnvironmentEditor />
-<VersionsDialog />
+{#if ui.versionsFor}<Lazy load={load.versions} />{/if}
 <MockServersHost />
-<RunnerDialog />
+{#if ui.runner}<Lazy load={load.runner} />{/if}
 <ScriptsDialogHost />
-<ExportCollectionDialog />
-<EnvironmentExportDialog />
-<ImportDialog open={ui.importOpen} initialText={ui.importText} onclose={() => ui.closeImport()} />
-{#if ui.updateOpen}<UpdateDialog />{/if}
+{#if ui.exportCollectionId}<Lazy load={load.collectionExport} />{/if}
+{#if ui.exportEnvironmentId}<Lazy load={load.environmentExport} />{/if}
+{#if ui.importOpen}<Lazy load={load.import} props={{ open: true, initialText: ui.importText, onclose: () => ui.closeImport() }} />{/if}
+{#if ui.updateOpen}<Lazy load={load.update} />{/if}
 <SaveAsDialog />
 <UnsavedDialog />
 <ToastHost />
