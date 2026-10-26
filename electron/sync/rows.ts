@@ -17,7 +17,18 @@ export interface RowEnv {
   /** Epoch seconds. */
   nowS: number
   /** Run after the surrounding transaction committed (keychain deletes). */
-  effects: Array<() => void>
+  effects: SideEffect[]
+}
+
+/** A keychain change run after commit; `entity` names what it belongs to, so a failure can be shown in Sync activity. */
+export interface SideEffect {
+  (): void
+  entity?: EntityRef & { label: string }
+}
+
+/** Removes a variable's secret value from the keychain after commit. */
+function forgetSecretLater(env: RowEnv, type: SyncEntityType, row: AnyRow, ref: string): void {
+  env.effects.push(Object.assign(() => env.secrets.delete(ref), { entity: { type, id: row.id as string, label: String(row.key ?? '') } }))
 }
 
 export interface EntityRef {
@@ -242,8 +253,7 @@ function overwriteVariable(env: RowEnv, row: AnyRow, p: Payload): void {
   } else {
     value = p.value === undefined || p.value === null ? '' : str(p.value)
     if (wasSecret && row.secret_ref) {
-      const r = row.secret_ref as string
-      env.effects.push(() => secrets.delete(r))
+      forgetSecretLater(env, 'environment_variable', row, row.secret_ref as string)
     }
   }
   db.prepare(
@@ -271,8 +281,7 @@ function overwriteGlobal(env: RowEnv, row: AnyRow, p: Payload): void {
   } else {
     value = has('value') ? (p.value === null ? '' : str(p.value)) : ((row.value as string | null) ?? '')
     if (wasSecret && row.secret_ref) {
-      const r = row.secret_ref as string
-      env.effects.push(() => secrets.delete(r))
+      forgetSecretLater(env, 'global_variable', row, row.secret_ref as string)
     }
   }
   db.prepare(
@@ -291,19 +300,13 @@ export function softDeleteRow(env: RowEnv, type: SyncEntityType, id: string): vo
   }
   if (type === 'environment_variable') {
     const row = loadRow(db, type, id)
-    if (row?.secret_ref) {
-      const ref = row.secret_ref as string
-      env.effects.push(() => env.secrets.delete(ref))
-    }
+    if (row?.secret_ref) forgetSecretLater(env, type, row, row.secret_ref as string)
     db.prepare('UPDATE environment_variables SET deleted = 1, value = NULL, secret_ref = NULL, secret_missing = 0, version = version + 1, updated_at = ? WHERE id = ?').run(nowS, id)
     return
   }
   if (type === 'global_variable') {
     const row = loadRow(db, type, id)
-    if (row?.secret_ref) {
-      const ref = row.secret_ref as string
-      env.effects.push(() => env.secrets.delete(ref))
-    }
+    if (row?.secret_ref) forgetSecretLater(env, type, row, row.secret_ref as string)
     db.prepare('UPDATE global_variables SET deleted = 1, value = NULL, secret_ref = NULL, secret_missing = 0, version = version + 1, updated_at = ? WHERE id = ?').run(nowS, id)
     return
   }

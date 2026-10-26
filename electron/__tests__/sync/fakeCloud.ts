@@ -154,6 +154,8 @@ export class FakeCloud {
   versionAuthors = true
   /** Servers before slinger-admin 9ce4b08 reported a folder missing from the workspace as `invalid`, not `not_found`. */
   legacyMissingFolder = false
+  /** Older servers sent snapshot folders by id only, so a nested folder could come before its parent. */
+  legacyFolderOrder = false
   pushBodyLimit: number
   /** Test hook: runs right before a push is applied (simulates another writer racing between our pull and push). */
   beforePush: ((workspaceId: string) => void) | null = null
@@ -829,7 +831,24 @@ export class FakeCloud {
     }
   }
 
-  /** Current entities (no tombstones) in type order then id; `checkpoint` is read before the first page and echoed via the cursor. */
+  /**
+   * Snapshot position of an entity inside its type: the id, except folders, which go parent-first (depth from the
+   * collection root, then id) like the real server. The depth is zero-padded so positions compare as strings.
+   */
+  private snapshotKey(e: Entity): string {
+    if (e.type !== 'folder' || this.legacyFolderOrder) return e.id
+    let depth = 0
+    let parent = e.data.parent_folder_id as string | null | undefined
+    while (parent && depth < 10_000) {
+      const p = this.entities.get(parent)
+      if (!p || p.ws !== e.ws) break
+      depth++
+      parent = p.data.parent_folder_id as string | null | undefined
+    }
+    return `${String(depth).padStart(6, '0')}:${e.id}`
+  }
+
+  /** Current entities (no tombstones) in type order then position (`snapshotKey`); `checkpoint` is read before the first page and echoed via the cursor. */
   private snapshot(w: Workspace, userId: string, q: URLSearchParams) {
     this.assertClient(q.get('client_id'), userId)
     const limit = Math.min(500, Math.max(1, Number(q.get('limit') ?? 200)))
@@ -839,17 +858,22 @@ export class FakeCloud {
     let t = cursor.t
     let after = cursor.a
     let next: string | null = null
+    let lastKey = ''
     const f = this.declaredBy(q.get('features'))
     outer: for (; t < TYPE_ORDER.length; t++) {
       if (!typeVisible(TYPE_ORDER[t]!, f)) continue
-      const rows = this.live(w.id, TYPE_ORDER[t]).filter((e) => e.id > after)
-      for (const e of rows) {
+      const rows = this.live(w.id, TYPE_ORDER[t])
+        .map((e) => ({ e, key: this.snapshotKey(e) }))
+        .filter((r) => r.key > after)
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      for (const { e, key } of rows) {
         if (entities.length === limit) {
           const last = entities[entities.length - 1]!
-          next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: last.resource_id })).toString('base64url')
+          next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: lastKey })).toString('base64url')
           break outer
         }
         entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: this.authored(e.type, shape(e.type, this.wire(e), f), f, e.author) })
+        lastKey = key
       }
       after = ''
     }

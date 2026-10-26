@@ -2,7 +2,7 @@
  * The sync engine: cycle (pull then push), status model, backoff, snapshot phase, role handling
  * (docs/SYNC_DESIGN.md sections 7, 10). No Electron imports: fetch, clock, timers and events are injected.
  */
-import type { CloudRole, SyncEntityType, SyncEvent, SyncRun, SyncState, SyncStatus, WorkspaceMember } from '../../shared/types'
+import type { CloudRole, SyncEvent, SyncRun, SyncState, SyncStatus, WorkspaceMember } from '../../shared/types'
 import { SyncActivity } from './activity'
 import { pendingCount } from './pending'
 import type { CloudAuth } from '../cloud/auth'
@@ -11,8 +11,9 @@ import { CloudApiError, ServerUnsupportedError } from '../cloud/errors'
 import type { Db } from '../db/database'
 import type { Clock } from '../lib/clock'
 import type { SecretStore } from '../services/secrets'
-import { applyRemoteOp, applySnapshotEntity, fixFolderCycles, makeApplyCtx, type ApplyCtx } from './apply'
+import { fixFolderCycles, makeApplyCtx, type ApplyCtx } from './apply'
 import { recordAutoResolved } from './conflictStore'
+import { applyRemoteChange, fromPullOp, fromSnapshotEntity, noteStuckDeferred, retryFailed, retryWaiting } from './deferred'
 import { reevaluateOpenConflicts } from './conflicts'
 import { hasUnattributedVersions, updateLinkFeatures } from './features'
 import { dedupeEnvironments } from './linking'
@@ -37,6 +38,7 @@ import {
   setSetting,
   updateLink,
 } from './store'
+import type { SideEffect } from './rows'
 import type { ChangeLog, LinkRow } from './types'
 
 const PULL_LIMIT = 200
@@ -183,12 +185,27 @@ export class SyncEngine {
     const before = openConflictCount(db, workspaceId)
     const ctx = makeApplyCtx({ db, secrets: this.deps.secrets, nowS: Math.floor(this.deps.clock.now() / 1000), effects: [] }, workspaceId)
     const result = applyTx(db, () => fn(ctx))
+    const failed: Array<{ effect: SideEffect; err: unknown }> = []
     for (const effect of ctx.effects) {
       try {
         effect()
       } catch (err) {
         console.warn('[slinger] sync side effect failed:', err instanceof Error ? err.message : err)
+        failed.push({ effect, err })
       }
+    }
+    if (failed.some((f) => f.effect.entity)) {
+      // A secret value the cloud's change removed is still in the system keychain: say so instead of only logging it.
+      applyTx(db, () => {
+        for (const { effect, err } of failed) {
+          const e = effect.entity
+          if (!e) continue
+          recordAutoResolved(db, ctx.nowS, {
+            workspaceId, type: e.type, id: e.id, kind: 'rejected', label: e.label || e.id,
+            message: `The old secret value of this variable could not be removed from the system keychain (${err instanceof Error ? err.message : String(err)}). It is no longer used; remove it there by hand if needed.`,
+          })
+        }
+      })
     }
     this.emitApplied(workspaceId, ctx.changed)
     const after = openConflictCount(db, workspaceId)
@@ -487,10 +504,14 @@ export class SyncEngine {
         // server upgraded): only the ops after the checkpoint carry authors, so the log is replayed once for the
         // versions that are already here. The replay is idempotent (design section 21.5).
         replay = !hadAuthors && ctx.features.has('version_authors') && link.sync_checkpoint > 0 && hasUnattributedVersions(db, workspaceId)
+        // Changes kept earlier get another chance: failed ones before this page (a newer change in it replaces them),
+        // those waiting for a parent after it (the page may have brought the parent).
+        retryFailed(ctx)
         for (const op of res.operations) {
           if (op.workspace_id && op.workspace_id !== link.remote_workspace_id) continue
-          this.applyGuarded(ctx, () => applyRemoteOp(ctx, op), op.resource_type, op.resource_id)
+          applyRemoteChange(ctx, fromPullOp(op))
         }
+        retryWaiting(ctx)
         fixFolderCycles(ctx)
         // The checkpoint advances ONLY here, with the transaction that applied the ops (back to 0 for the one-time replay).
         updateLink(db, workspaceId, { sync_checkpoint: replay ? 0 : Math.max(link.sync_checkpoint, res.checkpoint) })
@@ -499,20 +520,16 @@ export class SyncEngine {
       rt.progress = { phase: 'pull', done: total, total: null }
       this.emitStatus(workspaceId)
       if (!res.has_more && !replay) {
-        this.runApply(workspaceId, (ctx) => reevaluateOpenConflicts(ctx))
+        this.runApply(workspaceId, (ctx) => {
+          noteStuckDeferred(ctx)
+          reevaluateOpenConflicts(ctx)
+        })
         return total
       }
-    }
-  }
-
-  /** One poison operation must not wedge the whole workspace: roll it back, note it, move on. */
-  private applyGuarded(ctx: ApplyCtx, fn: () => void, type: SyncEntityType, id: string): void {
-    try {
-      ctx.db.transaction(fn)()
-    } catch (err) {
-      const message = `A change from the cloud could not be applied: ${err instanceof Error ? err.message : String(err)}`
-      console.warn('[slinger]', message)
-      recordAutoResolved(ctx.db, ctx.nowS, { workspaceId: ctx.workspaceId, type, id, kind: 'rejected', label: id, message })
+      if (!replay && res.checkpoint <= link.sync_checkpoint) {
+        // "More to come" without moving the checkpoint would ask for the same page forever.
+        throw new Error('The cloud reported more changes to download but its sync position did not move. Sync retries later.')
+      }
     }
   }
 
@@ -529,11 +546,16 @@ export class SyncEngine {
       const res = await this.withClient(workspaceId, clientId, (cid) => cloud.snapshot(link.remote_workspace_id, cid, cursor || null, SNAPSHOT_LIMIT))
       this.runApply(workspaceId, (ctx) => {
         updateLinkFeatures(ctx, res.features)
-        for (const e of res.entities) this.applyGuarded(ctx, () => applySnapshotEntity(ctx, e), e.resource_type, e.resource_id)
+        // One poison entity must not wedge the workspace, and one whose parent comes later (older servers send folders
+        // by id) must not be lost: both are kept and applied again (electron/sync/deferred.ts).
+        retryFailed(ctx)
+        for (const e of res.entities) applyRemoteChange(ctx, fromSnapshotEntity(e))
+        retryWaiting(ctx)
         const last = !res.next_cursor
         if (last) {
           dedupeEnvironments(ctx)
           fixFolderCycles(ctx)
+          noteStuckDeferred(ctx)
         }
         updateLink(db, workspaceId, { sync_checkpoint: res.checkpoint, snapshot_cursor: last ? null : res.next_cursor })
       })

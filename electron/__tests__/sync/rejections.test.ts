@@ -11,7 +11,7 @@ import { applyTx, getEntity, getLink } from '../../sync/store'
 import type { PushResponse } from '../../sync/types'
 import { FakeCloud } from './fakeCloud'
 import { DOC, liveState, makeDevice, pendingCount, settle, type Device } from './harness'
-import { checkLocalOnlyContract, checkRejectionContract } from './wireContract'
+import { checkLocalOnlyContract, checkRejectionContract, checkSnapshotOrderContract } from './wireContract'
 
 let cloud: FakeCloud
 let devices: Device[] = []
@@ -74,6 +74,17 @@ describe('wire contract', () => {
         const v = cloud.createUser(`viewer${cloud.users.size}@contract.test`)
         cloud.setRole(wsId, v.id, 'viewer')
         return cloud.issueTokens(v.id).accessToken
+      },
+    })
+  })
+
+  it('the fake server orders the snapshot parent-first exactly like the real one', async () => {
+    const owner = cloud.createUser('ownerS@contract.test')
+    await checkSnapshotOrderContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken: cloud.issueTokens(owner.id).accessToken,
+      viewerToken: async () => {
+        throw new Error('not needed')
       },
     })
   })
