@@ -72,6 +72,16 @@ get stdin EOF and then SIGTERM instead of outliving the app) and `app.quit()` ru
 Windows/Linux) also calls `McpService.markQuit()`, so the stdio bridge does not start Slinger again; a logout, an update or
 Playwright's `app.quit()` does not.
 
+**Unsaved edits on quit** (`electron/lib/quitGuard.ts`, `src/features/requests/unsavedOnQuit.svelte.ts`). The renderer reports
+(`setUnsavedChanges(titles)`, only when the list changes) which open tabs hold edits that would be lost: with "Restore open
+tabs" on, the drafts the last tab autosave could not keep (`unpersistedTitles`: over `MAX_DRAFT_BYTES`, or storage full) plus
+the dirty tabs of a workspace whose stored tabs are still waiting to be restored; with it off, every dirty tab of every open
+workspace. While that list is not empty, the tray/menu Quit (`quitByUser`), any other `before-quit` in the `running` phase,
+closing the window for good (close-to-tray off, also on macOS) and installing an update (before anything is installed) first
+show a native "Quit and discard N unsaved changes?" box (Discard and Quit / Cancel, Cancel default). Cancel leaves everything as
+it was (no `markQuit`, the MCP drain has not started); after Discard the quit runs the normal two passes. Automated runs
+(`SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW`) and an ending OS session never ask. A new window starts with an empty list.
+
 **Renderer origin.** Production loads `app://slinger/index.html`. The `app` scheme is registered as privileged
 (standard, secure, fetch-capable). Its handler serves files only from `dist/` (path traversal returns 403, missing files 404)
 and adds `Content-Security-Policy` and `X-Content-Type-Options: nosniff`. In dev (`SLINGER_DEV_SERVER_URL` set by
@@ -252,8 +262,12 @@ array under the key `scripts` (the key the importer has always used, so existing
 1. **Renderer, template resolution.** `src/lib/prepare.ts` `prepareRequest(draft, ctx)` is the *only* place `{{variable}}`
    substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`;
    MCP requests use its sibling `prepareMcp`, see [MCP requests](#mcp-requests-mcp-client)). It
-   resolves against `scopeStore.scopeFor(collectionId)` of the request's own collection (globals < collection variables <
-   environment, `app/scope.svelte.ts`; disabled variables do not resolve), fails early on unresolved names (the message names the
+   resolves against the send's own scope (globals < collection variables < environment of the request's own collection;
+   disabled variables do not resolve). `execute.ts` fixes that scope when the send starts (`SendScope`: workspace, environment
+   id, globals, the collection's variables and its collection/folder scripts, copied from what `app/state` has in memory or
+   read by id when it is not loaded) and uses only it for the whole send, scripts included; what the pre-request scripts wrote
+   is read back by those ids. A workspace or environment switch during a send therefore never resolves `{{vars}}` or reveals
+   secrets of the other one. It fails early on unresolved names (the message names the
    scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
    reported), generates built-ins (the dynamic variables of `shared/dynamicVariables.ts`, also used by script `replaceIn` and
@@ -1194,7 +1208,18 @@ checks keyboard, scrolling, filter and click on such a tree). e2e: `launch()` an
 State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tree, collection variables, environments, active
 environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}` scope: layers published by `app/state`,
 `scope` for the active tab's collection, `scopeFor(collectionId)` for sends and the runner), `settings`, `toast`, and `features/requests/tabs.svelte.ts`
-(open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
+(open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are persisted per workspace
+(`features/requests/tabsPersistence.ts`, "Restore open tabs on startup"): the autosave effect in `App.svelte` tracks the tabs'
+persisted fields (the draft's fingerprint is derived once per edit for the dirty check) and serializes only when the debounced
+write runs. It writes nothing for a workspace whose stored tabs still wait to be restored (`tabsStore.restorePending`, until
+its collections have fully loaded: `app.collectionsLoaded`); tabs opened meanwhile are kept after the restored ones. A dirty
+request draft is stored without its examples (`extras.responses`), which are taken from the stored request on restore.
+`tabsStore.save` runs one save per tab at a time (a save asked for meanwhile waits and then runs once more if the draft
+changed), so a double Ctrl+S never conflicts with itself.
+
+**Workspace switches and async work.** `app.workspaceGeneration` is bumped by every `selectWorkspace`; code that awaits and then
+writes workspace data into `app` (collection/folder/request reloads, globals, environments, workflows, the request returned by a
+save) compares it before and after and drops a stale result, and `app.upsertRequest` ignores a request of another workspace.
 Details: `src/README.md`.
 
 **Layout** (`src/features/layout`). The request/response split orientation, "Show sidebar" (Ctrl+B; hidden, `App.svelte`

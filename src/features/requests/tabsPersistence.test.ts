@@ -14,6 +14,7 @@ import {
   storageKey,
   type PersistedTabsState,
   type TabLike,
+  unpersistedTitles,
 } from './tabsPersistence'
 
 function tab(partial: Partial<TabLike> = {}): TabLike {
@@ -278,3 +279,97 @@ describe('workflow tabs', () => {
   })
 })
 
+
+describe('saved examples are not part of a dirty draft snapshot', () => {
+  const big = 'x'.repeat(MAX_DRAFT_BYTES)
+  const examples = [{ name: 'Huge example', response: [], originalRequest: {}, body: big }]
+  const server = (responses: unknown[] | undefined) => ({
+    id: 'r1',
+    collectionId: 'c1',
+    folderId: null,
+    method: 'GET',
+    url: 'https://x.test',
+    version: 2,
+    documentJson: JSON.stringify({ source: { a: 1 }, ...(responses ? { responses } : {}), settings: {} }),
+  })
+
+  it('a dirty request with large examples is kept (without them) and gets the stored examples back on restore', () => {
+    const draft = { ...newDraft(), name: 'Req', url: 'https://x.test/edited', extras: { source: { a: 1 }, responses: examples, settings: {} } }
+    const state = serializeTabs([tab({ id: 'a', requestId: 'r1', draft, dirty: true, title: 'Req' })], 'a')
+    const entry = state.tabs[0]!
+    expect(entry).toMatchObject({ kind: 'request' })
+    if (entry.kind !== 'request') return
+    expect(entry.draftTooLarge).toBeUndefined()
+    expect(entry.dirty?.draft.extras).toEqual({ source: { a: 1 }, settings: {} })
+    expect(draft.extras.responses).toBe(examples) // the live draft is untouched
+
+    const stored = [{ name: 'Stored example' }]
+    const restored = restoreTabs(JSON.parse(JSON.stringify(state)), { requests: [server(stored)], collections: [], folders: [] }).inits[0]!
+    expect(restored.kind).toBe('request')
+    if (restored.kind !== 'request') return
+    expect(restored.dirty?.draft.url).toBe('https://x.test/edited')
+    // The stored document's key order is kept (the dirty check compares serialized documents).
+    expect(Object.keys(restored.dirty!.draft.extras)).toEqual(['source', 'responses', 'settings'])
+    expect(restored.dirty!.draft.extras.responses).toEqual(stored)
+  })
+
+  it('a stored request without examples restores a draft without them', () => {
+    const state: PersistedTabsState = {
+      v: TABS_STORAGE_VERSION,
+      activeIndex: null,
+      tabs: [{ kind: 'request', requestId: 'r1', section: 'params', dirty: { draft: { ...newDraft(), extras: { responses: [{ name: 'old' }] } }, savedFingerprint: 'sf', baseVersion: 2, serverKey: 'k' } }],
+    }
+    const restored = restoreTabs(state, { requests: [server(undefined)], collections: [], folders: [] }).inits[0]!
+    if (restored.kind !== 'request') throw new Error('expected a request tab')
+    expect('responses' in restored.dirty!.draft.extras).toBe(false)
+  })
+})
+
+describe('lazy writes and what they could not keep', () => {
+  it('a scheduled builder runs only when the write happens', () => {
+    let built = 0
+    scheduleSave('w1', () => (built++, { v: TABS_STORAGE_VERSION, activeIndex: null, tabs: [] }))
+    scheduleSave('w1', () => (built++, { v: TABS_STORAGE_VERSION, activeIndex: null, tabs: [] }))
+    expect(built).toBe(0)
+    flushSave('w1')
+    expect(built).toBe(1)
+    expect(readPersisted('w1')).toEqual({ v: TABS_STORAGE_VERSION, activeIndex: null, tabs: [] })
+  })
+
+  it('lists drafts too large to keep, per workspace, until a later write keeps them', () => {
+    const huge = { ...newDraft(), name: 'Huge', url: 'https://x.test/' + 'y'.repeat(MAX_DRAFT_BYTES) }
+    scheduleSave('w2', () => serializeTabs([tab({ id: 'a', requestId: 'r1', draft: huge, dirty: true, title: 'Huge' })], 'a'))
+    flushSave('w2')
+    expect(unpersistedTitles()).toEqual(['Huge'])
+    scheduleSave('w2', () => serializeTabs([tab({ id: 'a', requestId: 'r1', draft: { ...huge, url: 'https://x.test/' }, dirty: true, title: 'Huge' })], 'a'))
+    flushSave('w2')
+    expect(unpersistedTitles()).toEqual([])
+  })
+
+  it('when storage is full every unsaved edit of that write counts as not kept', () => {
+    const setItem = Storage.prototype.setItem
+    Storage.prototype.setItem = () => {
+      throw new Error('QuotaExceededError')
+    }
+    try {
+      const draft = { ...newDraft(), name: 'Edited', url: 'https://x.test/e' }
+      scheduleSave('w3', () =>
+        serializeTabs(
+          [
+            tab({ id: 'a', requestId: 'r1', draft, dirty: true, title: 'Edited' }),
+            tab({ id: 'b', requestId: 'r2', draft: newDraft(), dirty: false }),
+            tab({ id: 'c', draft: { ...newDraft(), name: 'Scratch', url: 'https://s.test' } }),
+          ],
+          'a',
+        ),
+      )
+      flushSave('w3')
+      expect(unpersistedTitles()).toEqual(['Edited', 'Scratch'])
+    } finally {
+      Storage.prototype.setItem = setItem
+    }
+    scheduleSave('w3', { v: TABS_STORAGE_VERSION, activeIndex: null, tabs: [] })
+    flushSave('w3')
+    expect(unpersistedTitles()).toEqual([])
+  })
+})

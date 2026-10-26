@@ -311,6 +311,11 @@ export interface SlingerIpcApi {
   windowControl(action: WindowAction): Promise<void>
   /** Pops up the application menu at a point in the page (CSS pixels); the custom title bar's menu button. */
   showAppMenu(x: number, y: number): Promise<void>
+  /**
+   * The titles of open tabs whose unsaved edits would be lost on quit (not saved, and not kept for the next start).
+   * While the list is not empty, quitting or closing the window asks first ("Quit and discard N unsaved changes?").
+   */
+  setUnsavedChanges(titles: string[]): Promise<void>
 
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
@@ -538,6 +543,7 @@ export const IPC_CHANNELS = [
   'reopenWindow',
   'windowControl',
   'showAppMenu',
+  'setUnsavedChanges',
   'pickFile',
   'getCloudConfig',
   'setCloudConfig',

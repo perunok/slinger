@@ -20,6 +20,7 @@ import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
+import { discardPrompt, needsDiscardConfirm } from './lib/quitGuard'
 import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
@@ -83,9 +84,36 @@ let quitting = false
 let shutdown: 'running' | 'draining' | 'done' = 'running'
 /** Windows is logging off or shutting down: not the user quitting Slinger. */
 let sessionEnding = false
+/** Tabs whose unsaved edits would be lost on quit, as last reported by the window (lib/quitGuard.ts). */
+let unsavedTitles: readonly string[] = []
+/** The user chose "Discard and Quit" (or closed the window that way) for the quit under way. */
+let discardConfirmed = false
+let discardPromptOpen: Promise<boolean> | null = null
 const closeToTray = () => windowState.closeToTray !== false
 /** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
 const automatedWindow = () => !!(process.env.SLINGER_SMOKE_TEST || process.env.SLINGER_HIDE_WINDOW)
+const mustConfirmDiscard = () => needsDiscardConfirm({ titles: unsavedTitles, automated: automatedWindow(), sessionEnding, confirmed: discardConfirmed })
+
+/**
+ * Asks (once at a time) whether to quit and discard the unsaved edits the window reported; true when there is nothing to
+ * ask, or the user chose to discard them. The window comes back from the tray first so the user sees what is meant.
+ */
+function confirmDiscardUnsaved(): Promise<boolean> {
+  if (!mustConfirmDiscard()) return Promise.resolve(true)
+  discardPromptOpen ??= (async () => {
+    try {
+      if (hiddenToTray) showMainWindow()
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const prompt = discardPrompt(unsavedTitles)
+      const { response } = win ? await dialog.showMessageBox(win, prompt) : await dialog.showMessageBox(prompt)
+      if (response === 0) discardConfirmed = true
+      return response === 0
+    } finally {
+      discardPromptOpen = null
+    }
+  })()
+  return discardPromptOpen
+}
 
 // SLINGER_STARTUP_TIMING=1 prints one `STARTUP_TIMING {...}` line: main-process milestones (ms since process start)
 // and the renderer's own marks (ms since navigation start; see src/app/bootSkeleton.ts).
@@ -229,6 +257,12 @@ function createWindow(): BrowserWindow {
     if (hidesOnClose({ closeToTray: closeToTray(), quitting, reopening: reopeningWindow, sessionEnding })) {
       event.preventDefault()
       hideToTray(win)
+    } else if (!quitting && !reopeningWindow && mustConfirmDiscard()) {
+      // Closing the window for good (closing to the tray is off) loses what the page could not keep: ask first.
+      event.preventDefault()
+      void confirmDiscardUnsaved().then((ok) => {
+        if (ok && !win.isDestroyed()) win.close()
+      })
     }
   })
   win.on('session-end', () => {
@@ -399,6 +433,9 @@ function createUpdater(feedUrl: string): UpdateInstaller {
     execPath: process.execPath,
     quit: () => setTimeout(() => app.quit(), 100),
   })
+  // Installing ends with a restart: ask about unsaved edits before anything is installed (Cancel keeps the update ready).
+  const install = installer.install.bind(installer)
+  installer.install = async () => ((await confirmDiscardUnsaved()) ? install() : installer.state())
   return installer
 }
 
@@ -435,8 +472,11 @@ function showMainWindow(): void {
 
 /** Quit chosen by the user (tray or menu): connected assistants must not start Slinger again until it is opened. */
 function quitByUser(): void {
-  if (!quitting) core?.mcp.markQuit()
-  app.quit()
+  void confirmDiscardUnsaved().then((ok) => {
+    if (!ok) return
+    if (!quitting) core?.mcp.markQuit()
+    app.quit()
+  })
 }
 
 function setCloseToTray(enabled: boolean): WindowChrome {
@@ -483,6 +523,9 @@ function installAppMenu(): void {
 function openMainWindow(): BrowserWindow {
   const win = createWindow()
   mainWindow = win
+  // A new page reports its own unsaved edits; a discard chosen for the previous window does not carry over.
+  unsavedTitles = []
+  discardConfirmed = false
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null
@@ -702,7 +745,15 @@ if (!app.requestSingleInstanceLock()) {
         ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
         : undefined,
       updates: feedUrl ? createUpdater(feedUrl) : undefined,
-      window: { chrome: windowChrome, setTitleBarStyle, setCloseToTray, reopen: reopenMainWindow, control: windowControl, showAppMenu },
+      window: {
+        chrome: windowChrome,
+        setTitleBarStyle,
+        setCloseToTray,
+        reopen: reopenMainWindow,
+        control: windowControl,
+        showAppMenu,
+        setUnsavedChanges: (titles) => void (unsavedTitles = titles),
+      },
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
@@ -732,6 +783,14 @@ if (!app.requestSingleInstanceLock()) {
     app.quit()
   })
   app.on('before-quit', (event) => {
+    // Any other way of quitting (macOS Dock, app.quit() elsewhere): unsaved edits that would be lost are asked about first.
+    if (shutdown === 'running' && !quitting && mustConfirmDiscard()) {
+      event.preventDefault()
+      void confirmDiscardUnsaved().then((ok) => {
+        if (ok) app.quit()
+      })
+      return
+    }
     quitting = true
     if (shutdown === 'done') return
     event.preventDefault()

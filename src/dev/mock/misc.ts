@@ -29,6 +29,7 @@ type MiscApi = Pick<
   | 'reopenWindow'
   | 'windowControl'
   | 'showAppMenu'
+  | 'setUnsavedChanges'
   | 'pickFile'
   | 'grantedFiles'
 > & { resetSecureStore(): void; setLatestRelease(version: string | null): void }
@@ -186,6 +187,10 @@ export function createMiscApi(): MiscApi {
     },
     async showAppMenu() {
       /* no native menu in the browser */
+    },
+    async setUnsavedChanges(titles) {
+      if (!Array.isArray(titles) || titles.some((t) => typeof t !== 'string')) fail('invalid_input', 'titles must be a list of strings')
+      /* no quit to guard in the browser (the page's own beforeunload saves its tabs) */
     },
     async pickFile() {
       const name = PICK_NAMES[pickIndex++ % PICK_NAMES.length]

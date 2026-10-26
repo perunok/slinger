@@ -66,6 +66,8 @@ export function handleShortcut(e: KeyboardEvent): boolean {
       }
       return tab ? act(() => void tabsStore.send(tab)) : false
     case 's':
+      // A held Ctrl+S auto-repeats: one save per press (a queued save still follows if the draft changed meanwhile).
+      if (e.repeat) return act(() => {})
       // Workflows save as they are edited (local-only, so also in read-only workspaces); Ctrl+S just saves now.
       if (tab?.workflowId) {
         const id = tab.workflowId

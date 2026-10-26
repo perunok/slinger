@@ -13,11 +13,18 @@
  *
  * One run id covers the whole send, so cancelHttpRequest(runId) stops a running script as well as the request.
  *
+ * Everything a send resolves against is fixed when it starts (`SendScope`): the workspace, the environment, the globals,
+ * the collection's variables and its scripts. Switching workspace or environment while a send is under way (scripts and
+ * secret reveals take a while) never mixes in the other one's variables or secrets; what the pre-request scripts write is
+ * read back by the ids taken at the start.
+ *
  * An MCP request (`draft.mcp`) takes the same steps, but step 3 opens (or reuses) an MCP client session and runs its
  * operation (`sendMcp`); its outcome is a synthetic HttpResponseData (JSON result, `mcp` set), so the runner,
  * workflows, assistants and test scripts (`pm.response.json()`) handle it like any response.
  */
 import type {
+  ApiFolder,
+  Collection,
   HttpResponseData,
   McpCallOutcome,
   McpConnectInput,
@@ -30,7 +37,7 @@ import type {
 } from '../../../shared/types'
 import { settings } from '../../app/settings.svelte'
 import { scopeStore } from '../../app/scope.svelte'
-import { app } from '../../app/state.svelte'
+import { app, collectionVariableInfos, envVariableInfo, globalVariableInfos } from '../../app/state.svelte'
 import { api, errorInfo } from '../../lib/ipc'
 import { prepareMcp, prepareRequest, secretsNeeded, withMcpOAuth2Token, type McpPreparedCall } from '../../lib/prepare'
 import type { RequestDraft } from '../../lib/request'
@@ -45,7 +52,7 @@ import {
   scriptChain,
   type ScriptOutput,
 } from '../../lib/scripts'
-import { uuid, type TemplateScope, type VariableInfo } from '../../lib/template'
+import { EMPTY_SCOPE, layeredScope, uuid, type TemplateScope, type VariableInfo } from '../../lib/template'
 import { mcpConnections, type McpConnection } from '../mcpRequests/connections.svelte'
 
 export type ExecuteOutcome =
@@ -142,12 +149,91 @@ export function untrustedCommandOf(details: Record<string, unknown>): McpTrustCo
 export const UNTRUSTED_COMMAND_MESSAGE =
   'This command has not been allowed on this device yet. Open the request in Slinger and run it once to allow it.'
 
-function scriptsOf(draft: RequestDraft, ctx: ExecuteContext, event: ScriptEventName) {
-  const collection = ctx.collectionId ? (app.collections.find((c) => c.id === ctx.collectionId) ?? null) : null
+/**
+ * The variables and scripts one send uses, taken when it starts. A layer that is null is not in memory for this send
+ * (another workspace, a pinned environment that is not the active one, still loading) and is read by id (`loadScope`).
+ */
+interface SendScope {
+  workspaceId: string
+  environmentId: string | null
+  environmentName: string | null
+  environment: VariableInfo[] | null
+  globals: VariableInfo[] | null
+  collectionId: string | null
+  /** The collection's name and enabled variables (null: not read yet). */
+  collection: { name: string | null; vars: VariableInfo[] } | null
+  /** The collection and its folders, for the collection/folder scripts (null: not read yet). */
+  containers: { collection: Collection | null; folders: ApiFolder[] } | null
+}
+
+/** Synchronous: what the app has in memory for this send's workspace right now. */
+function snapshotScope(ctx: ExecuteContext): SendScope {
+  const current = app.workspaceId === ctx.workspaceId
+  const activeEnvironmentId = current && app.activeEnvironment?.workspaceId === ctx.workspaceId ? app.activeEnvironmentId : null
+  const environmentId = ctx.environment !== undefined ? (ctx.environment?.id ?? null) : activeEnvironmentId
+  const environmentName = environmentId === null ? null : ctx.environment !== undefined ? (ctx.environment?.name ?? null) : (app.activeEnvironment?.name ?? null)
+  const envLoaded = current && environmentId !== null && environmentId === app.activeEnvironmentId && app.envVariablesOf === environmentId
+  const collectionId = ctx.collectionId ?? null
+  const collectionsLoaded = current && app.collectionsLoaded
+  const layer = collectionId && collectionsLoaded ? scopeStore.collections.get(collectionId) : undefined
+  return {
+    workspaceId: ctx.workspaceId,
+    environmentId,
+    environmentName,
+    environment: environmentId === null ? [] : envLoaded ? [...scopeStore.environment] : null,
+    globals: current && app.globalsOf === ctx.workspaceId ? [...scopeStore.globals] : null,
+    collectionId,
+    collection: !collectionId ? { name: null, vars: [] } : layer ? { name: layer.name, vars: [...layer.vars] } : null,
+    containers: !collectionId
+      ? { collection: null, folders: [] }
+      : collectionsLoaded
+        ? { collection: app.collections.find((c) => c.id === collectionId) ?? null, folders: app.foldersOf(collectionId) }
+        : null,
+  }
+}
+
+/** Reads (by the ids taken at the start) the layers that were not in memory, or that `stale` names. */
+async function loadScope(s: SendScope, stale: { environment?: boolean; globals?: boolean; collection?: boolean } = {}): Promise<void> {
+  const cid = s.collectionId
+  await Promise.all([
+    (s.environment === null || stale.environment) && s.environmentId
+      ? api().listEnvironmentVariables(s.environmentId).then((vars) => void (s.environment = vars.map(envVariableInfo)))
+      : null,
+    s.globals === null || stale.globals ? api().listGlobalVariables(s.workspaceId).then((vars) => void (s.globals = globalVariableInfos(vars))) : null,
+    (s.collection === null || s.containers === null || stale.collection) && cid
+      ? Promise.all([
+          s.containers === null ? api().listCollections(s.workspaceId) : null,
+          s.containers === null ? api().listFolders(cid) : null,
+          api().listCollectionVariables(cid),
+        ]).then(([cols, folders, vars]) => {
+          if (s.containers === null) s.containers = { collection: cols?.find((c) => c.id === cid) ?? null, folders: folders ?? [] }
+          s.collection = { name: s.collection?.name ?? s.containers.collection?.name ?? null, vars: collectionVariableInfos(vars) }
+        })
+      : null,
+  ])
+}
+
+/** The template scope of a send (globals < collection < environment), from its own layers only. */
+function scopeOf(s: SendScope): TemplateScope {
+  const env = s.environment ?? []
+  const globals = s.globals ?? []
+  const col = s.collectionId && s.containers?.collection ? s.collection : null
+  if (!col && env.length === 0 && globals.length === 0 && s.environmentName === null) return EMPTY_SCOPE
+  return layeredScope({
+    environmentName: s.environmentName,
+    environment: env,
+    collectionId: col ? s.collectionId : null,
+    collectionName: col?.name ?? null,
+    collection: col?.vars,
+    globals,
+  })
+}
+
+function scriptsOf(draft: RequestDraft, s: SendScope, folderId: string | null, event: ScriptEventName) {
   return scriptChain(event, {
-    collection,
-    folders: ctx.collectionId ? app.foldersOf(ctx.collectionId) : [],
-    folderId: ctx.folderId ?? null,
+    collection: s.containers?.collection ?? null,
+    folders: s.containers?.folders ?? [],
+    folderId,
     requestName: draft.name,
     requestEvents: draft.extras.scripts,
   })
@@ -159,11 +245,18 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   const runId = uuid()
   ctx.onRunId?.(runId)
   const cancelled = (): ExecuteOutcome => ({ ok: false, kind: 'cancelled', error: 'Request cancelled', scripts })
-  const activeEnvironmentId = app.activeEnvironment?.workspaceId === ctx.workspaceId ? app.activeEnvironmentId : null
-  const environmentId = ctx.environment !== undefined ? (ctx.environment?.id ?? null) : activeEnvironmentId
+  // Taken before the first await (see SendScope).
+  const send = snapshotScope(ctx)
+  const environmentId = send.environmentId
+  try {
+    await loadScope(send)
+  } catch (e) {
+    const what = send.environment === null ? `the environment "${send.environmentName ?? ''}"` : 'the variables'
+    return { ok: false, kind: 'failed', error: `Could not read ${what}: ${errorInfo(e).message}`, scripts }
+  }
 
   const runScripts = async (event: ScriptEventName, draft: RequestDraft, extra: Partial<RunScriptsInput> = {}) => {
-    const chain = scriptsOf(draft, ctx, event)
+    const chain = scriptsOf(draft, send, ctx.folderId ?? null, event)
     if (chain.length === 0) return null
     const result = await api().runScripts({
       runId,
@@ -191,11 +284,19 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     scripts.errors.push(...result.errors)
     scripts.scriptCount += chain.length
     if (result.nextRequest !== undefined) scripts.nextRequest = result.nextRequest
-    // Reload the scopes (and so the template scope) the scripts wrote to.
+    // Read back what the scripts wrote, into this send's own layers (by the ids taken at the start) and, when they are
+    // the ones on screen, into the app's.
+    const envChanged = !!result.environmentChanged && !!environmentId
+    const collectionChanged = !!result.collectionVariablesChanged && !!ctx.collectionId
+    const globalsChanged = !!result.globalsChanged
     await Promise.all([
-      result.environmentChanged ? app.refreshEnvVariables() : null,
-      result.collectionVariablesChanged && ctx.collectionId ? app.reloadCollectionVariables(ctx.collectionId) : null,
-      result.globalsChanged ? app.reloadGlobals() : null,
+      // After the test scripts nothing in this send reads the layers any more.
+      event === 'prerequest' && (envChanged || collectionChanged || globalsChanged)
+        ? loadScope(send, { environment: envChanged, collection: collectionChanged, globals: globalsChanged })
+        : null,
+      envChanged && app.activeEnvironmentId === environmentId ? app.refreshEnvVariables() : null,
+      collectionChanged && app.workspaceId === ctx.workspaceId ? app.reloadCollectionVariables(ctx.collectionId!) : null,
+      globalsChanged && app.workspaceId === ctx.workspaceId ? app.reloadGlobals() : null,
     ])
     return result
   }
@@ -218,21 +319,8 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   }
   if (ctx.wasCancelled?.()) return cancelled()
 
-  // 2. Templates, with what the scripts set. A pinned environment that is no longer the active one is read fresh here,
-  // after the pre-request scripts (which may have written to it).
-  let envLayer: { name: string | null; vars: VariableInfo[] } | undefined
-  if (environmentId !== activeEnvironmentId) {
-    try {
-      const vars = environmentId ? await api().listEnvironmentVariables(environmentId) : []
-      envLayer = {
-        name: ctx.environment?.name ?? null,
-        vars: vars.map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id })),
-      }
-    } catch (e) {
-      return { ok: false, kind: 'failed', error: `Could not read the environment "${ctx.environment?.name ?? ''}": ${errorInfo(e).message}`, scripts }
-    }
-  }
-  const scope = scopeWithScriptVariables(scopeStore.scopeFor(ctx.collectionId, envLayer), {
+  // 2. Templates, with what the scripts set (this send's own layers; see SendScope).
+  const scope = scopeWithScriptVariables(scopeOf(send), {
     collection: ctx.collectionId ? undefined : run.collectionVariables,
     data: run.iterationData,
     local: run.variables,

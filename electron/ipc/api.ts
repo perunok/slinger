@@ -390,6 +390,8 @@ export interface WindowControls {
   control(action: WindowAction): void
   /** CSS pixels within the page. */
   showAppMenu(x: number, y: number): void
+  /** The window's unsaved edits that would be lost on quit (titles); quitting asks first while there are any. */
+  setUnsavedChanges?(titles: string[]): void
 }
 
 const assistantEdit = z
@@ -841,6 +843,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     showAppMenu: async (...a) => {
       const [x, y] = parseArgs(z.tuple([pagePoint, pagePoint]), a)
       platform.window?.showAppMenu(x, y)
+    },
+    setUnsavedChanges: async (...a) => {
+      const [titles] = parseArgs(z.tuple([z.array(z.string().max(1000)).max(10_000)]), a)
+      platform.window?.setUnsavedChanges?.(titles)
     },
   }
 

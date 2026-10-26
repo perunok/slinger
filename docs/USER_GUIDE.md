@@ -116,7 +116,8 @@ In the **Collections** sidebar:
 This section is about HTTP requests; for requests to MCP servers see [MCP requests](#mcp-requests).
 
 Ctrl+T opens a new tab. The URL bar has the method selector, the URL, **Send** (Ctrl+Enter, becomes cancel while running) and
-**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as"). A URL typed without
+**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as"). Saving again while a save
+is still running (or holding Ctrl+S) does not save twice: one more save follows only if you changed something meanwhile. A URL typed without
 `http://` or `https://` is sent as http, as in Postman (`localhost:3000/users`, `api.example.com/x`, `//cdn.example.com/a`);
 with port 443 (`api.example.com:443/x`) as https. The same goes for the other address fields: MCP request URLs, OAuth 2.0
 endpoints, the cloud server address (`172.16.0.236:8088`) and OpenAPI document URLs.
@@ -1205,7 +1206,11 @@ Settings (Ctrl+, or the gear icon) lists its sections at the left: **Appearance*
 - **Wrap long lines in editors** (request body, response, code).
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
   changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
-  and erases what is already stored; response panes are never part of what is saved or restored either way.
+  and erases what is already stored; response panes are never part of what is saved or restored either way. A request's saved
+  examples are not part of its kept unsaved changes: they come back from the saved request. If an unsaved change cannot be
+  kept (a single tab's edits over 256 KB, or this setting off), quitting Slinger or closing its window asks first: **Quit and
+  discard N unsaved changes?** with **Discard and Quit** or **Cancel** (go back and save). Installing an update asks the same
+  before it restarts.
 
 **Scripts:** **Time limit per script** (default 5000 ms, 100-60000) and **Send the request even when a pre-request script
 fails** (off by default).
