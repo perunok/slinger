@@ -3,9 +3,36 @@
 What changed in each version of Slinger, newest first. Slinger shows these notes in the app (Help > Release Notes, and
 once after an update), and each GitHub release uses its version's section.
 
-## 0.27.0 — unreleased
+## 0.28.0 — unreleased
 
 - (filled in at release)
+
+## 0.27.0 — 2026-10-26
+
+### New
+- **Path variables**: `:name` segments in a URL (`/pets/:petId`) get a Path Variables table under Params and are filled in when sending, as in Postman. Requests imported from OpenAPI or Postman with path parameters now send correctly.
+- **Collection and folder authorization**: set auth once on a collection or folder; requests choose **Inherit auth from parent** (the default for new requests). Postman and OpenAPI imports keep auth on the collection/folder instead of copying it into every request. Syncs with Slinger Cloud 0.5.0 or newer.
+- **Release notes in the app**: Help > Release Notes (also in About and Ctrl+K), a What's new dialog once after each update, and the update dialog shows the new version's notes before you install.
+- **Right-click menus** in History, the environments list, the response body, response headers and cookies, collection versions and workflow nodes; the sidebar and request tabs gain Copy URL, Copy as cURL and Close to the right. Text fields get the usual Cut / Copy / Paste menu.
+- **Maximum response size** (Settings > Requests, default 50 MB): a larger response shows its status and headers with **Send and download to file**, which streams the body straight to disk.
+
+### Improved
+- AI assistants (MCP) can no longer send your saved credentials or secrets anywhere you did not set up: a request that carries them can only be sent as you saved it, and secret values are removed from everything returned to the assistant.
+- Scripts in a collection you imported or received through sync ask once before they run. Collections you already have are trusted.
+- An OAuth 2.0 token is tied to the host it was first sent to; sending it to another host asks you first.
+- Quitting asks before discarding unsaved changes that cannot be restored next time; saved examples no longer make a draft too large to keep.
+- Version restore and Postman re-import update the existing requests instead of replacing them, so open tabs, workflows and history links keep working. Only the last 10 automatic safety versions per collection are kept.
+- Environment variables detect changes made elsewhere (another window or device) instead of overwriting them.
+
+### Fixed
+- A new device could miss folders (and everything in them) when it first downloaded a cloud workspace. Changes that cannot be applied yet are now kept and retried instead of being skipped.
+- Cancelling or keeping a waiting change while an upload was running could leave this device and the cloud out of step.
+- Open tabs and unsaved drafts could be lost when a workspace was slow to load.
+- A send that was still running when you switched workspace or environment could use the other one's variables.
+- Pressing Ctrl+S twice quickly showed a false "changed elsewhere" conflict.
+- Error messages and History no longer contain secret values from the URL or headers.
+- The updater checks the downloaded installer again right before installing it.
+- Arrow keys in right-click menus with separators could highlight a different item than Enter ran.
 
 ## 0.26.0 — 2026-10-26
 
