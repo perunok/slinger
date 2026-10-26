@@ -156,7 +156,7 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: signed/app
           parameters: |
-            version: ${{ toJSON(steps.version.outputs.version) }}
+            productVersion: ${{ toJSON(format('{0}.0', steps.version.outputs.version)) }}
       - name: Put the signed program back
         if: env.SIGN == 'true'
         run: cp signed/app/Slinger.exe release/win-unpacked/Slinger.exe
