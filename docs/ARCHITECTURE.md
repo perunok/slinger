@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0016_collection_openapi.sql
+  migrations/        0001_init.sql ... 0017_sync_deferred.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -224,6 +224,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
 | `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
 | `0016_collection_openapi` | `collection_openapi`: the OpenAPI document a collection is linked to on this device (source, text, hash, title, versions, folder mode, operation count); local only, see [OpenAPI](#openapi) |
+| `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -420,6 +421,8 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   the dirty entities the server would have cascaded with it (`serverCascades`, the same rule the count uses to hide them); a
   container created here also reverts the dirty entities now inside it (a cloud item moved into it goes back to its base
   place). Renderer: `syncStore.discardItems`, buttons in `SyncActivityDialog.svelte` (per row and Cancel all).
+  `discardPendingChanges`, `discardPendingItems` and `setSyncKept` first wait until no cycle runs for the workspace
+  (`SyncService.idle`): a push answer arriving after a discard would record the uploaded copy as agreed and undo it.
   **Keep on this device**: table `sync_kept` (migration 0015, local only) lists entities the user holds back
   (`setSyncKept(workspaceId, items, kept)`, only entities in `sync_dirty`; `listSyncKept` lists them like `listSyncPending`).
   `kept.ts` `heldKeys` adds what depends on them (fixpoint): a live dirty entity whose current parent is held and has no cloud
@@ -450,6 +453,15 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   dependency order, chunks <= 200 ops / 700 KB) -> push. Push rejections branch on the v2 `reason`
   (`version_mismatch` merges the returned `current_payload` and pushes again without a pull; `not_found` pulls the tombstone;
   `duplicate_key`, `immutable`, `invalid`/`too_large`, `id_in_use`, `read_only` as in design section 20).
+- **Deferred remote changes** (`deferred.ts`, table `sync_deferred`, migration 0017): every pulled op and snapshot entity is
+  applied by `applyRemoteChange` on its own savepoint. An upsert whose parent is not on this device (`ApplyCtx.missingParent`,
+  set by `apply.ts`; e.g. a nested folder from a server that orders snapshot folders by id) or that throws is kept there instead
+  of being lost (the checkpoint / cursor moves on with the page). Each snapshot/pull page first retries the failed ones
+  (`retryFailed`), then applies its own changes, then retries the waiting ones in passes while they make progress
+  (`retryWaiting`). A later change of the entity replaces the kept one; a failure is noted once in `sync_conflicts`
+  (`auto_resolved`, kind `rejected`), a change still waiting for its parent after a complete download likewise
+  (`noteStuckDeferred`). Removed by `detachSync`. A pull page that says `has_more` without advancing the checkpoint fails the
+  cycle (no endless loop). A keychain delete that fails after commit (`rows.ts` `SideEffect.entity`) is noted the same way.
 - **Conflicts** are detected locally (`apply.ts`, per field group) and stored in `sync_conflicts`; a conflicted entity is frozen
   (not pushed) until resolved (`conflicts.ts`: keep local / keep remote / merge per group / duplicate).
 - **Scheduling** (`scheduler.ts`): 5 s dirty poll + 1.5 s debounce, full cycle every 60 s focused / 5 min blurred, on start, focus,
@@ -783,8 +795,14 @@ Semver is strict 2.0.0 (`services/semver.ts`): optional prerelease, no build met
 version label is unique per collection among live rows (`invalid_input`, `reason: 'duplicate_version'`); a SQLite trigger
 aborts any UPDATE of the content columns (only `deleted` and the author columns may change). `listCollectionVersions` sorts newest first by semver precedence (parsed
 major/minor/patch/prerelease columns), not by creation time. Restore modes: `copy` creates a new collection named
-`"<name> (v<version>)"`; `replace` soft-deletes the live folders/requests and recreates the snapshot in one transaction with
-**new ids** (the renderer refetches and closes affected tabs). Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
+`"<name> (v<version>)"`; `replace` writes the snapshot over the live content in one transaction, **in place**
+(`services/collectionContent.ts` `replaceCollectionContent`, mode `id`): rows of the collection with a snapshot id are updated or
+un-deleted (untouched when equal), live rows the snapshot lacks are soft-deleted, snapshot items whose id is not in this collection
+(a copy, a snapshot imported from a file) get new ids. Ids stay stable for workflow nodes, history, open tabs and synced peers
+(an update instead of delete + create). The renderer refetches; `versions/restoreRemap.ts` `mapRestored` maps kept ids to
+themselves and vanished ones by path. Automatic safety versions (`createAutomaticVersion`, notes `Automatic snapshot before …`,
+taken by the Postman re-import and OpenAPI updates) are capped at `MAX_AUTOMATIC_VERSIONS` = 10 per collection: older automatic
+ones are soft-deleted (a synced delete; recognised by the notes, so every device agrees), user-made versions never. Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
 runs in the renderer on snapshots.
 
 **Who created a version.** `CollectionVersion.createdBy = {id: string | null, name: string} | null` (migration 0012). A version made
@@ -810,15 +828,17 @@ Nothing reaches main except those two existing IPC calls.
 
 **Re-import (replace).** `replaceCollectionFromPostman(collectionId, fileContents, sourceName?)` (`services/postmanImport.ts`)
 reuses the importer's parser (`parsePostmanCollection`), then in one transaction: creates an automatic safety version (the next
-patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`), soft-deletes the live
-folders/requests (so the sync dirty-set triggers propagate the deletions), inserts the file's tree with new ids in file order, and
+patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`; at most 10 kept), writes
+the file's tree over the live content in place (`replaceCollectionContent` mode `path`: a folder matches a live folder of the same
+name under the matched parent, a request a live request of the same name and method in the matched folder, then the same name;
+matched rows keep their id, the rest are inserted, unmatched live rows soft-deleted; the sync dirty-set triggers propagate it), and
 updates the collection's scripts, description, collection variables (the file's `variable` array, `shared/postmanVariables.ts`,
 also used by the import and the exporter) and `source_postman_id`. The collection keeps its id, name and versions; any
 failure rolls everything back. The renderer (`ImportPostmanDialog`, `importexport/reimport.ts`) matches the file to live
 collections of the workspace by `_postman_id` first (a collection's own id, as Slinger exports use it, or its local
-`source_postman_id`), else by trimmed case-insensitive name. After a replace it maps old ids to new ones with
-`versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs at their successor (`tabsStore.followReplaced`); dirty
-tabs are detached by the normal reconcile. "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
+`source_postman_id`), else by trimmed case-insensitive name. After a replace it maps vanished ids to new ones with
+`versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs of a vanished request at their successor
+(`tabsStore.followReplaced`); tabs of kept requests are reconciled as usual (clean ones reload, dirty ones keep their edits). "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
 record the source id, so the next re-import targets the original. When the file carries `info._slinger`, the replace also calls
 `restoreVersionHistory` in the same transaction (after the safety version), adding the file's versions next to the existing ones
 with the duplicate/clash rules below; the result's `versionHistory` is shown as a toast.

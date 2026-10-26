@@ -370,9 +370,9 @@
   }
 
   /**
-   * Replaces the collection in place (the backend snapshots it first). Every folder/request gets a new id, so
-   * the old layout is mapped onto the new one by path (as after a version restore): expanded folders stay open
-   * and clean tabs follow their request; dirty tabs are kept detached by the reconcile, never overwritten.
+   * Replaces the collection in place (the backend snapshots it first). Folders/requests that match by name keep their
+   * ids; for the others the old layout is mapped onto the new one by path (as after a version restore): expanded
+   * folders stay open and clean tabs follow their request; dirty tabs are kept detached by the reconcile, never overwritten.
    */
   async function replaceExisting(collectionId: string, name: string): Promise<{ summary: [string, string]; history?: VersionHistoryImportResult }> {
     const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }

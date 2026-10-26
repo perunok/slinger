@@ -11,8 +11,8 @@ import { nowSeconds } from '../lib/text'
 import { requireCollection } from '../repositories/common'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
 import { CollectionVariableRepository } from '../repositories/variables'
-import { createCollectionVersion, listCollectionVersions } from '../services/collectionVersions'
-import { nextPatchVersion, requestFromPostmanItem } from '../services/postmanImport'
+import { createAutomaticVersion } from '../services/collectionVersions'
+import { requestFromPostmanItem } from '../services/postmanImport'
 import type {
   CollectionVersion, CollectionVersionAuthor, OpenApiFolderMode, OpenApiLink, OpenApiSource, OpenApiUpdateInput, OpenApiUpdatePlan, OpenApiUpdateResult,
 } from '../../shared/types'
@@ -146,11 +146,7 @@ export function applyUpdate(db: Db, service: OpenApiService, input: OpenApiUpdat
     const changesSomething = writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null
     let safetyVersion: CollectionVersion | null = null
     if (changesSomething) {
-      safetyVersion = createCollectionVersion(db, {
-        collectionId: plan.collectionId,
-        version: nextPatchVersion(listCollectionVersions(db, plan.collectionId).map((v) => v.version)),
-        notes: 'Automatic snapshot before updating from the OpenAPI document',
-      }, author)
+      safetyVersion = createAutomaticVersion(db, plan.collectionId, 'updating from the OpenAPI document', author)
     }
     const folderRepo = new FolderRepository(db)
     const requestRepo = new RequestRepository(db)

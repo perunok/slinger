@@ -11,11 +11,10 @@ import { openApiToPostman } from '../../../shared/openapi/toCollection'
 import { createResponseValidator, type ResponseValidator } from '../../../shared/openapi/validate'
 import type { OpenApiFolderMode, OpenApiLink, OpenApiPreview, OpenApiSource, OpenApiUpdatePlan } from '../../../shared/types'
 import { generate, planChanges, planStamp, writesFor, type Generated, type PlanInput } from '../../../shared/openapi/update'
-import { suggestBumps } from '../../lib/semver'
 import { importPostman, requestFromItem } from './postmanImport'
 import { addFolder, addRequest, must, touch, type MockState } from './store'
 import { clone, fail, nowSec, uuid } from './util'
-import { addVersion } from './versions'
+import { addAutomaticVersion } from './versions'
 
 type OpenApiMockApi = Pick<
   SlingerIpcApi,
@@ -182,8 +181,7 @@ export function createOpenApiApi(state: MockState, links: Map<string, MockOpenAp
         fail('invalid_input', (e as Error).message)
       }
       const changes = writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null
-      const versions = state.versions.filter((v) => v.collectionId === collection.id).map((v) => v.version)
-      const safety = changes ? addVersion(state, collection.id, suggestBumps(versions).patch, 'Automatic snapshot before updating from the OpenAPI document') : null
+      const safety = changes ? addAutomaticVersion(state, collection.id, 'updating from the OpenAPI document') : null
       const folderIds = new Map<string, string>()
       for (const f of pi.folders) if (f.parentFolderId === null && !folderIds.has(f.name)) folderIds.set(f.name, f.id)
       for (const a of writes.add) {

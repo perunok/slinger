@@ -135,11 +135,16 @@ describe('change capture triggers', () => {
     expect(dirtyOf('collection_version')).toEqual([ver.id])
     clear()
 
+    // replace works in place: unchanged rows are not touched, changed / re-created ones are captured under their own id
     await env.api.restoreCollectionVersion(ver.id, 'replace')
-    expect(dirtyOf('folder')).toContain(f.id) // old row soft-deleted
-    expect(dirtyOf('request')).toContain(r.id)
-    expect(dirtyOf('folder')).toHaveLength(2) // + the re-created copy
-    expect(dirtyOf('request')).toHaveLength(2)
+    expect(dirtyOf('folder')).toEqual([])
+    expect(dirtyOf('request')).toEqual([])
+    await env.api.renameRequest(r.id, 'R2')
+    await env.api.deleteFolder(f.id)
+    clear()
+    await env.api.restoreCollectionVersion(ver.id, 'replace')
+    expect(dirtyOf('folder')).toEqual([f.id]) // un-deleted, same id
+    expect(dirtyOf('request')).toEqual([r.id])
     clear()
 
     const copy = await env.api.restoreCollectionVersion(ver.id, 'copy')

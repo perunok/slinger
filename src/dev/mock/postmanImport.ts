@@ -1,9 +1,8 @@
-import type { Collection, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../../shared/types'
-import { suggestBumps } from '../../lib/semver'
+import type { ApiFolder, ApiRequest, Collection, PostmanImportOptions, PostmanImportResult, PostmanReplaceResult } from '../../../shared/types'
 import { stripOAuth2Tokens, stripOAuth2TokensFromItem } from '../../../shared/oauth2'
 import { addCollection, addFolder, addRequest, must, removeCollectionContents, touch, type MockState } from './store'
 import { fail } from './util'
-import { addVersion } from './versions'
+import { addAutomaticVersion } from './versions'
 import { countScripts } from '../../lib/scripts'
 import { MCP_METHOD } from '../../lib/mcpRequest'
 import { columnsFromPostman } from '../../lib/description'
@@ -112,14 +111,48 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   return { collection, ...tree, variableCount: file.variables.length, ...(versionHistory ? { versionHistory } : {}) }
 }
 
+/**
+ * Mirror of electron/services/collectionContent.ts (mode `path`): folders that match a live folder by name under the
+ * matched parent, and requests that match by name and method (then name alone) in the matched folder, take over the
+ * existing id (version bumped when the content changes).
+ */
+function keepMatchingIds(s: MockState, collectionId: string, tree: { folders: ApiFolder[]; requests: ApiRequest[] }): void {
+  const liveFolders = s.folders.filter((f) => f.collectionId === collectionId).sort((a, b) => a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : 1))
+  const liveRequests = s.requests.filter((r) => r.collectionId === collectionId).sort((a, b) => a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : 1))
+  const folderMap = new Map<string, string>()
+  const used = new Set<string>()
+  for (const f of tree.folders) {
+    // build() emits parents before children
+    const parent = f.parentFolderId === null ? null : (folderMap.get(f.parentFolderId) ?? f.parentFolderId)
+    f.parentFolderId = parent
+    const old = liveFolders.find((e) => !used.has(e.id) && e.parentFolderId === parent && e.name === f.name)
+    if (!old) continue
+    used.add(old.id)
+    folderMap.set(f.id, old.id)
+    const same = old.sortOrder === f.sortOrder && old.scriptsJson === f.scriptsJson && old.description === f.description && old.descriptionType === f.descriptionType
+    Object.assign(f, { id: old.id, createdAt: old.createdAt, version: same ? old.version : old.version + 1, updatedAt: same ? old.updatedAt : f.updatedAt })
+  }
+  for (const r of tree.requests) if (r.folderId !== null) r.folderId = folderMap.get(r.folderId) ?? r.folderId
+  for (const strict of [true, false]) {
+    for (const r of tree.requests) {
+      if (liveRequests.some((e) => e.id === r.id)) continue
+      const old = liveRequests.find((e) => !used.has(e.id) && e.folderId === r.folderId && e.name === r.name && (!strict || e.method === r.method))
+      if (!old) continue
+      used.add(old.id)
+      const same = old.method === r.method && old.url === r.url && old.documentJson === r.documentJson && old.sortOrder === r.sortOrder
+      Object.assign(r, { id: old.id, createdAt: old.createdAt, version: same ? old.version : old.version + 1, updatedAt: same ? old.updatedAt : r.updatedAt })
+    }
+  }
+}
+
 /** Mirror of the main-process replace: safety version, then the collection's content is swapped (id kept). */
 export function replaceFromPostman(s: MockState, collectionId: string, fileContents: string, sourceName?: string | null): PostmanReplaceResult {
   const collection = must(s.collections, collectionId, 'Collection')
   const file = parseFile(fileContents)
   const tree = build(s, collection, file) // validates before anything changes
-  const versions = s.versions.filter((v) => v.collectionId === collection.id).map((v) => v.version)
   const label = sourceName?.trim() || 'a Postman file'
-  const row = addVersion(s, collection.id, suggestBumps(versions).patch, `Automatic snapshot before re-import from ${label}`)
+  const row = addAutomaticVersion(s, collection.id, `re-import from ${label}`)
+  keepMatchingIds(s, collection.id, tree)
   removeCollectionContents(s, collection.id)
   s.folders.push(...tree.folders)
   s.requests.push(...tree.requests)

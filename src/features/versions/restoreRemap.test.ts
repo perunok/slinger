@@ -37,6 +37,15 @@ describe('mapRestored', () => {
     expect(m.folders.size).toBe(0)
     expect(m.requests.size).toBe(0)
   })
+
+  it('an id that survived the replace maps to itself, even when it was renamed or moved', () => {
+    const m = mapRestored(
+      { folders: [f('f1', null, 'Old')], requests: [r('r1', 'f1', 'A'), r('r2', null, 'B')] },
+      { folders: [f('f1', null, 'New')], requests: [r('r1', null, 'A2'), r('m2', null, 'B')] },
+    )
+    expect(Object.fromEntries(m.folders)).toEqual({ f1: 'f1' })
+    expect(Object.fromEntries(m.requests)).toEqual({ r1: 'r1', r2: 'm2' })
+  })
 })
 
 describe('remapExpandedKeys', () => {

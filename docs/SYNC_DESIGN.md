@@ -873,6 +873,20 @@ Other differences
 - The scheduler also announces local edits (a `status` event when the pending/conflict counts change, at most once per second,
   also with auto sync off), so the renderer never polls.
 
+Remote changes that cannot be applied (desktop 0.27, migration 0017)
+- The snapshot sends parents before children. Older servers ordered folders by id, so a folder nested under a folder with a
+  larger id came first; the desktop skipped it (and everything inside it) and moved the cursor on, losing it for good. Servers
+  now order folders by depth from the collection root, then id (keyset cursor `"<depth>:<id>"`, opaque to the client; a folder
+  cursor without the depth restarts the folders). The fake server does the same (`legacyFolderOrder` simulates the old order),
+  and `wireContract.ts` `checkSnapshotOrderContract` runs against both.
+- The desktop never drops a remote change: an upsert whose parent is missing, or any change that fails to apply, is kept in
+  `sync_deferred` and applied again after every snapshot page and pull page (failed ones before the page, waiting ones after it,
+  in passes) until it succeeds or a newer change of the same entity (log order) replaces it. A failure is noted once in the
+  conflict history (`auto_resolved`); a change still waiting for its parent after a complete download likewise. Unlink drops them.
+- A pull page with `has_more: true` whose checkpoint does not advance fails the cycle (backoff) instead of looping.
+- Discarding or keeping pending changes waits until the workspace's running cycle ends: a push answer arriving after the
+  discard would otherwise record the uploaded copy as agreed while the row shows the old content.
+
 Server issues found while integrating (both fixed server-side in slinger-admin 9ce4b08, verified while writing section 21)
 - A request/folder upsert naming a folder that does not exist was rejected `invalid`, not `not_found`. Fixed: a folder missing
   from the workspace is `not_found`; one that exists in another collection of the workspace is still `invalid`. The desktop keeps

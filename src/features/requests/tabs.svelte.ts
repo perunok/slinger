@@ -542,7 +542,7 @@ class TabsStore {
     for (const t of this.tabs) {
       if (!t.requestId || t.example || t.overview || t.dirty) continue
       const next = idMap.get(t.requestId)
-      if (!next) continue
+      if (!next || next === t.requestId) continue // kept its id: the reconcile reloads changed content
       t.requestId = next
       t.baseVersion = -1 // forces a reload from the new request
       t.serverKey = ''

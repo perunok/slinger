@@ -237,7 +237,7 @@ describe('collection versions', () => {
     expect((await api.listCollectionVersions(col.id)).map((v) => v.version)).toEqual(['1.10.0', '1.10.0-beta.1', '1.0.0'])
   })
 
-  it('restores with replace and copy (both give fresh ids, like the real backend)', async () => {
+  it('restores with replace (ids kept, in place) and copy (fresh ids), like the real backend', async () => {
     const { ws, col } = await setup()
     const f = await api.createFolder({ workspaceId: ws.id, collectionId: col.id, name: 'F' })
     const r = await mkRequest(ws.id, col.id, 'orig', f.id)
@@ -257,8 +257,8 @@ describe('collection versions', () => {
     await api.restoreCollectionVersion(v.id, 'replace')
     const live = await api.listRequests(col.id)
     expect(live.map((x) => x.name)).toEqual(['orig'])
-    expect(live[0].id).not.toBe(r.id)
-    expect((await api.listFolders(col.id))[0].id).not.toBe(f.id)
+    expect(live[0].id).toBe(r.id)
+    expect((await api.listFolders(col.id))[0].id).toBe(f.id)
     expect((await api.listFolders(col.id))[0].name).toBe('F')
 
     const detail = await api.getCollectionVersion(v.id)

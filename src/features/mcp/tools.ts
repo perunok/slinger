@@ -751,7 +751,7 @@ const tools: Impls = {
     const c = await findCollection(a.collection_id)
     const v = pickVersion(await versionsOf(c), c, a.version)
     const inWindow = c.workspaceId === app.workspaceId
-    // A replace gives every folder/request a new id: remember the layout and the clean open tabs to carry them over.
+    // A replace gives vanished folders/requests' successors new ids: remember the layout and the clean open tabs to carry them over.
     const before = { folders: app.foldersOf(c.id).slice(), requests: app.requestsOf(c.id).slice() }
     const openIds = inWindow ? tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId)).map((t) => t.requestId!) : []
     const result = await api().restoreCollectionVersion(v.id, a.mode)
@@ -760,6 +760,7 @@ const tools: Impls = {
       const map = mapRestored(before, { folders: app.foldersOf(c.id), requests: app.requestsOf(c.id) })
       expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
       for (const oldId of openIds) {
+        if (map.requests.get(oldId) === oldId) continue // kept its id: its tab is still open
         const req = app.requestById(map.requests.get(oldId))
         if (req) tabsStore.openRequest(req)
       }

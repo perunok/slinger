@@ -152,7 +152,7 @@ describe('listCollectionVersions ordering', () => {
 })
 
 describe('restoreCollectionVersion', () => {
-  it("'replace' swaps the live content for the snapshot, with new ids, in one go", async () => {
+  it("'replace' swaps the live content for the snapshot in place, keeping ids, in one go", async () => {
     const { a, b, r1, r2 } = await populate()
     const v = await create('1.0.0')
 
@@ -161,6 +161,7 @@ describe('restoreCollectionVersion', () => {
     await env.api.deleteFolder(a.id)
     const extra = await env.api.createRequest({ workspaceId: wsId, collectionId: colId, name: 'extra', method: 'GET', url: 'http://extra', documentJson: DOC })
     const colBefore = (await env.api.listCollections(wsId)).find((c) => c.id === colId)!
+    const r2Before = env.core.db.prepare('SELECT version FROM requests WHERE id = ?').get(r2.id) as { version: number }
 
     const restored = await env.api.restoreCollectionVersion(v.id, 'replace')
     expect(restored.id).toBe(colId)
@@ -168,24 +169,38 @@ describe('restoreCollectionVersion', () => {
 
     const folders = await env.api.listFolders(colId)
     const requests = await env.api.listRequests(colId)
-    expect(folders.map((f) => f.name).sort()).toEqual(['a', 'b'])
-    expect(requests.map((r) => r.name).sort()).toEqual(['deep', 'root'])
-    const fa = folders.find((f) => f.name === 'a')!
-    const fb = folders.find((f) => f.name === 'b')!
-    expect(fa.parentFolderId).toBeNull()
-    expect(fb.parentFolderId).toBe(fa.id)
-    expect(requests.find((r) => r.name === 'deep')).toMatchObject({ folderId: fb.id, method: 'POST', url: 'http://deep' })
-    expect(requests.find((r) => r.name === 'root')).toMatchObject({ folderId: null, method: 'GET' })
-
-    // brand-new ids and fresh version counters; nothing from before survives
-    const oldIds = new Set([a.id, b.id, r1.id, r2.id, extra.id])
-    for (const row of [...folders, ...requests]) {
-      expect(oldIds.has(row.id)).toBe(false)
-      expect(row.version).toBe(1)
-    }
-    // the old rows are soft-deleted (and their versions bumped), not gone
+    // the same rows come back (renamed back / un-deleted), so workflows, history and open tabs keep working
+    expect(folders.map((f) => f.id).sort()).toEqual([a.id, b.id].sort())
+    expect(requests.map((r) => r.id).sort()).toEqual([r1.id, r2.id].sort())
+    expect(folders.find((f) => f.id === a.id)).toMatchObject({ name: 'a', parentFolderId: null })
+    expect(folders.find((f) => f.id === b.id)).toMatchObject({ name: 'b', parentFolderId: a.id })
+    expect(requests.find((r) => r.id === r2.id)).toMatchObject({ name: 'deep', folderId: b.id, method: 'POST', url: 'http://deep' })
+    expect(requests.find((r) => r.id === r1.id)).toMatchObject({ name: 'root', folderId: null, method: 'GET' })
+    // rows that change are bumped once (optimistic concurrency); what the snapshot does not have is soft-deleted
+    expect((env.core.db.prepare('SELECT version FROM requests WHERE id = ?').get(r2.id) as { version: number }).version).toBe(r2Before.version + 1)
     const old = env.core.db.prepare('SELECT deleted, version FROM requests WHERE id = ?').get(extra.id) as { deleted: number; version: number }
     expect(old).toEqual({ deleted: 1, version: 2 })
+  })
+
+  it("'replace' leaves unchanged rows alone and gives a workflow's request node its request back", async () => {
+    const { r1, r2 } = await populate()
+    const v = await create('1.0.0')
+    const before = env.core.db.prepare('SELECT id, version, updated_at FROM requests WHERE collection_id = ? ORDER BY id').all(colId)
+    await env.api.restoreCollectionVersion(v.id, 'replace')
+    expect(env.core.db.prepare('SELECT id, version, updated_at FROM requests WHERE collection_id = ? ORDER BY id').all(colId)).toEqual(before)
+    await env.api.deleteRequest(r1.id)
+    await env.api.restoreCollectionVersion(v.id, 'replace')
+    expect((await env.api.listRequests(colId)).map((r) => r.id).sort()).toEqual([r1.id, r2.id].sort())
+  })
+
+  it("'replace' with a snapshot from another collection (imported file) creates new rows", async () => {
+    const { r1 } = await populate()
+    const v = await create('1.0.0')
+    const copy = await env.api.restoreCollectionVersion(v.id, 'copy')
+    const copied = await env.api.listRequests(copy.id)
+    expect(copied.map((r) => r.id)).not.toContain(r1.id)
+    expect(copied).toHaveLength(2)
+    expect((await env.api.listRequests(colId)).map((r) => r.id)).toContain(r1.id) // the source is untouched
   })
 
   it("'replace' is atomic: a corrupt snapshot leaves the collection untouched", async () => {

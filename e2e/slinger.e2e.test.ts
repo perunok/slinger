@@ -755,8 +755,8 @@ describe('collection versions', () => {
     await page.getByRole('button', { name: 'Cancel' }).click()
   })
 
-  it('restores 1.0.0 in place: the folder stays expanded and the replaced Echo tab can be reopened', async () => {
-    // Open Echo (clean) before restoring, so there is a tab the restore has to replace.
+  it('restores 1.0.0 in place: the folder stays expanded and the open Echo tab stays open (ids are kept)', async () => {
+    // Open Echo (clean) before restoring: the restore keeps its id, so the tab must survive.
     await versionsDialog().getByRole('button', { name: 'Close dialog' }).click()
     await item(/Echo$/).click()
     await page.getByRole('tab', { name: /Echo/ }).waitFor()
@@ -772,15 +772,13 @@ describe('collection versions', () => {
       return (await window.slinger.listRequests(col.id)).map((r) => r.name)
     })).includes('Added Later')).toBe(false)
     if (await versionsDialog().count()) await versionsDialog().getByRole('button', { name: 'Close dialog' }).click()
-    // The folder keeps its expanded state (ids differ, but the folder is matched by name/path):
-    // the restored request is visible without clicking the folder open again.
+    // The folder keeps its id and its expanded state: the restored request is visible without opening the folder again.
     await item(/Echo$/).waitFor()
     expect(await item(/Added Later/).count()).toBe(0)
-    // Replace-restore recreates requests with new ids, so the old (clean) Echo tab was closed;
-    // the app offers to reopen the restored request of the same name.
-    expect(await page.getByRole('tab', { name: /Echo/ }).count()).toBe(0)
-    await page.getByRole('button', { name: 'Reopen restored request' }).click()
+    // Replace-restore keeps request ids, so the clean Echo tab stays open (nothing to reopen).
     await page.getByRole('tab', { name: /Echo/ }).waitFor()
+    expect(await page.getByRole('button', { name: 'Reopen restored request' }).count()).toBe(0)
+    await page.getByRole('tab', { name: /Echo/ }).click()
     await send()
     expect(await response().getByTestId('status-chip').innerText()).toContain('200')
     expect(target.requests.at(-1)!.headers.authorization).toBe(`Bearer ${SECRET}`)

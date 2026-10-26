@@ -110,8 +110,8 @@
   async function restore(mode: RestoreCollectionVersionMode) {
     if (!selected) return
     const v = selected
-    // A replace gives every folder/request a new id. Remember the layout and the clean open tabs
-    // (reloading closes tabs whose request id vanished) so both can be carried over by name/path.
+    // A replace keeps the ids of folders/requests that are in the version and gives the rest new ids. Remember the
+    // layout and the clean open tabs (reloading closes tabs whose request id vanished) so both can be carried over.
     const before = { folders: app.foldersOf(collectionId).slice(), requests: app.requestsOf(collectionId).slice() }
     const cleanTabs = tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId))
     const wasActive = tabsStore.active?.example ? null : (tabsStore.active?.requestId ?? null)
@@ -130,7 +130,8 @@
   ) {
     const map = mapRestored(before, { folders: app.foldersOf(collectionId), requests: app.requestsOf(collectionId) })
     expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
-    const reopen = [...openedNames.keys()].map((oldId) => ({ oldId, newId: map.requests.get(oldId) })).filter((x) => x.newId)
+    // Requests that kept their id stay open (the reconcile reloads them); only vanished ones are offered again.
+    const reopen = [...openedNames.keys()].map((oldId) => ({ oldId, newId: map.requests.get(oldId) })).filter((x) => x.newId && x.newId !== x.oldId)
     if (reopen.length === 0) return
     const names = reopen.map((x) => openedNames.get(x.oldId)).join(', ')
     toast.offer(

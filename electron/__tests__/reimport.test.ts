@@ -152,6 +152,42 @@ describe('replaceCollectionFromPostman', () => {
     await expect((env.api.replaceCollectionFromPostman as (...a: unknown[]) => Promise<unknown>)(wsId, 42)).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
+  it('keeps the ids of folders and requests that are still in the file (matched by name and method)', async () => {
+    const { collection, folders, requests } = await env.api.importPostmanCollection(wsId, JSON.stringify(v1))
+    const byName = (n: string) => requests.find((r) => r.name === n)!.id
+    const v1b = structuredClone(v1)
+    // the file renames nothing, edits one URL, adds a request and drops "Health"
+    v1b.item[0]!.item![0]!.request!.url = 'https://x/orders?page=1'
+    ;(v1b.item[0]!.item as unknown[]).push({ name: 'Create order', request: { method: 'POST', url: 'https://x/orders' } })
+    v1b.item.splice(1, 1)
+    const res = await env.api.replaceCollectionFromPostman(collection.id, JSON.stringify(v1b), 'v1b.json')
+    expect(res.folders.map((f) => f.id)).toEqual([folders[0]!.id])
+    const list = res.requests.find((r) => r.name === 'List orders')!
+    expect(list).toMatchObject({ id: byName('List orders'), url: 'https://x/orders?page=1' })
+    expect(res.requests.find((r) => r.name === 'Create order')!.id).not.toBe(byName('Health'))
+    expect(live('requests', collection.id).find((r) => r.id === byName('Health'))!.deleted).toBe(1)
+    // restoring the safety version brings "Health" back under its old id
+    await env.api.restoreCollectionVersion(res.safetyVersion.id, 'replace')
+    expect((await env.api.listRequests(collection.id)).map((r) => r.id).sort()).toEqual(requests.map((r) => r.id).sort())
+  })
+
+  it('keeps only the last 10 automatic safety versions; versions made by the user are never pruned', async () => {
+    const { collection } = await env.api.importPostmanCollection(wsId, JSON.stringify(v1))
+    await env.api.createCollectionVersion({ collectionId: collection.id, version: '0.0.1', notes: 'mine' })
+    const safety: string[] = []
+    for (let i = 0; i < 13; i++) {
+      safety.push((await env.api.replaceCollectionFromPostman(collection.id, JSON.stringify(i % 2 ? v1 : v2), `f${i}.json`)).safetyVersion.id)
+    }
+    const listed = await env.api.listCollectionVersions(collection.id)
+    expect(listed.filter((v) => v.notes === 'mine')).toHaveLength(1)
+    const automatic = listed.filter((v) => v.notes?.startsWith('Automatic snapshot before '))
+    expect(automatic).toHaveLength(10)
+    expect(automatic.map((v) => v.id).sort()).toEqual(safety.slice(3).sort())
+    // pruned ones are hidden (soft delete), not removed
+    const hidden = env.core.db.prepare('SELECT deleted FROM collection_versions WHERE id = ?').get(safety[0]) as { deleted: number }
+    expect(hidden.deleted).toBe(1)
+  })
+
   it('keeps the recorded source id when the new file has none', async () => {
     const { collection } = await env.api.importPostmanCollection(wsId, JSON.stringify(v1))
     const res = await env.api.replaceCollectionFromPostman(collection.id, JSON.stringify({ ...v2, info: { name: 'Shop API' } }))

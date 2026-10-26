@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
 import { mulberry32, randomOp } from '../sync/fuzzKit'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
-import { checkLocalOnlyContract, checkRejectionContract, checkVersionAuthorsContract } from '../sync/wireContract'
+import { checkLocalOnlyContract, checkRejectionContract, checkSnapshotOrderContract, checkVersionAuthorsContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
 
 const enabled = !!process.env.SLINGER_SYNC_IT_SERVER_DIR
@@ -293,6 +293,16 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
         await cloud.createUser(admin, email, PASSWORD)
         await cloud.addMember(wsId, ownerToken, email, PASSWORD, 'viewer')
         return cloud.login(email, PASSWORD)
+      },
+    })
+  })
+
+  it('sends snapshot folders parent-first exactly as the fake server does', async () => {
+    await checkSnapshotOrderContract({
+      baseUrl: cloud.baseUrl,
+      ownerToken,
+      viewerToken: async () => {
+        throw new Error('not needed')
       },
     })
   })

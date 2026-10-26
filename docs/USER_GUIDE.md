@@ -869,7 +869,9 @@ variables restores the collection without any).
 - **Compare:** pick a version and compare it against another version or the current collection to see added, removed and changed
   requests and folders. The two sides are headed with their version, author and date.
 - **Restore:** *as a new collection* named `<name> (vX.Y.Z)` (the live collection is untouched), or *replace the live collection*
-  (asks for confirmation; suggests creating a version first). Replacing gives requests new ids, so open tabs for them are closed.
+  (asks for confirmation; suggests creating a version first). Replacing updates the requests and folders in place: those that
+  are in the version keep their identity, so open tabs, workflow nodes, history and synced copies keep pointing at them, and
+  deleted ones come back as they were; only what the version does not have is removed.
 - **Delete** removes a version (it cannot be edited).
 - **Versions travel with exports:** exporting a collection writes its version history into the file, and importing that file
   into Slinger (on this or another machine) restores every version with its number, notes, date and snapshot, so you can
@@ -1036,7 +1038,10 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   - **Replace existing "X"** (default): the collection's folders, requests (with their saved examples), scripts,
     descriptions and collection variables are replaced by the file's content. The collection itself stays, with its name, versions and sync link. First
     an automatic version snapshot of the current content is created (the next patch version, notes
-    `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Expanded
+    `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Folders
+    and requests whose name (and method) match the file are updated in place and keep their identity, so open tabs, workflow
+    nodes and history entries keep working; the rest are added or removed. Only the 10 newest automatic snapshots of a collection
+    are kept (older automatic ones are deleted; versions you made yourself are never removed). Expanded
     folders stay expanded and open request tabs without unsaved changes switch to the new content; tabs with unsaved changes keep
     your edits (save them again to keep them). If several collections match, pick which one to replace. Not available in a
     read-only (viewer) workspace.
@@ -1164,6 +1169,10 @@ cloud changes regularly and uploads your edits shortly after you save) and **Syn
   created in it too (also what you add later), and keeping a deleted collection or folder keeps the cloud's copy of its
   contents. If someone changes a kept item in the cloud, you get the usual conflict and choose which version to keep. Kept
   changes stay kept across restarts; editing a kept item back to the cloud's version ends it.
+- Changes from the cloud that cannot be applied yet (for example an item whose folder has not arrived) are not lost: Slinger
+  keeps them and applies them on a later sync, and if one is still waiting after a sync it shows up once in the conflict
+  history as an automatically handled item. The same goes for a cloud change that failed to apply.
+  **Cancel**, **Keep here** and **Upload** wait for a sync that is running to finish, so its answer cannot undo your choice.
 - **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
   started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
   why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other
