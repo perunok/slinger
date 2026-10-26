@@ -1317,6 +1317,23 @@ still `(filled in at release)`).
   update notice. Then add `## <next> — unreleased` with `- (filled in at release)` at the top. `electron/__tests__/releaseNotes.test.ts`
   checks the file (ordering, dates, a section for `package.json`'s version) and the script.
 
+## Windows signing and installer checks
+
+The Windows installer is built and signed only in `release.yml`'s `windows` job (GitHub-hosted `windows-latest`):
+`scripts/package.mjs --win dir` builds `release/win-unpacked`; with SignPath configured (`SIGNPATH_API_TOKEN` secret +
+`SIGNPATH_ORGANIZATION_ID` variable; tag pushes always, manual runs with the `sign` input) `Slinger.exe` goes to SignPath
+(artifact configuration `app`, `.signpath/artifact-configurations/app.xml`) and comes back signed, then
+`electron-builder --win nsis --prepackaged release/win-unpacked` packs the installer around it, which is signed in a second
+request (`installer`). Both requests wait for a manual approval in SignPath (SignPath Foundation's open-source terms; policy
+in `docs/CODE_SIGNING.md`, setup in `.signpath/README.md`). Without SignPath the installer is unsigned, as before.
+
+Every Windows installer, signed or not, then goes through `scripts/windows-installer-smoke.mjs` on the runner: Authenticode
+status of the installer and the installed `Slinger.exe` (must be *Valid* and signed by SignPath Foundation when signing ran),
+silent install (`/S /D=`), the installed app's `SLINGER_SMOKE_TEST` self-check (result in `SLINGER_SMOKE_RESULT_FILE`, since a
+packaged GUI process's stdout is not reliably readable; includes a secret round trip through Credential Manager), the
+one-Slinger-per-user guard with two profiles, and silent uninstall. The NSIS installer shows `build/installer-license.txt`
+(privacy summary + MIT licence) as its licence page; the full policy is `PRIVACY.md`.
+
 ## Files, dialogs and the OS
 
 Export writes take a **file name** only (`ExportFiles`): reduced to a basename, control/reserved and bidi characters replaced,

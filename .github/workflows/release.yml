@@ -7,11 +7,19 @@ name: Release
 # Optional signing secrets (builds are unsigned and still succeed when they are absent):
 #   macOS:   CSC_LINK (base64 .p12 or URL), CSC_KEY_PASSWORD,
 #            APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID  (notarization)
-#   Windows: WIN_CSC_LINK (base64 .pfx or URL), WIN_CSC_KEY_PASSWORD
+#
+# Windows (job `windows`) is signed through SignPath (docs/CODE_SIGNING.md, .signpath/README.md) when the secret
+#   SIGNPATH_API_TOKEN and the variable SIGNPATH_ORGANIZATION_ID are set: tag pushes always, manual runs with `sign`.
+# Every Windows installer is then installed, checked and uninstalled on the runner (scripts/windows-installer-smoke.mjs).
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign the Windows build through SignPath (needs an approval in SignPath)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,6 +35,14 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" --out release-notes.md
+      # Every release page links the code signing and privacy policies (SignPath Foundation terms).
+      - run: |
+          {
+            echo
+            echo '---'
+            echo
+            echo "[Code signing policy](https://github.com/${GITHUB_REPOSITORY}/blob/master/docs/CODE_SIGNING.md) · [Privacy policy](https://github.com/${GITHUB_REPOSITORY}/blob/master/PRIVACY.md)"
+          } >> release-notes.md
       - uses: actions/upload-artifact@v4
         with:
           name: release-notes
@@ -40,9 +56,6 @@ jobs:
           - os: ubuntu-24.04
             name: linux-x64
             args: --linux AppImage deb --x64
-          - os: windows-latest
-            name: win-x64
-            args: --win nsis --x64
           - os: macos-15-intel
             name: mac-x64
             args: --mac dmg --x64
@@ -66,7 +79,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!v}" ]; then unset "$v"; fi
           done
           extra=()
@@ -80,8 +93,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: slinger-${{ matrix.name }}
@@ -94,9 +105,109 @@ jobs:
             release/*.blockmap
             release/latest*.yml
 
+  # The Windows installer, signed in two SignPath requests: Slinger.exe first (so the installer packs the signed program),
+  # then the installer itself. Without signing it is the plain NSIS build. Either way it is installed and checked.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' && (startsWith(github.ref, 'refs/tags/v') || inputs.sign) }}
+      SIGNPATH_PROJECT: ${{ vars.SIGNPATH_PROJECT_SLUG || 'slinger' }}
+      SIGNPATH_POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      # scripts/package.mjs: build, better-sqlite3 for Electron, electron-builder -> release/win-unpacked.
+      - name: Package the app (unpacked)
+        run: node scripts/package.mjs --win dir --x64 --publish never
+
+      - name: Collect the program to sign
+        if: env.SIGN == 'true'
+        run: mkdir -p to-sign/app && cp release/win-unpacked/Slinger.exe to-sign/app/
+      - name: Upload the unsigned program
+        if: env.SIGN == 'true'
+        id: unsigned-app
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-win-app
+          path: to-sign/app/
+          if-no-files-found: error
+      - name: Sign Slinger.exe (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ env.SIGNPATH_POLICY }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/app
+          parameters: |
+            productVersion: ${{ toJSON(format('{0}.0', steps.version.outputs.version)) }}
+      - name: Put the signed program back
+        if: env.SIGN == 'true'
+        run: cp signed/app/Slinger.exe release/win-unpacked/Slinger.exe
+
+      # The installer around the (signed) unpacked app; nothing is rebuilt.
+      - name: Build the installer
+        run: npx electron-builder --win nsis --x64 --prepackaged release/win-unpacked --publish never
+
+      - name: Collect the installer to sign
+        if: env.SIGN == 'true'
+        run: mkdir -p to-sign/installer && cp "release/Slinger-${{ steps.version.outputs.version }}-win-x64.exe" to-sign/installer/
+      - name: Upload the unsigned installer
+        if: env.SIGN == 'true'
+        id: unsigned-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-win-installer
+          path: to-sign/installer/
+          if-no-files-found: error
+      - name: Sign the installer (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ env.SIGNPATH_POLICY }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/installer
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+      - name: Put the signed installer back
+        if: env.SIGN == 'true'
+        run: cp "signed/installer/Slinger-${{ steps.version.outputs.version }}-win-x64.exe" release/
+
+      # Install silently, run the installed app's self-check (keychain included), one-instance guard, uninstall.
+      - name: Installer smoke test
+        run: node scripts/windows-installer-smoke.mjs "release/Slinger-${{ steps.version.outputs.version }}-win-x64.exe" ${{ env.SIGN == 'true' && '--expect-signed' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slinger-win-x64
+          if-no-files-found: error
+          path: release/Slinger-${{ steps.version.outputs.version }}-win-x64.exe
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [notes, build]
+    needs: [notes, build, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

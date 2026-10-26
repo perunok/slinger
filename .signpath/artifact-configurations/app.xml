@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration "app" (paste into the SignPath project; slug: app).
+  The release workflow uploads a ZIP with only the program built from this repository: Slinger.exe from
+  electron-builder's win-unpacked folder. Third-party files (Electron's DLLs, prebuilt native modules) ship unsigned.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <!-- Slinger.exe carries a four-part product version (0.27.1.0); the workflow passes it as productVersion. -->
+    <parameter name="productVersion" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="Slinger" product-version="${productVersion}">
+      <include path="Slinger.exe" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>
