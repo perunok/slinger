@@ -1466,9 +1466,9 @@ downloaded until you click.
 - Settings > Updates: turn **Check for new releases automatically** off, or **Check now**; it shows the result and when Slinger
   last checked, and **Update now** (or the download progress, or **Restart to update**) when there is a newer version.
 - The update check is the only network request Slinger makes on its own; see the [privacy policy](../PRIVACY.md).
-- **Windows:** the installer and Slinger.exe are signed (publisher *SignPath Foundation*, see the
-  [code signing policy](CODE_SIGNING.md)), so Windows can tell where they come from. A new release can still show a SmartScreen
-  notice for a while until Windows has seen enough downloads of it: **More info > Run anyway**.
+- **Windows:** signed releases (publisher *SignPath Foundation*, see the [code signing policy](CODE_SIGNING.md)) let Windows
+  tell where the installer comes from. A new release can still show a SmartScreen notice ("Windows protected your PC") until
+  Windows has seen enough downloads of it, and unsigned ones always do: **More info > Run anyway**.
 
 ## Release notes
 

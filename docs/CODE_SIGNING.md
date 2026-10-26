@@ -6,6 +6,9 @@ The Windows installer of Slinger (`Slinger-<version>-win-x64.exe`) and the progr
 native modules built from this repository) are signed with a certificate issued to **SignPath Foundation**. The signature
 tells Windows (and you) that the file was built from this repository and was not changed afterwards.
 
+**Status:** signing starts with the first release after SignPath Foundation has approved the project. Installers of earlier
+releases are unsigned; check the *Digital Signatures* tab (below) to see whether yours is signed.
+
 ## How releases are built and signed
 
 - Every release is built from the tagged commit of <https://github.com/perunok/slinger> by GitHub Actions on GitHub-hosted
