@@ -7,6 +7,13 @@ once after an update), and each GitHub release uses its version's section.
 
 - (filled in at release)
 
+## 0.27.1 — 2026-10-26
+
+### Improved
+- Windows: every installer is now installed, started and uninstalled on a real Windows machine before release (secrets in Windows Credential Manager, one Slinger per user, silent install and uninstall), and the release workflow is ready to sign the installer and Slinger.exe for free through SignPath Foundation, so Windows SmartScreen can recognise the publisher once signing is approved.
+- The Windows installer shows a short privacy summary: the update check is the only thing Slinger sends on its own, and you can turn it off in Settings > Updates.
+- New [privacy policy](https://github.com/perunok/slinger/blob/master/PRIVACY.md) and [code signing policy](https://github.com/perunok/slinger/blob/master/docs/CODE_SIGNING.md).
+
 ## 0.27.0 — 2026-10-26
 
 ### New
