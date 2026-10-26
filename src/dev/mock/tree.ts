@@ -139,6 +139,7 @@ export function createTreeApi(s: MockState): TreeApi {
       const root = must(s.folders, input.folderId, 'Folder')
       const source = must(s.collections, root.collectionId, 'Collection')
       const collection = addCollection(s, root.workspaceId, cleanName(input.name, 'Collection'))
+      if (s.untrustedCollections[source.id]) s.untrustedCollections[collection.id] = true
       collection.scriptsJson = input.scriptsJson === undefined ? (root.scriptsJson ?? null) : cleanScriptsJson(input.scriptsJson)
       collection.description = root.description ?? null
       collection.descriptionType = root.descriptionType ?? null

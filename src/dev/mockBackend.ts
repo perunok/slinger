@@ -9,6 +9,7 @@ import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import type { MenuCommand } from '../../shared/menu'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
+import { createSecurityApi } from './mock/security'
 import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
 import { createOAuth2Api } from './mock/oauth2'
@@ -110,7 +111,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createWorkflowsApi(state),
     ...mockServers.api,
     ...createOpenApiApi(state, openapiLinks),
-    ...createScriptsApi(),
+    ...createScriptsApi(state),
+    ...createSecurityApi(state),
     ...createOAuth2Api(state, () => latency),
     ...misc,
     ...sync.api,

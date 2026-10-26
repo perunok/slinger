@@ -105,6 +105,8 @@ export function importPostman(s: MockState, workspaceId: string, fileContents: s
   collection.sourcePostmanId = name ? null : file.postmanId
   const tree = build(s, collection, file)
   s.collections.push(collection)
+  // Imported: its scripts run only after the user allowed them (as main's collection_trust).
+  s.untrustedCollections[collection.id] = true
   s.folders.push(...tree.folders)
   s.requests.push(...tree.requests)
   setCollectionVariables(s, collection.id, collection.workspaceId, file.variables)

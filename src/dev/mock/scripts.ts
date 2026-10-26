@@ -5,10 +5,14 @@
  */
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import type { RunScriptsResult } from '../../../shared/types'
+import { assertScriptsTrusted } from './security'
+import type { MockState } from './store'
 
-export function createScriptsApi(): Pick<SlingerIpcApi, 'runScripts'> {
+export function createScriptsApi(s: MockState): Pick<SlingerIpcApi, 'runScripts'> {
   return {
     async runScripts(input): Promise<RunScriptsResult> {
+      // Like main: the scripts of an imported or synced-in collection need the user's permission first.
+      assertScriptsTrusted(s, input.collectionId, input.scripts.length)
       return {
         event: input.event,
         errors: [],

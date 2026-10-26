@@ -646,6 +646,10 @@ class TabsStore {
       tab.conflict = null
       tab.remoteNotice = null
       app.upsertRequest(updated)
+      // The user saved it: whatever an AI assistant wrote into it is reviewed now (MCP send policy).
+      void api()
+        .clearAssistantChange({ kind: 'request', requestId: updated.id })
+        .catch(() => {})
       this.syncWithServer() // example tabs of this request follow their examples
       return true
     } catch (e) {

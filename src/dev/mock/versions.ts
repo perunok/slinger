@@ -133,6 +133,7 @@ function restoreReplace(s: MockState, collection: Collection, snapshot: Collecti
 
 function restoreCopy(s: MockState, source: VersionRow): Collection {
   const copy = addCollection(s, source.workspaceId, `${source.snapshot.collectionName} (v${source.version})`)
+  if (s.untrustedCollections[source.collectionId]) s.untrustedCollections[copy.id] = true
   copy.scriptsJson = source.snapshot.collectionScriptsJson ?? null
   copy.description = source.snapshot.collectionDescription ?? null
   copy.descriptionType = source.snapshot.collectionDescription ? (source.snapshot.collectionDescriptionType ?? null) : null

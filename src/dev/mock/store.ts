@@ -55,6 +55,8 @@ export interface MockOAuth2Token {
   refreshToken: string | null
   scope: string | null
   obtainedAt: number
+  /** Origins the token may be sent to (first use, then allowOAuth2Origin); see electron/services/oauth2.ts. */
+  origins?: string[]
 }
 
 export interface MockState {
@@ -73,6 +75,13 @@ export interface MockState {
   oauth2Tokens: Record<string, MockOAuth2Token>
   /** ADDED (workflows): live rows only (a delete removes the row). */
   workflows: Workflow[]
+  /**
+   * ADDED (script trust, main's collection_trust): collections whose scripts are NOT allowed yet (imported or synced
+   * in). The inverse of main's table, so seeded and newly made collections are trusted without a row.
+   */
+  untrustedCollections: Record<string, true>
+  /** ADDED (MCP send policy, main's assistant_changes): `<kind>:<ref>` -> what the assistant wrote. */
+  assistantChanges: Record<string, { workspaceId: string; fingerprint: string; created: boolean }>
   /**
    * ADDED (version authors): the signed-in mock cloud user as the creator of versions made now (wired by mockBackend
    * to the mock sync session; not part of `emptyState`, so a reset keeps it). Unset or null: the author is unknown.
@@ -94,6 +103,8 @@ export function emptyState(): MockState {
     globalVariables: [],
     oauth2Tokens: {},
     workflows: [],
+    untrustedCollections: {},
+    assistantChanges: {},
   }
 }
 
