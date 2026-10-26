@@ -384,3 +384,82 @@ describe('restoring tabs from disk (per workspace, on switch/startup)', () => {
     })
   })
 })
+
+describe('saving twice at once', () => {
+  it('a second save while one is in flight waits for it instead of reporting a false conflict', async () => {
+    const tab = tabsStore.openRequest(find('Get user'))
+    tab.draft.url = '{{baseUrl}}/json?once=1'
+    const update = vi.spyOn(backend, 'updateRequest')
+    const [a, b] = await Promise.all([tabsStore.save(tab), tabsStore.save(tab)])
+    expect([a, b]).toEqual([true, true])
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(tab.conflict).toBeNull()
+    expect(tab.dirty).toBe(false)
+  })
+
+  it('edits typed during a save are saved by one queued follow-up save', async () => {
+    const tab = tabsStore.openRequest(find('Get user'))
+    tab.draft.url = '{{baseUrl}}/json?v=1'
+    const update = vi.spyOn(backend, 'updateRequest')
+    const first = tabsStore.save(tab)
+    tab.draft.url = '{{baseUrl}}/json?v=2' // typed while the first save is in flight
+    const second = tabsStore.save(tab)
+    const third = tabsStore.save(tab)
+    expect(await Promise.all([first, second, third])).toEqual([true, true, true])
+    expect(update).toHaveBeenCalledTimes(2)
+    expect(tab.conflict).toBeNull()
+    expect(tab.dirty).toBe(false)
+    expect(app.requestById(tab.requestId)!.url).toBe('{{baseUrl}}/json?v=2')
+  })
+})
+
+describe('workspace switches during async work', () => {
+  it('a save that finishes after a workspace switch does not put its request into the other workspace', async () => {
+    const tab = tabsStore.openRequest(find('Get user'))
+    const otherWs = await backend.createWorkspace('Other workspace')
+    tab.draft.url = '{{baseUrl}}/json?late=1'
+    const saving = tabsStore.save(tab)
+    const switching = app.selectWorkspace(otherWs.id)
+    expect(await saving).toBe(true)
+    await switching
+    expect(app.requests.some((r) => r.id === tab.requestId)).toBe(false)
+    expect(tab.dirty).toBe(false) // the stashed tab itself took the saved version
+  })
+
+  it('a collection reload started before a switch is dropped', async () => {
+    const colId = find('Get user').collectionId
+    const reload = app.reloadCollectionsById([colId])
+    const otherWs = await backend.createWorkspace('Other workspace')
+    await app.selectWorkspace(otherWs.id)
+    await reload
+    expect(app.requests.some((r) => r.collectionId === colId)).toBe(false)
+  })
+
+  it('upsertRequest ignores a request of another workspace', () => {
+    const r = find('Get user')
+    app.upsertRequest({ ...r, id: 'foreign', workspaceId: 'some-other-workspace' })
+    expect(app.requestById('foreign')).toBeUndefined()
+  })
+})
+
+describe('the disk restore of a workspace\'s tabs', () => {
+  it('waits for the collections; while it is pending nothing may be saved over the stored tabs', async () => {
+    const { ws, makeRequest } = await newPersistedWorkspace('Slow ws')
+    const req = await makeRequest('Req')
+    const state: PersistedTabsState = { v: TABS_STORAGE_VERSION, activeIndex: 0, tabs: [{ kind: 'request', requestId: req.id, section: 'params' }] }
+    localStorage.setItem(storageKey(ws.id), JSON.stringify(state))
+    backend.failNext('listCollections', { code: 'io_error', message: 'busy' })
+    await app.selectWorkspace(ws.id)
+    expect(app.collectionsLoaded).toBe(false)
+    expect(tabsStore.restorePending(ws.id)).toBe(true)
+    expect(tabsStore.tabs).toHaveLength(0)
+    // A partial reload (one collection) is not enough to restore from: it would drop the tabs of the others.
+    tabsStore.newTab() // opened meanwhile
+    await app.reloadCollectionsById([req.collectionId])
+    expect(tabsStore.restorePending(ws.id)).toBe(true)
+
+    await app.reloadCollections()
+    expect(tabsStore.restorePending(ws.id)).toBe(false)
+    expect(tabsStore.tabs.map((t) => t.requestId)).toEqual([req.id, null]) // restored first, the new tab kept
+  })
+})

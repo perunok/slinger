@@ -1,5 +1,5 @@
 import type { Environment, EnvironmentVariable, UpsertEnvironmentVariableInput } from '../../shared/types'
-import { invalidInput, notFound } from '../lib/errors'
+import { invalidInput, notFound, versionConflict } from '../lib/errors'
 import { assertUuid, newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
 import { envVarSecretKey, type SecretStore } from '../services/secrets'
@@ -188,6 +188,12 @@ export class EnvironmentRepository {
         .prepare('SELECT * FROM environment_variables WHERE environment_id = ? AND key = ? AND deleted = 0')
         .get(env.id, key) as VariableRow | undefined
     }
+    if (existing && input.expectedVersion !== undefined && existing.version !== input.expectedVersion) {
+      throw versionConflict('environment variable was modified elsewhere; reload and retry', {
+        expectedVersion: input.expectedVersion,
+        currentVersion: existing.version,
+      })
+    }
     if (existing && existing.key !== key) {
       const clash = this.db
         .prepare('SELECT 1 FROM environment_variables WHERE environment_id = ? AND key = ? AND deleted = 0 AND id != ?')
@@ -227,13 +233,27 @@ export class EnvironmentRepository {
     }
 
     const ref = envVarSecretKey(existing.id)
-    if (isSecret) this.secrets.set(ref, effective)
-    this.db
-      .prepare(
-        `UPDATE environment_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?, secret_missing = 0,
-           updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0`,
-      )
-      .run(key, isSecret ? null : effective, isSecret ? 1 : 0, isSecret ? ref : null, now, existing.id)
+    // The row first (same version as read, still live), then the keychain: a write that lost a race touches neither,
+    // and a keychain failure rolls the row back.
+    this.db.transaction(() => {
+      const res = this.db
+        .prepare(
+          `UPDATE environment_variables SET key = ?, value = ?, is_secret = ?, secret_ref = ?, secret_missing = 0,
+             updated_at = ?, version = version + 1 WHERE id = ? AND deleted = 0 AND version = ?`,
+        )
+        .run(key, isSecret ? null : effective, isSecret ? 1 : 0, isSecret ? ref : null, now, existing.id, existing.version)
+      if (res.changes === 0) {
+        const current = this.db.prepare('SELECT version, deleted FROM environment_variables WHERE id = ?').get(existing.id) as
+          | { version: number; deleted: number }
+          | undefined
+        if (!current || current.deleted === 1) throw notFound('environment variable')
+        throw versionConflict('environment variable was modified elsewhere; reload and retry', {
+          expectedVersion: existing.version,
+          currentVersion: current.version,
+        })
+      }
+      if (isSecret) this.secrets.set(ref, effective)
+    })()
     if (wasSecret && !isSecret) this.purgeSecrets([existing.secret_ref ?? ref])
     return toVariable(this.getVariableRow(existing.id))
   }

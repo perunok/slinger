@@ -216,17 +216,5 @@ export function cleanDescription(value: unknown): string | null {
   return value.trim() === '' ? null : value
 }
 
-/**
- * A Postman `description` (a string, or `{content, type}`) -> stored text + type. The type is kept only for
- * the object form so export can write the same shape back; an unknown type is treated as Markdown.
- */
-export function descriptionFromPostman(value: unknown): { text: string | null; type: DescriptionType | null } {
-  if (typeof value === 'string') return { text: value.trim() === '' ? null : value, type: null }
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const o = value as Record<string, unknown>
-    const content = typeof o.content === 'string' ? o.content : ''
-    if (content.trim() === '') return { text: null, type: null }
-    return { text: content, type: o.type === 'text/plain' ? 'text/plain' : 'text/markdown' }
-  }
-  return { text: null, type: null }
-}
+/** A Postman `description` -> stored text + type (shared with the renderer). */
+export { descriptionFromPostman } from '../../shared/postmanDescription'

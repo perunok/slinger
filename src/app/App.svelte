@@ -20,8 +20,9 @@
   import RequestView from '../features/requests/RequestView.svelte'
   import McpRequestView from '../features/mcpRequests/McpRequestView.svelte'
   import SaveAsDialog from '../features/requests/SaveAsDialog.svelte'
-  import { tabsStore } from '../features/requests/tabs.svelte'
+  import { tabsStore, trackPersisted } from '../features/requests/tabs.svelte'
   import { cancelScheduledSave, flushSave, scheduleSave, serializeTabs } from '../features/requests/tabsPersistence'
+  import { reportUnsaved, unsavedAtRisk } from '../features/requests/unsavedOnQuit.svelte'
   import UnsavedDialog from '../features/requests/UnsavedDialog.svelte'
   import ScriptsDialogHost from '../features/scripts/ScriptsDialogHost.svelte'
   import MockServersHost from '../features/mockServers/MockServersHost.svelte'
@@ -108,9 +109,10 @@
   })
 
   /**
-   * Debounced autosave of open tabs, per workspace (see tabsPersistence.ts). Reading `tabsStore.tabs`
-   * and each tab's fields (inside serializeTabs) is what makes this effect re-run on every relevant
-   * change, including keystrokes in a draft; only the localStorage write itself is delayed.
+   * Debounced autosave of open tabs, per workspace (see tabsPersistence.ts). Reading `tabsStore.tabs` and each tab's
+   * persisted fields (`trackPersisted`, cheap: the draft's fingerprint is already computed for the dirty check) makes
+   * this effect re-run on every relevant change, including keystrokes in a draft; serializing the tabs happens only
+   * when the debounced write runs. Nothing is written while the workspace's stored tabs still wait to be restored.
    */
   $effect(() => {
     const workspaceId = app.workspaceId
@@ -119,7 +121,16 @@
       cancelScheduledSave(workspaceId)
       return
     }
-    scheduleSave(workspaceId, serializeTabs(tabsStore.tabs, tabsStore.activeId))
+    if (tabsStore.restorePending(workspaceId)) return
+    const tabs = tabsStore.tabs
+    const activeId = tabsStore.activeId
+    for (const t of tabs) trackPersisted(t)
+    scheduleSave(workspaceId, () => serializeTabs(tabs, activeId))
+  })
+
+  // Unsaved edits that quitting would lose: main asks before quitting while there are any.
+  $effect(() => {
+    reportUnsaved(unsavedAtRisk(app.workspaceId))
   })
 </script>
 

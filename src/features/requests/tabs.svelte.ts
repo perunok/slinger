@@ -135,13 +135,17 @@ export class RequestTab {
   /** ADDED (workflows): set for workflow tabs (features/workflows); the workflow saves itself as it is edited. */
   workflowId = $state<string | null>(null)
 
+  /** The draft's fingerprint (computed once per edit; the dirty check and the tab autosave both read it). */
+  fingerprint = $derived(draftFingerprint(this.draft))
+  exampleDraftFingerprint = $derived(this.exampleDraft !== null ? exampleFingerprint(this.exampleDraft) : '')
+
   dirty = $derived(
     this.workflowId
       ? false
       : this.overview
       ? this.overviewDraft !== null && this.overviewDraft !== (overviewEntity(this.overview)?.description ?? '')
-      : draftFingerprint(this.draft) !== this.savedFingerprint ||
-          (this.exampleDraft !== null && exampleFingerprint(this.exampleDraft) !== this.exampleSavedFingerprint),
+      : this.fingerprint !== this.savedFingerprint ||
+          (this.exampleDraft !== null && this.exampleDraftFingerprint !== this.exampleSavedFingerprint),
   )
   title = $derived(
     this.workflowId
@@ -238,9 +242,20 @@ class TabsStore {
    */
   private stash = new Map<string, { tabs: RequestTab[]; activeId: string | null }>()
   private currentWorkspaceId: string | null = null
-  /** Set by switchWorkspace on a stash miss; consumed by the next syncWithServer (once requests/collections/
-   * folders reflect the new workspace) to restore that workspace's tabs from disk. */
-  private needsDiskRestore: string | null = null
+  /** Set by switchWorkspace on a stash miss; consumed by the next syncWithServer once the workspace's collections
+   * have loaded (`app.collectionsLoaded`) to restore that workspace's tabs from disk. Until then the tabs autosave
+   * must not run for that workspace, or it would overwrite the stored tabs with the (still empty) list. */
+  private needsDiskRestore = $state<string | null>(null)
+
+  /** True while `workspaceId`'s tabs still have to be restored from disk (nothing may be saved for it meanwhile). */
+  restorePending(workspaceId: string): boolean {
+    return this.needsDiskRestore === workspaceId
+  }
+
+  /** Every open tab, including the ones of other workspaces kept in memory (quitting asks about their unsaved edits). */
+  allTabs(): RequestTab[] {
+    return [...this.tabs, ...[...this.stash.values()].flatMap((s) => s.tabs)]
+  }
 
   find(id: string | null) {
     return id ? (this.tabs.find((t) => t.id === id) ?? null) : null
@@ -294,9 +309,19 @@ class TabsStore {
       folders: app.folders,
       workflows: app.workflowsLoaded ? app.workflows : null,
     })
-    const tabs = result.inits.map((init) => this.buildRestoredTab(init))
+    const restored = result.inits.map((init) => this.buildRestoredTab(init))
+    // Tabs opened while the workspace was still loading stay, after the restored ones (and win over a restored tab of
+    // the same request/overview/workflow, since they may hold newer edits).
+    const opened = this.tabs
+    const same = (a: RequestTab, b: RequestTab) =>
+      (!!a.workflowId && a.workflowId === b.workflowId) ||
+      (!!a.overview && a.overview.kind === b.overview?.kind && a.overview.id === b.overview.id) ||
+      (!!a.requestId && !a.overview && !a.workflowId && a.requestId === b.requestId && (a.example?.index ?? -1) === (b.example?.index ?? -1))
+    const tabs = [...restored.filter((r) => !opened.some((o) => same(o, r))), ...opened]
     this.tabs = tabs
-    this.activeId = (result.activeIndex != null ? tabs[result.activeIndex] : undefined)?.id ?? tabs[0]?.id ?? null
+    const restoredActive = result.activeIndex != null ? restored[result.activeIndex] : undefined
+    this.activeId =
+      (opened.length > 0 ? this.activeId : null) ?? (restoredActive && tabs.includes(restoredActive) ? restoredActive.id : null) ?? tabs[0]?.id ?? null
     if (result.lostDraftTitles.length > 0) {
       const list = result.lostDraftTitles.join(', ')
       toast.info('Some unsaved changes were too large to restore', `Kept the tab, but not the edit: ${list}`)
@@ -537,7 +562,7 @@ class TabsStore {
    * for the conflict dialog on dirty ones. Tabs whose request disappeared are closed.
    */
   syncWithServer() {
-    if (this.needsDiskRestore && this.needsDiskRestore === app.workspaceId) {
+    if (this.needsDiskRestore && this.needsDiskRestore === app.workspaceId && app.collectionsLoaded) {
       this.needsDiskRestore = null
       this.restoreFromDisk(app.workspaceId)
       return // the tabs just built are already fresh from the requests that triggered this reconcile
@@ -621,8 +646,28 @@ class TabsStore {
 
   // ---- saving -----------------------------------------------------------
 
-  /** Saves a tab. Returns true on success. Unsaved new tabs need Save As (caller opens the dialog). */
-  async save(tab: RequestTab, opts: { overwrite?: boolean } = {}): Promise<boolean> {
+  /** The save in flight per tab, and the one follow-up save queued behind it (see `save`). */
+  private saves = new WeakMap<RequestTab, { done: Promise<boolean>; next?: Promise<boolean> }>()
+
+  /**
+   * Saves a tab. Returns true on success. Unsaved new tabs need Save As (caller opens the dialog).
+   * One save per tab at a time: a save asked for while one is in flight (a double click, Ctrl+S during a slow save)
+   * waits for it and then runs once more only if the draft changed meanwhile. Two concurrent writes with the same base
+   * version would otherwise make the second one a false "changed elsewhere" conflict.
+   */
+  save(tab: RequestTab, opts: { overwrite?: boolean } = {}): Promise<boolean> {
+    const running = this.saves.get(tab)
+    if (running) return (running.next ??= running.done.then((ok) => (ok && tab.dirty ? this.save(tab, opts) : ok)))
+    const entry: { done: Promise<boolean>; next?: Promise<boolean> } = {
+      done: this.saveNow(tab, opts).finally(() => {
+        if (this.saves.get(tab) === entry) this.saves.delete(tab)
+      }),
+    }
+    this.saves.set(tab, entry)
+    return entry.done
+  }
+
+  private async saveNow(tab: RequestTab, opts: { overwrite?: boolean }): Promise<boolean> {
     if (tab.workflowId) return true
     if (tab.overview) return this.saveOverview(tab)
     if (!tab.requestId) return false
@@ -632,6 +677,7 @@ class TabsStore {
       const s = serializeDraft(tab.draft)
       // Snapshot BEFORE the round trip: keystrokes typed while saving must stay "unsaved".
       const fingerprint = draftFingerprint(tab.draft)
+      const generation = app.workspaceGeneration
       const updated = await api().updateRequest({
         requestId: tab.requestId,
         name: s.name,
@@ -645,8 +691,12 @@ class TabsStore {
       tab.serverKey = serverKeyOf(updated)
       tab.conflict = null
       tab.remoteNotice = null
-      app.upsertRequest(updated)
-      this.syncWithServer() // example tabs of this request follow their examples
+      // The tab is put away if the workspace changed meanwhile: its own fields are right, but the app's lists now
+      // belong to the other workspace (it reloads the request when the user comes back).
+      if (app.workspaceGeneration === generation) {
+        app.upsertRequest(updated)
+        this.syncWithServer() // example tabs of this request follow their examples
+      }
       return true
     } catch (e) {
       if (isVersionConflict(e)) {
@@ -797,6 +847,7 @@ class TabsStore {
   /** Save As / first save of a new tab: creates a request in the chosen collection. */
   async saveAs(tab: RequestTab, target: { collectionId: string; folderId: string | null; name: string }): Promise<void> {
     if (!app.workspaceId) throw new Error('No workspace selected')
+    const generation = app.workspaceGeneration
     const s = serializeDraft({ ...tab.draft, name: target.name })
     const fingerprint = draftFingerprint({ ...tab.draft, name: s.name })
     // Throws on failure: the Save As dialog stays open and shows the error.
@@ -809,7 +860,7 @@ class TabsStore {
       url: s.url,
       documentJson: s.documentJson,
     })
-    app.upsertRequest(created)
+    if (app.workspaceGeneration === generation) app.upsertRequest(created)
     tab.draft.name = created.name
     tab.requestId = created.id
     tab.collectionId = created.collectionId
@@ -872,6 +923,18 @@ class TabsStore {
     tab.cancelled = true
     await cancelRun(tab.runId)
   }
+}
+
+/**
+ * Reads every field of a tab that the tab autosave writes (tabsPersistence.serializeTabs), so an effect calling this
+ * re-runs when any of them changes, without serializing the draft (its fingerprint is already derived for `dirty`).
+ */
+export function trackPersisted(t: RequestTab): void {
+  void [
+    t.requestId, t.collectionId, t.folderId, t.baseVersion, t.serverKey, t.section, t.exampleSection, t.savedFingerprint,
+    t.exampleSavedFingerprint, t.example, t.overview, t.overviewDraft, t.workflowId, t.dirty, t.title, t.fingerprint,
+    t.exampleDraftFingerprint,
+  ]
 }
 
 /** The connection registry key of an MCP request tab's own connection. */

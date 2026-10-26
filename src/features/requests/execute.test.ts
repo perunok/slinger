@@ -328,6 +328,7 @@ describe('executeDraft with a pinned environment (collection runs)', () => {
           value: '7',
           isSecret: false,
         })
+        return { environmentChanged: true } // as main reports a script's environment write
       }
       return {}
     }
@@ -583,5 +584,56 @@ describe('executeDraft with an MCP request', () => {
     expect(out.ok).toBe(true)
     expect(connects.at(-1)?.headers).toEqual([{ key: 'Authorization', value: `Bearer ${token}` }])
     expect(JSON.stringify(mcpCalls)).not.toContain(token)
+  })
+})
+
+describe('a send keeps the scope it started with', () => {
+  it('switching the environment while the pre-request scripts run does not change the variables or secrets used', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    const localBase = (await backend.listEnvironmentVariables(local.id)).find((v) => v.key === 'baseUrl')!.value!
+    const secret = await backend.upsertEnvironmentVariable({ environmentId: local.id, key: 'apiKey', value: 'local-secret', isSecret: true })
+    const other = await backend.createEnvironment(app.workspaceId!, 'Other')
+    await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'baseUrl', value: 'https://other.test', isSecret: false })
+    const otherSecret = await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'apiKey', value: 'other-secret', isSecret: true })
+    await app.reloadEnvironments()
+    await app.setActiveEnvironment(local.id)
+    vi.mocked(backend.runScripts).mockImplementation(async (input) => {
+      calls.push(structuredClone(input))
+      await app.setActiveEnvironment(other.id) // the user switches while the script runs
+      return result(input)
+    })
+    const reveal = vi.spyOn(backend, 'revealEnvironmentVariable')
+    const { r, draft } = withScripts(pre('1'))
+    draft.headers = [newRow({ key: 'X-Key', value: '{{apiKey}}' })]
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(app.activeEnvironmentId).toBe(other.id)
+    expect(sent.at(-1)!.url.startsWith(localBase)).toBe(true)
+    expect(reveal).toHaveBeenCalledWith(secret.id)
+    expect(reveal).not.toHaveBeenCalledWith(otherSecret.id)
+    expect(sent.at(-1)!.headers).toContainEqual(expect.objectContaining({ key: 'X-Key', value: 'local-secret' }))
+  })
+
+  it('switching the workspace while the pre-request scripts run resolves the starting workspace\'s variables', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    const localBase = (await backend.listEnvironmentVariables(local.id)).find((v) => v.key === 'baseUrl')!.value!
+    const startWs = app.workspaceId!
+    const otherWs = await backend.createWorkspace('Elsewhere')
+    const otherEnv = await backend.createEnvironment(otherWs.id, 'Prod')
+    await backend.upsertEnvironmentVariable({ environmentId: otherEnv.id, key: 'baseUrl', value: 'https://prod.other.test', isSecret: false })
+    vi.mocked(backend.runScripts).mockImplementation(async (input) => {
+      calls.push(structuredClone(input))
+      if (input.event === 'prerequest') {
+        await app.selectWorkspace(otherWs.id)
+        await app.setActiveEnvironment(otherEnv.id)
+      }
+      return result(input, input.event === 'prerequest' ? { environmentChanged: true } : {})
+    })
+    const { r, draft } = withScripts(pre('1'))
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(app.workspaceId).toBe(otherWs.id)
+    expect(sent.at(-1)!.url.startsWith(localBase)).toBe(true)
+    expect(sent.at(-1)!.workspaceId).toBe(startWs)
   })
 })

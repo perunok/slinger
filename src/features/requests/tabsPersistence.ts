@@ -12,9 +12,16 @@
  * would exceed `MAX_DRAFT_BYTES`; the tab stays in the list with `draftTooLarge` + a `title`, so the
  * restoring side can toast once about what unsaved text could not be kept. At most `MAX_PERSISTED_TABS`
  * tabs are written, always including whichever was active.
+ *
+ * A saved request's examples (`draft.extras.responses`) are not part of a dirty request draft's snapshot: they are
+ * edited in example tabs (which keep their own draft) and written straight into the stored request, so the restore
+ * takes them from the stored request again. Large examples therefore no longer push a draft over the limit.
+ *
+ * Which unsaved edits a write could NOT keep (too large, storage full) is tracked per workspace (`unpersistedTitles`),
+ * so quitting can warn about exactly those.
  */
 import type { ApiFolder, ApiRequest, Collection, WorkflowSummary } from '../../../shared/types'
-import { draftFingerprint, newDraft, upgradeDraft, type RequestDraft } from '../../lib/request'
+import { draftFingerprint, newDraft, parseDocument, upgradeDraft, type RequestDraft } from '../../lib/request'
 import { exampleFingerprint, locateExample, parseExample, readExamples, type ExampleLocator, type ExampleResponseDraft, type ParsedExample } from '../../lib/examples'
 import type { ExampleSection, OverviewTarget, RequestSection } from './tabs.svelte'
 
@@ -43,6 +50,7 @@ interface PersistedRequestTab {
   kind: 'request'
   requestId: string
   section: RequestSection
+  /** `draft.extras.responses` is left out (see the file comment); entries written before 0.27 may still have it. */
   dirty?: { draft: RequestDraft; savedFingerprint: string; baseVersion: number; serverKey: string }
   draftTooLarge?: true
   title?: string
@@ -55,7 +63,8 @@ interface PersistedExampleTab {
   section: RequestSection
   exampleSection: ExampleSection
   dirty?: {
-    example: ExampleBindingSnapshot
+    /** Written before 0.27 only; the restore rebuilds the binding from `locator`. */
+    example?: ExampleBindingSnapshot
     draft: RequestDraft
     exampleDraft: ExampleResponseDraft
     savedFingerprint: string
@@ -115,11 +124,13 @@ function isPersistedTabsState(v: unknown): v is PersistedTabsState {
   return !!v && typeof v === 'object' && (v as PersistedTabsState).v === TABS_STORAGE_VERSION && Array.isArray((v as PersistedTabsState).tabs)
 }
 
-export function writePersisted(workspaceId: string, state: PersistedTabsState): void {
+/** Returns false when the state could not be written (storage unavailable or full). */
+export function writePersisted(workspaceId: string, state: PersistedTabsState): boolean {
   try {
     localStorage.setItem(storageKey(workspaceId), JSON.stringify(state))
+    return true
   } catch {
-    /* storage unavailable or full: the tab list just won't survive a restart */
+    return false /* the tab list just won't survive a restart */
   }
 }
 
@@ -150,10 +161,51 @@ function byteLength(value: unknown): number {
 // ---------------------------------------------------------------------------
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
-const pending = new Map<string, PersistedTabsState>()
+const pending = new Map<string, PersistedTabsState | (() => PersistedTabsState)>()
+/** Per workspace: titles of the unsaved edits the last write could not keep. */
+const unpersisted = new Map<string, string[]>()
+let unpersistedListener: (() => void) | null = null
 
-/** Schedules a debounced write for `workspaceId`; a later call before it fires replaces the payload. */
-export function scheduleSave(workspaceId: string, state: PersistedTabsState, delayMs = 500): void {
+/** Titles of the unsaved edits that the last write of each workspace could not keep (too large, storage full). */
+export function unpersistedTitles(): string[] {
+  return [...unpersisted.values()].flat()
+}
+/** Called whenever `unpersistedTitles()` may have changed. */
+export function onUnpersistedChange(listener: (() => void) | null): void {
+  unpersistedListener = listener
+}
+/** Forgets what a workspace's last write could not keep (the workspace was deleted, or its tabs are not saved at all). */
+export function forgetUnpersisted(workspaceId: string): void {
+  if (unpersisted.delete(workspaceId)) unpersistedListener?.()
+}
+
+function setUnpersisted(workspaceId: string, titles: string[]): void {
+  const before = unpersisted.get(workspaceId) ?? []
+  if (titles.length === 0) unpersisted.delete(workspaceId)
+  else unpersisted.set(workspaceId, titles)
+  if (before.length !== titles.length || before.some((t, i) => t !== titles[i])) unpersistedListener?.()
+}
+
+/** What a written state does not keep: drafts dropped as too large, or every unsaved edit when the write failed. */
+function lostIn(state: PersistedTabsState, written: boolean): string[] {
+  const lost: string[] = []
+  for (const t of state.tabs) {
+    if ((t.kind === 'request' || t.kind === 'example' || t.kind === 'scratch') && t.draftTooLarge) lost.push(t.title ?? 'Untitled Request')
+    else if (written) continue
+    else if (t.kind === 'request' && t.dirty) lost.push(t.dirty.draft.name || 'Untitled Request')
+    else if (t.kind === 'example' && t.dirty) lost.push(t.dirty.exampleDraft.name || 'Untitled example')
+    else if (t.kind === 'scratch' && draftFingerprint(t.draft) !== EMPTY_DRAFT_FINGERPRINT) lost.push(t.draft.name || 'Untitled Request')
+    else if (t.kind === 'overview' && t.overviewDraft !== null) lost.push('Documentation')
+  }
+  return lost
+}
+const EMPTY_DRAFT_FINGERPRINT = draftFingerprint(newDraft())
+
+/**
+ * Schedules a debounced write for `workspaceId`; a later call before it fires replaces the payload. Pass a function to
+ * build the state only when the write happens (serializing every draft on each keystroke is what the debounce avoids).
+ */
+export function scheduleSave(workspaceId: string, state: PersistedTabsState | (() => PersistedTabsState), delayMs = 500): void {
   pending.set(workspaceId, state)
   const existing = timers.get(workspaceId)
   if (existing) clearTimeout(existing)
@@ -170,9 +222,11 @@ export function flushSave(workspaceId?: string): void {
     const timer = timers.get(id)
     if (timer) clearTimeout(timer)
     timers.delete(id)
-    const state = pending.get(id)
+    const entry = pending.get(id)
     pending.delete(id)
-    if (state) writePersisted(id, state)
+    if (!entry) continue
+    const state = typeof entry === 'function' ? entry() : entry
+    setUnpersisted(id, lostIn(state, writePersisted(id, state)))
   }
 }
 
@@ -239,8 +293,8 @@ function serializeOne(t: TabLike): PersistedTab {
       exampleSection: t.exampleSection,
     }
     if (t.dirty) {
+      // The binding itself (`t.example`) is not needed: the restore rebuilds it from `locator`.
       const dirty = {
-        example: t.example,
         draft: t.draft,
         exampleDraft: t.exampleDraft!,
         savedFingerprint: t.savedFingerprint,
@@ -264,13 +318,37 @@ function serializeOne(t: TabLike): PersistedTab {
 
   const entry: PersistedRequestTab = { kind: 'request', requestId: t.requestId, section: t.section }
   if (t.dirty) {
-    const dirty = { draft: t.draft, savedFingerprint: t.savedFingerprint, baseVersion: t.baseVersion, serverKey: t.serverKey }
+    const dirty = { draft: withoutExamples(t.draft), savedFingerprint: t.savedFingerprint, baseVersion: t.baseVersion, serverKey: t.serverKey }
     if (byteLength(dirty) > MAX_DRAFT_BYTES) {
       entry.draftTooLarge = true
       entry.title = t.title
     } else entry.dirty = dirty
   }
   return entry
+}
+
+/** The draft without its saved examples (they are re-read from the stored request on restore). */
+function withoutExamples(draft: RequestDraft): RequestDraft {
+  if (!draft.extras || !('responses' in draft.extras)) return draft
+  const { responses: _examples, ...extras } = draft.extras
+  return { ...draft, extras }
+}
+
+/**
+ * A restored dirty request draft takes the stored request's examples (or none, when it has no `responses`). The keys
+ * keep the stored document's order (the dirty check compares serialized documents).
+ */
+function withStoredExamples(draft: RequestDraft, server: Pick<ApiRequest, 'method' | 'url' | 'documentJson'>): RequestDraft {
+  const { responses: _old, ...own } = draft.extras ?? {}
+  const stored = parseDocument({ name: '', method: server.method, url: server.url, documentJson: server.documentJson }).extras
+  if (!('responses' in stored)) return { ...draft, extras: own }
+  const extras: Record<string, unknown> = {}
+  for (const k of Object.keys(stored)) {
+    if (k === 'responses') extras[k] = stored[k]
+    else if (k in own) extras[k] = own[k]
+  }
+  for (const [k, v] of Object.entries(own)) if (!(k in extras)) extras[k] = v
+  return { ...draft, extras }
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +430,8 @@ function restoreOne(p: PersistedTab, data: RestoreDataSource): RestoredTabInit |
     case 'request': {
       const server = data.requests.find((r) => r.id === p.requestId)
       if (!server) return null // request deleted (or gone via sync): dropped silently
-      return { kind: 'request', requestId: server.id, section: p.section, dirty: p.dirty ? { ...p.dirty, draft: upgradeDraft(p.dirty.draft) } : null }
+      const dirty = p.dirty ? { ...p.dirty, draft: withStoredExamples(upgradeDraft(p.dirty.draft), server) } : null
+      return { kind: 'request', requestId: server.id, section: p.section, dirty }
     }
 
     case 'example': {

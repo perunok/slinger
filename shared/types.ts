@@ -284,6 +284,8 @@ export interface UpsertEnvironmentVariableInput {
   isSecret: boolean
   /** Set when updating an existing variable; omit to create a new one. */
   variableId?: string
+  /** When given, the stored variable's version must match (version_conflict otherwise), like updateRequest. */
+  expectedVersion?: number
 }
 
 /**

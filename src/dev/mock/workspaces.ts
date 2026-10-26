@@ -184,6 +184,9 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
       }
       const existing = must(s.variables, input.variableId, 'Variable')
       if (existing.environmentId !== input.environmentId) fail('invalid_input', 'Variable belongs to a different environment')
+      if (input.expectedVersion !== undefined && existing.version !== input.expectedVersion) {
+        fail('version_conflict', 'environment variable was modified elsewhere; reload and retry', { expectedVersion: input.expectedVersion, currentVersion: existing.version })
+      }
       existing.value = applyValue(existing, value, input.isSecret)
       if (!input.isSecret || !isKeepMarker(value)) existing.secretMissing = false
       existing.key = key
