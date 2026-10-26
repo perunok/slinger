@@ -356,3 +356,78 @@ export async function checkVersionAuthorsContract(t: ContractTarget): Promise<vo
   const clashOld = await push({ resource_type: 'collection_version', resource_id: v1, payload: { ...version, notes: 'changed' } }, null)
   expect(clashOld.rejected[0].current_payload).toEqual(version)
 }
+
+/**
+ * Wire contract of the `container_auth` extension (docs/SYNC_DESIGN.md section 21.6): `auth_json` on collection and
+ * folder payloads, served only to clients that declare the feature, absent = unchanged, validated as a Postman auth
+ * object. Runs against the fake (sync/rejections.test.ts) and the real server (sync-it).
+ */
+export async function checkContainerAuthContract(t: ContractTarget): Promise<void> {
+  const call = async (method: string, path: string, body?: unknown): Promise<{ status: number; json: J }> => {
+    const res = await fetch(t.baseUrl + path, {
+      method,
+      headers: { Authorization: `Bearer ${t.ownerToken}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    const text = await res.text()
+    return { status: res.status, json: text ? (JSON.parse(text) as J) : {} }
+  }
+  const BASE = ['folder_scripts', 'docs', 'collection_variables', 'globals']
+  const WITH = [...BASE, 'container_auth']
+  const reg = await call('POST', '/v1/sync/clients/register', { client_name: 'contract', device_name: 'contract-auth', features: WITH })
+  expect(reg.status).toBe(201)
+  expect(reg.json.features).toContain('container_auth')
+  const clientId = reg.json.client.client_id as string
+  const pub = await call('POST', '/v1/workspaces/publish', {
+    local_workspace: { name: `ContractAuth ${randomUUID().slice(0, 8)}` }, publish_mode: 'create', client: { client_id: clientId },
+  })
+  const ws = pub.json.workspace.id as string
+  const push = async (op: J, features: string[] | null = WITH): Promise<J> => {
+    const r = await call('POST', `/v1/workspaces/${ws}/sync/push`, {
+      client_id: clientId, ...(features ? { features } : {}), operations: [{ operation_id: randomUUID(), op: 'upsert', base_version: 0, payload: {}, ...op }],
+    })
+    expect(r.status, JSON.stringify(r.json)).toBe(200)
+    return r.json
+  }
+  const ok = async (op: J, features?: string[] | null) => expect((await push(op, features)).rejected).toEqual([])
+  const pull = async (features: string[] | null) =>
+    (await call('GET', `/v1/workspaces/${ws}/sync/pull?client_id=${clientId}&after_checkpoint=0&limit=500${features ? `&features=${features.join(',')}` : ''}`)).json
+  const snapshot = async (features: string[] | null) =>
+    (await call('GET', `/v1/workspaces/${ws}/sync/snapshot?client_id=${clientId}&limit=500${features ? `&features=${features.join(',')}` : ''}`)).json
+
+  const BEARER = JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: '{{token}}', type: 'string' }] })
+  const col = randomUUID()
+  const folder = randomUUID()
+  await ok({ resource_type: 'collection', resource_id: col, payload: { name: 'C', auth_json: BEARER } })
+  await ok({ resource_type: 'folder', resource_id: folder, payload: { collection_id: col, parent_folder_id: null, name: 'F', sort_order: 0, auth_json: '{"type":"noauth"}' } })
+  // an old client renames: the auth survives
+  await ok({ resource_type: 'collection', resource_id: col, base_version: 1, payload: { name: 'C2' } }, null)
+
+  const full = await pull(WITH)
+  expect(full.features).toContain('container_auth')
+  const last = (p: J, id: string) => (p.operations as J[]).filter((o) => o.resource_id === id && o.op === 'upsert').at(-1)!.payload
+  expect(last(full, col)).toEqual({ name: 'C2', scripts_json: null, description: null, description_type: null, auth_json: BEARER })
+  expect(last(full, folder)).toEqual({ collection_id: col, parent_folder_id: null, name: 'F', sort_order: 0, scripts_json: null, description: null, description_type: null, auth_json: '{"type":"noauth"}' })
+  const snap = await snapshot(WITH)
+  expect((snap.entities as J[]).find((e) => e.resource_id === col)!.payload.auth_json).toBe(BEARER)
+  // undeclared: never seen
+  for (const f of [null, BASE]) {
+    expect(last(await pull(f), col)).not.toHaveProperty('auth_json')
+    expect((await snapshot(f)).entities.find((e: J) => e.resource_id === col).payload).not.toHaveProperty('auth_json')
+  }
+  // version_mismatch payloads follow the declaration
+  const stale = await push({ resource_type: 'collection', resource_id: col, base_version: 1, payload: { name: 'x' } })
+  expect(stale.rejected[0]).toMatchObject({ reason: 'version_mismatch', current_payload: { name: 'C2', auth_json: BEARER } })
+  const staleOld = await push({ resource_type: 'collection', resource_id: col, base_version: 1, payload: { name: 'x' } }, null)
+  expect(staleOld.rejected[0].current_payload).toEqual({ name: 'C2' })
+  // validation
+  for (const bad of ['{not json', '[]', '{"bearer":[]}']) {
+    const r = await push({ resource_type: 'collection', resource_id: col, base_version: 2, payload: { auth_json: bad } })
+    expect(r.rejected[0], bad).toMatchObject({ code: 'invalid_request', reason: 'invalid' })
+  }
+  const big = await push({ resource_type: 'folder', resource_id: folder, base_version: 1, payload: { auth_json: JSON.stringify({ type: 'bearer', x: 'y'.repeat(1024 * 1024) }) } })
+  expect(big.rejected[0]).toMatchObject({ code: 'invalid_request', reason: 'too_large' })
+  // null clears
+  await ok({ resource_type: 'collection', resource_id: col, base_version: 2, payload: { auth_json: null } })
+  expect(last(await pull(WITH), col).auth_json).toBeNull()
+}

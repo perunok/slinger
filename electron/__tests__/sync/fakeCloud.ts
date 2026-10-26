@@ -8,8 +8,8 @@
  * workspaces (list/get/publish), members (paginated, active only), sync client registration, push, pull, snapshot.
  * Section 21 extensions (scripts/docs fields, collection_variable, global_variable) are on by default; with
  * `extensions: false` it behaves like a server from before them (no `features` in pull/snapshot, unknown types refused).
- * `containerAuth: true` adds the proposed `container_auth` feature (section 21.6: `auth_json` on collections and folders),
- * which the real server does not offer yet; off by default, like the real server.
+ * `container_auth` (section 21.6: `auth_json` on collections and folders) is on by default too; `containerAuth: false` is a
+ * server from before it.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -139,7 +139,7 @@ export interface FakeCloudOptions {
   extensions?: boolean
   /** Feature `version_authors` (default true); false = a server before it. */
   versionAuthors?: boolean
-  /** Proposed feature `container_auth` (default false, like the real server today). */
+  /** Feature `container_auth` (default true, like Slinger Cloud since 0.5); false = a server before it. */
   containerAuth?: boolean
   pushBodyLimit?: number
   accessTtlMs?: number
@@ -156,8 +156,8 @@ export class FakeCloud {
   extensions: boolean
   /** Feature `version_authors` (default true; needs `extensions`): the server records and reports who created a version. Can be flipped at runtime. */
   versionAuthors = true
-  /** Proposed feature `container_auth` (needs `extensions`): `auth_json` on collections and folders. Can be flipped at runtime. */
-  containerAuth = false
+  /** Feature `container_auth` (needs `extensions`): `auth_json` on collections and folders. Can be flipped at runtime. */
+  containerAuth = true
   /** Servers before slinger-admin 9ce4b08 reported a folder missing from the workspace as `invalid`, not `not_found`. */
   legacyMissingFolder = false
   pushBodyLimit: number
@@ -176,7 +176,7 @@ export class FakeCloud {
     this.protocolVersion = opts.protocolVersion ?? 2
     this.extensions = opts.extensions ?? true
     this.versionAuthors = opts.versionAuthors ?? true
-    this.containerAuth = opts.containerAuth ?? false
+    this.containerAuth = opts.containerAuth ?? true
     this.pushBodyLimit = opts.pushBodyLimit ?? 8 * 1024 * 1024
     this.accessTtlMs = opts.accessTtlMs ?? 15 * 60_000
   }
@@ -619,7 +619,9 @@ export class FakeCloud {
         } catch {
           /* below */
         }
-        if (!v || typeof v !== 'object' || Array.isArray(v)) throw invalid('auth_json auth_json must be a JSON object (Postman auth)')
+        if (!v || typeof v !== 'object' || Array.isArray(v) || typeof (v as { type?: unknown }).type !== 'string') {
+          throw invalid('auth_json auth_json must be a JSON object with a string type (Postman auth)')
+        }
       }
       if (p.description_type !== undefined && p.description_type !== null && p.description_type !== 'text/markdown' && p.description_type !== 'text/plain') {
         throw invalid('description_type Invalid enum value')

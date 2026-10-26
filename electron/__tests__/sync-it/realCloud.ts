@@ -3,7 +3,7 @@ import { startSyncItServer, type SyncItServer } from '../../../scripts/sync-it-s
 import type { Device } from '../sync/harness'
 
 /** Every sync extension (design section 21), so snapshots compare with what the devices sync. */
-const FEATURES = 'folder_scripts,docs,collection_variables,globals'
+const FEATURES = 'folder_scripts,docs,collection_variables,globals,container_auth'
 
 export interface Json {
   [k: string]: any // eslint-disable-line @typescript-eslint/no-explicit-any

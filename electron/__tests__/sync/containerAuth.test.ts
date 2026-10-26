@@ -1,6 +1,6 @@
 /**
- * Sync of collection/folder auth (docs/SYNC_DESIGN.md section 21.6, proposed feature `container_auth`): with today's
- * server (no `container_auth`) it stays on the device without any noise; once the server offers the feature, the next
+ * Sync of collection/folder auth (docs/SYNC_DESIGN.md section 21.6, feature `container_auth`): with a server before
+ * it (no `container_auth`) it stays on the device without any noise; once the server offers the feature, the next
  * sync uploads it and the other device receives it, merging as its own field group.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -40,6 +40,7 @@ const pushedOps = () => cloud.requests.filter((r) => /sync\/push$/.test(r.path))
 
 describe('container auth sync', () => {
   it('stays on the device with a server without container_auth (nothing pushed, nothing pending, no conflict); an upgrade uploads it', async () => {
+    cloud.containerAuth = false
     const p = await pair()
     await p.a.api.setCollectionAuth(p.col, BEARER('{{token}}'))
     await p.a.api.setFolderAuth(p.folder, '{"type":"noauth"}')
@@ -61,7 +62,6 @@ describe('container auth sync', () => {
   })
 
   it('with the feature: edits travel both ways; auth and name edited on different devices merge; different auths conflict in "auth" only', async () => {
-    cloud.containerAuth = true
     const p = await pair()
     await p.b.api.setFolderAuth(p.folder, BEARER('from-b'))
     await converge(p)
@@ -83,7 +83,6 @@ describe('container auth sync', () => {
   })
 
   it('a request document never gets a copy of the inherited auth', async () => {
-    cloud.containerAuth = true
     const p = await pair()
     await p.a.api.setCollectionAuth(p.col, BEARER('secret-ish'))
     await converge(p)

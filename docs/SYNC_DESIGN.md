@@ -1018,7 +1018,7 @@ created_by: { id: string | null, display_name: string } | null
 - Tests: `wireContract.ts` `checkVersionAuthorsContract` (fake and real server), `sync/versionAuthors.test.ts` (two devices, older
   server and its upgrade, deleted account, no false immutable clash, base/conflict copies free of the field).
 
-### 21.6 `container_auth`: collection and folder auth (desktop 0.27; server: not yet)
+### 21.6 `container_auth`: collection and folder auth (desktop 0.27, Slinger Cloud server alongside it)
 
 A sixth capability flag, `container_auth`, advertised and declared like the others. It adds ONE field to `collection` and
 `folder` payloads:
@@ -1037,15 +1037,15 @@ auth_json: string | null   // Postman `auth` object as JSON text; null = none se
   per setting). Limit: at most 1,048,576 bytes (the desktop's input cap), a JSON object.
 - Desktop (done): `FIELD_FEATURE.auth_json = 'container_auth'`, `toWire` adds the field only when the link has the feature,
   activation re-bases (`null`) and marks rows with a local value dirty, deactivation removes it from bases; capture triggers
-  `sync_dirty_{collections,folders}_auth_u` (0018). The client already declares `container_auth`; until a server advertises
-  it the column stays on the device, nothing is pushed or reported (exactly like scripts/docs with a server before 21.1).
-  The fake server implements it behind `new FakeCloud({ containerAuth: true })`; `sync/containerAuth.test.ts` covers today's
-  server, the upgrade and two-device merges/conflicts.
-- Server (TO DO in slinger-admin, not part of desktop 0.27): add `container_auth` to `EXTENSION_FEATURES` and
-  `FIELD_FEATURE.auth_json` (`services/syncFeatures.ts`), a nullable `authJson` column on `Collection` and `Folder` (Prisma
-  migration), `auth_json` in `containerExtras` (`z.string()` JSON object, <= 1 MB, `.nullable().optional()`, absent =
-  unchanged) and in `syncPayload`. Clients that do not declare the feature never see the field (shaping), and an older client
-  never sends it, so it is never wiped.
+  `sync_dirty_{collections,folders}_auth_u` (0018). With a server that does not advertise it the column stays on the device,
+  nothing is pushed or reported (exactly like scripts/docs with a server before 21.1).
+- Server (slinger-admin, migration `container_auth`): `container_auth` in `EXTENSION_FEATURES`, `FIELD_FEATURE.auth_json`,
+  nullable `authJson` on `Collection` and `Folder`, `auth_json` in `containerExtras` (JSON object with a string `type`,
+  <= 1 MiB, nullable, absent = unchanged; stored as sent like `document_json`) and in `syncPayload`. Clients that do not
+  declare the feature never see the field (shaping), and an older client never sends it, so it is never wiped.
+- Tests: the fake server has it on by default (`new FakeCloud({ containerAuth: false })` = a server before it);
+  `wireContract.ts` `checkContainerAuthContract` runs against the fake and the real server; `sync/containerAuth.test.ts` covers
+  a server without it, the upgrade and two-device merges/conflicts; slinger-admin `test/syncContainerAuth.test.ts`.
 - Old desktop versions (<= 0.26) on the same workspace: they neither send nor receive `auth_json`. They treat a request's
   `auth: null` as "No auth", so an inheriting request is sent WITHOUT the collection/folder auth there; a request they save with
   "No auth" stores `null`, which newer versions read as inherit. Requests imported by 0.26 or older carry their own copies of

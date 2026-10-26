@@ -209,9 +209,9 @@ documentation.
 - New requests inherit; a request with **No Auth** is sent without authorization whatever its folders and collection say.
   Requests saved by Slinger 0.26 or older with "No Auth" are shown as **Inherit**: they keep behaving the same until you give
   their collection or a folder an authorization.
-- Cloud sync: collection and folder authorization syncs only with a Slinger Cloud server that supports it; with today's server
-  it stays on this device (nothing is sent, no warning), like scripts and docs did with older servers. Other devices then send
-  inheriting requests without that authorization until the server is upgraded and both devices have synced once.
+- Cloud sync: collection and folder authorization syncs with Slinger Cloud servers that support it (released together with
+  this version); with an older server it stays on this device (nothing is sent, no warning), like scripts and docs did with
+  older servers, and other devices send inheriting requests without it until the server is upgraded.
 
 Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for

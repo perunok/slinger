@@ -259,7 +259,7 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
 `inherited_from` and the masked `effective` auth; `get_tree` lists a container's own auth type; `create_request` /
 `update_request` accept `auth.type: 'inherit'`. Versions snapshot `collectionAuthJson` and folder `authJson` and restore them
 (older snapshots restore with none). Sync: `auth_json` is a collection/folder field of the `container_auth` extension
-(sync design section 21.6), which today's server does not offer, so it stays on the device.
+(sync design section 21.6); with a server that does not offer it, it stays on the device.
 
 ## Secrets
 
@@ -388,8 +388,8 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
   `source_postman_id` (0007) stays device-local.
 - **Collection and folder auth** (`auth_json`, 0018; feature `container_auth`, design section 21.6): same mechanism, own field
-  group `auth`. No server offers the feature yet, so today the column stays on the device (nothing pushed, nothing reported);
-  it starts syncing on its own once the server adds it.
+  group `auth`. With a server without the feature the column stays on the device (nothing pushed, nothing reported); it
+  starts syncing on its own once the server offers it.
 - **Version authors** (feature `version_authors`, design section 21): the server records who created every collection version
   and sends `created_by: {id|null, display_name} | null` on `collection_version` payloads to clients that declared the feature
   (`CLIENT_FEATURES`). The desktop never sends it and it is not part of `toWire`. `apply.ts` `splitAuthor` removes it at EVERY
