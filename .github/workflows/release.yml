@@ -1,7 +1,8 @@
 name: Release
 
-# Builds installers on every OS. Tag pushes (v*) also attach them to a GitHub release;
-# manual runs (workflow_dispatch) only upload workflow artifacts.
+# Builds installers on every OS. Tag pushes (v*) also attach them to a GitHub release whose
+# body is the tag's section of CHANGELOG.md (scripts/release-notes.mjs; the in-app update notice
+# shows it); manual runs (workflow_dispatch) only upload workflow artifacts.
 #
 # Optional signing secrets (builds are unsigned and still succeed when they are absent):
 #   macOS:   CSC_LINK (base64 .p12 or URL), CSC_KEY_PASSWORD,
@@ -16,6 +17,21 @@ permissions:
   contents: read
 
 jobs:
+  # Fails fast when CHANGELOG.md has no dated, filled-in section for the tag's version.
+  notes:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" --out release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
   build:
     strategy:
       fail-fast: false
@@ -80,20 +96,24 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [notes, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: slinger-*
           path: dist-release
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           files: |
             dist-release/*.AppImage
             dist-release/*.deb
             dist-release/*.exe
             dist-release/*.dmg
-          generate_release_notes: true
