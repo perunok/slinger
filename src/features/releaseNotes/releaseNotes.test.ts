@@ -68,17 +68,17 @@ describe('checkWhatsNew', () => {
     expect(ui.releaseNotes).toBeNull()
   })
 
-  it('a fresh install only remembers the version', async () => {
+  it('a fresh install only remembers the version, even when stores wrote their keys during this start', async () => {
     vi.spyOn(backend, 'getAppVersion').mockResolvedValue(newest.version)
-    await checkWhatsNew()
+    localStorage.setItem('slinger.workspace', 'w1')
+    await checkWhatsNew(false)
     expect(ui.releaseNotes).toBeNull()
     expect(seen()).toEqual({ seen: newest.version })
   })
 
   it('an installation from before What’s new gets the running version’s notes', async () => {
     vi.spyOn(backend, 'getAppVersion').mockResolvedValue(newest.version)
-    localStorage.setItem('slinger.workspace', 'w1')
-    await checkWhatsNew()
+    await checkWhatsNew(true)
     expect(ui.releaseNotes).toEqual({ mode: 'new', after: null, current: newest.version })
   })
 

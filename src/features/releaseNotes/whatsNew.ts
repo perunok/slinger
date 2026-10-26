@@ -5,7 +5,8 @@
  */
 import { ui } from '../../app/ui.svelte'
 import { api } from '../../lib/ipc'
-import { decideWhatsNew, entriesSince, EXISTING_INSTALL_KEYS, loadSeenVersion, WHATS_NEW_STORAGE_KEY } from '../../lib/releaseNotes'
+import { existedBeforeStart } from '../../app/installMarker'
+import { decideWhatsNew, entriesSince, loadSeenVersion, WHATS_NEW_STORAGE_KEY } from '../../lib/releaseNotes'
 
 function storage(): Storage | null {
   try {
@@ -15,14 +16,13 @@ function storage(): Storage | null {
   }
 }
 
-/** Runs once at startup. Never throws. */
-export async function checkWhatsNew(): Promise<void> {
+/** Runs once at startup. Never throws. `existing`: the profile existed before this start (tests pass it). */
+export async function checkWhatsNew(existing = existedBeforeStart): Promise<void> {
   try {
     const store = storage()
     if (!store) return
     const current = await api().getAppVersion()
     const seen = loadSeenVersion(store.getItem(WHATS_NEW_STORAGE_KEY))
-    const existing = EXISTING_INSTALL_KEYS.some((k) => store.getItem(k) !== null)
     const decision = decideWhatsNew(seen, current, existing)
     if (decision.record) store.setItem(WHATS_NEW_STORAGE_KEY, JSON.stringify({ seen: current }))
     if (!decision.show) return

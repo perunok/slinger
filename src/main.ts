@@ -1,3 +1,5 @@
+// First: notes whether this profile existed before anything below writes to localStorage.
+import './app/installMarker'
 import './styles/app.css'
 import { mount } from 'svelte'
 import App from './app/App.svelte'
