@@ -316,9 +316,12 @@ describe('request bodies and responses', () => {
     await expect.poll(() => response().innerText()).toMatch(/00 ff fe 01 02 03 80 c8/i)
     const before = new Set(readdirSync(exportDir))
     await response().getByRole('button', { name: 'Save response to file' }).click()
-    await expect.poll(() => readdirSync(exportDir).some((f) => !before.has(f))).toBe(true)
-    const saved = readdirSync(exportDir).find((f) => !before.has(f))!
-    expect([...readFileSync(join(exportDir, saved))]).toEqual([0, 255, 254, 1, 2, 3, 128, 200])
+    // The file appears before its bytes are written: wait for the contents, not just the name.
+    const savedBytes = () => {
+      const saved = readdirSync(exportDir).find((f) => !before.has(f))
+      return saved ? [...readFileSync(join(exportDir, saved))] : null
+    }
+    await expect.poll(savedBytes).toEqual([0, 255, 254, 1, 2, 3, 128, 200])
   })
 
   it('previews a PDF in a blob: iframe permitted by the CSP', async () => {
