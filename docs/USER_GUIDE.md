@@ -100,7 +100,9 @@ In the **Collections** sidebar:
 - Right-click a folder for **Overview & docs**, **New request**, **New MCP request**, **New subfolder**, **Run folder...**, **Scripts...**,
   **Extract to new collection...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
-- Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete** (and **Add example**, except for MCP requests).
+- Right-click a request for **Open**, **Duplicate**, **Copy URL**, **Copy as cURL** (HTTP requests), **Rename**, **Delete** (and
+  **Add example**, except for MCP requests). Copy URL copies the URL as saved, with its `{{variables}}`; Copy as cURL copies the
+  same command as the Code panel's cURL snippet.
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
 - **Extract to new collection** turns a folder into a collection of its own, named after it (you can change the name). Its
   requests move with it, keeping their history, examples and docs, its subfolders come along, and the folder leaves the original
@@ -186,7 +188,8 @@ shows the token itself, **Refresh** uses the refresh token, **Clear** deletes th
 - **Not supported:** the implicit grant (deprecated; Slinger keeps imported settings and asks you to use Authorization Code
   (With PKCE)), and `pm.sendRequest` with OAuth 2.0 auth in scripts.
 
-Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
+Tabs: right-click a tab (or Shift+F10 on it) for Close / Close others / Close to the right / Close all / Save, and on request
+tabs Copy URL / Copy as cURL (of what the tab shows, unsaved edits included). Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
 example in another window), Save reports "Request changed elsewhere" and lets you **Reload from stored** or **Overwrite**.
 Open tabs (including new, never-saved ones, and any unsaved edits) are restored per workspace the next time you start Slinger
@@ -1388,6 +1391,28 @@ the left of the title bar (or in the menu bar, with the system title bar).
 - Menu items for dialogs do nothing while another dialog is open (Settings and Keyboard Shortcuts still open), the same as the
   keyboard shortcuts.
 - Development builds also show Reload and Toggle Developer Tools under View.
+
+## Right-click menus
+
+Right-click menus are shortcuts to actions that also have a button, a key or a menu entry elsewhere, plus copying. Where the
+item can take keyboard focus, **Shift+F10** or the **Menu** key opens the same menu; the arrow keys move, Enter chooses,
+Escape closes.
+
+| Where | Items |
+| --- | --- |
+| Collections tree: collection, folder, request, example | see [Collections, folders and requests](#collections-folders-and-requests) and [Saved examples](#saved-examples) |
+| Request tabs | Close, Close others, Close to the right, Close all, Save, Copy URL, Copy as cURL |
+| History entry | Open, Copy URL, Delete |
+| Environments list (Manage environments) | Set active, Rename…, Duplicate, Export…, Delete… |
+| Response body | Copy (the selected text), Copy response body, Save response to file…, Search in response |
+| Response headers / cookies row | Copy (the selected text), Copy name, Copy value, Copy as "Name: value" / "name=value" |
+| Collection versions list | Copy version number, Restore…, Delete… |
+| Workflows list | Open, Rename…, Duplicate, Delete… |
+| Workflow canvas node | Open request (Send request nodes), Delete node |
+| Title bar, status bar (run and mock server items) | see [Layout](#layout) |
+
+Text fields (the URL bar, key/value tables, variables, editors) get the usual Undo / Redo / Cut / Copy / Paste / Select all
+menu, and selected text elsewhere gets Copy. Pasting a cURL command into the URL bar this way still opens the import.
 
 ## Keyboard shortcuts
 

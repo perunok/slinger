@@ -11,7 +11,10 @@
   import NameDialog from '../../components/ui/NameDialog.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import { planDrop, type DragItem, type DropPosition, type DropTarget } from '../../lib/tree'
+  import { copyText } from '../../app/clipboard'
+  import { parseDocument } from '../../lib/request'
   import { isMcpMethod } from '../requests/method'
+  import { copyAsCurl } from '../requests/snippet'
   import { tabsStore } from '../requests/tabs.svelte'
   import * as actions from './actions'
   import ExtractFolderDialog from './ExtractFolderDialog.svelte'
@@ -104,7 +107,7 @@
   }
   /** Read-only workspaces keep the non-mutating entries (open, run, scripts (read-only view), versions, export). */
   function readOnlyMenu(items: MenuItem[]): MenuItem[] {
-    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Mock server…', 'Variables…', 'Scripts…', 'Versions…', 'Export…', 'OpenAPI…'])
+    const keep = new Set(['Open', 'Overview & docs', 'Show examples', 'Hide examples', 'Run collection…', 'Run folder…', 'Mock server…', 'Variables…', 'Scripts…', 'Versions…', 'Export…', 'OpenAPI…', 'Copy URL', 'Copy as cURL'])
     return items.filter((i) => i.separator || keep.has(i.label)).filter((it, i, all) => !(it.separator && (i === 0 || all[i - 1].separator || i === all.length - 1)))
   }
   function fullMenu(row: TreeRowModel): MenuItem[] {
@@ -159,8 +162,22 @@
       // MCP requests have no saved examples (v1).
       ...(isMcpMethod(row.method) ? [] : [{ label: 'Add example', icon: 'plus', action: () => (dlg = { t: 'newExample', requestId: row.id }) }]),
       { separator: true, label: '' },
+      ...copyItems(row),
+      { separator: true, label: '' },
       { label: 'Rename', icon: 'edit', hint: 'F2', action: () => (dlg = { t: 'rename', row }) },
       { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => (dlg = { t: 'delete', row }) },
+    ]
+  }
+
+  /** Copy entries of a saved request: its URL as written (with `{{variables}}`) and, for HTTP, the Code panel's cURL. */
+  function copyItems(row: TreeRowModel): MenuItem[] {
+    const r = app.requestById(row.id)
+    if (!r) return []
+    return [
+      { label: 'Copy URL', icon: 'link', disabled: !r.url, action: () => void copyText(r.url, 'URL copied') },
+      ...(isMcpMethod(r.method)
+        ? []
+        : [{ label: 'Copy as cURL', icon: 'code', action: () => void copyAsCurl(parseDocument(r), { collectionId: r.collectionId, requestId: r.id }) }]),
     ]
   }
 

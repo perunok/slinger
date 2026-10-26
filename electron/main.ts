@@ -15,6 +15,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
 import { APP_NAME, buildAppMenuTemplate, deliverMenuCommand, nextZoomLevel, type ZoomDirection } from './lib/appMenu'
 import { contentSecurityPolicy } from './lib/csp'
+import { editMenuTemplate } from './lib/editMenu'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
@@ -255,6 +256,11 @@ function createWindow(): BrowserWindow {
   })
   win.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) event.preventDefault()
+  })
+  // Cut / Copy / Paste on text fields and selected text (the app's own right-click menus stop this event in the page).
+  win.webContents.on('context-menu', (_event, params) => {
+    const template = editMenuTemplate(params)
+    if (template) Menu.buildFromTemplate(template).popup({ window: win })
   })
   timeMark('loadURL')
   void win.loadURL(devServerUrl ?? `${APP_ORIGIN}/index.html`)

@@ -83,10 +83,32 @@ describe('New MCP request', () => {
     const mcpRow = await screen.findByRole('treeitem', { name: /Demo MCP/ })
     expect(within(mcpRow).getByText('MCP')).toBeInTheDocument()
     await user.pointer({ keys: '[MouseRight]', target: mcpRow })
-    expect(menuLabels(await screen.findByRole('menu'))).toEqual(['Open', 'Duplicate', 'Rename', 'Delete'])
+    expect(menuLabels(await screen.findByRole('menu'))).toEqual(['Open', 'Duplicate', 'Copy URL', 'Rename', 'Delete'])
     await user.keyboard('{Escape}')
 
     await user.pointer({ keys: '[MouseRight]', target: await screen.findByRole('treeitem', { name: /Plain/ }) })
     expect(menuLabels(await screen.findByRole('menu'))).toContain('Add example')
   })
 })
+
+describe('request menu: copy', () => {
+  it('copies the saved URL and the cURL command of an HTTP request', async () => {
+    const ws = app.workspaceId!
+    await backend.createRequest({ workspaceId: ws, collectionId, folderId: null, name: 'Plain', method: 'POST', url: 'https://x.test/{{id}}', documentJson: '{}' })
+    await app.reloadCollections()
+    const user = userEvent.setup()
+    render(CollectionsPanel)
+    const col = await screen.findByRole('treeitem', { name: /Tools/ })
+    if (col.getAttribute('aria-expanded') !== 'true') await user.click(col)
+    const row = await screen.findByRole('treeitem', { name: /Plain/ })
+
+    await user.pointer({ keys: '[MouseRight]', target: row })
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Copy URL' }))
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe('https://x.test/{{id}}'))
+
+    await user.pointer({ keys: '[MouseRight]', target: row })
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Copy as cURL' }))
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toMatch(/^curl -X POST 'https:\/\/x\.test\/\{\{id\}\}'/))
+  })
+})
+

@@ -6,6 +6,9 @@
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
   import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { menuPoint } from '../../components/ui/contextMenu'
+  import { copyText } from '../../app/clipboard'
   import Dialog from '../../components/ui/Dialog.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { api, errorInfo } from '../../lib/ipc'
@@ -37,6 +40,24 @@
   let detailSeq = 0
 
   const selected = $derived(versions.find((v) => v.id === selectedId) ?? null)
+
+  let menu = $state<{ x: number; y: number; version: CollectionVersion } | null>(null)
+  /** Right-click / Shift+F10 on a version selects it and offers the detail pane's buttons, plus copying the number. */
+  function openMenu(id: string, e: MouseEvent | KeyboardEvent) {
+    const version = versions.find((v) => v.id === id)
+    if (!version) return
+    e.preventDefault()
+    selectedId = id
+    menu = { ...menuPoint(e), version }
+  }
+  function menuItems(v: CollectionVersion): MenuItem[] {
+    return [
+      { label: 'Copy version number', icon: 'copy', action: () => void copyText(v.version, 'Version number copied') },
+      { separator: true, label: '' },
+      { label: 'Restore…', icon: 'history', disabled: sync.blocked, action: () => (restoring = true) },
+      { label: 'Delete…', icon: 'trash', danger: true, disabled: sync.blocked, action: () => (deleting = true) },
+    ]
+  }
 
   async function reload(select?: string): Promise<void> {
     loading = true
@@ -167,7 +188,7 @@
       <!-- minmax(0,1fr) row + min-h-0 cell: keep the detail pane at the grid's height so its tab panel scrolls instead of being clipped -->
       <div class="grid min-h-0 flex-1 grid-cols-[minmax(220px,300px)_1fr] grid-rows-[minmax(0,1fr)] overflow-hidden rounded border border-border">
         <div class="overflow-auto border-r border-border">
-          <VersionList {versions} {selectedId} onselect={(id) => (selectedId = id)} />
+          <VersionList {versions} {selectedId} onselect={(id) => (selectedId = id)} onmenu={openMenu} />
         </div>
         <div class="min-h-0 min-w-0">
           {#if selected}
@@ -190,6 +211,10 @@
     {/if}
   </div>
 </Dialog>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.version)} onclose={() => (menu = null)} />
+{/if}
 
 {#if creating}
   <CreateVersionDialog

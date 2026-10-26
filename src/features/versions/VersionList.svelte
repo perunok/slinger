@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { CollectionVersion } from '../../../shared/types'
+  import { isMenuKey } from '../../components/ui/contextMenu'
   import { latestRelease } from '../../lib/semver'
   import { sync } from '../sync/syncStore.svelte'
   import { detailByline, isPrerelease, listByline, truncate } from './helpers'
@@ -8,8 +9,10 @@
     versions: CollectionVersion[]
     selectedId: string | null
     onselect: (id: string) => void
+    /** Right-click or Shift+F10 on a version (the panel shows its menu). */
+    onmenu?: (id: string, e: MouseEvent | KeyboardEvent) => void
   }
-  let { versions, selectedId, onselect }: Props = $props()
+  let { versions, selectedId, onselect, onmenu }: Props = $props()
 
   const latest = $derived(latestRelease(versions.map((v) => v.version)))
   /** The 15 s tick of the sync store re-renders the relative dates; the wall clock keeps it right before the first tick. */
@@ -39,7 +42,11 @@
       tabindex={selected || (selectedId === null && idx === 0) ? 0 : -1}
       class="cursor-pointer rounded border px-2.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-focus {selected ? 'border-accent bg-accent-soft' : 'border-transparent hover:bg-hover'}"
       onclick={() => onselect(v.id)}
-      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onselect(v.id))}
+      oncontextmenu={(e) => onmenu?.(v.id, e)}
+      onkeydown={(e) => {
+        if (isMenuKey(e) && onmenu) onmenu(v.id, e)
+        else if (e.key === 'Enter' || e.key === ' ') (e.preventDefault(), onselect(v.id))
+      }}
     >
       <div class="flex items-center gap-1.5">
         <span
