@@ -16,11 +16,13 @@
   import ThemeGallery from './ThemeGallery.svelte'
   import TitleBarLayoutEditor from './TitleBarLayoutEditor.svelte'
   import McpSettings from '../mcp/McpSettings.svelte'
+  import { MAX_MAX_RESPONSE_MB, MIN_MAX_RESPONSE_MB } from '../../../shared/responseLimit'
 
   const SECTIONS = [
     { id: 'appearance', label: 'Appearance' },
     { id: 'layout', label: 'Layout & window' },
     { id: 'editor', label: 'Editor & tabs' },
+    { id: 'requests', label: 'Requests' },
     { id: 'scripts', label: 'Scripts' },
     { id: 'updates', label: 'Updates' },
     { id: 'mcp', label: 'AI assistants (MCP)' },
@@ -169,6 +171,31 @@
             <InfoTip label="About restoring tabs">
               Reopens each workspace's tabs, in the same order with the same unsaved changes, next time you start Slinger. Turning this
               off also erases what is currently stored.
+            </InfoTip>
+          </div>
+        </section>
+      {:else if ui.settingsSection === 'requests'}
+        <section class="grid gap-3">
+          <div class="flex items-center gap-2 text-sm">
+            <label for="max-response-mb">Maximum response size (MB)</label>
+            <input
+              id="max-response-mb"
+              type="number"
+              min={MIN_MAX_RESPONSE_MB}
+              max={MAX_MAX_RESPONSE_MB}
+              step="1"
+              class="w-24"
+              value={settings.maxResponseMb}
+              onchange={(e) => {
+                settings.setMaxResponseMb(Number(e.currentTarget.value))
+                e.currentTarget.value = String(settings.maxResponseMb)
+              }}
+            />
+            <InfoTip label="About the maximum response size">
+              Slinger stops downloading a response body larger than this ({MIN_MAX_RESPONSE_MB}–{MAX_MAX_RESPONSE_MB} MB, default 50 MB,
+              like Postman) and shows only its status and headers, so a huge or endless response cannot freeze the app. Use Send and
+              download to file on such a response to save the whole body straight to a file instead. Scripts' pm.sendRequest loads at
+              most 10 MB.
             </InfoTip>
           </div>
         </section>

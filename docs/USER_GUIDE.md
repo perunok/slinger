@@ -283,6 +283,13 @@ After Send the pane shows status, time and size. Views: **Pretty** (formatted, f
 (parsed from `Set-Cookie`). Toolbar: search in response, toggle word wrap, copy body, **Save response to file** (to the export
 folder). Non-2xx responses are shown normally; network errors, timeouts and cancellations appear as inline errors.
 
+**Large responses.** Slinger loads at most the **Maximum response size** (Settings > Requests, default 50 MB like Postman,
+1-256 MB). For a larger body it stops the download and shows *Response larger than 50 MB — not loaded*, with the status and
+headers still there. **Send and download to file** asks where to save, sends the request again and writes the whole body
+straight to that file (no size limit); the response pane then shows where it was saved and how big it is. Test scripts do not
+run for such a download (there is no body to test). In the collection runner and for AI assistants a body over the limit is
+reported as not loaded.
+
 When the request (or its folder or collection) has scripts, two more views appear: **Tests** (every `pm.test` with pass/fail/skip,
 the assertion message of failures, script errors, a filter, and a `passed/total` badge on the tab that turns red when something
 failed) and **Console** (`console.log/info/warn/error` output with level, time and which script printed it; **Clear** empties it).
@@ -681,7 +688,8 @@ pm.sendRequest({
   `pm.variables.replaceIn(...)` work too. An unresolved `{{name}}` fails that request with an error naming it.
 - **When it runs.** Requests from one script run in parallel. The script (and so the main request) waits until every
   `pm.sendRequest` it started has answered and its callbacks ran, including requests started from callbacks.
-- **Limits.** At most 20 `pm.sendRequest` calls per script run; only `http`/`https` URLs (a URL without a scheme gets `http://`,
+- **Limits.** At most 20 `pm.sendRequest` calls per script run; a response body over 10 MB is not loaded (the call fails with
+  an error saying so); only `http`/`https` URLs (a URL without a scheme gets `http://`,
   like the main request). Each call times out after the request's own timeout (its Settings tab), 60 s by default, at most 120 s;
   a call's `timeout` can only lower that. Waiting for responses does not use the script's time limit, but a script is stopped if it
   is still waiting after its time limit + 20 × the request timeout (5 minutes at most). Redirects are followed.
@@ -1205,6 +1213,9 @@ Settings (Ctrl+, or the gear icon) lists its sections at the left: **Appearance*
   changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
   and erases what is already stored; response panes are never part of what is saved or restored either way.
 
+**Requests:** **Maximum response size** (MB; default 50, 1-256): larger response bodies are not loaded; see
+[Reading the response](#reading-the-response) (Large responses).
+
 **Scripts:** **Time limit per script** (default 5000 ms, 100-60000) and **Send the request even when a pre-request script
 fails** (off by default).
 
@@ -1336,7 +1347,8 @@ downloaded until you click.
 
 - **Update now** opens **Update Slinger**: it downloads the new version for your system from GitHub with a progress bar (size,
   speed, time left; **Cancel** stops it, **Hide** lets it continue in the background) and checks it against GitHub's
-  checksum. Then **Restart to update** installs it and starts Slinger again; your open tabs come back. **Later** keeps the
+  checksum. Then **Restart to update** checks the file again (an installer that changed since the download is refused) and
+  installs it and starts Slinger again; your open tabs come back. **Later** keeps the
   download: Settings > Updates then offers **Restart to update**.
 - How it installs:
   - Linux, installed from the **.deb**: with your system's package manager (`pkexec dpkg`), which asks for your password in a

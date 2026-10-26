@@ -46,3 +46,21 @@ export function suggestFileName(mime: string, contentDisposition?: string | null
   const ext = EXT[base] ?? (base.endsWith('+json') ? 'json' : base.endsWith('+xml') ? 'xml' : 'bin')
   return `response.${ext}`
 }
+
+/**
+ * The file name suggested for "Send and download to file": the server's Content-Disposition name (from the response that
+ * was too large, when there is one), else the URL's last path segment when it looks like a file name, else
+ * `response.<ext>` for the Content-Type.
+ */
+export function downloadFileName(url: string, headers: ReadonlyArray<{ key: string; value: string }> = []): string {
+  const header = (name: string) => headers.find((h) => h.key.toLowerCase() === name)?.value ?? null
+  const disposition = header('content-disposition')
+  if (disposition && /filename/i.test(disposition)) return suggestFileName('', disposition)
+  try {
+    const last = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '').replace(/[\\/:*?"<>|]/g, '_').trim()
+    if (/^[^.].*\.[A-Za-z0-9]{1,8}$/.test(last)) return last
+  } catch {
+    /* not a URL (or bad escapes): fall through */
+  }
+  return suggestFileName(header('content-type') ?? '')
+}

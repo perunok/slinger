@@ -52,10 +52,15 @@ is unit-tested without launching Electron.
 Window preferences: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`,
 `allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch (also bringing it
 back from the tray). Electron's lock is per profile (userData), so packaged builds also take a per-user lock
-(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the named pipe
-`\\.\pipe\slinger-<user>` on Windows, taken at `whenReady` before the database opens. A second start with any profile
-connects, sends `show` (the first shows its window) and exits; a socket file nobody listens on (refused) is replaced, but a
-first instance that is slow to answer still counts as running. A lock that cannot be created never blocks starting. Unpackaged
+(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>/instance.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the
+named pipe `\\.\pipe\slinger-<hash>` on Windows (SHA-256 of the user name and a random per-user secret kept in
+`%APPDATA%\Slinger\instance-guard.key`, so other users cannot guess it), taken at `whenReady` before the database opens. A
+second start with any profile connects, sends `show` (the first answers `ok` and shows its window) and exits; a socket file
+nobody listens on (refused) is replaced, but a first instance that is slow to answer still counts as running. Squatting: on
+POSIX the `slinger-<uid>` folder is created 0700 and must be a directory owned by this user (not a symlink; our own folder
+with a looser mode is tightened), and an existing socket is only trusted (asked, or removed when stale) when it is a socket
+owned by this user; anything else, and any peer that answers something other than `ok` (on Windows also silence), disables
+the guard instead of making Slinger exit. A lock that cannot be created never blocks starting. Unpackaged
 (dev, e2e) builds skip it so profiles can run side by side; `SLINGER_INSTANCE_GUARD=<path>` turns it on (e2e).
 
 **Tray and quitting** (`electron/lib/tray.ts` + `main.ts`). With `closeToTray` on (`window-state.json`, absent = on; IPC
@@ -277,7 +282,16 @@ array under the key `scripts` (the key the importer has always used, so existing
    `cancelHttpRequest(runId)` also works while the body streams. Timeouts and cancellations are `network_error` with
    `details.timedOut` / `details.cancelled`.
 5. **Response.** Non-2xx statuses resolve normally. Body is `bodyText` when the bytes decode (declared charset, else UTF-8),
-   otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download.
+   otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download. The body is read with a
+   hard cap (`lib/limitedBody.ts` `readLimitedBody`): a declared `Content-Length` over it stops before the first byte, otherwise
+   the stream is cancelled as soon as the bytes pass it. User sends carry `maxResponseBytes` (Settings > Requests > Maximum
+   response size, `shared/responseLimit.ts`: 1-256 MB, default 50 MB; 256 MB because a binary body travels as one base64
+   string, and V8 strings end near 512 M characters); a larger body resolves with `bodyTooLarge: { limitBytes }`, status and
+   headers, and no body. Internal callers (cloudFetch, OAuth token calls, release JSON) fail with `network_error` instead.
+   **Send and download to file**: `chooseResponseDownloadFile(name)` shows main's save dialog and returns a one-time id
+   (10 min, `HttpService.registerDownload`); `executeHttpRequest({ ..., downloadId })` streams the body into that file
+   (`streamBodyToFile`, no limit, no partial file left on failure) and resolves with `savedToFile` and no body. The renderer
+   never names a path to write; test scripts do not run for a download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
    are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`).
@@ -488,7 +502,8 @@ collection scope seeded from `input.collectionVariables`, with a console warning
   resolves `{{variables}}` with the same `replaceIn` as `pm.variables.replaceIn` (Postman resolves variables in sendRequest too;
   secret reads go through the normal by-name path, so they are remembered for redaction), rejects non-http(s) schemes, counts it
   against `maxSendRequests` (20 per run) and caps its timeout (`sendRequestTimeoutMs`: the request's own timeout, default 60 s,
-  max 120 s). It then calls `deps.sendHttp(call, signal)`: in the app the worker posts `{type:'http', id, call}` on a second
+  max 120 s). Its response body is capped at 10 MB (`SCRIPT_MAX_RESPONSE_BYTES`, enforced while streaming; larger: the call
+  fails with "larger than 10 MB"). It then calls `deps.sendHttp(call, signal)`: in the app the worker posts `{type:'http', id, call}` on a second
   `MessagePort` (`httpPort`, separate from the synchronous secret port so `receiveMessageOnPort` can never take an HTTP reply) and
   main (`WorkerExecutor`) runs `io.sendHttp`, which is `ScriptService` -> `services/scriptHttp.ts` -> `executeHttp` with the
   session's `FileGrants` (the same engine as a normal send: body building, auth, redirects, decoding) but **not**
@@ -692,7 +707,7 @@ requests carry their operation in the (synced, opaque) request document; the doc
   import" from "edited here" even after the renderer re-serialised it. Pure-JS 128-bit hash (main and browser alike).
 - **Link** (migration `0016_collection_openapi`, local only, no capture triggers): `collection_openapi` (collection, source
   kind url/file/text + value, document text and hash, title, versions, folder mode, operation count, times).
-  `electron/openapi/service.ts` (`core.openapi`): `previewOpenApi` (text, or a URL fetched with `net.fetch`: http(s) only, 50 MB,
+  `electron/openapi/service.ts` (`core.openapi`): `previewOpenApi` (text, or a URL fetched with `net.fetch`: http(s) only, 50 MB enforced while streaming,
   30 s, no credentials), `importOpenApi` (import + link in one transaction), `getOpenApiLink`, `unlinkOpenApi`.
 - **Validation** (`shared/openapi/validate.ts`, pure; `electron/openapi/validate.ts`): operation from the request's
   `openapi.key`, else method + URL path (after `{{baseUrl}}`, a server URL or scheme+host; `{param}` segments are wildcards and
@@ -1111,11 +1126,13 @@ name the release workflow uses (`Slinger-<v>-linux-amd64.deb`, `-linux-x86_64.Ap
 accepts only `https://github.com/perunok/slinger/releases/download/...` (or the test feed's own origin), streams it to
 `<userData>/updates/<name>.part` with progress (every 200 ms, speed over 1 s), and requires the exact size and GitHub's
 `digest` (`sha256:...`; no digest: refused) before renaming it; older files there are deleted. `installUpdate`: AppImage:
-copy to `<file>.new`, chmod 755, rename over `$APPIMAGE`; deb: `pkexec dpkg -i` (exit 126/127 = password not given ->
+copy to `<file>.new`, verify, chmod 755, rename over `$APPIMAGE`; deb: copied into a fresh `mkdtemp` folder (0700, file 0600),
+verified there, then `pkexec dpkg -i <copy>` (the folder is removed afterwards; exit 126/127 = password not given ->
 error, Slinger keeps running); then a detached `/bin/sh` waits for this pid to exit and starts the new version (the
-single-instance lock would otherwise send it back to this process); Windows: the installer runs detached with
+single-instance lock would otherwise send it back to this process); Windows: the installer is verified again, then runs detached with
 `/S --updated --force-run` (it restarts Slinger); macOS: the helper mounts the dmg after the quit, `ditto`s the bundle into
-place and `open`s it. Then `app.quit()` runs the normal quit (assistant calls finish, mock servers stop).
+place and `open`s it (the dmg is verified before the quit). Every install path re-hashes the file (size + SHA-256 kept from the
+download) right before it is used, because `<userData>/updates` is writable by the user. Then `app.quit()` runs the normal quit (assistant calls finish, mock servers stop).
 
 `SLINGER_UPDATE_FEED_URL` (http/https) replaces the GitHub URL (tests, e2e). Automated runs (`SLINGER_SMOKE_TEST`,
 `SLINGER_HIDE_WINDOW`) without it never call out: `checkForUpdates` answers `io_error` there.

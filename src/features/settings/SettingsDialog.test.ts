@@ -155,6 +155,23 @@ describe('restore tabs on startup', () => {
   })
 })
 
+describe('maximum response size', () => {
+  afterEach(() => settings.setMaxResponseMb(50))
+
+  it('defaults to 50 MB, persists a new value and keeps it within 1-256 MB', async () => {
+    setup('requests')
+    const input = screen.getByRole('spinbutton', { name: /Maximum response size/ }) as HTMLInputElement
+    expect(input.value).toBe('50')
+    await fireEvent.change(input, { target: { value: '120' } })
+    expect(settings.maxResponseMb).toBe(120)
+    expect(localStorage.getItem('slinger.maxResponseMb')).toBe('120')
+    await fireEvent.change(input, { target: { value: '5000' } })
+    expect(settings.maxResponseMb).toBe(256)
+    expect(input.value).toBe('256')
+    expect(screen.getByRole('button', { name: /About the maximum response size/ })).toBeInTheDocument()
+  })
+})
+
 describe('window and updates', () => {
   async function open(section: typeof ui.settingsSection): Promise<SlingerIpcApi & MockControls> {
     ui.settingsSection = section
@@ -229,7 +246,7 @@ describe('sections', () => {
   it('lists the sections at the side; each shows its own settings, and the last one stays selected', async () => {
     setup()
     const nav = screen.getByRole('tablist', { name: 'Settings sections' })
-    expect(within(nav).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Appearance', 'Layout & window', 'Editor & tabs', 'Scripts', 'Updates', 'AI assistants (MCP)'])
+    expect(within(nav).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Appearance', 'Layout & window', 'Editor & tabs', 'Requests', 'Scripts', 'Updates', 'AI assistants (MCP)'])
     expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /Show sidebar/ })).toBeNull()
     await fireEvent.click(within(nav).getByRole('tab', { name: 'Layout & window' }))

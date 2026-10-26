@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hexDump, suggestFileName } from './hex'
+import { downloadFileName, hexDump, suggestFileName } from './hex'
 
 describe('hexDump', () => {
   it('formats offset, hex and ascii', () => {
@@ -23,5 +23,15 @@ describe('suggestFileName', () => {
     expect(suggestFileName('application/json; charset=utf-8')).toBe('response.json')
     expect(suggestFileName('application/vnd.api+json')).toBe('response.json')
     expect(suggestFileName('application/x-unknown')).toBe('response.bin')
+  })
+})
+
+describe('downloadFileName', () => {
+  it('prefers Content-Disposition, then a file-like URL segment, then the Content-Type', () => {
+    expect(downloadFileName('https://x.dev/files/a.zip', [{ key: 'Content-Disposition', value: 'attachment; filename="r.csv"' }])).toBe('r.csv')
+    expect(downloadFileName('https://x.dev/files/big%20dump.tar.gz?x=1')).toBe('big dump.tar.gz')
+    expect(downloadFileName('https://x.dev/api/items', [{ key: 'content-type', value: 'application/json; charset=utf-8' }])).toBe('response.json')
+    expect(downloadFileName('https://x.dev/.env')).toBe('response.bin')
+    expect(downloadFileName('not a url')).toBe('response.bin')
   })
 })
