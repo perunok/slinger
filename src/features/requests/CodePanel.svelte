@@ -8,6 +8,8 @@
   import { saveExport } from '../../lib/exportFile'
   import { errorInfo } from '../../lib/ipc'
   import { prepareRequest } from '../../lib/prepare'
+  import { withEffectiveAuth } from '../../lib/authInheritance'
+  import { authChainFor } from './execute'
   import { generateSnippet, MCP_SNIPPET_LANG, mcpInspectorSnippet, prepareMcpSnippet, SNIPPET_LANGS, type SnippetLang } from '../../lib/snippets'
   import { sanitizeFileStem } from '../importexport/fileName'
   import type { RequestTab } from './tabs.svelte'
@@ -21,11 +23,13 @@
   // Regenerated on every draft/environment change; built-ins get a fresh sample value each time.
   const prepared = $derived.by((): { ok: true; snippet: string } | { ok: false; error: string } => {
     const ctx = { workspaceId: app.workspaceId ?? '', requestId: tab.requestId, scope: scopeStore.scopeFor(tab.collectionId) }
+    // An inherited auth is shown as the folder's / collection's, exactly as a send resolves it.
+    const draft = withEffectiveAuth(tab.draft, authChainFor(tab.collectionId, tab.folderId))
     if (isMcp) {
-      const mcp = prepareMcpSnippet(tab.draft, ctx)
+      const mcp = prepareMcpSnippet(draft, ctx)
       return mcp.ok ? { ok: true, snippet: mcpInspectorSnippet(mcp.input) } : mcp
     }
-    const http = prepareRequest(tab.draft, { ...ctx, allowUnresolved: true })
+    const http = prepareRequest(draft, { ...ctx, allowUnresolved: true })
     return http.ok ? { ok: true, snippet: generateSnippet(lang, http.input) } : http
   })
   const snippet = $derived(prepared.ok ? prepared.snippet : '')

@@ -229,7 +229,7 @@ const PURE_TEMPLATE = /^\s*\{\{[^{}]+\}\}\s*$/
  * masked. OAuth 2.0 tokens are never in the document, so they cannot appear. Null without (supported) auth.
  */
 export function scriptAuthView(a: AuthDraft): ScriptAuthData | null {
-  if (a.kind === 'none' || a.kind === 'unsupported') return null
+  if (a.kind === 'none' || a.kind === 'inherit' || a.kind === 'unsupported') return null
   const serialized = serializeAuth(a) as { type: string } & Record<string, unknown>
   const list = serialized[serialized.type]
   const secret = CREDENTIAL_PARAMS[serialized.type] ?? new Set<string>()

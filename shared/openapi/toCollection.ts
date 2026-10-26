@@ -274,7 +274,8 @@ function itemFor(op: SpecOperation, spec: LoadedSpec, vars: Vars, specHash: stri
 
   const name = `${(op.summary ?? op.operationId ?? op.key).slice(0, 480)}${op.deprecated ? ' (deprecated)' : ''}`
   const itemHash = fingerprintDocument(
-    { method: op.method, url: raw, headers, body: body ?? null, auth: request.auth ?? collectionAuth ?? null, description },
+    // Inherited auth is not part of the request (it stays on the collection), so not of its fingerprint either.
+    { method: op.method, url: raw, headers, body: body ?? null, auth: request.auth ?? null, description },
     op.method,
     raw,
   )

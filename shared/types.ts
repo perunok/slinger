@@ -40,6 +40,12 @@ export interface Collection {
   description?: string | null
   descriptionType?: DescriptionType | null
   /**
+   * ADDED (container auth): the collection's Postman `auth` object as JSON text, or null for "no auth". Requests whose
+   * own auth is "inherit" use it unless a folder on the way sets its own (src/lib/authInheritance.ts). Never holds an
+   * OAuth 2.0 token. Synced only with a server that has the `container_auth` feature. Optional so older fixtures stay valid.
+   */
+  authJson?: string | null
+  /**
    * ADDED (re-import): the Postman `info._postman_id` of the file this collection was imported (or last replaced)
    * from, used to recognise the same file on a later import. Local-only (never synced); null for collections
    * created here, imported as a copy, or downloaded from the cloud. Optional so older fixtures stay valid.
@@ -62,6 +68,11 @@ export interface ApiFolder {
   /** ADDED (docs): the folder's documentation, see Collection.description. */
   description?: string | null
   descriptionType?: DescriptionType | null
+  /**
+   * ADDED (container auth): the folder's Postman `auth` object as JSON text; null = inherit from the parent folder or
+   * the collection, '{"type":"noauth"}' = no auth (stops inheritance). See Collection.authJson.
+   */
+  authJson?: string | null
   createdAt: number
   updatedAt: number
   version: number
@@ -673,12 +684,14 @@ export interface CollectionSnapshot {
   /** ADDED (docs): collection description at snapshot time; absent in older snapshots or when empty. */
   collectionDescription?: string | null
   collectionDescriptionType?: DescriptionType | null
+  /** ADDED (container auth): the collection's auth (Postman `auth` JSON) at snapshot time; absent in older snapshots or when none. */
+  collectionAuthJson?: string | null
   /**
    * ADDED (persisted variables): the collection variables at snapshot time, in order; absent in older snapshots
    * (restoring one of those leaves the collection without variables) and when there were none.
    */
   collectionVariables?: import('./postmanVariables').CollectionVariableData[]
-  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType'>>
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType' | 'authJson'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
   >
@@ -1019,7 +1032,7 @@ export type SyncResolution = 'keep_local' | 'keep_remote' | 'merge' | 'duplicate
 /** One field group of a conflicting entity. Values are display strings; secret values never appear. */
 export interface SyncConflictGroup {
   /** `scripts`, `docs` (collections/folders) and `details` (variables: enabled + description): sync design section 21. */
-  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details'
+  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details' | 'auth'
   label: string
   conflicting: boolean
   base: string | null

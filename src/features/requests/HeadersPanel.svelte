@@ -1,10 +1,13 @@
 <script lang="ts">
   import KeyValueTable from '../../components/kv/KeyValueTable.svelte'
   import { autoHeaders } from '../../lib/autoHeaders'
+  import { withEffectiveAuth } from '../../lib/authInheritance'
+  import { authChainFor } from './execute'
   import type { RequestTab } from './tabs.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
-  const auto = $derived(autoHeaders(tab.draft))
+  // An inherited auth adds its header too.
+  const auto = $derived(autoHeaders(withEffectiveAuth(tab.draft, authChainFor(tab.collectionId, tab.folderId))))
   let showAuto = $state(false)
 </script>
 

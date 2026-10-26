@@ -16,6 +16,7 @@ import { importPostman, requestFromItem } from './postmanImport'
 import { addFolder, addRequest, must, touch, type MockState } from './store'
 import { clone, fail, nowSec, uuid } from './util'
 import { addVersion } from './versions'
+import { containerAuthFromPostman, parseContainerAuthJson } from '../../../shared/containerAuth'
 
 type OpenApiMockApi = Pick<
   SlingerIpcApi,
@@ -81,8 +82,9 @@ function planInput(s: MockState, link: MockOpenApiLink | undefined, collectionId
   }
   const requests = s.requests.filter((r) => r.collectionId === collectionId)
   const variables = s.collectionVariables.filter((v) => v.ownerId === collectionId).map((v) => ({ key: v.key, value: v.value }))
+  const collectionAuth = parseContainerAuthJson(s.collections.find((c) => c.id === collectionId)?.authJson)
   return {
-    input: { next, previous, requests, folders: s.folders.filter((f) => f.collectionId === collectionId), variables, toRequest: (item, inheritedAuth) => requestFromItem(item, inheritedAuth) },
+    input: { next, previous, requests, folders: s.folders.filter((f) => f.collectionId === collectionId), variables, collectionAuth, toRequest: (item) => requestFromItem(item) },
     stamp: planStamp(requests, variables.find((v) => v.key === 'baseUrl')?.value ?? null),
   }
 }
@@ -181,7 +183,9 @@ export function createOpenApiApi(state: MockState, links: Map<string, MockOpenAp
       } catch (e) {
         fail('invalid_input', (e as Error).message)
       }
-      const changes = writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null
+      const changes =
+        writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null ||
+        writes.collectionAuth !== undefined
       const versions = state.versions.filter((v) => v.collectionId === collection.id).map((v) => v.version)
       const safety = changes ? addVersion(state, collection.id, suggestBumps(versions).patch, 'Automatic snapshot before updating from the OpenAPI document') : null
       const folderIds = new Map<string, string>()
@@ -215,6 +219,7 @@ export function createOpenApiApi(state: MockState, links: Map<string, MockOpenAp
       }
       if (writes.baseUrl !== null) setVar('baseUrl', writes.baseUrl, 'Server URL from the API description')
       for (const v of writes.variables) setVar(v.key, v.value, v.description || null)
+      if (writes.collectionAuth !== undefined) touch(collection).authJson = containerAuthFromPostman(writes.collectionAuth, 'collection')
       const link = saveLink(links, collection.id, spec, plan.text, plan.source, folders)
       plans.delete(input.planId)
       const safetyVersion = safety ? (({ snapshot: _s, ...rest }) => rest)(safety) : null

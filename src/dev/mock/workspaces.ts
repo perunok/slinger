@@ -12,7 +12,7 @@ import {
   type MockState,
   type VariableRow,
 } from './store'
-import { cleanName, cleanScriptsJson, fail, nowSec, setDescription, uuid } from './util'
+import { cleanAuthJson, cleanName, cleanScriptsJson, fail, nowSec, setDescription, uuid } from './util'
 
 export const SECRET_MASK = '••••••••'
 
@@ -28,6 +28,7 @@ type WorkspaceApi = Pick<
   | 'deleteCollection'
   | 'setCollectionScripts'
   | 'setCollectionDescription'
+  | 'setCollectionAuth'
   | 'listEnvironments'
   | 'ensureDefaultEnvironment'
   | 'createEnvironment'
@@ -133,6 +134,11 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
     async setCollectionDescription(collectionId, description) {
       const row = must(s.collections, collectionId, 'Collection')
       setDescription(row, description)
+      return touch(row)
+    },
+    async setCollectionAuth(collectionId, authJson) {
+      const row = must(s.collections, collectionId, 'Collection')
+      row.authJson = cleanAuthJson(authJson, 'collection')
       return touch(row)
     },
 

@@ -2,6 +2,7 @@ import type { ApiFolder, ApiRequest, Collection, DescriptionType, Environment, W
 import type { Db } from '../db/database'
 import { invalidInput, notFound } from '../lib/errors'
 import { assertUuid } from '../lib/ids'
+import { cleanContainerAuthJson, type ContainerLevel } from '../../shared/containerAuth'
 
 export type { Db }
 
@@ -20,6 +21,7 @@ export interface CollectionRow {
   scripts_json?: string | null
   description?: string | null
   description_type?: string | null
+  auth_json?: string | null
   source_postman_id?: string | null
   version: number
   created_at: number
@@ -35,6 +37,7 @@ export interface FolderRow {
   scripts_json?: string | null
   description?: string | null
   description_type?: string | null
+  auth_json?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -77,6 +80,7 @@ export const toCollection = (r: CollectionRow): Collection => ({
   scriptsJson: r.scripts_json ?? null,
   description: r.description ?? null,
   descriptionType: descriptionTypeOf(r.description_type),
+  authJson: r.auth_json ?? null,
   sourcePostmanId: r.source_postman_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -92,6 +96,7 @@ export const toFolder = (r: FolderRow): ApiFolder => ({
   scriptsJson: r.scripts_json ?? null,
   description: r.description ?? null,
   descriptionType: descriptionTypeOf(r.description_type),
+  authJson: r.auth_json ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -198,6 +203,13 @@ export function cleanScriptsJson(value: unknown): string | null {
   }
   if (!Array.isArray(parsed)) throw invalidInput('scriptsJson must be a JSON array (Postman "event" list)')
   return parsed.length === 0 ? null : value
+}
+
+/** Validates a collection/folder `auth_json` value (shared/containerAuth.ts); OAuth 2.0 tokens are stripped. */
+export function cleanAuthJson(value: unknown, level: ContainerLevel): string | null {
+  const r = cleanContainerAuthJson(value, level)
+  if (!r.ok) throw invalidInput(r.error)
+  return r.json
 }
 
 export const MAX_DESCRIPTION_BYTES = 2 * 1024 * 1024

@@ -3,7 +3,8 @@
    * Collection / folder overview tab: name, location, what it contains, and its documentation (Postman
    * `description`, Markdown) rendered by default with Edit / Split. Saving (button or Ctrl+S) stores the text
    * on the collection/folder; it is exported to Postman and synced with the cloud workspace (sync design section 21).
-   * A collection overview also has a Variables section (the collection variables editor).
+   * A collection overview also has a Variables section (the collection variables editor); collections and folders
+   * have an Authorization section (the auth requests set to "inherit" use), saved with the same Save button.
    */
   import type { ApiFolder } from '../../../shared/types'
   import { app } from '../../app/state.svelte'
@@ -19,6 +20,8 @@
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
   import CollectionVariablesEditor from './CollectionVariablesEditor.svelte'
+  import AuthEditor from '../requests/AuthEditor.svelte'
+  import { containerAuthDraft, parentAuthOf, type AuthSource } from '../../lib/authInheritance'
 
   let { tab }: { tab: RequestTab } = $props()
 
@@ -54,8 +57,27 @@
     if (!sync.blocked) void tabsStore.save(tab)
   }
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-  const section = $derived(target.kind === 'collection' ? tab.overviewSection : 'docs')
   const varCount = $derived(collectionId ? (app.collectionVariables[collectionId]?.length ?? 0) : 0)
+  const section = $derived(target.kind === 'folder' && tab.overviewSection === 'variables' ? 'docs' : tab.overviewSection)
+  const sections = $derived(
+    target.kind === 'collection'
+      ? [['docs', 'Documentation'], ['variables', `Variables${varCount ? ` (${varCount})` : ''}`], ['auth', 'Authorization']]
+      : [['docs', 'Documentation'], ['auth', 'Authorization']],
+  )
+  // The Authorization section edits a copy of the stored auth (reloaded after a save).
+  $effect(() => {
+    if (section === 'auth' && entity && tab.overviewAuth === null) tab.overviewAuth = containerAuthDraft(entity.authJson ?? null, target.kind)
+  })
+  /** What a folder set to "inherit" gets from above it. */
+  const parentAuth = $derived(
+    target.kind === 'folder' && entity && collectionId
+      ? parentAuthOf((entity as ApiFolder).parentFolderId, { collection, folders: app.foldersOf(collectionId) })
+      : null,
+  )
+  function openSource(source: AuthSource) {
+    const t = tabsStore.openOverview({ kind: source.kind, id: source.id })
+    t.overviewSection = 'auth'
+  }
 </script>
 
 <div id="request-panel" role="tabpanel" aria-labelledby="rtab-{tab.id}" class="flex min-h-0 flex-1 flex-col" data-testid="overview-view">
@@ -103,14 +125,14 @@
           icon="save"
           loading={tab.saving}
           disabled={!tab.dirty || sync.blocked}
-          title={sync.blocked ? sync.blockedMessage : 'Save documentation (Ctrl+S)'}
+          title={sync.blocked ? sync.blockedMessage : 'Save (Ctrl+S)'}
           onclick={save}
         >Save</Button>
       </div>
     </header>
-    {#if target.kind === 'collection'}
+    {#if sections.length > 1}
       <div role="tablist" aria-label="Overview sections" class="flex gap-1 border-b border-border px-3 text-sm">
-        {#each [['docs', 'Documentation'], ['variables', `Variables${varCount ? ` (${varCount})` : ''}`]] as [id, text] (id)}
+        {#each sections as [id, text] (id)}
           <button
             type="button"
             role="tab"
@@ -118,13 +140,20 @@
             aria-selected={section === id}
             data-testid="overview-section-{id}"
             class="-mb-px border-b-2 px-2 py-1.5 {section === id ? 'border-accent text-fg' : 'border-transparent text-muted hover:text-fg'}"
-            onclick={() => (tab.overviewSection = id as 'docs' | 'variables')}
-          >{text}</button>
+            onclick={() => (tab.overviewSection = id as 'docs' | 'variables' | 'auth')}
+          >{text}{#if id === 'auth' && tab.overviewAuthDirty}<span class="ml-1 text-accent" aria-label="unsaved">•</span>{/if}</button>
         {/each}
       </div>
     {/if}
     {#if section === 'variables' && collectionId && collection}
       <CollectionVariablesEditor {tab} {collectionId} collectionName={collection.name} />
+    {:else if section === 'auth'}
+      {#if sync.blocked}<ReadOnlyNote class="mx-3 mt-2" />{/if}
+      {#if tab.overviewAuth}
+        <div class="min-h-0 flex-1 overflow-auto">
+          <AuthEditor bind:auth={() => tab.overviewAuth!, (v) => (tab.overviewAuth = v)} level={target.kind} {collectionId} inherited={parentAuth} onopensource={openSource} readOnly={sync.blocked} />
+        </div>
+      {/if}
     {:else}
     {#if sync.blocked}<ReadOnlyNote class="mx-3 mt-2" />{/if}
     <DocsEditor

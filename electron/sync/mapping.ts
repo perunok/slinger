@@ -15,17 +15,22 @@ export type AnyRow = Record<string, string | number | null>
  * sync call. A link's effective set (`cloud_links.sync_features`) gates the wire mapping: fields and types of a
  * feature that is off are not part of the payload at all, so they stay local-only with an older server.
  */
-export type SyncFeature = 'folder_scripts' | 'docs' | 'collection_variables' | 'globals' | 'version_authors'
-export const CLIENT_FEATURES: readonly SyncFeature[] = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors']
+export type SyncFeature = 'folder_scripts' | 'docs' | 'collection_variables' | 'globals' | 'version_authors' | 'container_auth'
+export const CLIENT_FEATURES: readonly SyncFeature[] = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors', 'container_auth']
 export type Features = ReadonlySet<string>
 export const NO_FEATURES: Features = new Set()
 export const ALL_FEATURES: Features = new Set(CLIENT_FEATURES)
 /** Resource types that only exist with a feature. */
 export const TYPE_FEATURE: Partial<Record<SyncEntityType, SyncFeature>> = { collection_variable: 'collection_variables', global_variable: 'globals' }
 /** Collection/folder payload fields that only exist with a feature. */
-export const FIELD_FEATURE: Readonly<Record<string, SyncFeature>> = { scripts_json: 'folder_scripts', description: 'docs', description_type: 'docs' }
+export const FIELD_FEATURE: Readonly<Record<string, SyncFeature>> = {
+  scripts_json: 'folder_scripts',
+  description: 'docs',
+  description_type: 'docs',
+  auth_json: 'container_auth',
+}
 /** Field groups that only exist with a feature. */
-const GROUP_FEATURE: Partial<Record<GroupName, SyncFeature>> = { scripts: 'folder_scripts', docs: 'docs' }
+const GROUP_FEATURE: Partial<Record<GroupName, SyncFeature>> = { scripts: 'folder_scripts', docs: 'docs', auth: 'container_auth' }
 
 /** Whether entities of `type` sync at all with `features`. */
 export function typeSynced(type: SyncEntityType, features: Features): boolean {
@@ -46,13 +51,14 @@ export const TABLE: Record<SyncEntityType, string> = {
 
 /** Field groups per entity type: the unit of 3-way merging (design section 6). */
 export const GROUPS: Record<SyncEntityType, Partial<Record<GroupName, string[]>>> = {
-  collection: { name: ['name'], scripts: ['scripts_json'], docs: ['description', 'description_type'] },
+  collection: { name: ['name'], scripts: ['scripts_json'], docs: ['description', 'description_type'], auth: ['auth_json'] },
   folder: {
     name: ['name'],
     location: ['collection_id', 'parent_folder_id'],
     order: ['sort_order'],
     scripts: ['scripts_json'],
     docs: ['description', 'description_type'],
+    auth: ['auth_json'],
   },
   request: {
     content: ['name', 'method', 'url', 'document_json'],
@@ -84,6 +90,7 @@ export const GROUP_LABELS: Record<GroupName, string> = {
   scripts: 'Scripts',
   docs: 'Documentation',
   details: 'Enabled & description',
+  auth: 'Authorization',
 }
 
 /** Server-side caps the engine enforces BEFORE sending (design section 3). */
@@ -100,6 +107,8 @@ export const LIMITS = {
   /** Collection/folder scripts and docs (design section 21): the local input caps (repositories/common.ts), so never hit in practice. */
   scriptsJsonBytes: 2 * 1024 * 1024,
   descriptionBytes: 2 * 1024 * 1024,
+  /** Collection/folder auth (section 21.6): the local input cap (shared/containerAuth.ts). */
+  authJsonBytes: 1024 * 1024,
   /** Collection variables and globals: the local input caps (repositories/variables.ts). */
   varKeyChars: 256,
   varValueChars: 1_000_000,
@@ -121,6 +130,7 @@ function containerExtras(row: AnyRow, features: Features): Payload {
     out.description = row.description ?? null
     out.description_type = typeof row.description_type === 'string' && DESCRIPTION_TYPES.has(row.description_type) ? row.description_type : null
   }
+  if (features.has('container_auth')) out.auth_json = row.auth_json ?? null
   return out
 }
 
@@ -279,6 +289,9 @@ export function checkLimits(type: SyncEntityType, payload: Payload): string | nu
   }
   if ((type === 'collection' || type === 'folder') && bytes(payload.description) > LIMITS.descriptionBytes) {
     return `The ${type}'s documentation is larger than 2 MB, which the cloud does not accept.`
+  }
+  if ((type === 'collection' || type === 'folder') && bytes(payload.auth_json) > LIMITS.authJsonBytes) {
+    return `The ${type}'s auth is larger than 1 MB, which the cloud does not accept.`
   }
   if (type === 'collection_variable' || type === 'global_variable') {
     const key = String(payload.key ?? '')
