@@ -20,7 +20,7 @@ import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
-import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
+import { acquireInstanceGuard, guardSecret, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -588,7 +588,9 @@ function instanceGuardTarget(): string | null {
   } catch {
     /* no passwd entry: the uid (POSIX) still makes the path unique */
   }
-  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir() })
+  // Windows: the pipe name includes a random secret kept in the user's own AppData (not readable by other users).
+  const secret = process.platform === 'win32' ? guardSecret(join(app.getPath('appData'), 'Slinger', 'instance-guard.key')) : undefined
+  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir(), secret })
 }
 let instanceGuard: InstanceGuard | null = null
 
