@@ -139,7 +139,7 @@ describe('assistant changes', () => {
     expect((await env.api.listAssistantChanges(wsId)).variables).toEqual([{ environmentId: envId, key: 'newVar' }])
   })
 
-  it('a collection / folder auth counts until it changes or the user saves it (migration 0020)', async () => {
+  it('a collection / folder auth counts until it changes or the user saves it (kind container)', async () => {
     const bearer = JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: 't', type: 'string' }] })
     await env.api.setCollectionAuth(collectionId, bearer)
     const folder = await env.api.createFolder({ workspaceId: wsId, collectionId, name: 'F' })

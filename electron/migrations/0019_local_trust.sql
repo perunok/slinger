@@ -15,8 +15,10 @@ INSERT INTO collection_trust (collection_id, trusted_at) SELECT id, CAST(strftim
 -- examples; an environment variable's value), so any later change by the user or through sync ends it; saving the
 -- request or the variable in the window removes it. kind 'request': ref = request id, `created` = the assistant made
 -- the request (so its literal credentials are the assistant's own). kind 'variable': ref = '<environment id>:<key>'.
+-- kind 'container': the auth of a collection or folder (0018) as the assistant wrote it (an import or a version restore
+-- through MCP), ref = 'collection:<id>' / 'folder:<id>', fingerprint = its auth_json.
 CREATE TABLE assistant_changes (
-  kind         TEXT NOT NULL CHECK (kind IN ('request', 'variable')),
+  kind         TEXT NOT NULL CHECK (kind IN ('request', 'variable', 'container')),
   ref          TEXT NOT NULL,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   fingerprint  TEXT NOT NULL,
