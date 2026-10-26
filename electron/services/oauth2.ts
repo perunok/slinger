@@ -9,6 +9,7 @@
  *
  * Token requests use the same HTTP engine as a normal send (`executeHttp`) but never write history.
  */
+import { withDefaultScheme } from '../../shared/urlScheme'
 import { createHash, randomBytes } from 'node:crypto'
 import type { HttpResponseData, OAuth2Config, OAuth2TokenStatus, RequestHeader } from '../../shared/types'
 import { DEFAULT_OAUTH2_REDIRECT_URI } from '../../shared/oauth2'
@@ -80,7 +81,7 @@ export function maskToken(token: string): string {
 function httpUrl(value: string, label: string): URL {
   let url: URL
   try {
-    url = new URL(value.trim())
+    url = new URL(withDefaultScheme(value))
   } catch {
     throw invalidInput(value.trim() ? `${label} "${value.trim()}" is not a valid URL` : `${label} is required`)
   }

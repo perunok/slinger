@@ -116,7 +116,10 @@ In the **Collections** sidebar:
 This section is about HTTP requests; for requests to MCP servers see [MCP requests](#mcp-requests).
 
 Ctrl+T opens a new tab. The URL bar has the method selector, the URL, **Send** (Ctrl+Enter, becomes cancel while running) and
-**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as").
+**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as"). A URL typed without
+`http://` or `https://` is sent as http, as in Postman (`localhost:3000/users`, `api.example.com/x`, `//cdn.example.com/a`);
+with port 443 (`api.example.com:443/x`) as https. The same goes for the other address fields: MCP request URLs, OAuth 2.0
+endpoints, the cloud server address (`172.16.0.236:8088`) and OpenAPI document URLs.
 
 The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **Scripts**, **Docs**, **Settings** and **Code**.
 

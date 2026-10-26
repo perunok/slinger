@@ -10,6 +10,7 @@ import { mcpDisplayUrl } from './mcpRequest'
 import { rawContentType, templateTexts, type AuthDraft, type RequestDraft } from './request'
 import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesChecked, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
+import { withDefaultScheme } from '../../shared/urlScheme'
 
 export type PrepareResult =
   /**
@@ -39,10 +40,9 @@ export function unresolvedIn(draft: RequestDraft, scope: TemplateScope): string[
   return findUnresolved(templateTexts(draft), scope)
 }
 
+/** A URL typed without a scheme gets one, as in Postman (shared/urlScheme.ts). */
 export function normalizeUrl(url: string): string {
-  const t = url.trim()
-  if (!t) return t
-  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t) ? t : `http://${t}`
+  return withDefaultScheme(url)
 }
 
 function appendQuery(url: string, key: string, value: string): string {

@@ -48,8 +48,11 @@ describe('url helpers', () => {
   it('validates and normalises', () => {
     expect(isValidBaseUrl('https://x.io')).toBe(true)
     expect(isValidBaseUrl('ftp://x')).toBe(false)
-    expect(isValidBaseUrl('nope')).toBe(false)
+    expect(isValidBaseUrl('not a url')).toBe(false)
+    // A bare address gets http:// (as main stores it), like Postman.
+    expect(isValidBaseUrl('nope')).toBe(true)
     expect(normalizeBaseUrl(' https://x.io// ')).toBe('https://x.io')
+    expect(normalizeBaseUrl('x.io:8088/')).toBe('http://x.io:8088')
   })
   it('warns for plain http except on loopback', () => {
     expect(isInsecureRemote('http://api.example.com')).toBe(true)
@@ -57,6 +60,7 @@ describe('url helpers', () => {
     expect(isInsecureRemote('http://127.0.0.1:8080')).toBe(false)
     expect(isInsecureRemote('http://[::1]:8080')).toBe(false)
     expect(isInsecureRemote('https://api.example.com')).toBe(false)
-    expect(isInsecureRemote('garbage')).toBe(false)
+    expect(isInsecureRemote('not a url')).toBe(false)
+    expect(isInsecureRemote('api.example.com')).toBe(true) // bare: http
   })
 })

@@ -1,5 +1,6 @@
 <script lang="ts">
   /** Server URL, device name, sign-in / signed-in identity and sign-out. */
+  import { withDefaultScheme } from '../../../shared/urlScheme'
   import Button from '../../components/ui/Button.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
   import { errorInfo } from '../../lib/ipc'
@@ -27,7 +28,7 @@
   const signedIn = $derived(session?.status === 'signedIn')
   const signingIn = $derived(sync.signIn.phase === 'waiting' || sync.signIn.phase === 'starting')
   const locked = $derived(signedIn || signingIn)
-  const dirty = $derived(!!sync.config && (url.trim().replace(/\/+$/, '') !== sync.config.apiBaseUrl || device.trim() !== sync.config.deviceName))
+  const dirty = $derived(!!sync.config && (withDefaultScheme(url).replace(/\/+$/, '') !== sync.config.apiBaseUrl || device.trim() !== sync.config.deviceName))
   const urlInvalid = $derived(url.trim() !== '' && !isValidBaseUrl(url))
   const insecure = $derived(isValidBaseUrl(url) && isInsecureRemote(url))
 
@@ -35,7 +36,7 @@
   async function save(): Promise<boolean> {
     error = null
     if (!isValidBaseUrl(url)) {
-      error = 'The server URL must start with http:// or https://'
+      error = 'The server URL must be an http:// or https:// address (http:// is added when you leave it out)'
       return false
     }
     if (!dirty) return true

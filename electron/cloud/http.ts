@@ -2,6 +2,7 @@
  * Minimal typed JSON transport for the cloud API, running in the main process. It never touches request
  * history, never logs headers or bodies, and maps failures to CloudApiError (docs/SYNC_DESIGN.md 7.6).
  */
+import { withDefaultScheme } from '../../shared/urlScheme'
 import { CloudApiError } from './errors'
 
 export interface CloudHttpOptions {
@@ -17,7 +18,8 @@ export interface RequestOptions {
   timeoutMs?: number
 }
 
-export const normalizeBaseUrl = (url: string): string => url.trim().replace(/\/+$/, '')
+/** The cloud address as stored: a scheme added when typed without one (`172.16.0.236:8088`), no trailing slash. */
+export const normalizeBaseUrl = (url: string): string => withDefaultScheme(url).replace(/\/+$/, '')
 
 export function assertBaseUrl(url: string): string {
   const u = normalizeBaseUrl(url)

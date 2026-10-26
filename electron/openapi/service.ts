@@ -3,6 +3,7 @@
  * renderer), and the collection's local link to it (table collection_openapi). Validation (validate.ts) and updates
  * (update.ts) read the link. See docs/ARCHITECTURE.md, "OpenAPI".
  */
+import { withDefaultScheme } from '../../shared/urlScheme'
 import type { Db } from '../db/database'
 import { invalidInput, ioError, notFound } from '../lib/errors'
 import { requireCollection, requireWorkspace } from '../repositories/common'
@@ -103,7 +104,7 @@ export class OpenApiService {
   async fetchSpec(url: string): Promise<string> {
     let parsed: URL
     try {
-      parsed = new URL(url.trim())
+      parsed = new URL(withDefaultScheme(url))
     } catch {
       throw invalidInput('Not a valid URL')
     }

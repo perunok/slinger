@@ -8,6 +8,7 @@
  * covers every origin; nothing but the window's dialog adds to the trusted list. What is allowed is the exact command,
  * arguments, working directory and extra environment; only their fingerprint is stored (an argument may hold a secret).
  */
+import { withDefaultScheme } from '../../shared/urlScheme'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
@@ -405,7 +406,7 @@ export class McpClientService implements McpClientApi {
   #httpTransport(input: McpConnectInput): Transport {
     let url: URL
     try {
-      url = new URL(input.url ?? '')
+      url = new URL(withDefaultScheme(input.url ?? ''))
     } catch {
       throw invalidInput('The MCP server URL is not valid')
     }
