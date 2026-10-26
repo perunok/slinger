@@ -1,7 +1,8 @@
 /**
- * After "Replace the live collection" every folder and request comes back with a new id. These
- * helpers map the old ids to their restored counterparts so the UI can keep its expanded folders
- * and offer to reopen tabs. Matching is by position: a folder or request is identified by the
+ * After "Replace the live collection" (or a Postman re-import replace) folders and requests that still correspond keep
+ * their ids (electron/services/collectionContent.ts); the rest come back with new ids. These helpers map the old ids
+ * to their restored counterparts (kept ids to themselves) so the UI can keep its expanded folders and offer to reopen
+ * tabs. Matching is by position: a folder or request is identified by the
  * chain of folder names above it plus its own name; siblings that share a name are told apart by
  * their order (sortOrder, then array order).
  */
@@ -49,8 +50,20 @@ function folderKeys(folders: F[]): Map<string, F> {
   return out
 }
 
-/** Old-id to new-id maps for folders and requests that exist (by path) in both layouts. */
+/**
+ * Old-id to new-id maps. An id that survived the replace maps to itself (whatever its path is now); a vanished one maps
+ * to the folder / request at the same path in the new layout, if any. Callers treat `old === new` as "still there".
+ */
 export function mapRestored(before: { folders: F[]; requests: R[] }, after: { folders: F[]; requests: R[] }): IdMap {
+  const map = mapByPath(before, after)
+  const liveFolders = new Set(after.folders.map((f) => f.id))
+  const liveRequests = new Set(after.requests.map((r) => r.id))
+  for (const f of before.folders) if (liveFolders.has(f.id)) map.folders.set(f.id, f.id)
+  for (const r of before.requests) if (liveRequests.has(r.id)) map.requests.set(r.id, r.id)
+  return map
+}
+
+function mapByPath(before: { folders: F[]; requests: R[] }, after: { folders: F[]; requests: R[] }): IdMap {
   const oldFolders = folderKeys(before.folders)
   const newFolders = folderKeys(after.folders)
   const folders = new Map<string, string>()

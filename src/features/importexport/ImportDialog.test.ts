@@ -318,13 +318,13 @@ describe('ImportDialog: re-importing an existing collection', () => {
     const versions = await mock.listCollectionVersions(id)
     expect(versions).toMatchObject([{ version: '0.0.1', notes: 'Automatic snapshot before re-import from pets.json', requestCount: 2 }])
     expect(toast.items.find((t) => t.kind === 'success')?.detail).toMatch(/saved as version 0\.0\.1/)
-    // The replaced folder stays expanded under its new id.
+    // The folder matches by name: it keeps its id and stays expanded.
     const newDogs = app.foldersOf(id)[0]!
-    expect(newDogs.id).not.toBe(dogs.id)
+    expect(newDogs.id).toBe(dogs.id)
     expect(expandedStore.keys.has(`folder:${newDogs.id}`)).toBe(true)
   })
 
-  it('clean tabs follow the replaced request; dirty tabs keep their unsaved edits', async () => {
+  it('requests keep their ids: clean tabs show the new content; dirty tabs keep their unsaved edits', async () => {
     const { onclose, created } = await setupExisting({ text: collection() })
     const id = created[0]!.collection.id
     const [list, health] = [...app.requestsOf(id)].sort((a, b) => a.name.localeCompare(b.name)).reverse()
@@ -337,14 +337,14 @@ describe('ImportDialog: re-importing an existing collection', () => {
     await waitFor(() => expect(onclose).toHaveBeenCalled())
 
     const newList = app.requestsOf(id).find((r) => r.name === 'List')!
-    expect(newList.id).not.toBe(list!.id)
+    expect(newList.id).toBe(list!.id)
     expect(tabsStore.tabs).toContain(clean)
     expect(clean.requestId).toBe(newList.id)
     expect(clean.draft.url).toBe('https://x.test/v2/dogs')
     expect(clean.dirty).toBe(false)
     expect(tabsStore.tabs).toContain(dirty)
     expect(dirty.draft.url).toBe('https://x.test/edited')
-    expect(dirty.requestId).toBeNull()
+    expect(dirty.requestId).toBe(health!.id) // still the same request: saving goes through the usual conflict check
   })
 
   it('imports as a copy named X (2), then X (3)', async () => {

@@ -5,8 +5,8 @@ import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
 import { descriptionFromPostman, requireCollection, requireWorkspace, toCollection, toFolder, toRequest } from '../repositories/common'
 import type { CollectionRow, FolderRow, RequestRow } from '../repositories/common'
-import { createCollectionVersion, listCollectionVersions } from './collectionVersions'
-import { compare as compareSemver, parse as parseSemver, type SemVer } from './semver'
+import { replaceCollectionContent } from './collectionContent'
+import { createAutomaticVersion, nextPatchVersion } from './collectionVersions'
 import { postmanUrlToString } from '../../shared/postmanUrl'
 import { restoreVersionHistory } from './versionHistory'
 import { variablesFromPostman, type CollectionVariableData } from '../../shared/postmanVariables'
@@ -227,6 +227,27 @@ function insertContent(db: Db, collection: CollectionRow, content: ParsedPostman
   }
 }
 
+/**
+ * Writes the parsed folders and requests over the collection's current content in place (call inside a transaction):
+ * folders and requests that match by name (and method) keep their ids (electron/services/collectionContent.ts).
+ */
+function replaceContent(db: Db, collection: CollectionRow, content: ParsedPostmanCollection, now: number): { folders: ApiFolder[]; requests: ApiRequest[] } {
+  const { folderIds, requestIds } = replaceCollectionContent(db, collection, {
+    folders: content.folders.map((f) => ({
+      key: String(f.tempId), parentKey: f.parentTempId === null ? null : String(f.parentTempId), name: f.name.slice(0, 200), sortOrder: f.sortOrder,
+      scriptsJson: f.scriptsJson, description: f.description.text, descriptionType: f.description.type,
+    })),
+    requests: content.requests.map((r) => ({
+      key: null, folderKey: r.folderTempId === null ? null : String(r.folderTempId), name: r.name.slice(0, 500), method: r.method.slice(0, 32),
+      url: r.url, documentJson: JSON.stringify(r.document), sortOrder: r.sortOrder,
+    })),
+  }, 'path', now)
+  return {
+    folders: content.folders.map((f) => toFolder(db.prepare('SELECT * FROM folders WHERE id = ?').get(folderIds.get(String(f.tempId))!) as FolderRow)),
+    requests: requestIds.map((id) => toRequest(db.prepare('SELECT * FROM requests WHERE id = ?').get(id) as RequestRow)),
+  }
+}
+
 const readCollection = (db: Db, id: string): CollectionRow => db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
 
 /**
@@ -260,30 +281,18 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
   })()
 }
 
-/**
- * The "next patch" version, as the Create version dialog suggests it: the latest release (pre-releases ignored)
- * with its patch bumped, bumped again while taken; "0.0.1" when there is no release yet.
- */
-export function nextPatchVersion(existing: readonly string[]): string {
-  let top: SemVer | null = null
-  for (const v of existing) {
-    const p = parseSemver(v)
-    if (p && p.prerelease.length === 0 && (!top || compareSemver(p, top) > 0)) top = p
-  }
-  const taken = new Set(existing)
-  let next = top ? { major: top.major, minor: top.minor, patch: top.patch + 1 } : { major: 0, minor: 0, patch: 1 }
-  while (taken.has(`${next.major}.${next.minor}.${next.patch}`)) next = { ...next, patch: next.patch + 1 }
-  return `${next.major}.${next.minor}.${next.patch}`
-}
+/** The "next patch" version, as the Create version dialog suggests it (kept here for existing imports). */
+export { nextPatchVersion }
 
 const MAX_SOURCE_LABEL = 500
 
 /**
  * Replaces an existing collection's content with a Postman file, in ONE transaction:
  * 1. an automatic safety version (next patch) snapshots the current content, so the replace can be undone;
- * 2. every live folder and request is soft-deleted (the sync dirty-set triggers propagate the deletions);
- * 3. the file's folders and requests are inserted with new ids, in file order;
- * 4. collection scripts, description, variables and `source_postman_id` are updated.
+ * 2. the file's folders and requests are written in place: those that match a live folder / request by name (requests
+ *    also by method) keep their id (workflow nodes, history, open tabs and synced copies keep working), the rest get
+ *    new ids, and live ones without a match are soft-deleted (the sync dirty-set triggers propagate the changes);
+ * 3. collection scripts, description, variables and `source_postman_id` are updated.
  * The collection keeps its id, name and versions. Any failure (bad file, read-only workspace) changes nothing.
  */
 export function replaceCollectionFromPostman(
@@ -299,23 +308,14 @@ export function replaceCollectionFromPostman(
   const label = (typeof sourceName === 'string' && sourceName.trim() ? sourceName.trim() : 'a Postman file').slice(0, MAX_SOURCE_LABEL)
 
   return db.transaction((): PostmanReplaceResult => {
-    const version = nextPatchVersion(listCollectionVersions(db, collection.id).map((v) => v.version))
-    const safetyVersion = createCollectionVersion(db, {
-      collectionId: collection.id,
-      version,
-      notes: `Automatic snapshot before re-import from ${label}`,
-    }, author)
+    const safetyVersion = createAutomaticVersion(db, collection.id, `re-import from ${label}`, author)
     const now = nowSeconds()
-    for (const table of ['requests', 'folders']) {
-      db.prepare(`UPDATE ${table} SET deleted = 1, updated_at = ?, version = version + 1 WHERE collection_id = ? AND deleted = 0`)
-        .run(now, collection.id)
-    }
     db.prepare(
       `UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, source_postman_id = COALESCE(?, source_postman_id),
          updated_at = ?, version = version + 1 WHERE id = ?`,
     ).run(content.scriptsJson, content.description.text, content.description.type, content.postmanId, now, collection.id)
     const row = readCollection(db, collection.id)
-    const { folders, requests } = insertContent(db, row, content, now)
+    const { folders, requests } = replaceContent(db, row, content, now)
     writeVariables(db, collection.id, content.variables)
     // The file's version history joins the existing versions (and the safety version); identical ones are skipped,
     // clashing ones kept as "<v>-imported". Runs in a savepoint: a bad history never undoes the replace.
