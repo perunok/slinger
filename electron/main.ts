@@ -694,6 +694,11 @@ if (!app.requestSingleInstanceLock()) {
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, dialogOptions) : await dialog.showOpenDialog(dialogOptions)
         return result.canceled ? null : (result.filePaths[0] ?? null)
       },
+      saveFile: async ({ title, defaultName }) => {
+        const options = { title, defaultPath: join(app.getPath('downloads'), defaultName) }
+        const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+        return result.canceled || !result.filePath ? null : result.filePath
+      },
       chooseDirectory: async () => {
         const options = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)

@@ -411,6 +411,22 @@ export interface HttpRequestInput {
    * that scripts of the session read are replaced by `{{name}}` in the history entry.
    */
   scriptSessionId?: string | null
+  /**
+   * ADDED (0.27): the most body bytes to load (Settings > Maximum response size), clamped by main to 1-256 MB; absent:
+   * 50 MB. A larger body is not loaded: the response comes back with `bodyTooLarge` (status and headers still there).
+   */
+  maxResponseBytes?: number
+  /**
+   * ADDED (0.27): "Send and download to file": the id chooseResponseDownloadFile returned. Main streams the body into the
+   * file the user picked (no size limit); the response then has `savedToFile` and no body.
+   */
+  downloadId?: string
+}
+
+/** chooseResponseDownloadFile's result: an opaque one-time id for executeHttpRequest, and the chosen file's name. */
+export interface ResponseDownloadTarget {
+  downloadId: string
+  fileName: string
 }
 
 export interface HttpResponseData {
@@ -423,6 +439,13 @@ export interface HttpResponseData {
   /** Present when the body is not valid UTF-8; base64-encoded raw bytes. */
   bodyBase64: string | null
   bodyByteLength: number
+  /**
+   * ADDED (0.27): the body was larger than the limit (`limitBytes`) and was not loaded (download stopped there):
+   * bodyText and bodyBase64 are null, bodyByteLength is the declared Content-Length, else the bytes received so far.
+   */
+  bodyTooLarge?: { limitBytes: number }
+  /** ADDED (0.27): "Send and download to file": the body was written to this file (bodyByteLength bytes), not returned. */
+  savedToFile?: string
   /**
    * ADDED (MCP requests): set by the renderer on the synthetic response of an MCP request (executeDraft), never by main.
    * `bodyText` then holds the JSON-RPC result; `operation` is 'tools/call' | 'resources/read' | 'prompts/get' and `name`

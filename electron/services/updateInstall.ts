@@ -26,6 +26,7 @@ import { basename, dirname, join } from 'node:path'
 import type { SpawnOptions } from 'node:child_process'
 import type { UpdateInstallMethod, UpdateInstallState } from '../../shared/types'
 import { ioError } from '../lib/errors'
+import { readLimitedBody } from '../lib/limitedBody'
 import { compare, parse } from './semver'
 import { LATEST_RELEASE_API, parseRelease, RELEASES_REPO } from './updateCheck'
 
@@ -292,8 +293,9 @@ export class UpdateInstaller {
       throw new Error('Could not reach GitHub to download the update.')
     }
     if (!res.ok) throw new Error(`GitHub answered HTTP ${res.status} for the latest release.`)
-    const text = await res.text()
-    if (text.length > MAX_RELEASE_JSON) throw new Error('The release information from GitHub is too large.')
+    const read = await readLimitedBody(res, MAX_RELEASE_JSON)
+    if (!read.ok) throw new Error('The release information from GitHub is too large.')
+    const text = read.bytes.toString('utf8')
     let body: unknown
     try {
       body = JSON.parse(text)

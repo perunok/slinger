@@ -41,6 +41,7 @@ import type {
   HistoryEntry,
   HttpRequestInput,
   HttpResponseData,
+  ResponseDownloadTarget,
   McpCallInput,
   McpCallOutcome,
   McpClientEvent,
@@ -165,6 +166,12 @@ export interface SlingerIpcApi {
   executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData>
   /** Cancels an HTTP request or a script run (RunScriptsInput.runId) with this id. */
   cancelHttpRequest(requestRunId: string): Promise<void>
+  /**
+   * ADDED (0.27): "Send and download to file": shows the save dialog (in main) with this suggested file name; null when the
+   * user cancels. The id goes into HttpRequestInput.downloadId (once, within 10 minutes); the path never comes from the
+   * renderer.
+   */
+  chooseResponseDownloadFile(suggestedName: string): Promise<ResponseDownloadTarget | null>
   /**
    * ADDED (scripts): runs a chain of pre-request or test scripts in the main-process QuickJS sandbox. Environment
    * writes are persisted before it resolves; script failures are reported in `errors`, not as a rejection.
@@ -479,6 +486,7 @@ export const IPC_CHANNELS = [
   'deleteHistoryEntry',
   'executeHttpRequest',
   'cancelHttpRequest',
+  'chooseResponseDownloadFile',
   'runScripts',
   'cloudFetch',
   'importPostmanCollection',

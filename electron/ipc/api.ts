@@ -163,7 +163,16 @@ const httpRequestInput = z.object({
   historyUrl: z.string().max(100_000).nullish(),
   historySource: z.literal('mcp').nullish(),
   scriptSessionId: z.string().max(128).nullish(),
+  maxResponseBytes: z.number().int().positive().optional(),
+  downloadId: z.string().uuid().optional(),
 })
+
+/** A file name for the save dialog's suggestion: no folders, no control or reserved characters. */
+export function safeDownloadName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? ''
+  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^[.\s]+/, '').trim().slice(0, 200)
+  return clean || 'response'
+}
 
 // ---- OAuth 2.0 ----------------------------------------------------------------
 
@@ -364,6 +373,8 @@ export interface PlatformDeps {
   chooseDirectory(): Promise<string | null>
   /** Shows a native open-file dialog (single selection); resolves to the chosen absolute path or null. */
   pickFile(options: PickFileOptions): Promise<string | null>
+  /** Shows a native save dialog (`defaultName` in the Downloads folder); the chosen absolute path or null. Optional: tests. */
+  saveFile?(options: { title: string; defaultName: string }): Promise<string | null>
   appVersion: string
   /** Paints + remembers the window background (already validated and normalised to `#rrggbb`). Optional: tests omit it. */
   setWindowBackground?(color: string): void
@@ -633,6 +644,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [runId] = parseArgs(z.tuple([z.string().max(128)]), a)
       core.http.cancel(runId)
       core.scripts.cancel(runId)
+    },
+    chooseResponseDownloadFile: async (...a) => {
+      const [name] = parseArgs(z.tuple([z.string().max(1000)]), a)
+      if (!platform.saveFile) throw invalidInput('Saving files is not available here')
+      const path = await platform.saveFile({ title: 'Download the response to', defaultName: safeDownloadName(name) })
+      return path ? core.http.registerDownload(path) : null
     },
     runScripts: async (...a) => core.scripts.run(parseArgs(z.tuple([runScriptsInput]), a)[0]),
 

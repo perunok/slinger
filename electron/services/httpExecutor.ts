@@ -3,6 +3,8 @@ import { withDefaultScheme } from '../../shared/urlScheme'
 import { basename } from 'node:path'
 import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
 import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
+import { FileWriteError, readLimitedBody, streamBodyToFile } from '../lib/limitedBody'
+import { DEFAULT_MAX_RESPONSE_MB, formatLimit, MB } from '../../shared/responseLimit'
 import type { FileAccess } from './fileGrants'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
@@ -237,37 +239,21 @@ export interface ExecuteOptions {
   files?: FileAccess
   /** Reads the stored OAuth 2.0 access token for `auth.oauth2.tokenKey`; without it OAuth 2.0 auth is rejected. */
   oauth2Token?: OAuth2TokenLookup
-  /** Fails with network_error instead of reading a larger response body (internal requests such as token calls). */
+  /** The most body bytes read into memory (default 50 MB); the download stops as soon as the body passes it. */
   maxResponseBytes?: number
+  /**
+   * What a larger body does: 'error' (default; internal requests, pm.sendRequest) fails with network_error, 'report' (user
+   * sends) returns the response with `bodyTooLarge` and no body.
+   */
+  oversize?: 'error' | 'report'
+  /** Streams the body into this file (chosen by the user in main's save dialog) instead of returning it; no size limit. */
+  toFile?: string
 }
 
 /** Returns the access token stored under a token key, or throws a user-facing IpcError (missing, expired). */
 export type OAuth2TokenLookup = (tokenKey: string) => string
 
-async function readBody(response: Response, max: number | undefined): Promise<Uint8Array> {
-  if (max === undefined) return new Uint8Array(await response.arrayBuffer())
-  const tooLarge = () => networkError(`The response is larger than ${max} bytes`)
-  const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > max) {
-    await response.body?.cancel().catch(() => {})
-    throw tooLarge()
-  }
-  const reader = response.body?.getReader()
-  if (!reader) return new Uint8Array(0)
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > max) {
-      await reader.cancel().catch(() => {})
-      throw tooLarge()
-    }
-    chunks.push(value)
-  }
-  return Buffer.concat(chunks)
-}
+const tooLargeError = (max: number) => networkError(`The response is larger than ${formatLimit(max)}, so it was not loaded`, { tooLarge: true })
 
 /**
  * Performs the HTTP request. Non-UTF-8 bodies come back as base64. durationMs covers connect,
@@ -300,19 +286,38 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
       signal: controller.signal,
       redirect: 'follow',
     })
-    const bytes = await readBody(response, options.maxResponseBytes)
-    const durationMs = Math.max(0, Math.round(performance.now() - started))
-    const text = decodeBody(bytes, response.headers)
     const headers: RequestHeader[] = []
     response.headers.forEach((value, key) => headers.push({ key, value }))
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      durationMs,
-      headers,
-      bodyText: text,
-      bodyBase64: text === null ? Buffer.from(bytes).toString('base64') : null,
-      bodyByteLength: bytes.byteLength,
+    const head = { status: response.status, statusText: response.statusText, headers }
+    const elapsed = () => Math.max(0, Math.round(performance.now() - started))
+
+    if (options.toFile) {
+      let written: number
+      try {
+        written = await streamBodyToFile(response, options.toFile)
+      } catch (err) {
+        if (!(err instanceof FileWriteError)) throw err
+        throw ioError(`Could not write the response to "${options.toFile}": ${err.message}`)
+      }
+      return { ...head, durationMs: elapsed(), bodyText: null, bodyBase64: null, bodyByteLength: written, savedToFile: options.toFile }
+    }
+
+    const max = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_MB * MB
+    const tooLarge = (size: number) => {
+      if (options.oversize !== 'report') throw tooLargeError(max)
+      return { ...head, durationMs: elapsed(), bodyText: null, bodyBase64: null, bodyByteLength: size, bodyTooLarge: { limitBytes: max } }
+    }
+    const body = await readLimitedBody(response, max)
+    if (!body.ok) return tooLarge(body.declared ?? body.received)
+    const bytes = body.bytes
+    const durationMs = elapsed()
+    try {
+      const text = decodeBody(bytes, response.headers)
+      return { ...head, durationMs, bodyText: text, bodyBase64: text === null ? bytes.toString('base64') : null, bodyByteLength: bytes.byteLength }
+    } catch (err) {
+      // Too long for one JavaScript string (base64 of a very large binary body): same as passing the limit.
+      if (err instanceof RangeError) return tooLarge(bytes.byteLength)
+      throw err
     }
   } catch (err) {
     if (cancelled) throw networkError('Request cancelled', { cancelled: true })
