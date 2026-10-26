@@ -36,7 +36,7 @@
   async function save(): Promise<boolean> {
     error = null
     if (!isValidBaseUrl(url)) {
-      error = 'The server URL is not valid'
+      error = 'The server URL must be an http:// or https:// address (http:// is added when you leave it out)'
       return false
     }
     if (!dirty) return true

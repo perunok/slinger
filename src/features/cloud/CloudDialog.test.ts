@@ -73,7 +73,7 @@ describe('CloudDialog account', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('http:// or https://')
     expect(b.calls.some((c) => c.method === 'startCloudSignIn')).toBe(false)
     await user.clear(url)
-    await user.type(url, 'http://127.0.0.1:8080/')
+    await user.type(url, '127.0.0.1:8080/') // no scheme: saved as http://
     expect(screen.queryByTestId('user-code')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
     await screen.findByTestId('user-code')
