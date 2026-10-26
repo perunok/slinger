@@ -1108,7 +1108,9 @@ server is updated. Version authors need Slinger Cloud 0.4.0 or newer: an older s
 the date only.
 
 **Status chip.** Synced (with pending changes and last-synced time in its tooltip), Syncing (with what it is doing: *Uploading
-3/12*, *Downloading 40 changes*), Offline (edits are kept and upload later), Sync error (with a Retry toast), conflicts,
+3/12*, *Downloading 40 changes*), Offline (edits are kept and upload later), Sync error (with a Retry toast; when the server itself fails it says so, e.g.
+*The Slinger Cloud server ran into an error (HTTP 500)… ask its administrator to check the server's logs and free disk space*,
+and your changes stay on this device), conflicts,
 Read-only, Signed out, Access revoked. Click it for **Sync now**, the **Auto sync** switch (on by default: Slinger checks for
 cloud changes regularly and uploads your edits shortly after you save) and **Sync activity…**.
 

@@ -81,6 +81,22 @@ interface Runtime {
 /** Raised inside a cycle when the workspace is gone or the user lost access (not an error state). */
 class AccessLost extends Error {}
 
+/**
+ * What a failure on the server's side means for the user (a bare "internal server error" says nothing): the changes are
+ * safe, sync retries by itself, and what the server's administrator can check. The server's own text stays in brackets.
+ */
+export function serverErrorMessage(err: CloudApiError): string {
+  const said = err.message && !/^The cloud answered HTTP \d+$/.test(err.message) ? ` (${err.message})` : ''
+  if (err.status === 429) return `The Slinger Cloud server asks to slow down${said}. Your changes are kept on this device; sync retries automatically.`
+  if (err.status === 502 || err.status === 503 || err.status === 504) {
+    return `The Slinger Cloud server is not answering (HTTP ${err.status})${said}. Your changes are kept on this device; sync retries automatically. If it lasts, ask its administrator to check that the server is running.`
+  }
+  if (err.status >= 500) {
+    return `The Slinger Cloud server ran into an error (HTTP ${err.status})${said}. Your changes are kept on this device; sync retries automatically. If it keeps happening, ask its administrator to check the server's logs and free disk space.`
+  }
+  return err.message
+}
+
 export class SyncEngine {
   private readonly rts = new Map<string, Runtime>()
   private readonly random: () => number
@@ -329,6 +345,7 @@ export class SyncEngine {
         rt.state = 'error'
         backoff = true
         retryAfterMs = err.retryAfterMs
+        message = serverErrorMessage(err)
       } else {
         rt.state = 'error'
         backoff = true

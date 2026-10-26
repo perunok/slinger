@@ -4,6 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../sync/mapping'
+import { mulberry32, randomOp } from '../sync/fuzzKit'
 import { DOC, liveState, makeDevice, pendingCount, type Device } from '../sync/harness'
 import { checkLocalOnlyContract, checkRejectionContract, checkVersionAuthorsContract } from '../sync/wireContract'
 import { RealCloud, signInDevice, type Json } from './realCloud'
@@ -94,6 +95,34 @@ describe.skipIf(!enabled)('sync engine against the real server', () => {
     const s = await a.core.sync.syncNow(ws)
     return { a, ws, col, remoteId: s.remoteWorkspaceId! }
   }
+
+  it.each([1, 2, 3])('an editor made viewer keeps pulling: random work on both sides around the downgrade, automatic and manual syncs (seed %i)', async (seed) => {
+    const { a, ws, remoteId } = await published(`Downgrade ${seed}`)
+    const email = `downgrade-${seed}@it.test`
+    await cloud.createUser(admin, email, PASSWORD)
+    await cloud.addMember(remoteId, ownerToken, email, PASSWORD, 'editor')
+    const e = await device(email)
+    const el = await e.api.linkRemoteWorkspace({ remoteWorkspaceId: remoteId, localWorkspaceId: null })
+    const wsE = el.workspace.id
+    await e.core.sync.syncNow(wsE)
+    const rnd = mulberry32(seed * 9973)
+    // Work on both sides; the editor's last edits are not pushed yet when write access goes.
+    for (let i = 0; i < 12; i++) await randomOp(a, ws, rnd, i)
+    await a.core.sync.syncNow(ws)
+    await e.core.sync.syncNow(wsE)
+    for (let i = 0; i < 10; i++) await randomOp(e, wsE, rnd, 100 + i)
+    await cloud.setRole(remoteId, ownerToken, email, 'viewer')
+    // The automatic cycle (role re-read is throttled) and then manual ones, while the owner keeps changing things.
+    let st = await e.core.sync.engine.runCycle(wsE)
+    expect(st.lastError, `auto cycle: ${JSON.stringify(st.lastError)}`).toBeNull()
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 8; i++) await randomOp(a, ws, rnd, 200 + round * 10 + i)
+      await a.core.sync.syncNow(ws)
+      st = round === 1 ? await e.core.sync.engine.runCycle(wsE) : await e.core.sync.syncNow(wsE)
+      expect(st.lastError, `round ${round}: ${JSON.stringify(st.lastError)}`).toBeNull()
+      expect(st).toMatchObject({ readOnly: true, role: 'viewer' })
+    }
+  })
 
   it('roles: viewer links read-only, editor pushes, downgrade keeps pending changes, revoke and delete stop sync', async () => {
     const { a, ws, col, remoteId } = await published('Roles')
