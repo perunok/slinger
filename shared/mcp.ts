@@ -49,6 +49,17 @@ const requestFields = {
   url: z.string().max(65536).optional().describe('May contain {{variables}} and a query string.'),
   headers: kv.optional().describe('Replaces all headers.'),
   query: kv.optional().describe('Replaces the query parameters (rewrites the query string of the URL).'),
+  path_variables: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(512).describe('Name of a :name path segment of the URL, without the colon.'),
+        value: z.string().max(65536).describe('May contain {{variables}}; sent URL-encoded. Empty: the segment is sent as :name.'),
+        description: z.string().max(10_000).optional(),
+      }),
+    )
+    .max(200)
+    .optional()
+    .describe('Values of the URL\'s path variables (/pets/:petId -> key "petId"). Only the given keys change.'),
   body: body.optional(),
   auth: auth.optional(),
   description: z.string().max(200_000).optional().describe('Markdown documentation.'),
@@ -117,7 +128,8 @@ export const MCP_TOOLS = {
   get_request: {
     title: 'Read a request',
     description:
-      'Full request: method, URL, query, headers, body, auth, scripts, docs, and its saved examples (index, name, status). ' +
+      'Full request: method, URL, query, path variables (values of :name path segments), headers, body, auth, scripts, docs, ' +
+      'and its saved examples (index, name, status). ' +
       'For an MCP request (type "mcp"): the transport (http = Streamable HTTP, sse, stdio = a local command), the server URL ' +
       'with headers and auth, or the command, args, environment variable names (values hidden) and cwd; then the operation ' +
       '(tools/call, resources/read or prompts/get) with its tool and arguments (JSON text), resource URI, or prompt and ' +

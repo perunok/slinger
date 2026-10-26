@@ -1,6 +1,7 @@
 <script lang="ts">
   import { METHODS } from '../../lib/request'
   import { mergeParamsFromUrl } from '../../lib/urlParams'
+  import { mergePathVariables } from '../../lib/pathVariables'
   import TemplateInput from '../../components/editor/TemplateInput.svelte'
   import Button from '../../components/ui/Button.svelte'
   import { ui } from '../../app/ui.svelte'
@@ -23,6 +24,7 @@
   function setUrl(v: string) {
     tab.draft.url = v
     tab.draft.params = mergeParamsFromUrl(v, tab.draft.params)
+    tab.draft.pathVariables = mergePathVariables(v, tab.draft.pathVariables)
   }
 
   /**

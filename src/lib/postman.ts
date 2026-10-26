@@ -316,8 +316,10 @@ function buildUrl(doc: Json, fallbackUrl: string): PostmanUrl {
   if (query.length > 0) url.query = query
   else delete url.query
 
-  if (sourceUrl && Array.isArray(sourceUrl.variable)) {
-    const variables = sourceUrl.variable.filter((v): v is PostmanUrlVariable => isObj(v) && typeof v.key === 'string' && v.key.trim() !== '')
+  // Path variables: the request's own (`pathVariables`, saved by the editor), else the imported item's.
+  const ownVariables = Array.isArray(doc.pathVariables) ? doc.pathVariables : sourceUrl && Array.isArray(sourceUrl.variable) ? sourceUrl.variable : null
+  if (ownVariables) {
+    const variables = ownVariables.filter((v): v is PostmanUrlVariable => isObj(v) && typeof v.key === 'string' && v.key.trim() !== '')
     if (variables.length > 0) url.variable = variables
   }
   return url

@@ -353,6 +353,35 @@ describe('sending', () => {
     expect(tabsStore.tabs.some((t) => t.requestId === otherReq.id)).toBe(true)
   })
 
+  it('path variables: create, read, update and send with :name segments substituted', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', {
+      collection_id: demo.id,
+      name: 'By path',
+      method: 'GET',
+      url: 'https://mock.slinger.local/:what',
+      path_variables: [{ key: 'what', value: 'jso', description: 'Which sample' }],
+    })
+    expect(created.path_variables).toEqual([{ key: 'what', value: 'jso', description: 'Which sample' }])
+    const { updated } = await call('update_request', { request_id: created.id, path_variables: [{ key: 'what', value: 'json' }] })
+    expect(updated.path_variables).toEqual([{ key: 'what', value: 'json', description: 'Which sample' }])
+    expect((await call('get_request', { request_id: created.id })).path_variables).toEqual(updated.path_variables)
+    expect(await failure('update_request', { request_id: created.id, path_variables: [{ key: 'nope', value: '1' }] })).toContain(':nope')
+
+    const tick = app.historyTick
+    const { response } = await call('send_request', { request_id: created.id })
+    expect(response.status).toBe(200)
+    expect(app.historyTick).toBe(tick + 1)
+    const { history } = await call('list_history', { limit: 1 })
+    expect(history[0].url).toBe('https://mock.slinger.local/json')
+
+    // ad hoc, and an override for one send; a variable without a value is sent as written, with a warning
+    const adHoc = await call('send_request', { method: 'GET', url: 'https://mock.slinger.local/:p', path_variables: [{ key: 'p', value: 'json' }] })
+    expect(adHoc.response.status).toBe(200)
+    const missing = await call('send_request', { method: 'GET', url: 'https://mock.slinger.local/:p' })
+    expect(missing.warnings.join(' ')).toContain(':p')
+  })
+
   it('runs a collection and reports every request', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!
     const users = app.foldersOf(demo.id).find((f) => f.name === 'Users')!

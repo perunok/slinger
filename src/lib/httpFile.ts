@@ -9,6 +9,7 @@
 import type { ApiFolder, ApiRequest, FormDataField, HttpRequestInput, ResolvedAuth, ResolvedBody } from '../../shared/types'
 import { dataRows } from './kv'
 import { normalizeUrl } from './prepare'
+import { applyPathVariables } from './pathVariables'
 import { parseDocument, rawContentType, type RequestDraft } from './request'
 import { generateSnippet, HTTP_OAUTH2_TOKEN_VARIABLE } from './snippets'
 import type { TemplateScope } from './template'
@@ -24,7 +25,8 @@ export const HTTP_CLIENT_DEFAULT_ENV = 'default'
  * field or binary body without a file, an unsupported auth or body type is left out instead of failing the export.
  */
 export function unresolvedInput(draft: RequestDraft, name = draft.name): HttpRequestInput {
-  const url = draft.url.trim()
+  // `.http` clients have no path variables: their values go into the URL (`{{variables}}` in them kept).
+  const url = applyPathVariables(draft.url, draft.pathVariables, (t) => t).url.trim()
   const headers = dataRows(draft.headers)
     .filter((h) => h.enabled && h.key.trim())
     .map((h) => ({ key: h.key.trim(), value: h.value }))

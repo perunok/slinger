@@ -4,7 +4,8 @@
  *
  * `url.raw` wins when present (the Postman app always writes it). Without it (Postman's SDK / Newman
  * `toJSON()` drop `raw`) the URL is rebuilt from protocol, host, port, path, enabled query params and hash,
- * like the SDK's `Url#toString()` but without substituting `:path` variables.
+ * like the SDK's `Url#toString()` but without substituting `:path` variables (the editor keeps those as path variables and
+ * `src/lib/prepare.ts` applies them at send).
  */
 type Json = Record<string, unknown>
 const isObj = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)

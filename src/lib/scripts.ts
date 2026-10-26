@@ -24,6 +24,7 @@ import type {
   ScriptVariables,
 } from '../../shared/types'
 import { dataRows, ensureTrailingEmpty, newRow } from './kv'
+import { mergePathVariables } from './pathVariables'
 import { RAW_LANGUAGES, serializeAuth, type AuthDraft, type RawLanguage, type RequestDraft } from './request'
 import { SECRET_MASK, type TemplateScope, type VariableInfo } from './template'
 
@@ -262,6 +263,7 @@ export function applyRequestData(d: RequestDraft, r: ScriptRequestData): Request
     ...d,
     method: r.method,
     url: r.url,
+    pathVariables: mergePathVariables(r.url, d.pathVariables),
     headers: ensureTrailingEmpty(r.headers.map((h) => newRow({ key: h.key, value: h.value, enabled: !h.disabled }))),
   }
   if (r.body.mode === 'raw') {

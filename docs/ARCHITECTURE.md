@@ -264,7 +264,10 @@ array under the key `scripts` (the key the importer has always used, so existing
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
    reported), generates built-ins (the dynamic variables of `shared/dynamicVariables.ts`, also used by script `replaceIn` and
    mock servers; one value per name per send), drops disabled rows, and moves an API key with `addTo: 'query'`
-   into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
+   into the URL. Path variables (`draft.pathVariables`, document key `pathVariables`, seeded from an imported item's
+   `source.request.url.variable`; rows follow the URL's `:name` segments, `src/lib/pathVariables.ts`) are applied first:
+   each whole `:name` path segment becomes its resolved, percent-encoded value; one without a value stays `:name` and adds a
+   warning. (`.http` exports apply them unresolved; `shared/postmanUrl.ts` never does.) It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
    the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
    calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
    `tokenKey` into `auth.oauth2`.
