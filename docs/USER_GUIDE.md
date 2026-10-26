@@ -238,7 +238,9 @@ revealed on request) and **On**. They are not part of any collection export; imp
 
 **Environments.** Click the gear next to the environment switcher (or use the switcher) to open the Environments dialog: create,
 rename, duplicate and delete environments, **Set active**, and edit variables in a table (or **bulk edit** as text). Changes
-save automatically with a status indicator. The active environment is remembered per workspace. Variable names are unique
+save automatically with a status indicator. If a variable changed elsewhere since the table loaded it (sync, a script, an
+assistant), its row shows *Changed elsewhere* instead of overwriting it; **Retry** saves your value over it. The same applies to
+collection variables and globals. The active environment is remembered per workspace. Variable names are unique
 within an environment, and environment names are unique within a workspace (ignoring case and surrounding spaces; renaming
 an environment to its own name in a different case is fine). The create/rename dialog flags a taken name as you type. Only
 sync can bring two same-named environments into one workspace (for example when two devices created one offline); rename or

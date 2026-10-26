@@ -16,6 +16,8 @@ export interface VarRecord {
   isSecret: boolean
   secretMissing: boolean
   enabled: boolean
+  /** The stored version (optimistic concurrency: an update sends it back as `expectedVersion`). */
+  version: number
 }
 
 export interface VarUpsert {
@@ -25,6 +27,8 @@ export interface VarUpsert {
   isSecret: boolean
   enabled: boolean
   variableId?: string
+  /** The version the row was loaded / last saved at; the write fails with version_conflict if it changed since. */
+  expectedVersion?: number
 }
 
 export interface VarBackend {
@@ -43,9 +47,9 @@ export interface VarBackend {
   changed(ownerId: string): void
 }
 
-const fromEnv = (v: EnvironmentVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: true })
-const fromCollection = (v: CollectionVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: false, secretMissing: false, enabled: v.enabled })
-const fromGlobal = (v: GlobalVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: v.enabled })
+const fromEnv = (v: EnvironmentVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: true, version: v.version })
+const fromCollection = (v: CollectionVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: false, secretMissing: false, enabled: v.enabled, version: v.version })
+const fromGlobal = (v: GlobalVariable): VarRecord => ({ id: v.id, key: v.key, value: v.value, isSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing, enabled: v.enabled, version: v.version })
 
 export const environmentBackend: VarBackend = {
   kind: 'environment',
@@ -53,7 +57,7 @@ export const environmentBackend: VarBackend = {
   enabledColumn: false,
   list: async (envId) => (await api().listEnvironmentVariables(envId)).map(fromEnv),
   upsert: async (envId, r) =>
-    fromEnv(await api().upsertEnvironmentVariable({ environmentId: envId, key: r.key, value: r.value, isSecret: r.isSecret, variableId: r.variableId })),
+    fromEnv(await api().upsertEnvironmentVariable({ environmentId: envId, key: r.key, value: r.value, isSecret: r.isSecret, variableId: r.variableId, expectedVersion: r.expectedVersion })),
   remove: (id) => api().deleteEnvironmentVariable(id),
   reveal: (id) => api().revealEnvironmentVariable(id),
   changed: (envId) => {
@@ -67,7 +71,7 @@ export const collectionBackend: VarBackend = {
   enabledColumn: true,
   list: async (collectionId) => (await api().listCollectionVariables(collectionId)).map(fromCollection),
   upsert: async (collectionId, r) =>
-    fromCollection(await api().upsertCollectionVariable({ collectionId, key: r.key, value: r.value, enabled: r.enabled, variableId: r.variableId })),
+    fromCollection(await api().upsertCollectionVariable({ collectionId, key: r.key, value: r.value, enabled: r.enabled, variableId: r.variableId, expectedVersion: r.expectedVersion })),
   remove: (id) => api().deleteCollectionVariable(id),
   reveal: async () => '',
   replace: async (collectionId, entries) =>
@@ -81,7 +85,7 @@ export const globalsBackend: VarBackend = {
   enabledColumn: true,
   list: async (workspaceId) => (await api().listGlobalVariables(workspaceId)).map(fromGlobal),
   upsert: async (workspaceId, r) =>
-    fromGlobal(await api().upsertGlobalVariable({ workspaceId, key: r.key, value: r.value, isSecret: r.isSecret, enabled: r.enabled, variableId: r.variableId })),
+    fromGlobal(await api().upsertGlobalVariable({ workspaceId, key: r.key, value: r.value, isSecret: r.isSecret, enabled: r.enabled, variableId: r.variableId, expectedVersion: r.expectedVersion })),
   remove: (id) => api().deleteGlobalVariable(id),
   reveal: (id) => api().revealGlobalVariable(id),
   replace: async (workspaceId, entries) => (await api().replaceGlobalVariables(workspaceId, entries)).map(fromGlobal),

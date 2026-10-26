@@ -6,6 +6,8 @@ export interface Row {
   envId: string
   /** Server id; undefined until the first successful create. */
   id?: string
+  /** Stored version the row was loaded / last saved at (sent as expectedVersion); undefined until created. */
+  version?: number
   key: string
   /** Plain value; for secrets only what the user typed or explicitly revealed (never loaded implicitly). */
   value: string

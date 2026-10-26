@@ -241,6 +241,7 @@ const upsertVariableInput = z.object({
   value: z.string().max(1_000_000),
   isSecret: z.boolean(),
   variableId: uuid.optional(),
+  expectedVersion: z.number().int().min(1).optional(),
 })
 // ---- persisted variables (collection variables + globals) --------------------------
 
