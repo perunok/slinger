@@ -271,7 +271,10 @@ export const MCP_TOOLS = {
       '{{variables}} resolve (secrets inside Slinger), the result lands in history. Returns status, headers, body and tests. ' +
       'An MCP request (request_id only, sent as saved) runs its operation on its server: the body is the JSON-RPC result, ' +
       'status 200, or 500 "Tool error" when the tool reports an error. A local command (stdio) runs only after the user ' +
-      'allowed it once in the Slinger window.',
+      'allowed it once in the Slinger window. The user\'s credentials (secret variables, saved auth, OAuth 2.0 tokens) are ' +
+      'only sent with a saved request sent as saved that you have not changed since the user last saved it; anything else ' +
+      'that would carry them is refused (ask the user to send or save it in the window). Secret values in results appear ' +
+      'as {{name}} or [hidden].',
     input: z.object({
       request_id: id.optional().describe('A saved request. Other fields given here override it for this send only.'),
       ...requestFields,

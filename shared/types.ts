@@ -209,6 +209,31 @@ export interface AssistantEditInput {
   detail: string
 }
 
+/**
+ * ADDED (assistant changes, 0019): a request or environment variable an AI assistant writes through the MCP server.
+ * markAssistantChange only: `created` = the assistant made the request; `pending` = recorded before the write, so it
+ * counts whatever the content is until the record after the write replaces it (a failed write never leaves the change
+ * unrecorded).
+ */
+export type AssistantChangeRef =
+  | { kind: 'request'; requestId: string; created?: boolean; pending?: boolean }
+  | { kind: 'variable'; environmentId: string; key: string; pending?: boolean }
+
+/** The assistant changes of a workspace whose content is still exactly what the assistant wrote (not reviewed since). */
+export interface AssistantChanges {
+  requests: Array<{ requestId: string; created: boolean }>
+  variables: Array<{ environmentId: string; key: string }>
+}
+
+/** ADDED (MCP): texts to return to an AI assistant, with the secrets of one send replaced (redactSecrets). */
+export interface RedactSecretsInput {
+  /** The send's script session: secret values its scripts read or wrote become `{{name}}`. */
+  scriptSessionId: string | null
+  /** The OAuth 2.0 token the send used: its access and refresh tokens become `<access token>` / `<refresh token>`. */
+  oauth2TokenKey: string | null
+  texts: string[]
+}
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
@@ -817,6 +842,11 @@ export interface RunScriptsInput {
   sendRequestTimeoutMs?: number
   /** Pre-request only: keep running the remaining scripts after one fails (default false). */
   continueOnError?: boolean
+  /**
+   * ADDED (MCP send policy): reading a secret variable throws inside the script with this message (a send an AI
+   * assistant controls: ad-hoc, changed, or using variables it set). Absent: secrets are read as usual.
+   */
+  denySecrets?: string
 }
 
 export type ScriptConsoleLevel = 'log' | 'info' | 'warn' | 'error'

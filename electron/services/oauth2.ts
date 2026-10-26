@@ -29,7 +29,15 @@ export interface StoredOAuth2Token {
   obtained_at: number
   /** Workspace the token belongs to (for the per-workspace index; not secret). */
   workspace_id?: string
+  /**
+   * Origins (scheme://host:port) the token may be sent to: the first one it was used with, plus those the user allowed.
+   * Absent or empty: not used yet. Kept across refreshes and new tokens of the same configuration.
+   */
+  origins?: string[]
 }
+
+/** At most this many origins per token (a request that cycles through hosts is refused instead of growing the list). */
+const MAX_TOKEN_ORIGINS = 50
 
 /** Keychain entry listing a workspace's token keys, so deleting the workspace deletes its tokens. */
 const indexKey = (workspaceId: string) => `${OAUTH2_TOKEN_PREFIX}index:${workspaceId.toLowerCase()}`
@@ -253,6 +261,8 @@ export class OAuth2Service {
       if (!token.scope && config.scope.trim()) token.scope = config.scope.trim()
       token.workspace_id = config.workspaceId
       const key = oauth2TokenKey(config)
+      const previous = this.readQuietly(key)
+      if (previous?.origins?.length) token.origins = previous.origins
       this.write(key, token)
       return this.statusOf(key, token)
     } finally {
@@ -301,6 +311,7 @@ export class OAuth2Service {
     fresh.refresh_token ??= stored.refresh_token
     fresh.scope ??= stored.scope
     fresh.workspace_id = config.workspaceId
+    if (stored.origins?.length) fresh.origins = stored.origins
     this.write(key, fresh)
     return this.statusOf(key, fresh)
   }
@@ -319,21 +330,76 @@ export class OAuth2Service {
     }
   }
 
-  /** The access token itself: only for an explicit user action (Reveal). */
-  reveal(tokenKey: string): string {
+  /**
+   * The access token itself: for an explicit user action (Reveal), or with `origin` for an MCP request's connect, which
+   * sends it there (the same origin check as a normal send).
+   */
+  reveal(tokenKey: string, origin?: string): string {
     const t = this.read(assertTokenKey(tokenKey))
     if (!t) throw invalidInput('No access token is stored for this configuration')
+    if (origin !== undefined) this.checkOrigin(tokenKey, t, origin)
     return t.access_token
   }
 
-  /** For the HTTP executor: the token to send, or a user-facing error. */
-  accessTokenFor(tokenKey: string): string {
+  /**
+   * For the HTTP executor: the token to send to `origin`, or a user-facing error. The first send records the origin;
+   * a later send to another origin is refused until the user allows it (allowOrigin), so a request whose URL changed
+   * (another environment, an edited URL) cannot hand the token to a host it was never meant for.
+   */
+  accessTokenFor(tokenKey: string, origin: string): string {
     const t = this.read(assertTokenKey(tokenKey))
     if (!t) throw invalidInput('No access token yet: click Get New Access Token in the Authorization tab', { reason: 'oauth2_no_token' })
     if (t.expires_at !== null && t.expires_at <= this.nowS()) {
       throw invalidInput('The access token has expired: click Get New Access Token in the Authorization tab', { reason: 'oauth2_expired' })
     }
+    this.checkOrigin(tokenKey, t, origin)
     return t.access_token
+  }
+
+  private checkOrigin(tokenKey: string, t: StoredOAuth2Token, origin: string): void {
+    const origins = t.origins ?? []
+    if (origins.includes(origin)) return
+    if (origins.length === 0) {
+      this.write(tokenKey, { ...t, origins: [origin] })
+      return
+    }
+    throw invalidInput(
+      `This access token has only been used with ${origins.join(', ')}, not ${origin}. Allow it there in the Slinger window, or get a separate token.`,
+      { reason: 'oauth2_new_origin', origin, origins, tokenKey },
+    )
+  }
+
+  /** The user allowed the token to be sent to one more origin. */
+  allowOrigin(tokenKey: string, origin: string): void {
+    const t = this.read(assertTokenKey(tokenKey))
+    if (!t) throw invalidInput('No access token is stored for this configuration')
+    const origins = t.origins ?? []
+    if (origins.includes(origin)) return
+    if (origins.length >= MAX_TOKEN_ORIGINS) throw invalidInput(`A token can be allowed for at most ${MAX_TOKEN_ORIGINS} origins; get a separate token.`)
+    this.write(tokenKey, { ...t, origins: [...origins, origin] })
+  }
+
+  /** Replaces the stored access and refresh tokens of `tokenKey` in `text` (output for an AI assistant). */
+  redactToken(tokenKey: string | null, text: string): string {
+    if (!tokenKey || !OAUTH2_TOKEN_KEY_RE.test(tokenKey)) return text
+    const t = this.readQuietly(tokenKey)
+    if (!t) return text
+    let out = text
+    for (const [value, label] of [
+      [t.access_token, '<access token>'],
+      [t.refresh_token, '<refresh token>'],
+    ] as const) {
+      if (value && value.length >= 4 && out.includes(value)) out = out.split(value).join(label)
+    }
+    return out
+  }
+
+  private readQuietly(tokenKey: string): StoredOAuth2Token | null {
+    try {
+      return this.read(tokenKey)
+    } catch {
+      return null
+    }
   }
 
   // ---- grant internals ----------------------------------------------------

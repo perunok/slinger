@@ -33,7 +33,13 @@ const INSTRUCTIONS =
   'Slinger is a local API client (like Postman). Workspaces hold collections (folders, saved requests) and environments ' +
   '({{variables}}). Start with list_workspaces and get_tree; most tools default to the workspace open in the Slinger window. ' +
   'Edits appear in the window at once. send_request sends exactly like the Send button and records history. Secret ' +
-  'values are never returned: use {{variables}} for credentials and set them with set_variable (secret: true).'
+  'values are never returned: use {{variables}} for credentials and set them with set_variable (secret: true); results ' +
+  'show the secrets, credentials and tokens of a send as {{name}} or [hidden]. The user\'s credentials (secret variables, ' +
+  'saved auth, OAuth 2.0 tokens) go only into requests the user saved, sent as saved: an ad-hoc request, a send with ' +
+  'overrides, a request you created or changed (until the user saves it in the window) and a URL whose host comes from a ' +
+  'variable you set (until the user edits it) are refused when they would carry them, and their scripts cannot read ' +
+  'secrets. Scripts of imported or synced-in collections and OAuth 2.0 tokens on a new host need the user\'s permission ' +
+  'in the window first; open_in_app shows a request there.'
 
 function jsonSchemaOf(spec: McpToolSpec) {
   const schema = z.toJSONSchema(spec.input, { target: 'draft-7' }) as Record<string, unknown>

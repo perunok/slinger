@@ -338,6 +338,7 @@ const runScriptsInput = z.object({
   timeoutMs: z.number().int().min(1).max(60_000).optional(),
   sendRequestTimeoutMs: z.number().int().min(1).max(10 * 60_000).optional(),
   continueOnError: z.boolean().optional(),
+  denySecrets: z.string().min(1).max(1000).optional(),
 })
 const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()
 const extractFolderInput = z.object({
@@ -401,6 +402,29 @@ const assistantEdit = z
     detail: z.string().min(1).max(1000),
   })
   .strict()
+const assistantChangeRef = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('request'), requestId: uuid, created: z.boolean().optional(), pending: z.boolean().optional() }).strict(),
+  z.object({ kind: z.literal('variable'), environmentId: uuid, key: z.string().min(1).max(500), pending: z.boolean().optional() }).strict(),
+])
+const redactSecretsInput = z
+  .object({
+    scriptSessionId: z.string().max(128).nullable(),
+    oauth2TokenKey: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+    texts: z.array(z.string().max(64 * 1024 * 1024)).max(10_000),
+  })
+  .strict()
+/** An origin as `new URL(x).origin` prints it: http(s)://host[:port]. */
+const httpOrigin = z
+  .string()
+  .max(2048)
+  .refine((v) => {
+    try {
+      const u = new URL(v)
+      return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === v
+    } catch {
+      return false
+    }
+  }, { message: 'must be an http(s) origin' })
 const mcpClientId = z.enum(['claude-desktop', 'claude-code', 'cursor', 'vscode', 'windsurf'])
 const mcpSettings = z.object({ enabled: z.boolean(), port: z.number().int().min(1024).max(65535) }).strict()
 const mcpCallResult = z.union([
@@ -576,6 +600,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       return core.collections.rename(id, n)
     },
     deleteCollection: async (...a) => core.collections.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
+    trustCollectionScripts: async (...a) => core.trust.trustCollection(parseArgs(z.tuple([uuid]), a)[0]),
     setCollectionScripts: async (...a) => {
       const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
       return core.collections.setScripts(id, json)
@@ -625,6 +650,13 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     recordAssistantEdit: async (...a) => {
       const [e] = parseArgs(z.tuple([assistantEdit]), a)
       return core.history.record({ ...e, statusCode: null, ok: true, errorMessage: null, durationMs: 0, kind: 'edit', source: 'mcp' })
+    },
+    markAssistantChange: async (...a) => core.trust.markAssistantChange(parseArgs(z.tuple([assistantChangeRef]), a)[0]),
+    clearAssistantChange: async (...a) => core.trust.clearAssistantChange(parseArgs(z.tuple([assistantChangeRef]), a)[0]),
+    listAssistantChanges: async (...a) => core.trust.listAssistantChanges(parseArgs(z.tuple([uuid]), a)[0]),
+    redactSecrets: async (...a) => {
+      const [input] = parseArgs(z.tuple([redactSecretsInput]), a)
+      return input.texts.map((t) => core.oauth2.redactToken(input.oauth2TokenKey, core.scripts.redact(input.scriptSessionId, t)))
     },
 
     // HTTP execution
@@ -772,7 +804,14 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     getOAuth2TokenStatus: async (...a) => core.oauth2.status(parseArgs(z.tuple([oauth2Config]), a)[0]),
     deleteOAuth2Token: async (...a) => core.oauth2.delete(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
-    revealOAuth2Token: async (...a) => core.oauth2.reveal(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
+    revealOAuth2Token: async (...a) => {
+      const [key, origin] = parseArgs(z.tuple([oauth2TokenKey, httpOrigin.optional()]), a)
+      return core.oauth2.reveal(key, origin)
+    },
+    allowOAuth2Origin: async (...a) => {
+      const [key, origin] = parseArgs(z.tuple([oauth2TokenKey, httpOrigin]), a)
+      core.oauth2.allowOrigin(key, origin)
+    },
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),

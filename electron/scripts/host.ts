@@ -241,6 +241,8 @@ export class RunHost {
     const e = entries.get(key)
     if (!e) return undefined
     if (!e.known) {
+      // A send an AI assistant controls: secrets stay out of its scripts (main refuses the read too).
+      if (this.job.denySecrets) throw new ScriptApiError(`Secret variable "${key}": ${this.job.denySecrets}`)
       // The only place a secret value enters a script: an explicit read by name.
       const value = e.id ? this.deps.readSecret(e.id) : null
       if (value === null) {

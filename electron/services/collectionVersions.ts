@@ -23,6 +23,7 @@ import {
 } from '../repositories/common'
 import { CollectionVariableRepository } from '../repositories/variables'
 import { compare, parse } from './semver'
+import { copyCollectionTrust } from '../repositories/trust'
 
 interface VersionRow {
   id: string
@@ -305,6 +306,7 @@ export function restoreCollectionVersion(
       ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null,
         ...snapshotDescription(snapshot), now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
+      copyCollectionTrust(db, source.id, id)
       materialize(db, created, snapshot)
       restoreVariables(db, created.id, snapshot)
       return toCollection(created)

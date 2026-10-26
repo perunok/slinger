@@ -11,6 +11,7 @@ import {
   type Db,
 } from './common'
 import { cascadeCollectionVariables } from './variables'
+import { trustCollectionRow } from './trust'
 
 export class CollectionRepository {
   constructor(private readonly db: Db) {}
@@ -43,6 +44,8 @@ export class CollectionRepository {
          VALUES (?, ?, ?, 1, 0, ?, ?)`,
       )
       .run(id, workspaceId, name, now, now)
+    // Made on this device: its scripts are the user's own (migration 0019).
+    trustCollectionRow(this.db, id)
     return this.get(id)
   }
 

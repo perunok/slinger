@@ -14,6 +14,9 @@ import type { McpCall, McpCallResult, McpClientId, McpClientStatus, McpSettings,
 import type {
   ApiFolder,
   AssistantEditInput,
+  AssistantChangeRef,
+  AssistantChanges,
+  RedactSecretsInput,
   ApiRequest,
   CloudFetchInput,
   OpenApiImportInput,
@@ -130,6 +133,11 @@ export interface SlingerIpcApi {
   deleteCollection(collectionId: string): Promise<void>
   /** ADDED (scripts): replaces the collection's Postman `event` array (JSON text, or null to clear). Local-only. */
   setCollectionScripts(collectionId: string, scriptsJson: string | null): Promise<Collection>
+  /**
+   * ADDED (script trust, 0019): allows the scripts of an imported or synced-in collection on this device. Until then
+   * runScripts refuses its chains (`invalid_input`, details.reason 'untrusted_scripts'). Local-only.
+   */
+  trustCollectionScripts(collectionId: string): Promise<void>
   /** ADDED (docs): replaces the collection's description text (null or blank clears it; the stored type is kept). Local-only. */
   setCollectionDescription(collectionId: string, description: string | null): Promise<Collection>
 
@@ -158,6 +166,14 @@ export interface SlingerIpcApi {
   listHistory(workspaceId: string, limit?: number): Promise<HistoryEntry[]>
   /** ADDED (MCP): records an edit an AI assistant made through the MCP server (kind 'edit', source 'mcp'). */
   recordAssistantEdit(input: AssistantEditInput): Promise<HistoryEntry>
+  /** ADDED (MCP send policy, 0019): remembers the current content of a request / variable as the assistant's. */
+  markAssistantChange(ref: AssistantChangeRef): Promise<void>
+  /** ADDED (MCP send policy): the user reviewed it (saved it in the window). */
+  clearAssistantChange(ref: AssistantChangeRef): Promise<void>
+  /** ADDED (MCP send policy): assistant changes of the workspace whose content has not changed since. */
+  listAssistantChanges(workspaceId: string): Promise<AssistantChanges>
+  /** ADDED (MCP send policy): replaces the secrets of one send (scripts' reads, the OAuth 2.0 token) in texts for an assistant. */
+  redactSecrets(input: RedactSecretsInput): Promise<string[]>
   clearHistory(workspaceId: string): Promise<void>
   deleteHistoryEntry(historyId: string): Promise<void>
 
@@ -440,8 +456,16 @@ export interface SlingerIpcApi {
   getOAuth2TokenStatus(config: OAuth2Config): Promise<OAuth2TokenStatus>
   /** ADDED (OAuth 2.0): removes a stored token from the keychain. */
   deleteOAuth2Token(tokenKey: string): Promise<void>
-  /** ADDED (OAuth 2.0): the access token itself, for an explicit user action only (like revealEnvironmentVariable). */
-  revealOAuth2Token(tokenKey: string): Promise<string>
+  /**
+   * ADDED (OAuth 2.0): the access token itself, for an explicit user action only (like revealEnvironmentVariable), or
+   * with `origin` for an MCP request's connect to that origin (checked like a send: see allowOAuth2Origin).
+   */
+  revealOAuth2Token(tokenKey: string, origin?: string): Promise<string>
+  /**
+   * ADDED (token origins): lets the token be sent to one more origin (scheme://host:port). A stored token goes only to
+   * the origins it was first used with or the user allowed; another one fails with details.reason 'oauth2_new_origin'.
+   */
+  allowOAuth2Origin(tokenKey: string, origin: string): Promise<void>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -464,6 +488,7 @@ export const IPC_CHANNELS = [
   'renameCollection',
   'deleteCollection',
   'setCollectionScripts',
+  'trustCollectionScripts',
   'setCollectionDescription',
   'listFolders',
   'createFolder',
@@ -581,12 +606,17 @@ export const IPC_CHANNELS = [
   'getOAuth2TokenStatus',
   'deleteOAuth2Token',
   'revealOAuth2Token',
+  'allowOAuth2Origin',
   'getMcpStatus',
   'setMcpSettings',
   'revealMcpToken',
   'regenerateMcpToken',
   'mcpRespond',
   'recordAssistantEdit',
+  'markAssistantChange',
+  'clearAssistantChange',
+  'listAssistantChanges',
+  'redactSecrets',
   'mcpHostReady',
   'listMcpClients',
   'connectMcpClient',

@@ -1,9 +1,9 @@
 import type { CloudFetchInput, HttpRequestInput, HttpResponseData } from '../../shared/types'
-import { toErrorPayload, invalidInput } from '../lib/errors'
+import { IpcError, toErrorPayload, invalidInput } from '../lib/errors'
 import { assertUuid, isUuid } from '../lib/ids'
 import type { HistoryRepository } from '../repositories/history'
 import type { FileAccess } from './fileGrants'
-import { executeHttp, normalizeUrl, type OAuth2TokenLookup } from './httpExecutor'
+import { executeHttp, normalizeUrl, scrubRequestValues, type OAuth2TokenLookup } from './httpExecutor'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 
@@ -47,13 +47,16 @@ export class HttpService {
       })
       return response
     } catch (err) {
+      // The message may quote resolved values (platform errors about the URL, a host from a secret variable): it goes
+      // to history and back to the window (and so to an AI assistant) without them.
+      const safe = this.safeError(err, input)
       this.record(input, workspaceId, {
         statusCode: null,
         ok: false,
-        errorMessage: toErrorPayload(err).message,
+        errorMessage: safe.message,
         durationMs: performance.now() - started,
       })
-      throw err
+      throw safe
     } finally {
       if (runId !== null) this.runs.delete(runId)
     }
@@ -74,6 +77,12 @@ export class HttpService {
       timeoutMs: input.timeoutMs,
       workspaceId: '',
     })
+  }
+
+  private safeError(err: unknown, input: HttpRequestInput): IpcError {
+    const payload = toErrorPayload(err)
+    const message = this.redact(input.scriptSessionId, scrubRequestValues(payload.message, input))
+    return new IpcError({ ...payload, message })
   }
 
   /** Cancelling an unknown or already finished run is a no-op. */
