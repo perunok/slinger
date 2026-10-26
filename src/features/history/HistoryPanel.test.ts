@@ -206,3 +206,23 @@ describe('HistoryPanel', () => {
     expect(await screen.findByText('https://api.test/n')).toBeInTheDocument()
   })
 })
+
+describe('HistoryPanel right-click menu', () => {
+  it('opens from the keyboard (Shift+F10) with Open, Copy URL and Delete', async () => {
+    await setup([entry('a'), entry('b')])
+    const row = (await screen.findAllByRole('button', { name: /api\.test\/a/ }))[0]
+    row.focus()
+    await fireEvent.keyDown(row, { key: 'F10', shiftKey: true })
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.replace(/(Enter|Del)$/, '').trim())).toEqual(['Open', 'Copy URL', 'Delete'])
+    await fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete/ }))
+    await waitFor(() => expect(window.slinger.deleteHistoryEntry).toHaveBeenCalledWith('a'))
+  })
+
+  it('has no Open or Copy URL for an edit of something that is not a request', async () => {
+    await setup([entry('e', { kind: 'edit', detail: 'Renamed environment', url: '' })])
+    await fireEvent.contextMenu(await screen.findByText('Renamed environment'))
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent?.replace(/Del$/, '').trim())).toEqual(['Delete'])
+  })
+})

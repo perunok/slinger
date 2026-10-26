@@ -21,7 +21,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
                      HTTP servers answering with saved examples)
-  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), editMenu (native Cut/Copy/Paste menu of text), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
   mcpClient/         MCP client for MCP requests: service.ts (McpClientService: sessions over Streamable HTTP / SSE / stdio,
@@ -142,6 +142,12 @@ Electron's default menu is replaced at startup (`installAppMenu()` in `main.ts`)
 `electron/lib/appMenu.ts` builds the template as plain data (`buildAppMenuTemplate({ platform, isPackaged, devTools, send,
 openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` only supplies the callbacks and calls
 `Menu.setApplicationMenu`.
+
+Right-click menus: the app's own menus are `src/components/ui/ContextMenu.svelte` (items are secondary paths to existing actions;
+`contextMenu.ts` has `isMenuKey` for Shift+F10 / the Menu key and `menuPoint` for placing a keyboard-opened menu). They call
+`preventDefault()` on the DOM `contextmenu` event, and Chromium then raises no `context-menu` event in main. Everywhere else,
+`main.ts` pops up `electron/lib/editMenu.ts`'s template (Undo/Redo/Cut/Copy/Paste/Select all on editable fields, Copy on
+selected text, nothing otherwise), since Electron shows no text menu by default.
 
 - **macOS:** Slinger (About Slinger, Settings… Cmd+,, Services, Hide / Hide Others / Show All, Quit), File, Edit, View, Window,
   Help. **Windows/Linux:** File, Edit, View, Help (About Slinger at the bottom of Help, Settings… and Quit/Exit in File, Alt

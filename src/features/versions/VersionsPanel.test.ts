@@ -62,3 +62,24 @@ function within_dialog(title: string): HTMLElement {
   const dlg = screen.getByRole('dialog', { name: title })
   return Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Replace collection')!
 }
+
+describe('version right-click menu', () => {
+  it('selects the version and offers its Restore and Delete', async () => {
+    const mock = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = mock
+    await app.init()
+    const col = await mock.createCollection(app.workspaceId!, 'Col')
+    await mock.createCollectionVersion({ collectionId: col.id, version: '1.0.0', notes: null })
+    await mock.createCollectionVersion({ collectionId: col.id, version: '1.1.0', notes: null })
+    await app.reloadCollections()
+    render(VersionsPanel, { collectionId: col.id, onclose: () => {} })
+
+    const old = await screen.findByRole('option', { name: /1\.0\.0/ })
+    await fireEvent.contextMenu(old)
+    expect(old).toHaveAttribute('aria-selected', 'true')
+    const menu = await screen.findByRole('menu')
+    expect([...menu.querySelectorAll('[role=menuitem]')].map((i) => i.textContent?.trim())).toEqual(['Copy version number', 'Restore…', 'Delete…'])
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete…' }))
+    expect(await screen.findByRole('dialog', { name: 'Delete version v1.0.0?' })).toBeInTheDocument()
+  })
+})

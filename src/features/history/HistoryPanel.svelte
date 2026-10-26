@@ -5,6 +5,9 @@
   import { toast } from '../../app/toast.svelte'
   import Button from '../../components/ui/Button.svelte'
   import ConfirmDialog from '../../components/ui/ConfirmDialog.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { isMenuKey, menuPoint } from '../../components/ui/contextMenu'
+  import { copyText } from '../../app/clipboard'
   import Icon from '../../components/ui/Icon.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
@@ -24,6 +27,7 @@
   let confirmClear = $state(false)
   let focusId = $state<string | null>(null)
   let listEl: HTMLElement | undefined = $state()
+  let menu = $state<{ x: number; y: number; entry: HistoryEntry } | null>(null)
   let seq = 0
 
   const shown = $derived.by(() => {
@@ -105,6 +109,24 @@
     focusId = null
   }
 
+  /** Right-click / Shift+F10 on an entry: the same actions as click, Delete and the row's trash button, plus copying. */
+  function menuItems(entry: HistoryEntry): MenuItem[] {
+    // An edit of something that is not a request has nothing to open or copy.
+    const openable = entry.kind !== 'edit' || !!app.requestById(entry.requestId)
+    const copyable = entry.kind !== 'edit' && !!entry.url
+    return [
+      ...(openable ? [{ label: 'Open', icon: 'file', hint: 'Enter', action: () => open(entry) }] : []),
+      ...(copyable ? [{ label: 'Copy URL', icon: 'link', action: () => void copyText(entry.url, 'URL copied') }] : []),
+      ...(openable || copyable ? [{ separator: true, label: '' }] : []),
+      { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', action: () => void remove(entry) },
+    ]
+  }
+  function openMenu(e: MouseEvent | KeyboardEvent, entry: HistoryEntry) {
+    e.preventDefault()
+    focusId = entry.id
+    menu = { ...menuPoint(e), entry }
+  }
+
   function focusRow(id: string | null) {
     if (!id || !listEl) return
     for (const el of listEl.querySelectorAll<HTMLElement>('[data-entry-id]')) {
@@ -116,6 +138,7 @@
   }
 
   function onRowKey(e: KeyboardEvent, entry: HistoryEntry) {
+    if (isMenuKey(e)) return openMenu(e, entry)
     const i = flat.findIndex((x) => x.id === entry.id)
     const go = (j: number) => {
       const t = flat[Math.max(0, Math.min(flat.length - 1, j))]
@@ -203,6 +226,7 @@
                   title={entry.kind === 'edit' ? (entry.detail ?? 'Edit') : `${entry.method} ${entry.url}`}
                   class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 pr-9 outline-none hover:bg-hover focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-focus"
                   onclick={() => open(entry)}
+                  oncontextmenu={(e) => openMenu(e, entry)}
                   onfocus={() => (focusId = entry.id)}
                   onkeydown={(e) => e.target === e.currentTarget && onRowKey(e, entry)}
                 >
@@ -254,6 +278,10 @@
     {/if}
   </div>
 </section>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.entry)} onclose={() => (menu = null)} />
+{/if}
 
 {#if confirmClear}
   <ConfirmDialog

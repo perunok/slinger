@@ -9,9 +9,12 @@
   import { settings } from '../../app/settings.svelte'
   import { toast } from '../../app/toast.svelte'
   import type CodeEditor from '../../components/editor/CodeEditor.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { menuPoint } from '../../components/ui/contextMenu'
   import IconButton from '../../components/ui/IconButton.svelte'
   import Tabs from '../../components/ui/Tabs.svelte'
   import { errorInfo } from '../../lib/ipc'
+  import { copyText } from '../../app/clipboard'
   import { saveExport } from '../../lib/exportFile'
   import { suggestFileName } from '../../lib/hex'
   import { analyzeResponse, formatBytes, formatDuration, parseSetCookies, statusTone, textToBase64 } from '../../lib/response'
@@ -103,6 +106,24 @@
     }
   }
 
+  let menu = $state<{ x: number; y: number; selection: string } | null>(null)
+  /** Right-click on the body: the toolbar's copy / save / search, plus copying the selected text (the menu replaces Chromium's). */
+  function bodyMenu(selection: string): MenuItem[] {
+    return [
+      ...(selection ? [{ label: 'Copy', icon: 'copy', action: () => void copyText(selection) }, { separator: true, label: '' }] : []),
+      { label: 'Copy response body', icon: 'copy', disabled: info.text === null, action: () => void copyBody() },
+      { label: 'Save response to file…', icon: 'download', disabled: info.kind === 'empty', action: () => void saveBody() },
+      { label: 'Search in response', icon: 'search', hint: 'Ctrl+F', disabled: !editor || info.text === null, action: () => editor?.openSearch() },
+    ]
+  }
+  function openBodyMenu(e: MouseEvent) {
+    e.preventDefault()
+    const view = editor?.getView()
+    const sel = view?.state.selection.main
+    const selection = view && sel && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : (window.getSelection()?.toString() ?? '')
+    menu = { ...menuPoint(e), selection }
+  }
+
   const canEdit = $derived(effectiveView !== 'headers' && effectiveView !== 'cookies' && effectiveView !== 'tests' && effectiveView !== 'console')
 </script>
 
@@ -132,7 +153,13 @@
     {:else if effectiveView === 'cookies'}
       <CookiesTable headers={data.headers} />
     {:else}
-      <BodyView {info} mode={bodyMode} {wrap} {showAll} onshowall={() => (showAll = true)} bind:editor />
+      <div class="h-full min-h-0" role="presentation" oncontextmenu={openBodyMenu} data-testid="response-body">
+        <BodyView {info} mode={bodyMode} {wrap} {showAll} onshowall={() => (showAll = true)} bind:editor />
+      </div>
     {/if}
   </div>
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={bodyMenu(menu.selection)} onclose={() => (menu = null)} />
+{/if}

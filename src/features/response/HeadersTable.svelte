@@ -1,6 +1,25 @@
 <script lang="ts">
   import type { RequestHeader } from '../../../shared/types'
+  import { copyText } from '../../app/clipboard'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { menuPoint, selectedText } from '../../components/ui/contextMenu'
   let { headers }: { headers: RequestHeader[] } = $props()
+
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  /** Right-click on a header: copy its name, value or the whole line (and the selected text, which the menu replaces). */
+  function openMenu(e: MouseEvent, h: RequestHeader) {
+    e.preventDefault()
+    const selection = selectedText()
+    menu = {
+      ...menuPoint(e),
+      items: [
+        ...(selection ? [{ label: 'Copy', icon: 'copy', action: () => void copyText(selection) }, { separator: true, label: '' }] : []),
+        { label: 'Copy name', action: () => void copyText(h.key, 'Header name copied') },
+        { label: 'Copy value', action: () => void copyText(h.value, 'Header value copied') },
+        { label: 'Copy as “Name: value”', action: () => void copyText(`${h.key}: ${h.value}`, 'Header copied') },
+      ],
+    }
+  }
 </script>
 
 {#if headers.length === 0}
@@ -13,7 +32,7 @@
       </thead>
       <tbody>
         {#each headers as h, i (i)}
-          <tr class="border-t border-border align-top">
+          <tr class="border-t border-border align-top" oncontextmenu={(e) => openMenu(e, h)}>
             <td class="px-2 py-1 font-mono text-xs font-semibold">{h.key}</td>
             <td class="break-all px-2 py-1 font-mono text-xs">{h.value}</td>
           </tr>
@@ -21,4 +40,8 @@
       </tbody>
     </table>
   </div>
+{/if}
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
 {/if}
