@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 
 describe('replace-restore keeps the UI state', () => {
-  it('keeps the folder expanded and offers to reopen the closed tab', async () => {
+  it('keeps ids: the folder stays expanded and the open tab stays open on the restored request', async () => {
     const mock = createMockBackend({ latencyMs: 0, seed: false })
     window.slinger = mock
     await app.init()
@@ -31,9 +31,11 @@ describe('replace-restore keeps the UI state', () => {
     await mock.createRequest({ workspaceId: ws, collectionId: col.id, folderId: folder.id, name: 'Login', method: 'GET', url: 'x', documentJson: doc('Login') })
     await mock.createCollectionVersion({ collectionId: col.id, version: '1.0.0', notes: null })
     await app.reloadCollections()
-    expandedStore.replace(new Set([`collection:${col.id}`, `folder:${folder.id}`]))
     const login = app.requestsOf(col.id)[0]!
-    tabsStore.openRequest(login)
+    await mock.renameRequest(login.id, 'Sign in')
+    await app.reloadCollections()
+    expandedStore.replace(new Set([`collection:${col.id}`, `folder:${folder.id}`]))
+    tabsStore.openRequest(app.requestsOf(col.id)[0]!)
     expect(tabsStore.tabs).toHaveLength(1)
 
     render(VersionsPanel, { collectionId: col.id, onclose: () => {} })
@@ -44,17 +46,14 @@ describe('replace-restore keeps the UI state', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Replace collection...' }))
     await fireEvent.click(within_dialog('Overwrite live collection?'))
 
-    await waitFor(() => expect(app.foldersOf(col.id)[0]!.id).not.toBe(folder.id))
-    const newFolder = app.foldersOf(col.id)[0]!
-    expect(expandedStore.keys.has(`folder:${newFolder.id}`)).toBe(true)
-    expect(expandedStore.keys.has(`folder:${folder.id}`)).toBe(false)
+    await waitFor(() => expect(app.requestsOf(col.id)[0]!.name).toBe('Login'))
+    expect(app.foldersOf(col.id)[0]!.id).toBe(folder.id)
+    expect(app.requestsOf(col.id)[0]!.id).toBe(login.id)
+    expect(expandedStore.keys.has(`folder:${folder.id}`)).toBe(true)
     expect(expandedStore.keys.has(`collection:${col.id}`)).toBe(true)
-    expect(tabsStore.tabs).toHaveLength(0) // the replaced request's clean tab was closed ...
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Reopen restored request' })) // ... and can be reopened
     expect(tabsStore.tabs).toHaveLength(1)
-    expect(tabsStore.tabs[0]!.requestId).toBe(app.requestsOf(col.id)[0]!.id)
-    expect(tabsStore.tabs[0]!.requestId).not.toBe(login.id)
+    expect(tabsStore.tabs[0]!.requestId).toBe(login.id)
+    expect(screen.queryByRole('button', { name: 'Reopen restored request' })).toBeNull()
   })
 })
 
@@ -62,3 +61,24 @@ function within_dialog(title: string): HTMLElement {
   const dlg = screen.getByRole('dialog', { name: title })
   return Array.from(dlg.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Replace collection')!
 }
+
+describe('version right-click menu', () => {
+  it('selects the version and offers its Restore and Delete', async () => {
+    const mock = createMockBackend({ latencyMs: 0, seed: false })
+    window.slinger = mock
+    await app.init()
+    const col = await mock.createCollection(app.workspaceId!, 'Col')
+    await mock.createCollectionVersion({ collectionId: col.id, version: '1.0.0', notes: null })
+    await mock.createCollectionVersion({ collectionId: col.id, version: '1.1.0', notes: null })
+    await app.reloadCollections()
+    render(VersionsPanel, { collectionId: col.id, onclose: () => {} })
+
+    const old = await screen.findByRole('option', { name: /1\.0\.0/ })
+    await fireEvent.contextMenu(old)
+    expect(old).toHaveAttribute('aria-selected', 'true')
+    const menu = await screen.findByRole('menu')
+    expect([...menu.querySelectorAll('[role=menuitem]')].map((i) => i.textContent?.trim())).toEqual(['Copy version number', 'Restore…', 'Delete…'])
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Delete…' }))
+    expect(await screen.findByRole('dialog', { name: 'Delete version v1.0.0?' })).toBeInTheDocument()
+  })
+})

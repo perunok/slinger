@@ -17,7 +17,18 @@ export interface RowEnv {
   /** Epoch seconds. */
   nowS: number
   /** Run after the surrounding transaction committed (keychain deletes). */
-  effects: Array<() => void>
+  effects: SideEffect[]
+}
+
+/** A keychain change run after commit; `entity` names what it belongs to, so a failure can be shown in Sync activity. */
+export interface SideEffect {
+  (): void
+  entity?: EntityRef & { label: string }
+}
+
+/** Removes a variable's secret value from the keychain after commit. */
+function forgetSecretLater(env: RowEnv, type: SyncEntityType, row: AnyRow, ref: string): void {
+  env.effects.push(Object.assign(() => env.secrets.delete(ref), { entity: { type, id: row.id as string, label: String(row.key ?? '') } }))
 }
 
 export interface EntityRef {
@@ -95,9 +106,10 @@ export function insertFromPayload(env: RowEnv, type: SyncEntityType, id: string,
   switch (type) {
     case 'collection':
       db.prepare(
-        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-      ).run(id, workspaceId, str(p.name), nullableStr(p.scripts_json), nullableStr(p.description), nullableStr(p.description_type), deleted, nowS, nowS)
+        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, auth_json, version, deleted, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      ).run(id, workspaceId, str(p.name), nullableStr(p.scripts_json), nullableStr(p.description), nullableStr(p.description_type), nullableStr(p.auth_json),
+        deleted, nowS, nowS)
       break
     case 'environment':
       db.prepare(
@@ -107,10 +119,10 @@ export function insertFromPayload(env: RowEnv, type: SyncEntityType, id: string,
     case 'folder':
       db.prepare(
         `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
-           version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+           auth_json, version, deleted, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       ).run(id, workspaceId, str(p.collection_id), nullableStr(p.parent_folder_id), str(p.name), int(p.sort_order), nullableStr(p.scripts_json),
-        nullableStr(p.description), nullableStr(p.description_type), deleted, nowS, nowS)
+        nullableStr(p.description), nullableStr(p.description_type), nullableStr(p.auth_json), deleted, nowS, nowS)
       break
     case 'request':
       db.prepare(
@@ -176,19 +188,21 @@ export function overwriteFromPayload(env: RowEnv, type: SyncEntityType, row: Any
       break
     case 'collection':
       db.prepare(
-        `UPDATE collections SET name = ?, scripts_json = ?, description = ?, description_type = ?, deleted = 0, version = version + 1, updated_at = ?
-         WHERE id = ?`,
+        `UPDATE collections SET name = ?, scripts_json = ?, description = ?, description_type = ?, auth_json = ?, deleted = 0, version = version + 1,
+           updated_at = ? WHERE id = ?`,
       ).run(has('name') ? str(p.name) : row.name, has('scripts_json') ? nullableStr(p.scripts_json) : row.scripts_json,
-        has('description') ? nullableStr(p.description) : row.description, has('description_type') ? nullableStr(p.description_type) : row.description_type, nowS, id)
+        has('description') ? nullableStr(p.description) : row.description, has('description_type') ? nullableStr(p.description_type) : row.description_type,
+        has('auth_json') ? nullableStr(p.auth_json) : row.auth_json, nowS, id)
       break
     case 'folder':
       db.prepare(
         `UPDATE folders SET collection_id = ?, parent_folder_id = ?, name = ?, sort_order = ?, scripts_json = ?, description = ?, description_type = ?,
-           deleted = 0, version = version + 1, updated_at = ? WHERE id = ?`,
+           auth_json = ?, deleted = 0, version = version + 1, updated_at = ? WHERE id = ?`,
       ).run(has('collection_id') ? str(p.collection_id) : row.collection_id, has('parent_folder_id') ? nullableStr(p.parent_folder_id) : row.parent_folder_id,
         has('name') ? str(p.name) : row.name, has('sort_order') ? int(p.sort_order) : row.sort_order,
         has('scripts_json') ? nullableStr(p.scripts_json) : row.scripts_json, has('description') ? nullableStr(p.description) : row.description,
-        has('description_type') ? nullableStr(p.description_type) : row.description_type, nowS, id)
+        has('description_type') ? nullableStr(p.description_type) : row.description_type, has('auth_json') ? nullableStr(p.auth_json) : row.auth_json,
+        nowS, id)
       break
     case 'collection_variable':
       db.prepare(
@@ -242,8 +256,7 @@ function overwriteVariable(env: RowEnv, row: AnyRow, p: Payload): void {
   } else {
     value = p.value === undefined || p.value === null ? '' : str(p.value)
     if (wasSecret && row.secret_ref) {
-      const r = row.secret_ref as string
-      env.effects.push(() => secrets.delete(r))
+      forgetSecretLater(env, 'environment_variable', row, row.secret_ref as string)
     }
   }
   db.prepare(
@@ -271,8 +284,7 @@ function overwriteGlobal(env: RowEnv, row: AnyRow, p: Payload): void {
   } else {
     value = has('value') ? (p.value === null ? '' : str(p.value)) : ((row.value as string | null) ?? '')
     if (wasSecret && row.secret_ref) {
-      const r = row.secret_ref as string
-      env.effects.push(() => secrets.delete(r))
+      forgetSecretLater(env, 'global_variable', row, row.secret_ref as string)
     }
   }
   db.prepare(
@@ -291,19 +303,13 @@ export function softDeleteRow(env: RowEnv, type: SyncEntityType, id: string): vo
   }
   if (type === 'environment_variable') {
     const row = loadRow(db, type, id)
-    if (row?.secret_ref) {
-      const ref = row.secret_ref as string
-      env.effects.push(() => env.secrets.delete(ref))
-    }
+    if (row?.secret_ref) forgetSecretLater(env, type, row, row.secret_ref as string)
     db.prepare('UPDATE environment_variables SET deleted = 1, value = NULL, secret_ref = NULL, secret_missing = 0, version = version + 1, updated_at = ? WHERE id = ?').run(nowS, id)
     return
   }
   if (type === 'global_variable') {
     const row = loadRow(db, type, id)
-    if (row?.secret_ref) {
-      const ref = row.secret_ref as string
-      env.effects.push(() => env.secrets.delete(ref))
-    }
+    if (row?.secret_ref) forgetSecretLater(env, type, row, row.secret_ref as string)
     db.prepare('UPDATE global_variables SET deleted = 1, value = NULL, secret_ref = NULL, secret_missing = 0, version = version + 1, updated_at = ? WHERE id = ?').run(nowS, id)
     return
   }

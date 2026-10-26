@@ -8,9 +8,14 @@
  *
  * MCP requests (`draft.mcp`) can be read, sent (as saved), run, renamed, moved and deleted, but not edited here, and
  * they have no saved examples: tools that would change their document refuse them.
+ *
+ * MCP send policy (lib/assistantPolicy.ts, enforced in executeDraft): every request or variable an assistant writes is
+ * recorded with markAssistantChange (before the write as `pending`, after it with the content), and send_request tells
+ * executeDraft whether it is ad-hoc or overrides fields. A send the assistant controls never carries the user's
+ * credentials; results never contain the send's secret values.
  */
 import { MCP_BODY_LIMIT, MCP_TOOLS, type McpCallResult, type McpToolArgs, type McpToolName } from '../../../shared/mcp'
-import type { ApiFolder, ApiRequest, Collection, CollectionVersion, HttpResponseData } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, AssistantChangeRef, Collection, CollectionVersion, HttpResponseData } from '../../../shared/types'
 import { expandedStore } from '../../app/expanded.svelte'
 import { app } from '../../app/state.svelte'
 import { api, errorInfo } from '../../lib/ipc'
@@ -32,11 +37,15 @@ import { editorCode, withScript } from '../../lib/scripts'
 import { compareSemver, parseSemver, sortVersionsDesc, suggestBumps, validateVersion } from '../../lib/semver'
 import { diffSnapshots, folderPath as snapshotFolderPath, snapshotFromCollection } from '../../lib/versionDiff'
 import { buildUrlFromParams, mergeParamsFromUrl } from '../../lib/urlParams'
+import { mergePathVariables, type PathVariable } from '../../lib/pathVariables'
 import { executeDraft, type ExecuteContext } from '../requests/execute'
 import { tabsStore } from '../requests/tabs.svelte'
 import { collectRunItems, summarize } from '../runner/runner'
 import { runsStore } from '../runner/runs.svelte'
 import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
+import { formatLimit } from '../../../shared/responseLimit'
+import { resolveEffectiveAuth, type AuthChain } from '../../lib/authInheritance'
+import { parseContainerAuthJson } from '../../../shared/containerAuth'
 
 type Data = Record<string, unknown>
 
@@ -112,6 +121,43 @@ async function logEdit(workspaceId: string, detail: string, request?: Pick<ApiRe
   }
 }
 
+/** Records content an assistant wrote (MCP send policy). A failure fails the tool: the change must never go unrecorded. */
+async function markChange(ref: AssistantChangeRef): Promise<void> {
+  try {
+    await api().markAssistantChange(ref)
+  } catch (e) {
+    fail(`Could not record the change as the assistant's: ${errorInfo(e).message}`)
+  }
+}
+
+/** Marks requests the assistant brought in (create, import, restore); when that fails, `undo` removes them again. */
+async function markNew(requestIds: string[], created: boolean, undo: () => Promise<unknown>): Promise<void> {
+  try {
+    for (const id of requestIds) await api().markAssistantChange({ kind: 'request', requestId: id, created })
+  } catch (e) {
+    await undo().catch(() => {})
+    fail(`Could not record the change as the assistant's, so it was undone: ${errorInfo(e).message}`)
+  }
+}
+
+/**
+ * Marks the collection and folder auth (container auth) the assistant brought in with an import or a restore: requests
+ * inheriting it send the assistant's value, not the user's credential (lib/assistantPolicy.ts). Only containers that have
+ * an auth are marked. When that fails, `undo` removes the import again.
+ */
+async function markContainers(collectionId: string, workspaceId: string, undo: () => Promise<unknown>): Promise<void> {
+  try {
+    const col = (await api().listCollections(workspaceId)).find((c) => c.id === collectionId)
+    if (col?.authJson) await api().markAssistantChange({ kind: 'container', containerKind: 'collection', id: col.id })
+    for (const f of await api().listFolders(collectionId)) {
+      if (f.authJson) await api().markAssistantChange({ kind: 'container', containerKind: 'folder', id: f.id })
+    }
+  } catch (e) {
+    await undo().catch(() => {})
+    fail(`Could not record the change as the assistant's, so it was undone: ${errorInfo(e).message}`)
+  }
+}
+
 const q = (name: string) => `“${name}”`
 /** Ends a message with a full stop unless it already ends a sentence. */
 const sentence = (s: string) => (/[.!?]$/.test(s) ? s : `${s}.`)
@@ -175,8 +221,20 @@ function bodyOut(d: RequestDraft): Data {
   }
 }
 
-function authOut(d: RequestDraft): Data {
+/**
+ * A request's auth, credentials masked. `inherit`: where the auth comes from (folder or collection) and what it is, never
+ * a secret value either; `chain` (the request's collection and folders) is needed for that, else only the type shows.
+ */
+function authOut(d: RequestDraft, chain?: AuthChain | null): Data {
   const a = d.auth
+  if (a.kind === 'inherit') {
+    const eff = chain ? resolveEffectiveAuth(a, chain) : null
+    return {
+      type: 'inherit',
+      ...(eff?.source ? { inherited_from: { kind: eff.source.kind, id: eff.source.id, name: eff.source.name } } : {}),
+      ...(eff ? { effective: authOut({ ...d, auth: eff.auth }) } : {}),
+    }
+  }
   switch (a.kind) {
     case 'none':
       return { type: 'none' }
@@ -200,7 +258,7 @@ function authOut(d: RequestDraft): Data {
   }
 }
 
-function requestOut(r: ApiRequest, d: RequestDraft): Data {
+function requestOut(r: ApiRequest, d: RequestDraft, chain?: AuthChain | null): Data {
   return {
     id: r.id,
     workspace_id: r.workspaceId,
@@ -211,9 +269,10 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
     method: d.method,
     url: d.url,
     query: rowsOut(d.params),
+    path_variables: d.pathVariables.map((v) => (v.description ? { key: v.key, value: v.value, description: v.description } : { key: v.key, value: v.value })),
     headers: rowsOut(d.headers),
     body: bodyOut(d),
-    auth: authOut(d),
+    auth: authOut(d, chain),
     pre_request_script: editorCode(d.extras.scripts, 'prerequest'),
     test_script: editorCode(d.extras.scripts, 'test'),
     description: d.description,
@@ -223,12 +282,12 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
 }
 
 /** get_request of an MCP request: what it connects to and runs. Environment values of a command are never shown. */
-function mcpRequestOut(r: ApiRequest, d: RequestDraft): Data {
+function mcpRequestOut(r: ApiRequest, d: RequestDraft, chain?: AuthChain | null): Data {
   const m = d.mcp!
   const server: Data =
     m.transport === 'stdio'
       ? { command: m.command, args: [...m.args], env_keys: dataRows(m.env).filter((e) => e.enabled).map((e) => e.key), cwd: m.cwd }
-      : { url: d.url, headers: rowsOut(d.headers), auth: authOut(d) }
+      : { url: d.url, headers: rowsOut(d.headers), auth: authOut(d, chain) }
   const operation: Data =
     m.operation === 'tools/call'
       ? { tool: m.tool, arguments: m.arguments }
@@ -255,11 +314,36 @@ function mcpRequestOut(r: ApiRequest, d: RequestDraft): Data {
   }
 }
 
-const requestOutAny = (r: ApiRequest, d: RequestDraft) => (d.mcp ? mcpRequestOut(r, d) : requestOut(r, d))
+const requestOutAny = (r: ApiRequest, d: RequestDraft, chain?: AuthChain | null) => (d.mcp ? mcpRequestOut(r, d, chain) : requestOut(r, d, chain))
+
+/** The folders and collection a request's `inherit` auth is looked up in (any workspace). */
+async function chainOf(r: ApiRequest): Promise<AuthChain> {
+  const t = await treeOf(r.workspaceId)
+  return { collection: t.collections.find((c) => c.id === r.collectionId) ?? null, folders: t.folders.filter((f) => f.collectionId === r.collectionId), folderId: r.folderId }
+}
+
+/** The type of a collection's / folder's own auth for get_tree (values are not shown): undefined when none is set. */
+function containerAuthType(authJson: string | null | undefined): string | undefined {
+  const a = parseContainerAuthJson(authJson)
+  return a && typeof a.type === 'string' ? a.type : undefined
+}
 
 type RequestFields = Partial<McpToolArgs<'update_request'>>
 /** The request fields a tool can give (name, method, url, headers, ...). */
 const REQUEST_FIELD_KEYS = Object.keys(MCP_TOOLS.update_request.input.shape).filter((k) => k !== 'request_id')
+
+/** Sets the given path variables by key; each must be a `:name` segment of the request's URL. */
+function pathVariablesIn(d: RequestDraft, given: NonNullable<RequestFields['path_variables']>): PathVariable[] {
+  const rows = mergePathVariables(d.url, d.pathVariables)
+  for (const g of given) {
+    const row =
+      rows.find((r) => r.key === g.key) ??
+      fail(`The URL has no path variable "${g.key}"; write :${g.key} as a path segment of the URL (e.g. /pets/:${g.key}).`)
+    row.value = g.value
+    if (g.description !== undefined) row.description = g.description
+  }
+  return rows
+}
 
 /** Applies the given tool fields to a draft (what is not given stays). */
 function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
@@ -271,11 +355,13 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
   if (f.url !== undefined) {
     d.url = f.url
     d.params = mergeParamsFromUrl(f.url, d.params)
+    d.pathVariables = mergePathVariables(f.url, d.pathVariables)
   }
   if (f.query !== undefined) {
     d.params = rowsIn(f.query)
     d.url = buildUrlFromParams(d.url, d.params)
   }
+  if (f.path_variables !== undefined) d.pathVariables = pathVariablesIn(d, f.path_variables)
   if (f.headers !== undefined) d.headers = rowsIn(f.headers)
   if (f.body !== undefined) {
     const b = { ...emptyBody(), preserved: undefined }
@@ -297,6 +383,7 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
     const a = { ...d.auth, preserved: undefined, unsupportedType: undefined }
     const t = f.auth.type
     if (t === 'none') a.kind = 'none'
+    else if (t === 'inherit') a.kind = 'inherit'
     else if (t === 'basic') {
       a.kind = 'basic'
       a.basic = { username: f.auth.username ?? a.basic.username, password: f.auth.password ?? a.basic.password }
@@ -436,12 +523,14 @@ function collectionTree(c: Collection, t: Tree): Data {
   const folderNode = (f: ApiFolder): Data => ({
     id: f.id,
     name: f.name,
+    ...(containerAuthType(f.authJson) ? { auth: containerAuthType(f.authJson) } : {}),
     folders: folders.filter((x) => x.parentFolderId === f.id).sort(bySort).map(folderNode),
     requests: requests.filter((r) => r.folderId === f.id).sort(bySort).map(requestLine),
   })
   return {
     id: c.id,
     name: c.name,
+    ...(containerAuthType(c.authJson) ? { auth: containerAuthType(c.authJson) } : {}),
     folders: folders.filter((f) => f.parentFolderId === null).sort(bySort).map(folderNode),
     requests: requests.filter((r) => r.folderId === null).sort(bySort).map(requestLine),
   }
@@ -452,7 +541,8 @@ function collectionTree(c: Collection, t: Tree): Data {
 function responseOut(res: HttpResponseData): Data {
   let body: string
   let truncated = false
-  if (res.bodyText === null) body = `(binary body, ${res.bodyByteLength} bytes, not shown)`
+  if (res.bodyTooLarge) body = `(body not loaded: larger than ${formatLimit(res.bodyTooLarge.limitBytes)}, the Maximum response size in Settings)`
+  else if (res.bodyText === null) body = `(binary body, ${res.bodyByteLength} bytes, not shown)`
   else {
     body = res.bodyText
     const isJson = res.headers.some((h) => h.key.toLowerCase() === 'content-type' && /json/i.test(h.value))
@@ -516,7 +606,7 @@ const tools: Impls = {
 
   async get_request(a) {
     const r = await findRequest(a.request_id)
-    return done(requestOutAny(r, parseDocument(r)))
+    return done(requestOutAny(r, parseDocument(r), await chainOf(r)))
   },
 
   async create_collection(a) {
@@ -544,6 +634,7 @@ const tools: Impls = {
     if (a.folder_id && (await findFolder(a.folder_id)).collectionId !== c.id) fail('folder_id belongs to another collection.')
     const s = serializeDraft(applyFields(newDraft({ name: a.name, method: a.method, url: a.url }), a))
     const r = await api().createRequest({ workspaceId: c.workspaceId, collectionId: c.id, folderId: a.folder_id ?? null, ...s })
+    await markNew([r.id], true, () => api().deleteRequest(r.id))
     await refresh(c.workspaceId, c.id)
     await logEdit(c.workspaceId, `Created request ${q(r.name)} in ${q(c.name)}`, r)
     return done({ created: requestOut(r, parseDocument(r)) })
@@ -553,7 +644,11 @@ const tools: Impls = {
     const r = await findRequest(a.request_id)
     refuseMcp(r, MCP_EDIT_HINT)
     const s = serializeDraft(applyFields(parseDocument(r), a))
+    // A request the assistant created stays its own (its literal credentials are the assistant's).
+    const created = (await api().listAssistantChanges(r.workspaceId)).requests.some((x) => x.requestId === r.id && x.created)
+    await markChange({ kind: 'request', requestId: r.id, created, pending: true })
     const updated = await api().updateRequest({ requestId: r.id, ...s, expectedVersion: r.version })
+    await markChange({ kind: 'request', requestId: r.id, created })
     await refresh(r.workspaceId, r.collectionId)
     await logEdit(r.workspaceId, `Edited request ${q(updated.name)}: ${changedParts(a, ['request_id'])}`, updated)
     return done({ updated: requestOut(updated, parseDocument(updated)) })
@@ -732,15 +827,19 @@ const tools: Impls = {
     const c = await findCollection(a.collection_id)
     const v = pickVersion(await versionsOf(c), c, a.version)
     const inWindow = c.workspaceId === app.workspaceId
-    // A replace gives every folder/request a new id: remember the layout and the clean open tabs to carry them over.
+    // A replace gives vanished folders/requests' successors new ids: remember the layout and the clean open tabs to carry them over.
     const before = { folders: app.foldersOf(c.id).slice(), requests: app.requestsOf(c.id).slice() }
     const openIds = inWindow ? tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId)).map((t) => t.requestId!) : []
     const result = await api().restoreCollectionVersion(v.id, a.mode)
+    // The restored requests are what the version holds, which may be content an assistant wrote: treated as changed.
+    await markNew((await api().listRequests(result.id)).map((r) => r.id), false, async () => {})
+    await markContainers(result.id, result.workspaceId, async () => {})
     await refresh(c.workspaceId)
     if (inWindow && a.mode === 'replace') {
       const map = mapRestored(before, { folders: app.foldersOf(c.id), requests: app.requestsOf(c.id) })
       expandedStore.replace(remapExpandedKeys(expandedStore.keys, map.folders, new Set(before.folders.map((f) => f.id))))
       for (const oldId of openIds) {
+        if (map.requests.get(oldId) === oldId) continue // kept its id: its tab is still open
         const req = app.requestById(map.requests.get(oldId))
         if (req) tabsStore.openRequest(req)
       }
@@ -780,7 +879,11 @@ const tools: Impls = {
     const env = await findEnvironment(a.environment_id)
     const existing = (await api().listEnvironmentVariables(env.id)).find((v) => v.key === a.key)
     const isSecret = a.secret ?? existing?.isSecret ?? false
+    // MCP send policy: a value the assistant sets may not decide where the user's credentials go, and a secret it sets is
+    // its own value (not one of the user's credentials) until the user changes it.
+    await markChange({ kind: 'variable', environmentId: env.id, key: a.key, pending: true })
     await api().upsertEnvironmentVariable({ environmentId: env.id, key: a.key, value: a.value, isSecret, variableId: existing?.id })
+    await markChange({ kind: 'variable', environmentId: env.id, key: a.key })
     if (env.workspaceId === app.workspaceId) await app.refreshEnvVariables()
     await logEdit(env.workspaceId, `${existing ? 'Changed' : 'Added'} ${isSecret ? 'secret ' : ''}variable ${q(a.key)} in ${q(env.name)}`)
     return done({ set: { environment_id: env.id, key: a.key, secret: isSecret, created: !existing } })
@@ -812,17 +915,21 @@ const tools: Impls = {
       const r = await findRequest(a.request_id)
       requireOpen(r.workspaceId, 'Sending')
       draft = parseDocument(r)
+      const given = REQUEST_FIELD_KEYS.filter((k) => (a as Record<string, unknown>)[k] !== undefined)
       if (draft.mcp) {
-        const given = REQUEST_FIELD_KEYS.filter((k) => (a as Record<string, unknown>)[k] !== undefined)
         if (given.length) fail(`${q(r.name)} is an MCP request: it is sent as saved, so ${given.join(', ')} cannot be given.`)
         if (a.save_as_example) fail(`${q(r.name)} is an MCP request: MCP requests have no saved examples.`)
-      } else draft = applyFields(draft, a)
-      ctx = { workspaceId: r.workspaceId, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId }
+      }
+      // What the assistant changes for this send (name and description change nothing that is sent).
+      const overrides = given.filter((k) => k !== 'name' && k !== 'description').map((k) => k.replace(/_/g, ' '))
+      const savedAuthKind = draft.auth.kind
+      if (!draft.mcp) draft = applyFields(draft, a)
+      ctx = { workspaceId: r.workspaceId, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId, assistant: { overrides, savedAuthKind } }
     } else {
       if (!a.url) fail('Give request_id, or method and url for an ad-hoc request.')
       const ws = workspaceOf(undefined)
       draft = applyFields(newDraft({ name: a.name ?? 'MCP request', method: a.method ?? 'GET', url: a.url }), a)
-      ctx = { workspaceId: ws }
+      ctx = { workspaceId: ws, assistant: { adHoc: true } }
     }
     const environment = await environmentArg(a.environment_id, ctx.workspaceId)
     if (environment !== undefined) ctx.environment = environment
@@ -921,6 +1028,8 @@ const tools: Impls = {
   async import_postman(a) {
     const ws = workspaceOf(a.workspace_id)
     const res = await api().importPostmanCollection(ws, a.collection_json)
+    await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
+    await markContainers(res.collection.id, ws, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported collection ${q(res.collection.name)} (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({ imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length } })
@@ -936,6 +1045,8 @@ const tools: Impls = {
       folders: a.folders ?? (preview.tags.length ? 'tags' : 'paths'),
       ...(a.name ? { name: a.name } : {}),
     })
+    await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
+    await markContainers(res.collection.id, ws, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported API ${q(res.collection.name)} from an OpenAPI document (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({

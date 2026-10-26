@@ -10,6 +10,7 @@ import type { RunScriptsInput, RunScriptsResult, ScriptErrorInfo } from '../../s
 import type { Db } from '../db/database'
 import { invalidInput, toErrorPayload } from '../lib/errors'
 import { requireCollection, requireEnvironment, requireWorkspace } from '../repositories/common'
+import { isCollectionTrustedRow } from '../repositories/trust'
 import type { EnvironmentRepository } from '../repositories/environments'
 import type { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
 import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type EnvOp, type EnvSnapshot, type PersistedScopeSnapshot, type ScriptJob } from '../scripts/job'
@@ -119,6 +120,18 @@ export class ScriptService {
     if (!RUN_ID_RE.test(input.runId)) throw invalidInput('runId must be 1-128 characters of [A-Za-z0-9._:-]')
     if (!RUN_ID_RE.test(input.sessionId)) throw invalidInput('sessionId must be 1-128 characters of [A-Za-z0-9._:-]')
     if (this.runs.has(input.runId)) throw invalidInput('scripts with this runId are already running')
+    // Scripts of an imported or synced-in collection run only after the user allowed them on this device (0019).
+    if (input.collectionId && input.scripts.length > 0) {
+      const collection = requireCollection(this.db, input.collectionId)
+      if (!isCollectionTrustedRow(this.db, collection.id)) {
+        throw invalidInput(`The scripts of the collection "${collection.name}" have not been allowed on this device yet.`, {
+          reason: 'untrusted_scripts',
+          collectionId: collection.id,
+          collectionName: collection.name,
+        })
+      }
+    }
+    const denySecrets = typeof input.denySecrets === 'string' && input.denySecrets ? input.denySecrets : null
 
     let environment: EnvSnapshot | null = null
     // variable id -> where to reveal it, for this environment's and this workspace's secrets only
@@ -167,6 +180,7 @@ export class ScriptService {
       persistedGlobals,
       readOnly,
       continueOnError: input.continueOnError === true,
+      ...(denySecrets ? { denySecrets } : {}),
       limits: { ...DEFAULT_LIMITS, timeoutMs, sendRequestTimeoutMs, wallClockMs },
     }
 
@@ -185,7 +199,7 @@ export class ScriptService {
         readSecret: (variableId) => {
           // Only secrets of the environment / globals this run was given; anything else is refused.
           const target = secretIds.get(variableId)
-          if (!target) return null
+          if (!target || denySecrets) return null
           try {
             const value = target.reveal(variableId)
             this.remember(input.sessionId, target.key, value)

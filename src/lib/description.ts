@@ -9,6 +9,7 @@
  * plain string, except that a `{content, type}` object keeps its shape (only `content` changes) so a text/plain
  * description stays plain text in Postman and here.
  */
+import { descriptionFromPostman } from '../../shared/postmanDescription'
 import type { DescriptionType } from '../../shared/types'
 
 export type DescriptionFormat = 'markdown' | 'plain'
@@ -54,13 +55,8 @@ export function formatOfType(type: DescriptionType | null | undefined): Descript
   return type === 'text/plain' ? 'plain' : 'markdown'
 }
 
-/** A Postman `description` -> collection/folder columns (same rules as the main-process importer). */
+/** A Postman `description` -> collection/folder columns (shared/postmanDescription.ts, like the main-process importer). */
 export function columnsFromPostman(value: unknown): { description: string | null; descriptionType: DescriptionType | null } {
-  if (typeof value === 'string') return { description: value.trim() === '' ? null : value, descriptionType: null }
-  if (isObj(value)) {
-    const content = typeof value.content === 'string' ? value.content : ''
-    if (content.trim() === '') return { description: null, descriptionType: null }
-    return { description: content, descriptionType: value.type === 'text/plain' ? 'text/plain' : 'text/markdown' }
-  }
-  return { description: null, descriptionType: null }
+  const { text, type } = descriptionFromPostman(value)
+  return { description: text, descriptionType: type }
 }

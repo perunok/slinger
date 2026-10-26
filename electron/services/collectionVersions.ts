@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { stripOAuth2TokensFromDocumentJson } from '../../shared/oauth2'
+import { cleanContainerAuthJson } from '../../shared/containerAuth'
 import type {
   Collection,
   CollectionSnapshot,
@@ -22,7 +23,9 @@ import {
   type RequestRow,
 } from '../repositories/common'
 import { CollectionVariableRepository } from '../repositories/variables'
+import { replaceCollectionContent } from './collectionContent'
 import { compare, parse } from './semver'
+import { copyCollectionTrust } from '../repositories/trust'
 
 interface VersionRow {
   id: string
@@ -50,6 +53,8 @@ export const snapshotSchema = z.object({
   // Descriptions (migration 0006) likewise.
   collectionDescription: z.string().nullish(),
   collectionDescriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
+  // Collection/folder auth (migration 0018) likewise; older snapshots restore with none (their requests carry their own).
+  collectionAuthJson: z.string().nullish(),
   // Collection variables (migration 0008) likewise; older snapshots restore with none.
   collectionVariables: z
     .array(
@@ -71,6 +76,7 @@ export const snapshotSchema = z.object({
       scriptsJson: z.string().nullish(),
       description: z.string().nullish(),
       descriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
+      authJson: z.string().nullish(),
     }),
   ),
   requests: z.array(
@@ -193,6 +199,7 @@ export function createCollectionVersion(
       ...(f.scripts_json ? { scriptsJson: f.scripts_json } : {}),
       ...(f.description ? { description: f.description } : {}),
       ...(f.description && descriptionTypeOf(f.description_type) ? { descriptionType: descriptionTypeOf(f.description_type) } : {}),
+      ...(f.auth_json ? { authJson: snapshotAuth(f.auth_json, 'folder') } : {}),
     }))
     const requests = (
       db
@@ -212,6 +219,7 @@ export function createCollectionVersion(
     const snapshot: CollectionSnapshot = {
       collectionName: collection.name,
       ...(collection.scripts_json ? { collectionScriptsJson: collection.scripts_json } : {}),
+      ...(collection.auth_json ? { collectionAuthJson: snapshotAuth(collection.auth_json, 'collection') } : {}),
       ...(collection.description ? { collectionDescription: collection.description } : {}),
       ...(collection.description && descriptionTypeOf(collection.description_type)
         ? { collectionDescriptionType: descriptionTypeOf(collection.description_type) }
@@ -236,53 +244,76 @@ export function createCollectionVersion(
   })()
 }
 
+/**
+ * Automatic "safety" versions (taken before a Postman re-import or an OpenAPI update) are recognised by their notes,
+ * which sync with the version, so every device prunes the same ones. Only the newest MAX_AUTOMATIC_VERSIONS per
+ * collection are kept; older automatic ones are hidden (soft delete, synced like a manual delete). Versions the user
+ * made are never touched.
+ */
+export const AUTOMATIC_VERSION_NOTES_PREFIX = 'Automatic snapshot before '
+export const MAX_AUTOMATIC_VERSIONS = 10
+
+/** "Next patch" after the latest release (pre-releases ignored), bumped while taken; "0.0.1" without releases. */
+export function nextPatchVersion(existing: readonly string[]): string {
+  let top: ReturnType<typeof parse> = null
+  for (const v of existing) {
+    const p = parse(v)
+    if (p && p.prerelease.length === 0 && (!top || compare(p, top) > 0)) top = p
+  }
+  const taken = new Set(existing)
+  let next = top ? { major: top.major, minor: top.minor, patch: top.patch + 1 } : { major: 0, minor: 0, patch: 1 }
+  while (taken.has(`${next.major}.${next.minor}.${next.patch}`)) next = { ...next, patch: next.patch + 1 }
+  return `${next.major}.${next.minor}.${next.patch}`
+}
+
+/**
+ * Takes an automatic safety version (next patch, notes `Automatic snapshot before <what>`) and prunes the older
+ * automatic versions of the collection beyond the newest MAX_AUTOMATIC_VERSIONS. Runs in the caller's transaction.
+ */
+export function createAutomaticVersion(db: Db, collectionId: string, what: string, author: CollectionVersionAuthor | null = null): CollectionVersion {
+  const version = createCollectionVersion(db, {
+    collectionId,
+    version: nextPatchVersion(listCollectionVersions(db, collectionId).map((v) => v.version)),
+    notes: `${AUTOMATIC_VERSION_NOTES_PREFIX}${what}`,
+  }, author)
+  const automatic = (
+    db
+      .prepare('SELECT id, created_at, rowid AS seq FROM collection_versions WHERE collection_id = ? AND deleted = 0 AND substr(notes, 1, ?) = ?')
+      .all(version.collectionId, AUTOMATIC_VERSION_NOTES_PREFIX.length, AUTOMATIC_VERSION_NOTES_PREFIX) as Array<{ id: string; created_at: number; seq: number }>
+  ).sort((a, b) => b.created_at - a.created_at || b.seq - a.seq)
+  const hide = db.prepare('UPDATE collection_versions SET deleted = 1 WHERE id = ?')
+  for (const old of automatic.slice(MAX_AUTOMATIC_VERSIONS)) if (old.id !== version.id) hide.run(old.id)
+  return version
+}
+
+/** Stored container auth as a snapshot keeps it (validated, never an OAuth 2.0 token); null when unusable. */
+function snapshotAuth(json: string | null | undefined, level: 'collection' | 'folder'): string | null {
+  const r = cleanContainerAuthJson(json ?? null, level)
+  return r.ok ? r.json : null
+}
+
 /** The collection description columns a snapshot restores (older snapshots have none: restoring clears it). */
 function snapshotDescription(snapshot: CollectionSnapshot): [string | null, string | null] {
   const text = snapshot.collectionDescription ?? null
   return [text, text ? (snapshot.collectionDescriptionType ?? null) : null]
 }
 
-/** Inserts snapshot content into `collectionId` with brand-new ids; returns counts. */
-function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnapshot): void {
-  const now = nowSeconds()
-  const idMap = new Map<string, string>()
-  const pending = [...snapshot.folders]
-  const insertFolder = db.prepare(
-    `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
-       version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
-  )
-  // Parents first, regardless of the order stored in the snapshot.
-  while (pending.length) {
-    const before = pending.length
-    for (let i = pending.length - 1; i >= 0; i--) {
-      const f = pending[i]!
-      if (f.parentFolderId !== null && !idMap.has(f.parentFolderId)) continue
-      const id = newId()
-      insertFolder.run(id, collection.workspace_id, collection.id,
-        f.parentFolderId === null ? null : idMap.get(f.parentFolderId)!, f.name, f.sortOrder, f.scriptsJson ?? null,
-        f.description ?? null, f.description ? (f.descriptionType ?? null) : null, now, now)
-      idMap.set(f.id, id)
-      pending.splice(i, 1)
-    }
-    if (pending.length === before) {
-      throw new IpcError({ code: 'internal_error', message: 'stored collection snapshot has an invalid folder tree' })
-    }
-  }
-  const insertRequest = db.prepare(
-    `INSERT INTO requests (id, workspace_id, collection_id, folder_id, name, method, url, document_json,
-       sort_order, version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
-  )
-  for (const r of snapshot.requests) {
-    let folderId: string | null = null
-    if (r.folderId !== null) {
-      folderId = idMap.get(r.folderId) ?? null
-      if (!folderId) throw new IpcError({ code: 'internal_error', message: 'stored collection snapshot references a missing folder' })
-    }
-    insertRequest.run(newId(), collection.workspace_id, collection.id, folderId, r.name, r.method, r.url,
-      r.documentJson, r.sortOrder, now, now)
-  }
+/**
+ * Writes snapshot content into `collection` (electron/services/collectionContent.ts): rows of the collection that
+ * carry a snapshot id are updated or un-deleted in place, everything else live is soft-deleted, items whose id is not
+ * in this collection (a copy, a snapshot from a file) get new ids.
+ */
+function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnapshot, now: number): void {
+  replaceCollectionContent(db, collection, {
+    folders: snapshot.folders.map((f) => ({
+      key: f.id, parentKey: f.parentFolderId, name: f.name, sortOrder: f.sortOrder, scriptsJson: f.scriptsJson ?? null,
+      description: f.description ?? null, descriptionType: f.description ? (f.descriptionType ?? null) : null,
+      authJson: snapshotAuth(f.authJson, 'folder'),
+    })),
+    requests: snapshot.requests.map((r) => ({
+      key: r.id, folderKey: r.folderId, name: r.name, method: r.method, url: r.url, documentJson: r.documentJson, sortOrder: r.sortOrder,
+    })),
+  }, 'id', now)
 }
 
 export function restoreCollectionVersion(
@@ -300,24 +331,22 @@ export function restoreCollectionVersion(
     if (mode === 'copy') {
       const id = newId()
       db.prepare(
-        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, auth_json, version, deleted, created_at,
+           updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
       ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null,
-        ...snapshotDescription(snapshot), now, now)
+        ...snapshotDescription(snapshot), snapshotAuth(snapshot.collectionAuthJson, 'collection'), now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
-      materialize(db, created, snapshot)
+      copyCollectionTrust(db, source.id, id)
+      materialize(db, created, snapshot, now)
       restoreVariables(db, created.id, snapshot)
       return toCollection(created)
     }
-    for (const table of ['folders', 'requests']) {
-      db.prepare(
-        `UPDATE ${table} SET deleted = 1, updated_at = ?, version = version + 1 WHERE collection_id = ? AND deleted = 0`,
-      ).run(now, source.id)
-    }
-    materialize(db, source, snapshot)
+    // In place: requests keep their ids, so workflows, history, open tabs and synced copies keep pointing at them.
+    materialize(db, source, snapshot, now)
     restoreVariables(db, source.id, snapshot)
-    db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, updated_at = ?, version = version + 1 WHERE id = ?')
-      .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), now, source.id)
+    db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, auth_json = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+      .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), snapshotAuth(snapshot.collectionAuthJson, 'collection'), now, source.id)
     return toCollection(db.prepare('SELECT * FROM collections WHERE id = ?').get(source.id) as CollectionRow)
   })()
 }

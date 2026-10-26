@@ -89,7 +89,7 @@
   const json = $derived(includeSnapshots ? fullJson : metadataJson)
 
   // .http: built from the saved requests with {{variables}} unresolved; the env files hold non-secret values only.
-  const http = $derived(collection && format === 'http' ? exportHttpFile({ collectionName: collection.name, folders, requests }) : null)
+  const http = $derived(collection && format === 'http' ? exportHttpFile({ collectionName: collection.name, collectionAuthJson: collection.authJson ?? null, folders, requests }) : null)
   const envFiles = $derived(http && collection ? buildHttpClientEnv(scopeStore.scopeFor(collection.id), { oauth2: http.usesOAuth2 }) : null)
   // OpenAPI 3.1: built from the saved requests; info.version is the latest collection version once the history loaded.
   const openapi = $derived(

@@ -24,6 +24,7 @@ import type {
   ScriptVariables,
 } from '../../shared/types'
 import { dataRows, ensureTrailingEmpty, newRow } from './kv'
+import { mergePathVariables } from './pathVariables'
 import { RAW_LANGUAGES, serializeAuth, type AuthDraft, type RawLanguage, type RequestDraft } from './request'
 import { SECRET_MASK, type TemplateScope, type VariableInfo } from './template'
 
@@ -229,7 +230,7 @@ const PURE_TEMPLATE = /^\s*\{\{[^{}]+\}\}\s*$/
  * masked. OAuth 2.0 tokens are never in the document, so they cannot appear. Null without (supported) auth.
  */
 export function scriptAuthView(a: AuthDraft): ScriptAuthData | null {
-  if (a.kind === 'none' || a.kind === 'unsupported') return null
+  if (a.kind === 'none' || a.kind === 'inherit' || a.kind === 'unsupported') return null
   const serialized = serializeAuth(a) as { type: string } & Record<string, unknown>
   const list = serialized[serialized.type]
   const secret = CREDENTIAL_PARAMS[serialized.type] ?? new Set<string>()
@@ -262,6 +263,7 @@ export function applyRequestData(d: RequestDraft, r: ScriptRequestData): Request
     ...d,
     method: r.method,
     url: r.url,
+    pathVariables: mergePathVariables(r.url, d.pathVariables),
     headers: ensureTrailingEmpty(r.headers.map((h) => newRow({ key: h.key, value: h.value, enabled: !h.disabled }))),
   }
   if (r.body.mode === 'raw') {

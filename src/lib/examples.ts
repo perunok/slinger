@@ -244,6 +244,7 @@ function documentFromPostmanRequest(req: unknown): { method: string; url: string
   }
   // Disabled query params only exist in url.query; enabled ones are re-read from the URL text.
   if (query) doc.params = query.filter((q) => isObj(q) && q.disabled)
+  if (isObj(req.url) && Array.isArray(req.url.variable)) doc.pathVariables = req.url.variable
   return { method, url, documentJson: JSON.stringify(doc) }
 }
 
@@ -311,7 +312,7 @@ function serializeRequest(draft: RequestDraft, original: unknown): Json {
     if (k in built) out[k] = built[k]
     else delete out[k]
   }
-  // Path variables are not editable here; keep the stored ones.
+  // No `:name` left in the URL: keep whatever variables the stored request had.
   if (isObj(original) && isObj(original.url) && Array.isArray(original.url.variable) && isObj(out.url) && !('variable' in out.url)) {
     out.url = { ...out.url, variable: original.url.variable }
   }
@@ -373,6 +374,7 @@ function languageOfResponse(res: HttpResponseData): PreviewLanguage {
  */
 export function exampleFromResponse(input: { name: string; request: RequestDraft; response: HttpResponseData; id?: string }): { example: Json; note: string | null } {
   const res = input.response
+  if (res.bodyTooLarge || res.savedToFile) throw new Error('This response body was not loaded, so it cannot be kept as an example.')
   const binary = res.bodyText === null && !!res.bodyBase64
   let body = binary ? (res.bodyBase64 ?? '') : (res.bodyText ?? '')
   let note: string | null = null

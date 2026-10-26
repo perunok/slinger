@@ -14,6 +14,9 @@ import type { McpCall, McpCallResult, McpClientId, McpClientStatus, McpSettings,
 import type {
   ApiFolder,
   AssistantEditInput,
+  AssistantChangeRef,
+  AssistantChanges,
+  RedactSecretsInput,
   ApiRequest,
   CloudFetchInput,
   OpenApiImportInput,
@@ -41,6 +44,7 @@ import type {
   HistoryEntry,
   HttpRequestInput,
   HttpResponseData,
+  ResponseDownloadTarget,
   McpCallInput,
   McpCallOutcome,
   McpClientEvent,
@@ -130,8 +134,18 @@ export interface SlingerIpcApi {
   deleteCollection(collectionId: string): Promise<void>
   /** ADDED (scripts): replaces the collection's Postman `event` array (JSON text, or null to clear). Local-only. */
   setCollectionScripts(collectionId: string, scriptsJson: string | null): Promise<Collection>
+  /**
+   * ADDED (script trust, 0019): allows the scripts of an imported or synced-in collection on this device. Until then
+   * runScripts refuses its chains (`invalid_input`, details.reason 'untrusted_scripts'). Local-only.
+   */
+  trustCollectionScripts(collectionId: string): Promise<void>
   /** ADDED (docs): replaces the collection's description text (null or blank clears it; the stored type is kept). Local-only. */
   setCollectionDescription(collectionId: string, description: string | null): Promise<Collection>
+  /**
+   * ADDED (container auth): replaces the collection's auth (Postman `auth` object as JSON text; null or '{"type":"noauth"}'
+   * = no auth). OAuth 2.0 tokens are stripped. Requests set to "inherit" use it at send time.
+   */
+  setCollectionAuth(collectionId: string, authJson: string | null): Promise<Collection>
 
   // Folders
   listFolders(collectionId: string): Promise<ApiFolder[]>
@@ -145,6 +159,8 @@ export interface SlingerIpcApi {
   setFolderScripts(folderId: string, scriptsJson: string | null): Promise<ApiFolder>
   /** ADDED (docs): replaces the folder's description text (see setCollectionDescription). Local-only. */
   setFolderDescription(folderId: string, description: string | null): Promise<ApiFolder>
+  /** ADDED (container auth): replaces the folder's auth (null = inherit from the parent; '{"type":"noauth"}' = no auth). */
+  setFolderAuth(folderId: string, authJson: string | null): Promise<ApiFolder>
 
   // Requests
   listRequests(collectionId: string): Promise<ApiRequest[]>
@@ -158,6 +174,14 @@ export interface SlingerIpcApi {
   listHistory(workspaceId: string, limit?: number): Promise<HistoryEntry[]>
   /** ADDED (MCP): records an edit an AI assistant made through the MCP server (kind 'edit', source 'mcp'). */
   recordAssistantEdit(input: AssistantEditInput): Promise<HistoryEntry>
+  /** ADDED (MCP send policy, 0019): remembers the current content of a request / variable as the assistant's. */
+  markAssistantChange(ref: AssistantChangeRef): Promise<void>
+  /** ADDED (MCP send policy): the user reviewed it (saved it in the window). */
+  clearAssistantChange(ref: AssistantChangeRef): Promise<void>
+  /** ADDED (MCP send policy): assistant changes of the workspace whose content has not changed since. */
+  listAssistantChanges(workspaceId: string): Promise<AssistantChanges>
+  /** ADDED (MCP send policy): replaces the secrets of one send (scripts' reads, the OAuth 2.0 token) in texts for an assistant. */
+  redactSecrets(input: RedactSecretsInput): Promise<string[]>
   clearHistory(workspaceId: string): Promise<void>
   deleteHistoryEntry(historyId: string): Promise<void>
 
@@ -165,6 +189,12 @@ export interface SlingerIpcApi {
   executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData>
   /** Cancels an HTTP request or a script run (RunScriptsInput.runId) with this id. */
   cancelHttpRequest(requestRunId: string): Promise<void>
+  /**
+   * ADDED (0.27): "Send and download to file": shows the save dialog (in main) with this suggested file name; null when the
+   * user cancels. The id goes into HttpRequestInput.downloadId (once, within 10 minutes); the path never comes from the
+   * renderer.
+   */
+  chooseResponseDownloadFile(suggestedName: string): Promise<ResponseDownloadTarget | null>
   /**
    * ADDED (scripts): runs a chain of pre-request or test scripts in the main-process QuickJS sandbox. Environment
    * writes are persisted before it resolves; script failures are reported in `errors`, not as a rejection.
@@ -259,11 +289,6 @@ export interface SlingerIpcApi {
   getMockServerLog(collectionId: string): Promise<MockServerLogEntry[]>
   clearMockServerLog(collectionId: string): Promise<void>
 
-  // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
-  secureStoreGet(key: string): Promise<string | null>
-  secureStoreSet(key: string, value: string): Promise<void>
-  secureStoreDelete(key: string): Promise<void>
-
   // Misc
   openExternalUrl(url: string): Promise<void>
   prepareBrowserAuthCallback(): Promise<{ callbackId: string; redirectUrl: string }>
@@ -311,6 +336,11 @@ export interface SlingerIpcApi {
   windowControl(action: WindowAction): Promise<void>
   /** Pops up the application menu at a point in the page (CSS pixels); the custom title bar's menu button. */
   showAppMenu(x: number, y: number): Promise<void>
+  /**
+   * The titles of open tabs whose unsaved edits would be lost on quit (not saved, and not kept for the next start).
+   * While the list is not empty, quitting or closing the window asks first ("Quit and discard N unsaved changes?").
+   */
+  setUnsavedChanges(titles: string[]): Promise<void>
 
   // --- Renderer-driven additions ---
   /** Native open-file dialog (form-data file fields, binary body); absolute path, or null when cancelled. */
@@ -440,8 +470,16 @@ export interface SlingerIpcApi {
   getOAuth2TokenStatus(config: OAuth2Config): Promise<OAuth2TokenStatus>
   /** ADDED (OAuth 2.0): removes a stored token from the keychain. */
   deleteOAuth2Token(tokenKey: string): Promise<void>
-  /** ADDED (OAuth 2.0): the access token itself, for an explicit user action only (like revealEnvironmentVariable). */
-  revealOAuth2Token(tokenKey: string): Promise<string>
+  /**
+   * ADDED (OAuth 2.0): the access token itself, for an explicit user action only (like revealEnvironmentVariable), or
+   * with `origin` for an MCP request's connect to that origin (checked like a send: see allowOAuth2Origin).
+   */
+  revealOAuth2Token(tokenKey: string, origin?: string): Promise<string>
+  /**
+   * ADDED (token origins): lets the token be sent to one more origin (scheme://host:port). A stored token goes only to
+   * the origins it was first used with or the user allowed; another one fails with details.reason 'oauth2_new_origin'.
+   */
+  allowOAuth2Origin(tokenKey: string, origin: string): Promise<void>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -464,7 +502,9 @@ export const IPC_CHANNELS = [
   'renameCollection',
   'deleteCollection',
   'setCollectionScripts',
+  'trustCollectionScripts',
   'setCollectionDescription',
+  'setCollectionAuth',
   'listFolders',
   'createFolder',
   'renameFolder',
@@ -473,6 +513,7 @@ export const IPC_CHANNELS = [
   'deleteFolder',
   'setFolderScripts',
   'setFolderDescription',
+  'setFolderAuth',
   'listRequests',
   'createRequest',
   'updateRequest',
@@ -484,6 +525,7 @@ export const IPC_CHANNELS = [
   'deleteHistoryEntry',
   'executeHttpRequest',
   'cancelHttpRequest',
+  'chooseResponseDownloadFile',
   'runScripts',
   'cloudFetch',
   'importPostmanCollection',
@@ -518,9 +560,6 @@ export const IPC_CHANNELS = [
   'listMockServers',
   'getMockServerLog',
   'clearMockServerLog',
-  'secureStoreGet',
-  'secureStoreSet',
-  'secureStoreDelete',
   'openExternalUrl',
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
@@ -538,6 +577,7 @@ export const IPC_CHANNELS = [
   'reopenWindow',
   'windowControl',
   'showAppMenu',
+  'setUnsavedChanges',
   'pickFile',
   'getCloudConfig',
   'setCloudConfig',
@@ -581,12 +621,17 @@ export const IPC_CHANNELS = [
   'getOAuth2TokenStatus',
   'deleteOAuth2Token',
   'revealOAuth2Token',
+  'allowOAuth2Origin',
   'getMcpStatus',
   'setMcpSettings',
   'revealMcpToken',
   'regenerateMcpToken',
   'mcpRespond',
   'recordAssistantEdit',
+  'markAssistantChange',
+  'clearAssistantChange',
+  'listAssistantChanges',
+  'redactSecrets',
   'mcpHostReady',
   'listMcpClients',
   'connectMcpClient',

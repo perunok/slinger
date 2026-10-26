@@ -17,6 +17,9 @@ export interface ScriptHttpOptions {
   redact(text: string): string
 }
 
+/** pm.sendRequest loads at most this much of a response (the download stops there; the call fails with a clear error). */
+export const SCRIPT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+
 const USERINFO_RE = /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#\s@]*@/g
 
 /** Masks `user:password@` in every URL of a text (fetch errors quote the URL). */
@@ -34,7 +37,7 @@ export async function runScriptSendRequest(call: SendRequestCall, signal: AbortS
   try {
     const res = await executeHttp(
       { method: call.method, url: call.url, headers: call.headers, auth: call.auth, body: call.body, timeoutMs: call.timeoutMs, workspaceId: '' },
-      { signal, files: options.files },
+      { signal, files: options.files, maxResponseBytes: SCRIPT_MAX_RESPONSE_BYTES },
     )
     // Binary bodies: bytes as Latin-1 characters (what a string-based sandbox can hold without loss).
     const text = res.bodyText ?? Buffer.from(res.bodyBase64 ?? '', 'base64').toString('latin1')

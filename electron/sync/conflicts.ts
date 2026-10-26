@@ -100,6 +100,8 @@ function displayGroup(db: Db, type: SyncEntityType, group: GroupName, p: Payload
       const text = typeof p.description === 'string' ? clip(p.description) : ''
       return p.description_type === 'text/plain' ? `${text}\n(plain text)` : text
     }
+    case 'auth':
+      return authText(p.auth_json)
     case 'details':
       return `${p.enabled === false ? 'Disabled' : 'Enabled'}${typeof p.description === 'string' && p.description ? `\n${clip(p.description)}` : ''}`
   }
@@ -129,6 +131,31 @@ export function scriptsText(json: unknown): string {
     parts.push(`// ${title[listen] ?? listen}\n${exec}`)
   }
   return clip(parts.join('\n\n'))
+}
+
+/**
+ * Collection/folder auth for the conflict diff: the type, then each setting on its own line. Values are shown as stored
+ * (usually `{{variables}}`; secrets belong in secret variables, which never sync).
+ */
+export function authText(json: unknown): string {
+  if (typeof json !== 'string' || !json) return '(inherit / no auth)'
+  let auth: unknown
+  try {
+    auth = JSON.parse(json)
+  } catch {
+    return clip(json)
+  }
+  if (!auth || typeof auth !== 'object') return clip(json)
+  const a = auth as Record<string, unknown>
+  const type = typeof a.type === 'string' ? a.type : 'unknown'
+  const lines = [`type: ${type}`]
+  const params = a[type]
+  if (Array.isArray(params)) {
+    for (const e of params as Array<Record<string, unknown>>) if (e && typeof e.key === 'string') lines.push(`${e.key}: ${typeof e.value === 'string' ? e.value : JSON.stringify(e.value)}`)
+  } else if (params && typeof params === 'object') {
+    for (const [k, v] of Object.entries(params as Record<string, unknown>)) lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+  }
+  return clip(lines.join('\n'))
 }
 
 export function toSyncConflict(db: Db, c: ConflictRow, features: Features = linkFeatures(db, c.workspace_id)): SyncConflict {

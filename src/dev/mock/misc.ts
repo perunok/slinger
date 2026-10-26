@@ -8,9 +8,6 @@ type MiscApi = Pick<
   | 'defaultExportPath'
   | 'writeExportFile'
   | 'chooseExportDirectory'
-  | 'secureStoreGet'
-  | 'secureStoreSet'
-  | 'secureStoreDelete'
   | 'openExternalUrl'
   | 'prepareBrowserAuthCallback'
   | 'waitForBrowserAuthCallback'
@@ -29,11 +26,14 @@ type MiscApi = Pick<
   | 'reopenWindow'
   | 'windowControl'
   | 'showAppMenu'
+  | 'setUnsavedChanges'
   | 'pickFile'
   | 'grantedFiles'
-> & { resetSecureStore(): void; setLatestRelease(version: string | null): void }
+> & { setLatestRelease(version: string | null, notes?: string | null): void }
 
 const MOCK_VERSION = '0.0.0-dev'
+/** Release notes the pretend latest release carries unless a test passes its own. */
+export const MOCK_RELEASE_NOTES = '### New\n- A pretend feature of the pretend release.\n\n### Fixed\n- A pretend bug.'
 const TITLE_BAR_KEY = 'slinger.mock.titleBar'
 
 function loadTitleBar(): TitleBarStyle {
@@ -44,27 +44,7 @@ function loadTitleBar(): TitleBarStyle {
   }
 }
 
-const STORAGE_KEY = 'slinger.mock.secureStore'
 const PICK_NAMES = ['sample-upload.png', 'report.pdf', 'data.csv']
-
-/** Dev-only persistence; the real app keeps these values in the OS keychain. */
-function loadSecure(): Map<string, string> {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    if (raw) return new Map(Object.entries(JSON.parse(raw) as Record<string, string>))
-  } catch {
-    /* storage unavailable: start empty */
-  }
-  return new Map()
-}
-
-function saveSecure(store: Map<string, string>): void {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(store)))
-  } catch {
-    /* in-memory only */
-  }
-}
 
 function download(fileName: string, contents: string, encoding: 'utf8' | 'base64'): void {
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
@@ -80,12 +60,13 @@ function download(fileName: string, contents: string, encoding: 'utf8' | 'base64
 }
 
 export function createMiscApi(): MiscApi {
-  let secure = loadSecure()
   let pickIndex = 0
   const granted = new Set<string>()
   let exportDir = '/home/user/Downloads'
   /** The "latest release" checkForUpdates reports; null = none published (no notice in dev and tests by default). */
   let latestRelease: string | null = null
+  /** Its release notes (the GitHub release body); a sample by default. */
+  let latestNotes: string | null = null
   // In-app updater: a pretend .deb installation whose download takes ~1 s in 10 steps (no real file, nothing installed).
   const updateListeners = new Set<(s: UpdateInstallState) => void>()
   let update: UpdateInstallState = { method: 'deb', unsupportedReason: null, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
@@ -109,17 +90,6 @@ export function createMiscApi(): MiscApi {
     async writeExportFile(fileName, contents, encoding = 'utf8') {
       if (!fileName.trim()) fail('invalid_input', 'File name must not be empty')
       download(fileName, contents, encoding)
-    },
-    async secureStoreGet(key) {
-      return secure.get(key) ?? null
-    },
-    async secureStoreSet(key, value) {
-      secure.set(key, value)
-      saveSecure(secure)
-    },
-    async secureStoreDelete(key) {
-      secure.delete(key)
-      saveSecure(secure)
     },
     async openExternalUrl(url) {
       // Same policy as the main process (services/externalUrl.ts): http, https and mailto only.
@@ -155,7 +125,7 @@ export function createMiscApi(): MiscApi {
       if (!latestRelease) return { currentVersion: MOCK_VERSION, latest: null, updateAvailable: false, checkedAt }
       return {
         currentVersion: MOCK_VERSION,
-        latest: { version: latestRelease, url: `https://github.com/perunok/slinger/releases/tag/v${latestRelease}`, publishedAt: checkedAt - 86_400 },
+        latest: { version: latestRelease, url: `https://github.com/perunok/slinger/releases/tag/v${latestRelease}`, publishedAt: checkedAt - 86_400, notes: latestNotes },
         updateAvailable: compareSemver(latestRelease, MOCK_VERSION) > 0,
         checkedAt,
       }
@@ -186,6 +156,10 @@ export function createMiscApi(): MiscApi {
     },
     async showAppMenu() {
       /* no native menu in the browser */
+    },
+    async setUnsavedChanges(titles) {
+      if (!Array.isArray(titles) || titles.some((t) => typeof t !== 'string')) fail('invalid_input', 'titles must be a list of strings')
+      /* no quit to guard in the browser (the page's own beforeunload saves its tabs) */
     },
     async pickFile() {
       const name = PICK_NAMES[pickIndex++ % PICK_NAMES.length]
@@ -234,14 +208,11 @@ export function createMiscApi(): MiscApi {
       updateListeners.add(listener)
       return () => updateListeners.delete(listener)
     },
-    setLatestRelease(version) {
+    setLatestRelease(version, notes = MOCK_RELEASE_NOTES) {
       latestRelease = version
+      latestNotes = notes
       if (updateTimer) clearTimeout(updateTimer)
       update = { ...update, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
-    },
-    resetSecureStore() {
-      secure = new Map()
-      saveSecure(secure)
     },
   }
 }

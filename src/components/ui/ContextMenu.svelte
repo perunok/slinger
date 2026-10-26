@@ -39,7 +39,8 @@
     if (!list.length) return
     const at = list.indexOf(index)
     index = list[(at + dir + list.length) % list.length] ?? list[0]
-    root.querySelectorAll<HTMLElement>('[role=menuitem]')[index]?.focus()
+    // Separators are not buttons, so look the item up by its index in `items`.
+    root.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus()
   }
 
   function choose(it: MenuItem) {
@@ -106,10 +107,12 @@
         type="button"
         role="menuitem"
         tabindex="-1"
+        data-index={i}
         disabled={it.disabled}
         class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none disabled:opacity-40 {it.danger ? 'text-danger' : ''}"
         onclick={() => choose(it)}
         onmouseenter={() => (index = i)}
+        onfocus={() => (index = i)}
       >
         <span class="inline-flex w-4 justify-center">{#if it.icon}<Icon name={it.icon} size={14} />{/if}</span>
         <span class="flex-1">{it.label}</span>

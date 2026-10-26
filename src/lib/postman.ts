@@ -12,6 +12,7 @@
  */
 import type { SlingerExportBlock } from '../../shared/slingerExport'
 import { stripOAuth2Tokens } from '../../shared/oauth2'
+import { parseContainerAuthJson } from '../../shared/containerAuth'
 import type { ApiFolder, ApiRequest, Collection, CollectionVariable } from '../../shared/types'
 import { variablesToPostman } from '../../shared/postmanVariables'
 import { postmanDescription } from './description'
@@ -70,6 +71,8 @@ export interface PostmanItem {
   description?: unknown
   item?: PostmanItem[]
   request?: PostmanRequest
+  /** Folder auth (requests keep theirs on `request.auth`); absent = inherit. */
+  auth?: unknown
   event?: unknown[]
   response?: unknown[]
   /** MCP requests only: the document's `mcp` object (wire format of mcpRequest.ts), lifted back by the importers. */
@@ -95,6 +98,8 @@ export interface PostmanCollectionV21 {
   item: PostmanItem[]
   /** Collection-level pre-request / test scripts (stored verbatim in `Collection.scriptsJson`). */
   event?: unknown[]
+  /** Collection auth (`Collection.authJson`), inherited by requests and folders without their own. */
+  auth?: unknown
   /** Collection variables (`{key, value, type: 'string', disabled?, description?}`). */
   variable?: Array<Record<string, unknown>>
 }
@@ -316,8 +321,10 @@ function buildUrl(doc: Json, fallbackUrl: string): PostmanUrl {
   if (query.length > 0) url.query = query
   else delete url.query
 
-  if (sourceUrl && Array.isArray(sourceUrl.variable)) {
-    const variables = sourceUrl.variable.filter((v): v is PostmanUrlVariable => isObj(v) && typeof v.key === 'string' && v.key.trim() !== '')
+  // Path variables: the request's own (`pathVariables`, saved by the editor), else the imported item's.
+  const ownVariables = Array.isArray(doc.pathVariables) ? doc.pathVariables : sourceUrl && Array.isArray(sourceUrl.variable) ? sourceUrl.variable : null
+  if (ownVariables) {
+    const variables = ownVariables.filter((v): v is PostmanUrlVariable => isObj(v) && typeof v.key === 'string' && v.key.trim() !== '')
     if (variables.length > 0) url.variable = variables
   }
   return url
@@ -369,6 +376,8 @@ function folderItem(f: ApiFolder, item: PostmanItem[]): PostmanItem {
   out.item = item
   const events = eventsFromJson(f.scriptsJson)
   if (events) out.event = events
+  const auth = parseContainerAuthJson(f.authJson)
+  if (auth) out.auth = stripOAuth2Tokens(auth)
   return out
 }
 
@@ -424,6 +433,8 @@ export function buildPostmanCollection({ collection, folders, requests, version,
   const out: PostmanCollectionV21 = { info: ordered, item }
   const events = eventsFromJson(collection.scriptsJson)
   if (events) out.event = events
+  const auth = parseContainerAuthJson(collection.authJson)
+  if (auth) out.auth = stripOAuth2Tokens(auth)
   if (variables && variables.length > 0) {
     out.variable = variablesToPostman(variables.map((v) => ({ key: v.key, value: v.value, enabled: v.enabled, description: v.description })))
   }

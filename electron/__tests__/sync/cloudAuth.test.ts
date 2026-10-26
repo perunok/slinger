@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { tokenKey } from '../../cloud/auth'
-import { assertGenericSecureKey } from '../../services/secrets'
 import { FakeCloud } from './fakeCloud'
 import { makeDevice, type Device } from './harness'
 
@@ -68,10 +67,8 @@ describe('device sign-in', () => {
     expect(JSON.stringify(session)).not.toMatch(/access|refresh|token/i)
     const stored = JSON.parse(d.secrets.get(tokenKey(cloud.baseUrl))!) as Record<string, string>
     expect(Object.keys(stored).sort()).toEqual(['accessToken', 'refreshToken'])
-    // tokens are not readable through the generic renderer keychain passthrough
-    await expect(d.api.secureStoreGet(tokenKey(cloud.baseUrl))).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(d.api.secureStoreSet('slinger.cloud.tokens:evil', 'x')).rejects.toMatchObject({ code: 'invalid_input' })
-    expect(() => assertGenericSecureKey('SLINGER.CLOUD.TOKENS:x')).toThrow()
+    // the renderer has no keychain access at all
+    expect((d.api as unknown as Record<string, unknown>).secureStoreGet).toBeUndefined()
     // and the session works with the stored tokens
     expect(await d.api.listRemoteWorkspaces()).toEqual([])
   })

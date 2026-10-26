@@ -632,3 +632,15 @@ describe('MCP Inspector CLI', () => {
     expect(out).toContain('--tool-arg b=x3')
   })
 })
+
+describe('path variables in snippets', () => {
+  it('every language gets the substituted URL; a variable without a value stays :name', async () => {
+    const { prepareRequest } = await import('./prepare')
+    const scope = makeScope('Dev', [{ key: 'id', value: '42', secret: false }])
+    const d = newDraft({ url: 'https://api.example.com/users/:userId/posts/:postId', pathVariables: [{ key: 'userId', value: '{{id}}', description: '' }] })
+    const prepared = prepareRequest(d, { workspaceId: 'w', scope, allowUnresolved: true })
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    for (const lang of ALL) expect(generateSnippet(lang, prepared.input), lang).toContain('api.example.com/users/42/posts/:postId')
+  })
+})

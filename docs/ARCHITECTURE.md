@@ -11,7 +11,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   preload.ts         contextBridge: builds window.slinger from IPC_CHANNELS
   ipc/               handlers.ts (ipcMain.handle + sender check), api.ts (zod validation + dispatch), envelope.ts
   db/                database.ts (open + pragmas), migrate.ts (runner)
-  migrations/        0001_init.sql ... 0016_collection_openapi.sql
+  migrations/        0001_init.sql ... 0017_sync_deferred.sql
   scripts/           script sandbox: prelude.js (the pm API, runs inside QuickJS), host.ts (state + dispatcher),
                      sandbox.ts (QuickJS runner), worker.ts (worker-thread entry), executor.ts (worker pool), inline.ts (tests),
                      libs/ (build-time Node shims for the bundled script libraries)
@@ -21,7 +21,7 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
                      HTTP servers answering with saved examples)
-  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
+  lib/               errors, ids, text, csp, permissions, windowState, titleBar (custom title bar options), appMenu (application menu template), editMenu (native Cut/Copy/Paste menu of text), tray (tray menu, icons, close-to-tray decision), instanceGuard (one Slinger per user)
   mcp/               MCP server: server.ts (127.0.0.1 endpoint), bridge.ts (tool calls -> renderer), service.ts (settings, token),
                      files.ts (<userData>/mcp), clients.ts (Connect), stdioBridge.ts + stdioMain.ts (what assistants run)
   mcpClient/         MCP client for MCP requests: service.ts (McpClientService: sessions over Streamable HTTP / SSE / stdio,
@@ -29,12 +29,14 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
                      scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox), mockMatch.ts (mock server
-                     request matching) - imported by main AND
+                     request matching), changelog.mjs (CHANGELOG.md parser, also used by scripts/) - imported by main AND
                      renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
-scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs
+scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs,
+                     release-notes.mjs (a version's CHANGELOG.md section: the GitHub release body)
+CHANGELOG.md         user-facing release notes, bundled into the renderer (see Release notes)
 test/                renderer test setup
 ```
 
@@ -52,10 +54,15 @@ is unit-tested without launching Electron.
 Window preferences: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webSecurity: true`,
 `allowRunningInsecureContent: false`. A single-instance lock focuses the existing window on a second launch (also bringing it
 back from the tray). Electron's lock is per profile (userData), so packaged builds also take a per-user lock
-(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the named pipe
-`\\.\pipe\slinger-<user>` on Windows, taken at `whenReady` before the database opens. A second start with any profile
-connects, sends `show` (the first shows its window) and exits; a socket file nobody listens on (refused) is replaced, but a
-first instance that is slow to answer still counts as running. A lock that cannot be created never blocks starting. Unpackaged
+(`lib/instanceGuard.ts`): a Unix socket `slinger-<uid>/instance.sock` in `$XDG_RUNTIME_DIR` (else the temp folder) or the
+named pipe `\\.\pipe\slinger-<hash>` on Windows (SHA-256 of the user name and a random per-user secret kept in
+`%APPDATA%\Slinger\instance-guard.key`, so other users cannot guess it), taken at `whenReady` before the database opens. A
+second start with any profile connects, sends `show` (the first answers `ok` and shows its window) and exits; a socket file
+nobody listens on (refused) is replaced, but a first instance that is slow to answer still counts as running. Squatting: on
+POSIX the `slinger-<uid>` folder is created 0700 and must be a directory owned by this user (not a symlink; our own folder
+with a looser mode is tightened), and an existing socket is only trusted (asked, or removed when stale) when it is a socket
+owned by this user; anything else, and any peer that answers something other than `ok` (on Windows also silence), disables
+the guard instead of making Slinger exit. A lock that cannot be created never blocks starting. Unpackaged
 (dev, e2e) builds skip it so profiles can run side by side; `SLINGER_INSTANCE_GUARD=<path>` turns it on (e2e).
 
 **Tray and quitting** (`electron/lib/tray.ts` + `main.ts`). With `closeToTray` on (`window-state.json`, absent = on; IPC
@@ -71,6 +78,16 @@ get stdin EOF and then SIGTERM instead of outliving the app) and `app.quit()` ru
 `will-quit` (after the pages saved their tabs). Quit chosen by the user (tray, File/Slinger menu: our own item, not `role: 'quit'`; or closing the window with `closeToTray` off on
 Windows/Linux) also calls `McpService.markQuit()`, so the stdio bridge does not start Slinger again; a logout, an update or
 Playwright's `app.quit()` does not.
+
+**Unsaved edits on quit** (`electron/lib/quitGuard.ts`, `src/features/requests/unsavedOnQuit.svelte.ts`). The renderer reports
+(`setUnsavedChanges(titles)`, only when the list changes) which open tabs hold edits that would be lost: with "Restore open
+tabs" on, the drafts the last tab autosave could not keep (`unpersistedTitles`: over `MAX_DRAFT_BYTES`, or storage full) plus
+the dirty tabs of a workspace whose stored tabs are still waiting to be restored; with it off, every dirty tab of every open
+workspace. While that list is not empty, the tray/menu Quit (`quitByUser`), any other `before-quit` in the `running` phase,
+closing the window for good (close-to-tray off, also on macOS) and installing an update (before anything is installed) first
+show a native "Quit and discard N unsaved changes?" box (Discard and Quit / Cancel, Cancel default). Cancel leaves everything as
+it was (no `markQuit`, the MCP drain has not started); after Discard the quit runs the normal two passes. Automated runs
+(`SLINGER_SMOKE_TEST`, `SLINGER_HIDE_WINDOW`) and an ending OS session never ask. A new window starts with an empty list.
 
 **Renderer origin.** Production loads `app://slinger/index.html`. The `app` scheme is registered as privileged
 (standard, secure, fetch-capable). Its handler serves files only from `dist/` (path traversal returns 403, missing files 404)
@@ -97,7 +114,7 @@ workspaces, environments (+ `revealEnvironmentVariable`), collections and folder
 requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `duplicateWorkflow`, `deleteWorkflow`; see
 [Workflows](#workflows)), mock servers (`startMockServer`, `updateMockServer`, `stopMockServer`, `listMockServers`,
 `getMockServerLog`, `clearMockServerLog`; see [Mock servers](#mock-servers)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
-`writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
+`writeExportFile`, `chooseExportDirectory`), collection versions,
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
 `revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
@@ -143,6 +160,12 @@ Electron's default menu is replaced at startup (`installAppMenu()` in `main.ts`)
 openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` only supplies the callbacks and calls
 `Menu.setApplicationMenu`.
 
+Right-click menus: the app's own menus are `src/components/ui/ContextMenu.svelte` (items are secondary paths to existing actions;
+`contextMenu.ts` has `isMenuKey` for Shift+F10 / the Menu key and `menuPoint` for placing a keyboard-opened menu). They call
+`preventDefault()` on the DOM `contextmenu` event, and Chromium then raises no `context-menu` event in main. Everywhere else,
+`main.ts` pops up `electron/lib/editMenu.ts`'s template (Undo/Redo/Cut/Copy/Paste/Select all on editable fields, Copy on
+selected text, nothing otherwise), since Electron shows no text menu by default.
+
 - **macOS:** Slinger (About Slinger, Settings… Cmd+,, Services, Hide / Hide Others / Show All, Quit), File, Edit, View, Window,
   Help. **Windows/Linux:** File, Edit, View, Help (About Slinger at the bottom of Help, Settings… and Quit/Exit in File, Alt
   mnemonics).
@@ -150,7 +173,7 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
   Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Sidebar, Toggle Response Position, Toggle Right Panel, Toggle Status
   Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
-  **Help:** User Guide, Keyboard Shortcuts, Release Notes, Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
+  **Help:** User Guide, Keyboard Shortcuts, Release Notes (command `releaseNotes`, the bundled changelog, see [Release notes](#release-notes)), Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
   `import`, `exportCollection`, `settings`, `about`, `shortcuts`, `checkForUpdates`, and the View layout toggles `toggleSidebar`,
@@ -201,6 +224,9 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
 | `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
 | `0016_collection_openapi` | `collection_openapi`: the OpenAPI document a collection is linked to on this device (source, text, hash, title, versions, folder mode, operation count); local only, see [OpenAPI](#openapi) |
+| `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
+| `0018_container_auth` | nullable `auth_json` on `collections` and `folders` (Postman `auth` object, never an OAuth 2.0 token; see [Collection and folder auth](#collection-and-folder-auth)), read-only and capture triggers (synced only with the `container_auth` feature, sync design section 21.6) |
+| `0019_local_trust` | `collection_trust (collection_id, trusted_at)`: collections whose scripts may run here (existing collections are trusted by the migration); `assistant_changes (kind, ref, workspace_id, fingerprint, created, changed_at)`: requests, environment variables and collection/folder auth (kind `container`) an AI assistant wrote and the user has not reviewed. Both local only (`repositories/trust.ts`), see [Scripts sandbox](#scripts-sandbox) and [MCP server](#mcp-server) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -220,6 +246,46 @@ additions `params` and `settings.timeoutMs`). The main process treats it as an o
 `src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save. Request scripts are the Postman `event`
 array under the key `scripts` (the key the importer has always used, so existing and synced documents need no migration).
 
+## Collection and folder auth
+
+Postman-style inheritance. Collections and folders store their auth in `auth_json` (0018): the Postman `auth` object as JSON
+text, validated and stripped of OAuth 2.0 tokens by `shared/containerAuth.ts` (main repositories and the mock use the same
+rules). `NULL` = nothing set: a folder then inherits from its parent, a collection has no auth; a folder with
+`{"type":"noauth"}` stops inheritance (on a collection `noauth` is stored as `NULL`); Postman's `{"type":"inherit"}` reads as
+`NULL`. IPC: `setCollectionAuth` / `setFolderAuth` (refused on read-only workspaces by triggers). Credentials typed into it
+are stored like a request's typed credentials (in the document / row, synced and exported alike); secret values belong in
+secret variables, which never leave the keychain.
+
+A request's own auth in `document_json` follows Postman too: `auth` absent or `null` = **inherit** (`AuthKind 'inherit'`, the
+default of `emptyAuth()` / new requests), `{"type":"noauth"}` = no auth. Requests saved by 0.26 or older with "No Auth" stored
+`null`, so they read as inherit; that only changes anything once a folder or the collection gets an auth.
+
+Resolution is renderer-side and happens at send time on a copy: `src/lib/authInheritance.ts` `resolveEffectiveAuth` walks
+folder -> parent folders -> collection (cycle safe) and `withEffectiveAuth` replaces an `inherit` auth before anything else
+(`executeDraft` step 0, so pre-request scripts' `pm.request.auth`, `secretsNeeded`, `prepareRequest` / `prepareMcp` and the
+OAuth 2.0 token lookup all see the auth that is sent; single send, runner, workflows and MCP `send_request` all go through it).
+The chain comes from the loaded tree (`execute.ts` `authChainFor`); the same call feeds code snippets (`CodePanel`), the
+auto-generated headers list, the MCP connect (`McpRequestView`), the `.http` export and the OpenAPI export (effective auth ->
+security scheme). Inherited auth is never copied into a request document.
+
+Postman import (main and mock) keeps collection/folder `auth` on the container and stores requests without their own auth as
+`null`; the Postman export writes collection/folder `auth` back. OpenAPI import already produced a collection-level `auth` when
+every operation shares one security requirement; it now stays there (request fingerprints no longer include it), and an update
+plan (`shared/openapi/update.ts`) sets the collection auth to the document's when it is unset or still what the previous
+document generated (so collections imported before 0018, whose requests carried copies, get it back while their clean requests
+return to inherit). Extract to new collection gives the new collection what the folder inherited. OAuth 2.0 tokens are keyed by
+the resolved settings (`OAuth2Service` token key), so every request inheriting the same container settings shares one token;
+the container's Authorization section has the same Get New Access Token panel.
+
+UI: the overview tab of a collection or folder has an **Authorization** section (`features/overview/OverviewView.svelte`,
+draft `RequestTab.overviewAuth`, saved by the overview's Save together with the docs; not restored with the tab after a
+restart); the editor is `features/requests/AuthEditor.svelte`, shared with the request's Authorization tab (`AuthPanel.svelte`),
+which shows "Inherited from <name>" and the effective type while inheriting. MCP: `get_request` returns `type: 'inherit'` with
+`inherited_from` and the masked `effective` auth; `get_tree` lists a container's own auth type; `create_request` /
+`update_request` accept `auth.type: 'inherit'`. Versions snapshot `collectionAuthJson` and folder `authJson` and restore them
+(older snapshots restore with none). Sync: `auth_json` is a collection/folder field of the `container_auth` extension
+(sync design section 21.6); with a server that does not offer it, it stays on the device.
+
 ## Secrets
 
 - Store: `@napi-rs/keyring` (`KeychainSecretStore`, service `Slinger`). If the module or keychain is unavailable the app still
@@ -232,9 +298,11 @@ array under the key `scripts` (the key the importer has always used, so existing
   is deleted with the variable (and with its workspace). The keychain is written after the row, inside the same transaction, so a
   refused write (read-only trigger, duplicate key) never changes a stored secret. Collection variables are never secret: they are
   exported and versioned with the collection (`isSecret: true` is rejected).
-- `secureStoreGet/Set/Delete` are a generic passthrough; the reserved prefixes (`RESERVED_SECRET_PREFIXES`) `slinger:env-var:`
-  and `slinger:global-var:` (secret variables), `slinger.cloud.tokens:` (cloud session tokens, `electron/cloud/`) and
-  `slinger:oauth2:` (OAuth 2.0 request tokens) are refused so the renderer cannot bypass the mask or read a token.
+- No generic keychain access over IPC: the former `secureStoreGet/Set/Delete` passthrough (unused by the renderer) was
+  removed in 0.27, because besides the reserved prefixes it reached `mcp.token` (the MCP server's bearer token),
+  `mcp-client.trusted` (the allowed MCP stdio commands) and `cloud.*`. Every entry (`slinger:env-var:`, `slinger:global-var:`,
+  `slinger.cloud.tokens:`, `slinger:oauth2:`, `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
+  written only by the main-process service that owns it.
 - OAuth 2.0 request tokens: `slinger:oauth2:<tokenKey>` holds `{access_token, token_type, expires_at, refresh_token, scope,
   obtained_at, workspace_id}`; `slinger:oauth2:index:<workspaceId>` lists a workspace's token keys so `deleteWorkspace`
   deletes them. Tokens never go to SQLite, history, documents, version snapshots, exports or sync (see below).
@@ -244,7 +312,8 @@ array under the key `scripts` (the key the importer has always used, so existing
 
 ## HTTP execution pipeline
 
-0. **Pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
+0. **Inherited auth.** A draft whose auth is `inherit` gets its folder's / collection's auth on the outgoing copy
+   ([Collection and folder auth](#collection-and-folder-auth)). Then the **pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
    calls `runScripts` with the chain and the draft; environment writes are persisted in main, request mutations are applied to an
    outgoing copy of the draft, collection variable / global writes are persisted in main too (the renderer reloads the scopes a
    script changed), and `pm.variables` is layered on top of the template scope (local > environment > collection > globals).
@@ -252,13 +321,20 @@ array under the key `scripts` (the key the importer has always used, so existing
 1. **Renderer, template resolution.** `src/lib/prepare.ts` `prepareRequest(draft, ctx)` is the *only* place `{{variable}}`
    substitution happens (single send, collection runner and code snippets all use it, via `features/requests/execute.ts`;
    MCP requests use its sibling `prepareMcp`, see [MCP requests](#mcp-requests-mcp-client)). It
-   resolves against `scopeStore.scopeFor(collectionId)` of the request's own collection (globals < collection variables <
-   environment, `app/scope.svelte.ts`; disabled variables do not resolve), fails early on unresolved names (the message names the
+   resolves against the send's own scope (globals < collection variables < environment of the request's own collection;
+   disabled variables do not resolve). `execute.ts` fixes that scope when the send starts (`SendScope`: workspace, environment
+   id, globals, the collection's variables and its collection/folder scripts, copied from what `app/state` has in memory or
+   read by id when it is not loaded) and uses only it for the whole send, scripts included; what the pre-request scripts wrote
+   is read back by those ids. A workspace or environment switch during a send therefore never resolves `{{vars}}` or reveals
+   secrets of the other one. It fails early on unresolved names (the message names the
    scopes checked), reveals just the secrets the request references through `revealEnvironmentVariable` / `revealGlobalVariable`
    immediately before sending, resolves values that reference other variables (bounded to 6 passes, so cycles end and are
    reported), generates built-ins (the dynamic variables of `shared/dynamicVariables.ts`, also used by script `replaceIn` and
    mock servers; one value per name per send), drops disabled rows, and moves an API key with `addTo: 'query'`
-   into the URL. It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
+   into the URL. Path variables (`draft.pathVariables`, document key `pathVariables`, seeded from an imported item's
+   `source.request.url.variable`; rows follow the URL's `:name` segments, `src/lib/pathVariables.ts`) are applied first:
+   each whole `:name` path segment becomes its resolved, percent-encoded value; one without a value stays `:name` and adds a
+   warning. (`.http` exports apply them unresolved; `shared/postmanUrl.ts` never does.) It produces a resolved `HttpRequestInput` including `requestRunId` and `historyUrl`. For OAuth 2.0 it resolves
    the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
    calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
    `tokenKey` into `auth.oauth2`.
@@ -275,10 +351,23 @@ array under the key `scripts` (the key the importer has always used, so existing
    `cancelHttpRequest(runId)` also works while the body streams. Timeouts and cancellations are `network_error` with
    `details.timedOut` / `details.cancelled`.
 5. **Response.** Non-2xx statuses resolve normally. Body is `bodyText` when the bytes decode (declared charset, else UTF-8),
-   otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download.
+   otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download. The body is read with a
+   hard cap (`lib/limitedBody.ts` `readLimitedBody`): a declared `Content-Length` over it stops before the first byte, otherwise
+   the stream is cancelled as soon as the bytes pass it. User sends carry `maxResponseBytes` (Settings > Requests > Maximum
+   response size, `shared/responseLimit.ts`: 1-256 MB, default 50 MB; 256 MB because a binary body travels as one base64
+   string, and V8 strings end near 512 M characters); a larger body resolves with `bodyTooLarge: { limitBytes }`, status and
+   headers, and no body. Internal callers (cloudFetch, OAuth token calls, release JSON) fail with `network_error` instead.
+   **Send and download to file**: `chooseResponseDownloadFile(name)` shows main's save dialog and returns a one-time id
+   (10 min, `HttpService.registerDownload`); `executeHttpRequest({ ..., downloadId })` streams the body into that file
+   (`streamBodyToFile`, no limit, no partial file left on failure) and resolves with `savedToFile` and no body. The renderer
+   never names a path to write; test scripts do not run for a download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
-   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`).
+   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`). Error messages never quote resolved
+   values: `buildRequest` names an invalid header or credential instead of quoting the platform message, an invalid URL is shown
+   as `historyUrl`, and `HttpService` runs every failure message (also the one thrown back to the renderer) through
+   `scrubRequestValues`, which replaces each value of the outgoing request that `historyUrl` does not show (resolved URL and its
+   parts, header values, credentials) with `•••`.
 7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
    response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
 
@@ -316,6 +405,12 @@ support.
   run through `escapeHtml` (`authCallback.ts` `callbackPage`, also used by the older browser-auth listener) with a
   `default-src 'none'` CSP. Waiting is bounded (5 min default, 10 max) and cancellable by `flowId` (`cancelOAuth2Flow`); app
   quit cancels all flows.
+- **Token origins:** the stored JSON also has `origins` (scheme://host:port). `accessTokenFor(tokenKey, origin)` (the executor
+  passes the request URL's origin) records the first origin a token is sent to and refuses any other with `invalid_input`,
+  `details {reason: 'oauth2_new_origin', origin, origins, tokenKey}`; `allowOAuth2Origin(tokenKey, origin)` adds one (at most 50).
+  `revealOAuth2Token(tokenKey, origin)` applies the same check for an MCP request's connect; a plain reveal (the user's Reveal)
+  does not. Origins survive refreshes and new tokens of the same configuration. In the window, `executeDraft` asks the user
+  (`securityPrompts`, `features/security/`) and retries once when allowed; assistants' sends never ask.
 - **Sending:** see the HTTP pipeline above. History never holds the token (headers are not recorded, the query parameter is
   added in main after the history URL was taken). `pm.request.auth` in scripts is a read-only view of the stored settings
   (templates unresolved, literal credentials masked); `pm.sendRequest` refuses `oauth2` auth. Code snippets print
@@ -345,6 +440,9 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   a global created elsewhere has `secretMissing` until this device sets a value (keychain `slinger:global-var:<id>`). Equal
   never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
   `source_postman_id` (0007) stays device-local.
+- **Collection and folder auth** (`auth_json`, 0018; feature `container_auth`, design section 21.6): same mechanism, own field
+  group `auth`. With a server without the feature the column stays on the device (nothing pushed, nothing reported); it
+  starts syncing on its own once the server offers it.
 - **Version authors** (feature `version_authors`, design section 21): the server records who created every collection version
   and sends `created_by: {id|null, display_name} | null` on `collection_version` payloads to clients that declared the feature
   (`CLIENT_FEATURES`). The desktop never sends it and it is not part of `toWire`. `apply.ts` `splitAuthor` removes it at EVERY
@@ -379,6 +477,8 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   the dirty entities the server would have cascaded with it (`serverCascades`, the same rule the count uses to hide them); a
   container created here also reverts the dirty entities now inside it (a cloud item moved into it goes back to its base
   place). Renderer: `syncStore.discardItems`, buttons in `SyncActivityDialog.svelte` (per row and Cancel all).
+  `discardPendingChanges`, `discardPendingItems` and `setSyncKept` first wait until no cycle runs for the workspace
+  (`SyncService.idle`): a push answer arriving after a discard would record the uploaded copy as agreed and undo it.
   **Keep on this device**: table `sync_kept` (migration 0015, local only) lists entities the user holds back
   (`setSyncKept(workspaceId, items, kept)`, only entities in `sync_dirty`; `listSyncKept` lists them like `listSyncPending`).
   `kept.ts` `heldKeys` adds what depends on them (fixpoint): a live dirty entity whose current parent is held and has no cloud
@@ -409,6 +509,15 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   dependency order, chunks <= 200 ops / 700 KB) -> push. Push rejections branch on the v2 `reason`
   (`version_mismatch` merges the returned `current_payload` and pushes again without a pull; `not_found` pulls the tombstone;
   `duplicate_key`, `immutable`, `invalid`/`too_large`, `id_in_use`, `read_only` as in design section 20).
+- **Deferred remote changes** (`deferred.ts`, table `sync_deferred`, migration 0017): every pulled op and snapshot entity is
+  applied by `applyRemoteChange` on its own savepoint. An upsert whose parent is not on this device (`ApplyCtx.missingParent`,
+  set by `apply.ts`; e.g. a nested folder from a server that orders snapshot folders by id) or that throws is kept there instead
+  of being lost (the checkpoint / cursor moves on with the page). Each snapshot/pull page first retries the failed ones
+  (`retryFailed`), then applies its own changes, then retries the waiting ones in passes while they make progress
+  (`retryWaiting`). A later change of the entity replaces the kept one; a failure is noted once in `sync_conflicts`
+  (`auto_resolved`, kind `rejected`), a change still waiting for its parent after a complete download likewise
+  (`noteStuckDeferred`). Removed by `detachSync`. A pull page that says `has_more` without advancing the checkpoint fails the
+  cycle (no endless loop). A keychain delete that fails after commit (`rows.ts` `SideEffect.entity`) is noted the same way.
 - **Conflicts** are detected locally (`apply.ts`, per field group) and stored in `sync_conflicts`; a conflicted entity is frozen
   (not pushed) until resolved (`conflicts.ts`: keep local / keep remote / merge per group / duplicate).
 - **Scheduling** (`scheduler.ts`): 5 s dirty poll + 1.5 s debounce, full cycle every 60 s focused / 5 min blurred, on start, focus,
@@ -486,7 +595,8 @@ collection scope seeded from `input.collectionVariables`, with a console warning
   resolves `{{variables}}` with the same `replaceIn` as `pm.variables.replaceIn` (Postman resolves variables in sendRequest too;
   secret reads go through the normal by-name path, so they are remembered for redaction), rejects non-http(s) schemes, counts it
   against `maxSendRequests` (20 per run) and caps its timeout (`sendRequestTimeoutMs`: the request's own timeout, default 60 s,
-  max 120 s). It then calls `deps.sendHttp(call, signal)`: in the app the worker posts `{type:'http', id, call}` on a second
+  max 120 s). Its response body is capped at 10 MB (`SCRIPT_MAX_RESPONSE_BYTES`, enforced while streaming; larger: the call
+  fails with "larger than 10 MB"). It then calls `deps.sendHttp(call, signal)`: in the app the worker posts `{type:'http', id, call}` on a second
   `MessagePort` (`httpPort`, separate from the synchronous secret port so `receiveMessageOnPort` can never take an HTTP reply) and
   main (`WorkerExecutor`) runs `io.sendHttp`, which is `ScriptService` -> `services/scriptHttp.ts` -> `executeHttp` with the
   session's `FileGrants` (the same engine as a normal send: body building, auth, redirects, decoding) but **not**
@@ -515,12 +625,26 @@ script that never asks causes no keychain read (tested). `set` on a secret keeps
 scripts read or wrote (`ScriptService`, per `sessionId`, 1 h TTL, 500 sessions max) and `HttpService` redacts them from history.
 Script console output travels only in the IPC result; main never logs script output or values; the renderer keeps it in memory.
 
+**Trust per collection (0019).** `ScriptService.run` refuses a non-empty chain of a collection without a `collection_trust` row
+(`invalid_input`, `details {reason: 'untrusted_scripts', collectionId, collectionName}`). Rows are added for collections made
+on this device (`CollectionRepository.insert`), copied from the source by extract folder and restore-as-copy
+(`copyCollectionTrust`), and by `trustCollectionScripts` (the user allowed them); Postman/Slinger imports and collections created
+by a sync pull get none. The migration trusts every collection that existed before it. `executeDraft` catches the refusal, asks
+the user once per collection (`securityPrompts`, concurrent asks for the same collection share one dialog), calls
+`trustCollectionScripts` and retries; a declined prompt is a `kind: 'script'` outcome (nothing sent), and an assistant's send gets
+`untrustedScriptsMessage` instead of a prompt. Workflow code nodes (`collectionId: null`) are the user's own and not affected.
+
+**Scripts without secrets.** `RunScriptsInput.denySecrets` (a message) makes every secret read throw that message inside the
+script (`RunHost.read`, `ScriptApiError`), and main's `readSecret` returns null for that job as well. `executeDraft` sets it
+for sends an AI assistant controls (see [MCP server](#mcp-server)).
+
 **Read-only workspaces.** `set/unset/clear` of `pm.environment`, `pm.collectionVariables` and `pm.globals` throw inside the script
 (a clear error that fails it); ScriptService refuses to apply their operations for a read-only workspace as a second line of
 defence (and the 0008 triggers as a third); the 0005 triggers refuse
 `setCollectionScripts` / `setFolderScripts`; the renderer disables the script editors.
 
-**Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
+**Threat model.** Scripts of imported or synced-in collections only run after the user allowed that collection once (above).
+In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
 Node APIs, other scripts' state, or the host process (escape, prototype pollution, resource exhaustion: CPU, memory, stack,
 output), or to use `pm.sendRequest` beyond its contract (non-http schemes, ungranted local files, more than 20 requests,
 unbounded waiting, history pollution). Out of scope / accepted: a script can read non-secret environment values and any secret it
@@ -542,7 +666,9 @@ globals as metadata only); script writes are captured like any other write.
 
 **Renderer side.** `src/lib/scripts.ts` (pure: Postman `event` editing that returns the same array when nothing changed, chain
 assembly, request/response snapshots, scope layering, test counts), `features/requests/execute.ts` (the pipeline),
-`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog). The browser
+`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog),
+`features/security/` (`securityPrompts`: questions a send asks the user, the script trust and the OAuth 2.0 new-origin
+prompt, shown one at a time by `SecurityPromptHost` in App; the same key waits for the same answer). The browser
 mock's `runScripts` does not execute scripts (it returns the scopes unchanged with a console note).
 
 ## Workflows
@@ -690,7 +816,7 @@ requests carry their operation in the (synced, opaque) request document; the doc
   import" from "edited here" even after the renderer re-serialised it. Pure-JS 128-bit hash (main and browser alike).
 - **Link** (migration `0016_collection_openapi`, local only, no capture triggers): `collection_openapi` (collection, source
   kind url/file/text + value, document text and hash, title, versions, folder mode, operation count, times).
-  `electron/openapi/service.ts` (`core.openapi`): `previewOpenApi` (text, or a URL fetched with `net.fetch`: http(s) only, 50 MB,
+  `electron/openapi/service.ts` (`core.openapi`): `previewOpenApi` (text, or a URL fetched with `net.fetch`: http(s) only, 50 MB enforced while streaming,
   30 s, no credentials), `importOpenApi` (import + link in one transaction), `getOpenApiLink`, `unlinkOpenApi`.
 - **Validation** (`shared/openapi/validate.ts`, pure; `electron/openapi/validate.ts`): operation from the request's
   `openapi.key`, else method + URL path (after `{{baseUrl}}`, a server URL or scheme+host; `{param}` segments are wildcards and
@@ -741,8 +867,14 @@ Semver is strict 2.0.0 (`services/semver.ts`): optional prerelease, no build met
 version label is unique per collection among live rows (`invalid_input`, `reason: 'duplicate_version'`); a SQLite trigger
 aborts any UPDATE of the content columns (only `deleted` and the author columns may change). `listCollectionVersions` sorts newest first by semver precedence (parsed
 major/minor/patch/prerelease columns), not by creation time. Restore modes: `copy` creates a new collection named
-`"<name> (v<version>)"`; `replace` soft-deletes the live folders/requests and recreates the snapshot in one transaction with
-**new ids** (the renderer refetches and closes affected tabs). Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
+`"<name> (v<version>)"`; `replace` writes the snapshot over the live content in one transaction, **in place**
+(`services/collectionContent.ts` `replaceCollectionContent`, mode `id`): rows of the collection with a snapshot id are updated or
+un-deleted (untouched when equal), live rows the snapshot lacks are soft-deleted, snapshot items whose id is not in this collection
+(a copy, a snapshot imported from a file) get new ids. Ids stay stable for workflow nodes, history, open tabs and synced peers
+(an update instead of delete + create). The renderer refetches; `versions/restoreRemap.ts` `mapRestored` maps kept ids to
+themselves and vanished ones by path. Automatic safety versions (`createAutomaticVersion`, notes `Automatic snapshot before …`,
+taken by the Postman re-import and OpenAPI updates) are capped at `MAX_AUTOMATIC_VERSIONS` = 10 per collection: older automatic
+ones are soft-deleted (a synced delete; recognised by the notes, so every device agrees), user-made versions never. Deleting a version soft-deletes it. Compare (`lib/versionDiff.ts`)
 runs in the renderer on snapshots.
 
 **Who created a version.** `CollectionVersion.createdBy = {id: string | null, name: string} | null` (migration 0012). A version made
@@ -768,15 +900,17 @@ Nothing reaches main except those two existing IPC calls.
 
 **Re-import (replace).** `replaceCollectionFromPostman(collectionId, fileContents, sourceName?)` (`services/postmanImport.ts`)
 reuses the importer's parser (`parsePostmanCollection`), then in one transaction: creates an automatic safety version (the next
-patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`), soft-deletes the live
-folders/requests (so the sync dirty-set triggers propagate the deletions), inserts the file's tree with new ids in file order, and
+patch after the latest release, `0.0.1` if none; notes `Automatic snapshot before re-import from <file>`; at most 10 kept), writes
+the file's tree over the live content in place (`replaceCollectionContent` mode `path`: a folder matches a live folder of the same
+name under the matched parent, a request a live request of the same name and method in the matched folder, then the same name;
+matched rows keep their id, the rest are inserted, unmatched live rows soft-deleted; the sync dirty-set triggers propagate it), and
 updates the collection's scripts, description, collection variables (the file's `variable` array, `shared/postmanVariables.ts`,
 also used by the import and the exporter) and `source_postman_id`. The collection keeps its id, name and versions; any
 failure rolls everything back. The renderer (`ImportPostmanDialog`, `importexport/reimport.ts`) matches the file to live
 collections of the workspace by `_postman_id` first (a collection's own id, as Slinger exports use it, or its local
-`source_postman_id`), else by trimmed case-insensitive name. After a replace it maps old ids to new ones with
-`versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs at their successor (`tabsStore.followReplaced`); dirty
-tabs are detached by the normal reconcile. "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
+`source_postman_id`), else by trimmed case-insensitive name. After a replace it maps vanished ids to new ones with
+`versions/restoreRemap.ts`, keeps expanded folders, and points clean tabs of a vanished request at their successor
+(`tabsStore.followReplaced`); tabs of kept requests are reconciled as usual (clean ones reload, dirty ones keep their edits). "Import as a copy" passes `importPostmanCollection(..., { name: "X (n)" })`; copies do not
 record the source id, so the next re-import targets the original. When the file carries `info._slinger`, the replace also calls
 `restoreVersionHistory` in the same transaction (after the safety version), adding the file's versions next to the existing ones
 with the duplicate/clash rules below; the result's `versionHistory` is shown as a toast.
@@ -891,6 +1025,29 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`; version lines carry `created` (ISO time) and `created_by`
   (`{name, id}` or null);
   `restore_version` replace carries expanded folders and clean open tabs over (`mapRestored`), like the Versions panel.
+- **Send policy** (`lib/assistantPolicy.ts`, enforced by `executeDraft` for `source: 'mcp'`; the window is the trust boundary,
+  main only sees resolved requests). A send is *assistant-controlled* when it is ad-hoc, has overrides (send_request fields other
+  than name/description, `ExecuteContext.assistant`), or its request is in `listAssistantChanges` (an assistant wrote its stored
+  content and the user has not saved it since). Such a send is refused (`kind: 'refused'`, nothing revealed or sent) when it would
+  carry the user's credentials: stored auth (except literal auth of a request the assistant created, `created`, or of an ad-hoc
+  request), any OAuth 2.0 auth, an auth the request inherits from its folder or collection (unless that container auth is
+  still what an assistant wrote: `assistant_changes` kind `container`, recorded by import_postman / import_openapi /
+  restore_version and ended by any change or a save in the overview), or any secret variable after the pre-request scripts. Environment variables the assistant set and
+  the user has not changed (`assistant_changes` kind `variable`) may not decide the URL's origin of a send with credentials
+  (`originDependsOn` resolves the URL with the variable replaced by a marker). Scripts of an assistant-controlled send, and of any
+  assistant send while such variables are in use, run with `denySecrets`. Recording: tools.ts calls `markAssistantChange` for
+  update_request and set_variable as `pending` before the write (fingerprint `*` matches any content, so a failed
+  write never leaves an unrecorded change) and with the content after it; create_request, import_postman / import_openapi and
+  restore_version record after the write and undo it when recording fails. Main stores a SHA-256 fingerprint (request: method, URL
+  and document without `responses` and `name`; variable: secret flag and value, a secret by its row `version`). A secret variable
+  the assistant set is its own value, not a user credential; `listAssistantChanges` returns only rows whose
+  content still matches, so a user edit or a sync pull ends them. The user's Save of the request (`tabsStore.save`) and a write
+  through the variable editor (`environmentBackend.upsert`) call `clearAssistantChange`. Output: `executeDraft` wraps an assistant
+  send and redacts its outcome (response status text, body, header values, warnings, console, tests, script errors, error, MCP
+  error message): first `redactSecrets` in main (secrets the send's scripts read, `ScriptService.redact`; the stored OAuth 2.0
+  access / refresh token, `OAuth2Service.redactToken`), then the values the renderer revealed (secret variables, resolved
+  credentials incl. the Basic base64, an MCP request's token and auth headers) as `[hidden]` (`redactValues`); if redaction
+  fails the outcome becomes a failure. The runner and workflows get the same for `source: 'mcp'`.
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
   (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel
@@ -1095,8 +1252,9 @@ bundled into main like the server side. User-facing behaviour: [USER_GUIDE.md](U
 
 `checkForUpdates` (`electron/services/updateCheck.ts`) makes one GET to `https://api.github.com/repos/perunok/slinger/releases/latest`
 through `net.fetch` (system proxy), 15 s timeout, `User-Agent: Slinger/<version>`. GitHub's "latest" never returns drafts or
-pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`) and `published_at` are
-read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
+pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`), `published_at` and
+`body` (the release notes, `ReleaseInfo.notes`: control characters dropped, cut at a line break past `MAX_NOTES_CHARS` = 20,000,
+null when empty) are read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
 from the response. 404 means "no release yet"; other HTTP errors and failures are `network_error`, an unreadable answer
 `io_error`. The check itself downloads nothing.
 
@@ -1109,11 +1267,13 @@ name the release workflow uses (`Slinger-<v>-linux-amd64.deb`, `-linux-x86_64.Ap
 accepts only `https://github.com/perunok/slinger/releases/download/...` (or the test feed's own origin), streams it to
 `<userData>/updates/<name>.part` with progress (every 200 ms, speed over 1 s), and requires the exact size and GitHub's
 `digest` (`sha256:...`; no digest: refused) before renaming it; older files there are deleted. `installUpdate`: AppImage:
-copy to `<file>.new`, chmod 755, rename over `$APPIMAGE`; deb: `pkexec dpkg -i` (exit 126/127 = password not given ->
+copy to `<file>.new`, verify, chmod 755, rename over `$APPIMAGE`; deb: copied into a fresh `mkdtemp` folder (0700, file 0600),
+verified there, then `pkexec dpkg -i <copy>` (the folder is removed afterwards; exit 126/127 = password not given ->
 error, Slinger keeps running); then a detached `/bin/sh` waits for this pid to exit and starts the new version (the
-single-instance lock would otherwise send it back to this process); Windows: the installer runs detached with
+single-instance lock would otherwise send it back to this process); Windows: the installer is verified again, then runs detached with
 `/S --updated --force-run` (it restarts Slinger); macOS: the helper mounts the dmg after the quit, `ditto`s the bundle into
-place and `open`s it. Then `app.quit()` runs the normal quit (assistant calls finish, mock servers stop).
+place and `open`s it (the dmg is verified before the quit). Every install path re-hashes the file (size + SHA-256 kept from the
+download) right before it is used, because `<userData>/updates` is writable by the user. Then `app.quit()` runs the normal quit (assistant calls finish, mock servers stop).
 
 `SLINGER_UPDATE_FEED_URL` (http/https) replaces the GitHub URL (tests, e2e). Automated runs (`SLINGER_SMOKE_TEST`,
 `SLINGER_HIDE_WINDOW`) without it never call out: `checkForUpdates` answers `io_error` there.
@@ -1128,6 +1288,34 @@ update itself). The store follows `onUpdateState`; the dialog shows progress (`p
 update**, errors with **Try again**. Help > Check for Updates… always answers with a toast; Settings > Updates > Check now answers
 inline and shows the same Update now / progress / Restart to update button. The browser mock pretends to be a .deb install
 whose download takes a second.
+
+## Release notes
+
+`CHANGELOG.md` at the repo root is the curated, user-facing changelog: `## X.Y.Z — YYYY-MM-DD` per version, newest first,
+then short bullets under `### New` / `### Improved` / `### Fixed` (what changed for the user, not internals). While a version
+is in development its section is `## X.Y.Z — unreleased`. `shared/changelog.mjs` (plain JS + `changelog.d.mts`, shared by Node
+scripts and the renderer) parses it: `parseChangelog`, `changelogSection`, `releaseNotesProblem` (missing, undated, empty or
+still `(filled in at release)`).
+
+- **In the app** (works offline): `src/features/releaseNotes/changelog.ts` imports `CHANGELOG.md?raw` at build time; only the
+  lazily loaded `ReleaseNotesDialog.svelte` and the What's new check import it. The dialog renders the sections as one
+  Markdown document with `MarkdownView` (marked + DOMPurify, the docs renderer). `ui.releaseNotes`: `{ mode: 'all' }` (Help >
+  Release Notes via menu command `releaseNotes`, Ctrl+K "Release notes", About's **Release notes** button) lists every dated
+  section; `{ mode: 'new', after, current }` is What's new. Pure rules in `src/lib/releaseNotes.ts`.
+- **What's new** (`features/releaseNotes/whatsNew.ts`, run once from `App.svelte` at startup): `localStorage['slinger.whatsNew']`
+  = `{ seen }`. `decideWhatsNew`: same version: nothing; newer than `seen`: show the dated sections in `(seen, current]` and
+  store `current`; no `seen` on a fresh install (none of `EXISTING_INSTALL_KEYS` present): store silently; no `seen` but an
+  existing install (updated from a version before What's new): show the current version's section; downgrade: store quietly;
+  pre-release/dev version (the browser mock's `0.0.0-dev`): nothing. No matching section: nothing is shown.
+- **Update notice:** `UpdateDialog.svelte` shows the new release's `notes` (the GitHub release body) with the same
+  `MarkdownView` above **Update now**; without notes, "See release notes on GitHub". Notes are kept in
+  `localStorage['slinger.updates'].latest` (same cap). The browser mock's `setLatestRelease(version, notes?)` sets them.
+- **Releasing:** fill in the version's section (replace `unreleased` with the date and the placeholder with the notes) in the
+  `Release X.Y.Z` commit, together with `npm version`. On a `v*` tag, `release.yml`'s `notes` job runs
+  `node scripts/release-notes.mjs "$GITHUB_REF_NAME" --out release-notes.md` (fails fast when the section is not ready) and the
+  `publish` job creates the GitHub release with `body_path: release-notes.md`, so installed apps show the curated notes in their
+  update notice. Then add `## <next> — unreleased` with `- (filled in at release)` at the top. `electron/__tests__/releaseNotes.test.ts`
+  checks the file (ordering, dates, a section for `package.json`'s version) and the script.
 
 ## Files, dialogs and the OS
 
@@ -1194,7 +1382,18 @@ checks keyboard, scrolling, filter and click on such a tree). e2e: `launch()` an
 State lives in Svelte 5 rune stores (`*.svelte.ts`): `app/state` (workspaces, tree, collection variables, environments, active
 environment, globals), `ui` (which dialogs are open), `scope` (the `{{variable}}` scope: layers published by `app/state`,
 `scope` for the active tab's collection, `scopeFor(collectionId)` for sends and the runner), `settings`, `toast`, and `features/requests/tabs.svelte.ts`
-(open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are not persisted across restarts.
+(open tabs, drafts, save/send). Pure logic is in `src/lib/` with colocated tests. Open tabs are persisted per workspace
+(`features/requests/tabsPersistence.ts`, "Restore open tabs on startup"): the autosave effect in `App.svelte` tracks the tabs'
+persisted fields (the draft's fingerprint is derived once per edit for the dirty check) and serializes only when the debounced
+write runs. It writes nothing for a workspace whose stored tabs still wait to be restored (`tabsStore.restorePending`, until
+its collections have fully loaded: `app.collectionsLoaded`); tabs opened meanwhile are kept after the restored ones. A dirty
+request draft is stored without its examples (`extras.responses`), which are taken from the stored request on restore.
+`tabsStore.save` runs one save per tab at a time (a save asked for meanwhile waits and then runs once more if the draft
+changed), so a double Ctrl+S never conflicts with itself.
+
+**Workspace switches and async work.** `app.workspaceGeneration` is bumped by every `selectWorkspace`; code that awaits and then
+writes workspace data into `app` (collection/folder/request reloads, globals, environments, workflows, the request returned by a
+save) compares it before and after and drops a stale result, and `app.upsertRequest` ignores a request of another workspace.
 Details: `src/README.md`.
 
 **Layout** (`src/features/layout`). The request/response split orientation, "Show sidebar" (Ctrl+B; hidden, `App.svelte`

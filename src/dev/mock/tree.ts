@@ -18,7 +18,8 @@ import {
   touch,
   type MockState,
 } from './store'
-import { bySortOrder, cleanName, cleanScriptsJson, fail, setDescription } from './util'
+import { bySortOrder, cleanAuthJson, cleanName, cleanScriptsJson, fail, setDescription } from './util'
+import { containerAuthFromPostman, parseContainerAuthJson } from '../../../shared/containerAuth'
 
 type Ordered = { id: string; sortOrder: number; updatedAt: number; version: number }
 
@@ -74,6 +75,7 @@ type TreeApi = Pick<
   | 'deleteFolder'
   | 'setFolderScripts'
   | 'setFolderDescription'
+  | 'setFolderAuth'
   | 'listRequests'
   | 'createRequest'
   | 'updateRequest'
@@ -134,14 +136,36 @@ export function createTreeApi(s: MockState): TreeApi {
       return touch(folder)
     },
 
+    async setFolderAuth(folderId, authJson) {
+      const folder = must(s.folders, folderId, 'Folder')
+      folder.authJson = cleanAuthJson(authJson, 'folder')
+      return touch(folder)
+    },
+
     /** Same shape as electron/services/extractFolder.ts: fresh subfolders, requests keep their ids, old tree goes. */
     async extractFolderToCollection(input) {
       const root = must(s.folders, input.folderId, 'Folder')
       const source = must(s.collections, root.collectionId, 'Collection')
       const collection = addCollection(s, root.workspaceId, cleanName(input.name, 'Collection'))
+      if (s.untrustedCollections[source.id]) s.untrustedCollections[collection.id] = true
       collection.scriptsJson = input.scriptsJson === undefined ? (root.scriptsJson ?? null) : cleanScriptsJson(input.scriptsJson)
       collection.description = root.description ?? null
       collection.descriptionType = root.descriptionType ?? null
+      // What the folder's requests inherited (its own, the nearest parent folder's, else the collection's).
+      let authFrom: typeof root | undefined = root
+      const seen = new Set<string>()
+      let inherited: unknown = null
+      while (authFrom && !seen.has(authFrom.id)) {
+        seen.add(authFrom.id)
+        const own = parseContainerAuthJson(authFrom.authJson)
+        if (own) {
+          inherited = own
+          break
+        }
+        const parentId: string | null = authFrom.parentFolderId
+        authFrom = parentId ? s.folders.find((f) => f.id === parentId) : undefined
+      }
+      collection.authJson = containerAuthFromPostman(inherited ?? parseContainerAuthJson(source.authJson), 'collection')
       const old = descendantFolderIds(s, root.id)
       const newIdOf = new Map<string, string | null>([[root.id, null]])
       // Parents before children: repeat until every subfolder found its new parent.
@@ -153,6 +177,7 @@ export function createTreeApi(s: MockState): TreeApi {
         copy.scriptsJson = f.scriptsJson ?? null
         copy.description = f.description ?? null
         copy.descriptionType = f.descriptionType ?? null
+        copy.authJson = f.authJson ?? null
         newIdOf.set(f.id, copy.id)
       }
       let requestCount = 0

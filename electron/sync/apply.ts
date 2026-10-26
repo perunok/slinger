@@ -47,10 +47,15 @@ export interface ApplyCtx extends RowEnv {
   touched: Set<string>
   /** Effective sync extension features of the link (design section 21); updated in place when they change. */
   features: Set<string>
+  /**
+   * Set by an upsert that could not be applied because a parent (collection, folder, environment) is not on this
+   * device; the caller defers the change (electron/sync/deferred.ts) instead of losing it.
+   */
+  missingParent: EntityRef | null
 }
 
 export function makeApplyCtx(env: RowEnv, workspaceId: string): ApplyCtx {
-  return { ...env, workspaceId, changed: new Map(), touched: new Set(), features: linkFeatures(env.db, workspaceId) }
+  return { ...env, workspaceId, changed: new Map(), touched: new Set(), features: linkFeatures(env.db, workspaceId), missingParent: null }
 }
 
 const k = (type: SyncEntityType, id: string) => `${type}:${id}`
@@ -216,9 +221,13 @@ function upsertInner(
   const ws = ctx.workspaceId
   const synced = { remote_version: version, base_payload: canon }
 
-  // Parents must exist locally (a later replay from the checkpoint brings them); never leave dangling rows.
+  // Parents must exist locally; never leave dangling rows. The caller keeps the change and applies it again once the
+  // parent arrived (sync_deferred, electron/sync/deferred.ts): the checkpoint moves on, so nothing would replay it.
   for (const ref of parentRefs(type, payload)) {
-    if (!loadRow(db, ref.type, ref.id)) return
+    if (!loadRow(db, ref.type, ref.id)) {
+      ctx.missingParent = ref
+      return
+    }
   }
 
   if (!L) {

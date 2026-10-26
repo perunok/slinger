@@ -6,6 +6,7 @@
 import { withDefaultScheme } from '../../shared/urlScheme'
 import type { Db } from '../db/database'
 import { invalidInput, ioError, notFound } from '../lib/errors'
+import { readLimitedBody } from '../lib/limitedBody'
 import { requireCollection, requireWorkspace } from '../repositories/common'
 import { importPostmanCollection, MAX_IMPORT_BYTES } from '../services/postmanImport'
 import type { OpenApiFolderMode, OpenApiImportInput, OpenApiImportResult, OpenApiLink, OpenApiPreview, OpenApiSource } from '../../shared/types'
@@ -122,11 +123,16 @@ export class OpenApiService {
       throw ioError(timeout ? `${parsed.host} did not answer within ${FETCH_TIMEOUT_MS / 1000} s` : `Could not download the document: ${(e as Error)?.message ?? String(e)}`)
     }
     if (!res.ok) throw ioError(`Could not download the document: ${res.status} ${res.statusText}`.trim(), { status: res.status })
-    const length = Number(res.headers.get('content-length') ?? 0)
-    if (length > MAX_IMPORT_BYTES) throw invalidInput('The document is larger than 50 MB')
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length > MAX_IMPORT_BYTES) throw invalidInput('The document is larger than 50 MB')
-    return buf.toString('utf8')
+    // Enforced while it streams in: a larger document stops downloading at the limit.
+    let body: Awaited<ReturnType<typeof readLimitedBody>>
+    try {
+      body = await readLimitedBody(res, MAX_IMPORT_BYTES)
+    } catch (e) {
+      const timeout = (e as Error)?.name === 'TimeoutError'
+      throw ioError(timeout ? `${parsed.host} did not send the document within ${FETCH_TIMEOUT_MS / 1000} s` : `Could not download the document: ${(e as Error)?.message ?? String(e)}`)
+    }
+    if (!body.ok) throw invalidInput('The document is larger than 50 MB')
+    return body.bytes.toString('utf8')
   }
 
   async textOf(input: { text?: string | null; url?: string | null }): Promise<string> {

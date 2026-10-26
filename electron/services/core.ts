@@ -7,6 +7,7 @@ import { WorkspaceRepository } from '../repositories/workspaces'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
 import { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
 import { WorkflowRepository } from '../repositories/workflows'
+import { TrustRepository } from '../repositories/trust'
 import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
@@ -58,6 +59,8 @@ export interface Core {
   /** ADDED (workflows): local-only visual workflows per workspace. */
   workflows: WorkflowRepository
   history: HistoryRepository
+  /** ADDED (0019): local-only script trust per collection and the AI assistant's unreviewed changes. */
+  trust: TrustRepository
   /** ADDED (persisted variables): local-only collection variables and workspace globals. */
   collectionVariables: CollectionVariableRepository
   globals: GlobalVariableRepository
@@ -103,9 +106,10 @@ export function createCore(deps: CoreDeps): Core {
     requests: new RequestRepository(db),
     workflows: new WorkflowRepository(db),
     history,
+    trust: new TrustRepository(db),
     collectionVariables,
     globals,
-    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key) => oauth2.accessTokenFor(key)),
+    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key, origin) => oauth2.accessTokenFor(key, origin)),
     oauth2,
     scripts,
     authCallbacks: new BrowserAuthCallbacks(),

@@ -23,6 +23,7 @@ import { dataRows, type KvRow } from './kv'
 import { parseDocument, rawContentType, type AuthDraft, type BodyDraft, type RequestDraft } from './request'
 import { inferSchema, mergeSchemas, stringFormat, type JsonSchema } from './schemaInfer'
 import { buildTree, type TreeNode } from './tree'
+import { resolveEffectiveAuth } from './authInheritance'
 
 export const OPENAPI_VERSION = '3.1.0'
 
@@ -101,7 +102,8 @@ export interface OpenApiDocument {
 }
 
 export interface OpenApiExportInput {
-  collection: Pick<Collection, 'name'> & Partial<Pick<Collection, 'description'>>
+  /** `authJson`: the collection's auth, which requests set to "inherit" use (as do folders' own, see authInheritance.ts). */
+  collection: Pick<Collection, 'name'> & Partial<Pick<Collection, 'description' | 'authJson'>>
   folders: ApiFolder[]
   requests: ApiRequest[]
   /** Collection variables: `baseUrl` gives the server, others the defaults of server variables and OAuth URLs. */
@@ -408,8 +410,9 @@ function parametersOf(draft: RequestDraft, pathParams: string[], fromSpec: boole
   const source = sourceRequest(draft.extras)
   const sourceUrl = source && isObj(source.url) ? source.url : null
 
-  // Path: Postman path variables (`url.variable`) carry values and descriptions.
+  // Path: the request's path variables (Postman `url.variable`) carry values and descriptions; then the imported item's.
   const pathVars = new Map<string, Json>()
+  for (const v of draft.pathVariables) if (!pathVars.has(v.key)) pathVars.set(v.key, { key: v.key, value: v.value, description: v.description })
   if (sourceUrl && Array.isArray(sourceUrl.variable)) {
     for (const v of sourceUrl.variable) if (isObj(v) && typeof v.key === 'string' && !pathVars.has(v.key)) pathVars.set(v.key, v)
   }
@@ -720,7 +723,9 @@ export function buildOpenApiExport({ collection, folders, requests, variables, l
     }
     const responses = Array.isArray(draft.extras.responses) ? draft.extras.responses : []
     addResponses(op, request, responses, fromSpec)
-    const use = securityUse(draft.auth, vars)
+    // The effective auth: an inheriting request is described with its folder's / collection's.
+    const auth = resolveEffectiveAuth(draft.auth, { collection: { id: '', name: collection.name, authJson: collection.authJson ?? null }, folders, folderId: request.folderId }).auth
+    const use = securityUse(auth, vars)
     if (use) op.security = [{ [registry.register(use)]: use.scopes }]
 
     const key = `${method} ${op.path}`

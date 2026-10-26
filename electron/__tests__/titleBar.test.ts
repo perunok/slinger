@@ -52,6 +52,7 @@ describe('window chrome (IPC)', () => {
       reopen: () => void calls.push(['reopen']),
       control: (action: WindowAction) => void calls.push(['control', action]),
       showAppMenu: (x, y) => void calls.push(['menu', x, y]),
+      setUnsavedChanges: (titles) => void calls.push(['unsaved', titles]),
     }
     const api = createIpcApi(env.core, { appVersion: '0', openExternal: async () => {}, chooseDirectory: async () => null, pickFile: async () => null, window })
     return { api, calls }
@@ -90,6 +91,17 @@ describe('window chrome (IPC)', () => {
       await expect(call(api.showAppMenu, ...bad), JSON.stringify(bad)).rejects.toMatchObject({ code: 'invalid_input' })
     }
     expect(calls).toHaveLength(5)
+  })
+
+  it('passes the unsaved-edits list on (strings only)', async () => {
+    const { api, calls } = withWindow()
+    await api.setUnsavedChanges(['Get user', 'Untitled Request'])
+    await api.setUnsavedChanges([])
+    expect(calls).toEqual([['unsaved', ['Get user', 'Untitled Request']], ['unsaved', []]])
+    for (const bad of [[], ['x'], [[1]], [['a'], 'b'], [['x'.repeat(1001)]]]) {
+      await expect(call(api.setUnsavedChanges, ...bad), JSON.stringify(bad).slice(0, 40)).rejects.toMatchObject({ code: 'invalid_input' })
+    }
+    await expect(env.api.setUnsavedChanges(['a'])).resolves.toBeUndefined() // no window: nothing to guard
   })
 
   it('without a window: reading/saving fails with io_error, window actions are no-ops', async () => {

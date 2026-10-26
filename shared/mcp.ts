@@ -33,7 +33,7 @@ const body = z
   .describe('Request body. Omit to keep the current one.')
 const auth = z
   .object({
-    type: z.enum(['none', 'basic', 'bearer', 'apikey']),
+    type: z.enum(['inherit', 'none', 'basic', 'bearer', 'apikey']).describe('inherit = use the folder\'s or collection\'s auth (the default for new requests).'),
     username: z.string().max(4096).optional(),
     password: z.string().max(4096).optional(),
     token: z.string().max(65536).optional(),
@@ -49,6 +49,17 @@ const requestFields = {
   url: z.string().max(65536).optional().describe('May contain {{variables}} and a query string.'),
   headers: kv.optional().describe('Replaces all headers.'),
   query: kv.optional().describe('Replaces the query parameters (rewrites the query string of the URL).'),
+  path_variables: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(512).describe('Name of a :name path segment of the URL, without the colon.'),
+        value: z.string().max(65536).describe('May contain {{variables}}; sent URL-encoded. Empty: the segment is sent as :name.'),
+        description: z.string().max(10_000).optional(),
+      }),
+    )
+    .max(200)
+    .optional()
+    .describe('Values of the URL\'s path variables (/pets/:petId -> key "petId"). Only the given keys change.'),
   body: body.optional(),
   auth: auth.optional(),
   description: z.string().max(200_000).optional().describe('Markdown documentation.'),
@@ -104,7 +115,8 @@ export const MCP_TOOLS = {
     description:
       'Collections with their folders and requests (ids, type, method, URL) in sidebar order. Use the ids with the other tools. ' +
       'type "mcp" marks an MCP request (method MCP): it calls a tool, reads a resource or gets a prompt on an MCP server; its ' +
-      'URL is the server URL, or the command line of a local (stdio) server.',
+      'URL is the server URL, or the command line of a local (stdio) server. A collection or folder with its own auth has `auth` ' +
+      '(its type only); requests set to inherit use it.',
     input: z.object({ workspace_id: optWorkspace, collection_id: id.optional().describe('Only this collection.') }),
     readOnly: true,
   },
@@ -117,11 +129,13 @@ export const MCP_TOOLS = {
   get_request: {
     title: 'Read a request',
     description:
-      'Full request: method, URL, query, headers, body, auth, scripts, docs, and its saved examples (index, name, status). ' +
+      'Full request: method, URL, query, path variables (values of :name path segments), headers, body, auth, scripts, docs, ' +
+      'and its saved examples (index, name, status). ' +
       'For an MCP request (type "mcp"): the transport (http = Streamable HTTP, sse, stdio = a local command), the server URL ' +
       'with headers and auth, or the command, args, environment variable names (values hidden) and cwd; then the operation ' +
       '(tools/call, resources/read or prompts/get) with its tool and arguments (JSON text), resource URI, or prompt and ' +
-      'arguments. Literal credentials are masked.',
+      'arguments. Literal credentials are masked. Auth type "inherit" uses the nearest folder\'s or the collection\'s auth: ' +
+      '`inherited_from` names it and `effective` shows it (masked too).',
     input: z.object({ request_id: id }),
     readOnly: true,
   },
@@ -271,7 +285,10 @@ export const MCP_TOOLS = {
       '{{variables}} resolve (secrets inside Slinger), the result lands in history. Returns status, headers, body and tests. ' +
       'An MCP request (request_id only, sent as saved) runs its operation on its server: the body is the JSON-RPC result, ' +
       'status 200, or 500 "Tool error" when the tool reports an error. A local command (stdio) runs only after the user ' +
-      'allowed it once in the Slinger window.',
+      'allowed it once in the Slinger window. The user\'s credentials (secret variables, saved auth, OAuth 2.0 tokens) are ' +
+      'only sent with a saved request sent as saved that you have not changed since the user last saved it; anything else ' +
+      'that would carry them is refused (ask the user to send or save it in the window). Secret values in results appear ' +
+      'as {{name}} or [hidden].',
     input: z.object({
       request_id: id.optional().describe('A saved request. Other fields given here override it for this send only.'),
       ...requestFields,

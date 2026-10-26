@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HttpResponseData } from '../../../shared/types'
 import { createMockBackend } from '../../dev/mockBackend'
 import { LARGE_BODY_BYTES, textToBase64 } from '../../lib/response'
@@ -129,5 +129,60 @@ describe('ResponseViewer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save response to file' }))
     await new Promise((r) => setTimeout(r, 20))
     expect(calls.filter((c) => c.method === 'writeExportFile').at(-1)!.args).toEqual(['response.bin', b64, 'base64'])
+  })
+})
+
+describe('ResponseViewer right-click menus', () => {
+  it('offers the toolbar actions on the body', async () => {
+    render(ResponseViewer, { data: res({ ct: 'application/json', body: '{"a":1}' }) })
+    await fireEvent.contextMenu(screen.getByTestId('response-body'))
+    const items = screen.getAllByRole('menuitem').map((i) => i.textContent?.replace(/Ctrl\+F$/, '').trim())
+    expect(items).toEqual(['Copy response body', 'Save response to file…', 'Search in response'])
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Search in response/ }))
+    expect(document.querySelector('.cm-search')).not.toBeNull()
+  })
+
+  it('copies a header name or value', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    render(ResponseViewer, { data: res({ ct: 'text/plain', body: 'x', headers: [{ key: 'X-Trace', value: 'abc' }] }), view: 'headers' })
+    await fireEvent.contextMenu(screen.getByText('X-Trace'))
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Copy value' }))
+    expect(writeText).toHaveBeenCalledWith('abc')
+    await fireEvent.contextMenu(screen.getByText('X-Trace'))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Name: value/ }))
+    expect(writeText).toHaveBeenLastCalledWith('X-Trace: abc')
+  })
+
+  it('copies a cookie as name=value', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    render(ResponseViewer, { data: res({ body: 'x', headers: [{ key: 'Set-Cookie', value: 'sid=42; Path=/' }] }), view: 'cookies' })
+    await fireEvent.contextMenu(screen.getByText('sid'))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /name=value/ }))
+    expect(writeText).toHaveBeenCalledWith('sid=42')
+  })
+})
+
+describe('ResponseViewer: bodies that were not loaded', () => {
+  it('over the size limit: says so, keeps status and headers, and offers Send and download to file', async () => {
+    let clicked = 0
+    render(ResponseViewer, {
+      data: res({ ct: 'application/zip', bodyByteLength: 80 * 1024 * 1024, bodyTooLarge: { limitBytes: 50 * 1024 * 1024 } }),
+      onsendtofile: () => clicked++,
+    })
+    expect(screen.getByTestId('status-chip')).toHaveTextContent('200 OK')
+    expect(screen.getByTestId('body-not-loaded')).toHaveTextContent('Response larger than 50 MB — not loaded')
+    await fireEvent.click(screen.getByTestId('send-to-file'))
+    expect(clicked).toBe(1)
+    await fireEvent.click(tab('Headers'))
+    expect(screen.getByText('application/zip', { selector: 'td, span, div' })).toBeInTheDocument()
+  })
+
+  it('downloaded to a file: shows where and how much', () => {
+    render(ResponseViewer, { data: res({ bodyByteLength: 2048, savedToFile: '/home/u/Downloads/a.bin' }) })
+    expect(screen.getByTestId('body-not-loaded')).toHaveTextContent('Saved 2.0 KB to a file')
+    expect(screen.getByTestId('saved-path')).toHaveTextContent('/home/u/Downloads/a.bin')
+    expect(screen.queryByTestId('send-to-file')).toBeNull()
   })
 })

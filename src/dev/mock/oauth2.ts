@@ -10,7 +10,13 @@ import { fail, nowSec, sleep, uuid } from './util'
 
 type OAuth2Api = Pick<
   SlingerIpcApi,
-  'getOAuth2Token' | 'cancelOAuth2Flow' | 'refreshOAuth2Token' | 'getOAuth2TokenStatus' | 'deleteOAuth2Token' | 'revealOAuth2Token'
+  | 'getOAuth2Token'
+  | 'cancelOAuth2Flow'
+  | 'refreshOAuth2Token'
+  | 'getOAuth2TokenStatus'
+  | 'deleteOAuth2Token'
+  | 'revealOAuth2Token'
+  | 'allowOAuth2Origin'
 >
 
 /** Deterministic 64-hex key (not cryptographic; the real one is SHA-256 in main). */
@@ -54,13 +60,43 @@ function httpUrl(value: string, label: string): void {
 }
 
 /** The access token for executeHttpRequest, or the same errors as main. */
-export function mockAccessToken(s: MockState, tokenKey: string): string {
+export function mockAccessToken(s: MockState, tokenKey: string, origin: string): string {
   const t = s.oauth2Tokens[tokenKey]
   if (!t) fail('invalid_input', 'No access token yet: click Get New Access Token in the Authorization tab', { reason: 'oauth2_no_token' })
   if (t.expiresAt !== null && t.expiresAt <= nowSec()) {
     fail('invalid_input', 'The access token has expired: click Get New Access Token in the Authorization tab', { reason: 'oauth2_expired' })
   }
+  checkOrigin(t, tokenKey, origin)
   return t.accessToken
+}
+
+/** As main: the first origin is recorded, another one is refused until allowed. */
+function checkOrigin(t: MockOAuth2Token, tokenKey: string, origin: string): void {
+  const origins = t.origins ?? []
+  if (origins.includes(origin)) return
+  if (origins.length === 0) {
+    t.origins = [origin]
+    return
+  }
+  fail(
+    'invalid_input',
+    `This access token has only been used with ${origins.join(', ')}, not ${origin}. Allow it there in the Slinger window, or get a separate token.`,
+    { reason: 'oauth2_new_origin', origin, origins, tokenKey },
+  )
+}
+
+/** As main's OAuth2Service.redactToken. */
+export function mockRedactToken(s: MockState, tokenKey: string | null, text: string): string {
+  const t = tokenKey ? s.oauth2Tokens[tokenKey] : undefined
+  if (!t) return text
+  let out = text
+  for (const [value, label] of [
+    [t.accessToken, '<access token>'],
+    [t.refreshToken, '<refresh token>'],
+  ] as const) {
+    if (value && value.length >= 4) out = out.split(value).join(label)
+  }
+  return out
 }
 
 export function createOAuth2Api(s: MockState, latency: () => number): OAuth2Api {
@@ -96,7 +132,8 @@ export function createOAuth2Api(s: MockState, latency: () => number): OAuth2Api 
         if (cancelled) fail('network_error', 'Authorization cancelled', { cancelled: true })
       }
       const key = mockTokenKey(c)
-      s.oauth2Tokens[key] = issue(c)
+      const origins = s.oauth2Tokens[key]?.origins
+      s.oauth2Tokens[key] = { ...issue(c), ...(origins?.length ? { origins } : {}) }
       return statusOf(key, s.oauth2Tokens[key])
     },
     async cancelOAuth2Flow(flowId) {
@@ -109,7 +146,7 @@ export function createOAuth2Api(s: MockState, latency: () => number): OAuth2Api 
       if (options?.ifExpiring && (!t || !expiring || !t.refreshToken)) return statusOf(key, t)
       if (!t) fail('invalid_input', 'No access token yet: click Get New Access Token')
       if (!t.refreshToken) fail('invalid_input', 'This token has no refresh token: click Get New Access Token', { reason: 'no_refresh_token' })
-      s.oauth2Tokens[key] = { ...issue(c), refreshToken: t.refreshToken }
+      s.oauth2Tokens[key] = { ...issue(c), refreshToken: t.refreshToken, ...(t.origins?.length ? { origins: t.origins } : {}) }
       return statusOf(key, s.oauth2Tokens[key])
     },
     async getOAuth2TokenStatus(c) {
@@ -119,10 +156,16 @@ export function createOAuth2Api(s: MockState, latency: () => number): OAuth2Api 
     async deleteOAuth2Token(tokenKey) {
       delete s.oauth2Tokens[tokenKey]
     },
-    async revealOAuth2Token(tokenKey) {
+    async revealOAuth2Token(tokenKey, origin) {
       const t = s.oauth2Tokens[tokenKey]
       if (!t) fail('invalid_input', 'No access token is stored for this configuration')
+      if (origin !== undefined) checkOrigin(t, tokenKey, origin)
       return t.accessToken
+    },
+    async allowOAuth2Origin(tokenKey, origin) {
+      const t = s.oauth2Tokens[tokenKey]
+      if (!t) fail('invalid_input', 'No access token is stored for this configuration')
+      if (!(t.origins ?? []).includes(origin)) t.origins = [...(t.origins ?? []), origin]
     },
   }
 }

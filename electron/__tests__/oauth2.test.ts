@@ -492,15 +492,6 @@ describe('reveal, delete and the reserved keychain namespace', () => {
     await expect(api.revealOAuth2Token('not-a-key')).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
-  it('refuses the slinger:oauth2: prefix in the generic secure store', async () => {
-    const { tokenKey } = await api.getOAuth2Token(config())
-    for (const key of [OAUTH2_TOKEN_PREFIX + tokenKey, 'SLINGER:OAUTH2:x']) {
-      await expect(api.secureStoreGet(key)).rejects.toMatchObject({ code: 'invalid_input' })
-      await expect(api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
-      await expect(api.secureStoreDelete(key)).rejects.toMatchObject({ code: 'invalid_input' })
-    }
-  })
-
   it('reports an unusable keychain as io_error', async () => {
     env.secrets.set = () => {
       throw new Error('keyring locked')
@@ -532,5 +523,64 @@ describe('token key binding', () => {
     const evil = await api.refreshOAuth2Token(config({ refreshTokenUrl: 'https://attacker.example/steal' }), { ifExpiring: true })
     expect(evil.hasToken).toBe(false)
     expect(oauth.tokenCalls).toHaveLength(1)
+  })
+})
+
+describe('token origins', () => {
+  let target: Awaited<ReturnType<typeof startTestServer>>
+  beforeEach(async () => {
+    target = await startTestServer()
+  })
+  afterEach(() => target.close())
+
+  const sendTo = (tokenKey: string, base: string) =>
+    api.executeHttpRequest(baseHttp(workspaceId, { url: `${base}/data`, historyUrl: `${base}/data`, auth: { kind: 'oauth2', oauth2: { tokenKey, addTo: 'header', headerPrefix: 'Bearer' } } }))
+  const other = () => target.baseUrl.replace('127.0.0.1', 'localhost')
+
+  it('binds a token to the origin it was first sent to and refuses another one until the user allows it', async () => {
+    const { tokenKey } = await api.getOAuth2Token(config())
+    expect(stored(tokenKey).origins).toBeUndefined()
+    await sendTo(tokenKey, target.baseUrl)
+    expect(stored(tokenKey).origins).toEqual([new URL(target.baseUrl).origin])
+    await sendTo(tokenKey, target.baseUrl)
+    expect(target.requests).toHaveLength(2)
+
+    const otherOrigin = new URL(other()).origin
+    await expect(sendTo(tokenKey, other())).rejects.toMatchObject({
+      code: 'invalid_input',
+      details: { reason: 'oauth2_new_origin', origin: otherOrigin, origins: [new URL(target.baseUrl).origin], tokenKey },
+    })
+    expect(target.requests).toHaveLength(2)
+
+    await expect(api.allowOAuth2Origin(tokenKey, `${otherOrigin}/path`)).rejects.toMatchObject({ code: 'invalid_input' })
+    await api.allowOAuth2Origin(tokenKey, otherOrigin)
+    await sendTo(tokenKey, other())
+    expect(target.requests).toHaveLength(3)
+  })
+
+  it('keeps the origins across a refresh and a new token of the same configuration', async () => {
+    const { tokenKey } = await api.getOAuth2Token(config())
+    await sendTo(tokenKey, target.baseUrl)
+    await api.refreshOAuth2Token(config())
+    expect(stored(tokenKey).origins).toEqual([new URL(target.baseUrl).origin])
+    await api.getOAuth2Token(config())
+    expect(stored(tokenKey).origins).toEqual([new URL(target.baseUrl).origin])
+    await expect(sendTo(tokenKey, other())).rejects.toMatchObject({ details: { reason: 'oauth2_new_origin' } })
+  })
+
+  it('applies the same check to a reveal for a connect (MCP requests), not to a plain reveal', async () => {
+    const { tokenKey } = await api.getOAuth2Token(config())
+    expect(await api.revealOAuth2Token(tokenKey)).toBe(stored(tokenKey).access_token)
+    expect(stored(tokenKey).origins).toBeUndefined()
+    await api.revealOAuth2Token(tokenKey, 'https://mcp.example.com')
+    expect(stored(tokenKey).origins).toEqual(['https://mcp.example.com'])
+    await expect(api.revealOAuth2Token(tokenKey, 'https://evil.example.com')).rejects.toMatchObject({ details: { reason: 'oauth2_new_origin' } })
+  })
+
+  it('redactSecrets replaces the stored access and refresh tokens', async () => {
+    const { tokenKey } = await api.getOAuth2Token(config())
+    const t = stored(tokenKey)
+    const [out] = await api.redactSecrets({ scriptSessionId: null, oauth2TokenKey: tokenKey, texts: [`echo ${t.access_token} and ${t.refresh_token}`] })
+    expect(out).toBe('echo <access token> and <refresh token>')
   })
 })

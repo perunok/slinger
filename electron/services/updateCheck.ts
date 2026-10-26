@@ -2,11 +2,14 @@
  * "Is there a newer Slinger?" One GET to GitHub's latest-release endpoint (drafts and pre-releases are never returned
  * there). Nothing is downloaded or installed: the renderer only shows a notice linking to the release page.
  *
- * The response is untrusted: only `tag_name` (must be a semantic version) and `published_at` are read, and the link is
- * built from the version, so a tampered answer can at most name a wrong version. Pure Node (fetch injected).
+ * The response is untrusted: only `tag_name` (must be a semantic version), `published_at` and `body` (the release notes,
+ * Markdown, capped at MAX_NOTES_CHARS) are read, and the link is built from the version, so a tampered answer can at most
+ * name a wrong version or show wrong notes. The renderer shows the notes through its sanitising Markdown renderer
+ * (DOMPurify allowlist, no remote images, links open in the system browser). Pure Node (fetch injected).
  */
 import type { UpdateCheckResult } from '../../shared/types'
 import { invalidInput, ioError, networkError } from '../lib/errors'
+import { readLimitedBody } from '../lib/limitedBody'
 import { compare, parse } from './semver'
 
 export const RELEASES_REPO = 'perunok/slinger'
@@ -16,6 +19,8 @@ export const releasePageUrl = (version: string) => `https://github.com/${RELEASE
 /** Larger answers are refused (a release JSON is a few KB, mostly the notes). */
 const MAX_BYTES = 1024 * 1024
 const TIMEOUT_MS = 15_000
+/** Release notes longer than this are cut at a line break (the curated notes of one version are a few KB). */
+export const MAX_NOTES_CHARS = 20_000
 
 export interface UpdateCheckOptions {
   currentVersion: string
@@ -50,8 +55,9 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
     // 403/429: GitHub's rate limit for unauthenticated calls (60 an hour per address).
     throw networkError(`GitHub answered HTTP ${res.status}`, { status: res.status })
   }
-  const text = await res.text()
-  if (text.length > MAX_BYTES) throw ioError('The release information from GitHub is too large')
+  const read = await readLimitedBody(res, MAX_BYTES)
+  if (!read.ok) throw ioError('The release information from GitHub is too large')
+  const text = read.bytes.toString('utf8')
   let body: unknown
   try {
     body = JSON.parse(text)
@@ -63,14 +69,14 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
   const current = parse(currentVersion)
   return {
     currentVersion,
-    latest: { version: release.version, url: releasePageUrl(release.version), publishedAt: release.publishedAt },
+    latest: { version: release.version, url: releasePageUrl(release.version), publishedAt: release.publishedAt, notes: release.notes },
     updateAvailable: current !== null && compare(release.version, current) > 0,
     checkedAt,
   }
 }
 
-/** `tag_name` "v1.2.3" or "1.2.3" (a strict semantic version), plus an optional ISO `published_at`. */
-export function parseRelease(body: unknown): { version: string; publishedAt: number | null } | null {
+/** `tag_name` "v1.2.3" or "1.2.3" (a strict semantic version), plus an optional ISO `published_at` and Markdown `body`. */
+export function parseRelease(body: unknown): { version: string; publishedAt: number | null; notes: string | null } | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return null
   const o = body as Record<string, unknown>
   if (o.draft === true || o.prerelease === true) return null
@@ -79,7 +85,21 @@ export function parseRelease(body: unknown): { version: string; publishedAt: num
   const parsed = parse(version)
   if (!parsed || parsed.prerelease.length > 0) return null
   const ms = typeof o.published_at === 'string' ? Date.parse(o.published_at) : NaN
-  return { version, publishedAt: Number.isFinite(ms) ? Math.floor(ms / 1000) : null }
+  return { version, publishedAt: Number.isFinite(ms) ? Math.floor(ms / 1000) : null, notes: releaseNotesText(o.body) }
+}
+
+/** The release `body` as notes: line endings normalised, trimmed, cut at a line break past MAX_NOTES_CHARS; null when empty. */
+export function releaseNotesText(body: unknown, max = MAX_NOTES_CHARS): string | null {
+  if (typeof body !== 'string') return null
+  // NUL and other C0 controls except tab/newline have no place in Markdown notes.
+  // eslint-disable-next-line no-control-regex
+  let text = body.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim()
+  if (!text) return null
+  if (text.length > max) {
+    const cut = text.lastIndexOf('\n', max)
+    text = `${text.slice(0, cut > max / 2 ? cut : max).trimEnd()}\n\n…`
+  }
+  return text
 }
 
 /**

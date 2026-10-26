@@ -10,7 +10,7 @@ import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import { newRow } from '../../lib/kv'
 import { newMcpDraft, newMcpRequestDraft, type McpDraft } from '../../lib/mcpRequest'
-import { draftFingerprint, parseDocument, type RequestDraft } from '../../lib/request'
+import { draftFingerprint, emptyAuth, parseDocument, type RequestDraft } from '../../lib/request'
 import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { cancelRun, executeDraft, newScriptRun, UNTRUSTED_COMMAND_MESSAGE } from './execute'
 import { tabsStore } from './tabs.svelte'
@@ -68,6 +68,74 @@ const withScripts = (events: unknown[]) => {
   return { r, draft }
 }
 const ctx = (r: ReturnType<typeof getUser>) => ({ workspaceId: app.workspaceId!, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId })
+
+describe('executeDraft with inherited auth', () => {
+  const bearer = (token: string) => JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: token, type: 'string' }] })
+
+  it('sends the nearest folder\'s or the collection\'s auth, resolving its variables, and scripts see it', async () => {
+    const r = getUser()
+    await backend.setCollectionAuth(r.collectionId, bearer('{{userId}}-root'))
+    await app.reloadCollections()
+    const draft = { ...parseDocument(r), auth: emptyAuth() }
+    draft.extras = { ...draft.extras, scripts: pre('p()') }
+    expect((await executeDraft(draft, ctx(r))).ok).toBe(true)
+    expect(sent[0].auth).toEqual({ kind: 'bearer', bearer: { token: '42-root' } }) // userId = 42 in the Local environment
+    expect(calls[0].request.auth).toMatchObject({ type: 'bearer' })
+
+    await backend.setFolderAuth(r.folderId!, bearer('folder'))
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {} }, ctx(r))
+    expect(sent[1].auth).toEqual({ kind: 'bearer', bearer: { token: 'folder' } })
+
+    // A folder set to "No auth" stops inheritance; a request's own "No auth" ignores the chain.
+    await backend.setFolderAuth(r.folderId!, '{"type":"noauth"}')
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {} }, ctx(r))
+    expect(sent[2].auth).toEqual({ kind: 'none' })
+    await backend.setFolderAuth(r.folderId!, null)
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {}, auth: { ...emptyAuth(), kind: 'none' } }, ctx(r))
+    expect(sent[3].auth).toEqual({ kind: 'none' })
+    // The stored document still says inherit: nothing was copied into it.
+    expect(JSON.parse(app.requests.find((x) => x.id === r.id)!.documentJson).auth ?? null).not.toEqual(JSON.parse(bearer('folder')))
+  })
+
+  it('requests inheriting one OAuth 2.0 setting share its token, and the token stays bound to the hosts it was used with', async () => {
+    const r = getUser()
+    const oauth2 = JSON.stringify({
+      type: 'oauth2',
+      oauth2: [
+        { key: 'grant_type', value: 'client_credentials' }, { key: 'accessTokenUrl', value: '{{baseUrl}}/token' },
+        { key: 'clientId', value: 'app' }, { key: 'clientSecret', value: '{{apiToken}}' }, { key: 'addTokenTo', value: 'header' },
+      ],
+    })
+    await backend.setCollectionAuth(r.collectionId, oauth2)
+    await app.reloadCollections()
+    const { containerAuthDraft } = await import('../../lib/authInheritance')
+    const { resolveOAuth2 } = await import('../oauth2/oauth2Actions')
+    const got = await resolveOAuth2(containerAuthDraft(oauth2, 'collection').oauth2, { workspaceId: app.workspaceId!, collectionId: r.collectionId }, 'token')
+    if (!got.ok) throw new Error(got.error)
+    const token = await backend.getOAuth2Token(got.config)
+    const draft = { ...parseDocument(r), auth: emptyAuth(), extras: {} }
+    expect((await executeDraft(draft, ctx(r))).ok).toBe(true)
+    // A second inheriting request of the same collection (same host) uses the same stored token, no prompt.
+    const other = app.requests.find((x) => x.collectionId === r.collectionId && x.id !== r.id && /^\{\{baseUrl\}\}/.test(x.url))!
+    expect((await executeDraft({ ...parseDocument(other), auth: emptyAuth(), extras: {} }, ctx(other))).ok).toBe(true)
+    expect(sent.map((s) => s.auth.oauth2?.tokenKey)).toEqual([token.tokenKey, token.tokenKey])
+    // Another host: the token is not sent there unless the user allows it.
+    const { securityPrompts } = await import('../security/prompts.svelte')
+    const ask = vi.spyOn(securityPrompts, 'ask').mockResolvedValue(false)
+    const elsewhere = await executeDraft({ ...draft, url: 'https://elsewhere.example/x' }, ctx(r))
+    expect(elsewhere.ok).toBe(false)
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('a request outside a collection that inherits is sent without auth', async () => {
+    const out = await executeDraft({ ...parseDocument(getUser()), auth: emptyAuth() }, { workspaceId: app.workspaceId! })
+    expect(out.ok).toBe(true)
+    expect(sent[0].auth).toEqual({ kind: 'none' })
+  })
+})
 
 describe('executeDraft with scripts', () => {
   it('does not call runScripts when there are no scripts', async () => {
@@ -328,6 +396,7 @@ describe('executeDraft with a pinned environment (collection runs)', () => {
           value: '7',
           isSecret: false,
         })
+        return { environmentChanged: true } // as main reports a script's environment write
       }
       return {}
     }
@@ -583,5 +652,96 @@ describe('executeDraft with an MCP request', () => {
     expect(out.ok).toBe(true)
     expect(connects.at(-1)?.headers).toEqual([{ key: 'Authorization', value: `Bearer ${token}` }])
     expect(JSON.stringify(mcpCalls)).not.toContain(token)
+  })
+})
+
+describe('a send keeps the scope it started with', () => {
+  it('switching the environment while the pre-request scripts run does not change the variables or secrets used', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    const localBase = (await backend.listEnvironmentVariables(local.id)).find((v) => v.key === 'baseUrl')!.value!
+    const secret = await backend.upsertEnvironmentVariable({ environmentId: local.id, key: 'apiKey', value: 'local-secret', isSecret: true })
+    const other = await backend.createEnvironment(app.workspaceId!, 'Other')
+    await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'baseUrl', value: 'https://other.test', isSecret: false })
+    const otherSecret = await backend.upsertEnvironmentVariable({ environmentId: other.id, key: 'apiKey', value: 'other-secret', isSecret: true })
+    await app.reloadEnvironments()
+    await app.setActiveEnvironment(local.id)
+    vi.mocked(backend.runScripts).mockImplementation(async (input) => {
+      calls.push(structuredClone(input))
+      await app.setActiveEnvironment(other.id) // the user switches while the script runs
+      return result(input)
+    })
+    const reveal = vi.spyOn(backend, 'revealEnvironmentVariable')
+    const { r, draft } = withScripts(pre('1'))
+    draft.headers = [newRow({ key: 'X-Key', value: '{{apiKey}}' })]
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(app.activeEnvironmentId).toBe(other.id)
+    expect(sent.at(-1)!.url.startsWith(localBase)).toBe(true)
+    expect(reveal).toHaveBeenCalledWith(secret.id)
+    expect(reveal).not.toHaveBeenCalledWith(otherSecret.id)
+    expect(sent.at(-1)!.headers).toContainEqual(expect.objectContaining({ key: 'X-Key', value: 'local-secret' }))
+  })
+
+  it('switching the workspace while the pre-request scripts run resolves the starting workspace\'s variables', async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    const localBase = (await backend.listEnvironmentVariables(local.id)).find((v) => v.key === 'baseUrl')!.value!
+    const startWs = app.workspaceId!
+    const otherWs = await backend.createWorkspace('Elsewhere')
+    const otherEnv = await backend.createEnvironment(otherWs.id, 'Prod')
+    await backend.upsertEnvironmentVariable({ environmentId: otherEnv.id, key: 'baseUrl', value: 'https://prod.other.test', isSecret: false })
+    vi.mocked(backend.runScripts).mockImplementation(async (input) => {
+      calls.push(structuredClone(input))
+      if (input.event === 'prerequest') {
+        await app.selectWorkspace(otherWs.id)
+        await app.setActiveEnvironment(otherEnv.id)
+      }
+      return result(input, input.event === 'prerequest' ? { environmentChanged: true } : {})
+    })
+    const { r, draft } = withScripts(pre('1'))
+    const out = await executeDraft(draft, ctx(r))
+    expect(out.ok).toBe(true)
+    expect(app.workspaceId).toBe(otherWs.id)
+    expect(sent.at(-1)!.url.startsWith(localBase)).toBe(true)
+    expect(sent.at(-1)!.workspaceId).toBe(startWs)
+  })
+})
+
+describe('Maximum response size and Send and download to file', () => {
+  it('sends the limit from Settings with every request', async () => {
+    settings.setMaxResponseMb(7)
+    const r = getUser()
+    await executeDraft(parseDocument(r), ctx(r))
+    expect(sent[0].maxResponseBytes).toBe(7 * 1024 * 1024)
+    settings.setMaxResponseMb(0)
+    expect(settings.maxResponseMb).toBe(50) // no "unlimited"
+    settings.setMaxResponseMb(100_000)
+    expect(settings.maxResponseMb).toBe(256)
+  })
+
+  it('a body over the limit keeps status and headers; sendToFile asks main for a file, then sends with its id (no tests run)', async () => {
+    settings.setMaxResponseMb(1)
+    const { r, draft } = withScripts(testEv('t()'))
+    const tab = tabsStore.openRequest(r)
+    tab.draft = { ...draft, url: 'https://mock.slinger.local/huge' }
+    await tabsStore.send(tab)
+    expect(tab.response?.data).toMatchObject({ status: 200, bodyText: null, bodyBase64: null, bodyTooLarge: { limitBytes: 1024 * 1024 } })
+    expect(tab.response?.data.headers.length).toBeGreaterThan(0)
+    calls = []
+
+    const choose = vi.spyOn(backend, 'chooseResponseDownloadFile')
+    await tabsStore.sendToFile(tab)
+    expect(choose).toHaveBeenCalledWith('response.txt')
+    expect(sent.at(-1)?.downloadId).toEqual(expect.any(String))
+    expect(tab.response?.data).toMatchObject({ savedToFile: '/home/user/Downloads/response.txt', bodyText: null })
+    expect(calls.filter((c) => c.event === 'test')).toEqual([])
+    settings.setMaxResponseMb(50)
+  })
+
+  it('a cancelled save dialog sends nothing', async () => {
+    const r = getUser()
+    const tab = tabsStore.openRequest(r)
+    vi.spyOn(backend, 'chooseResponseDownloadFile').mockResolvedValue(null)
+    expect(await tabsStore.sendToFile(tab)).toBeNull()
+    expect(sent).toEqual([])
   })
 })

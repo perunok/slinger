@@ -9,6 +9,8 @@
   import type { Workflow } from '../../../shared/types'
   import { app } from '../../app/state.svelte'
   import Button from '../../components/ui/Button.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { menuPoint } from '../../components/ui/contextMenu'
   import Icon from '../../components/ui/Icon.svelte'
   import InfoTip from '../../components/ui/InfoTip.svelte'
   import { api, errorInfo } from '../../lib/ipc'
@@ -174,6 +176,28 @@
     edges = edges.filter((e) => e.source !== id && e.target !== id)
   }
 
+  function openRequest(id: string) {
+    const r = app.requestById(id)
+    if (r) tabsStore.openRequest(r)
+  }
+
+  // Right-click on a node selects it and offers the inspector's "Open request" and "Delete node".
+  let menu = $state<{ x: number; y: number; nodeId: string } | null>(null)
+  function onNodeMenu(e: MouseEvent, id: string) {
+    e.preventDefault()
+    nodes = nodes.map((x) => (x.selected !== (x.id === id) ? { ...x, selected: x.id === id } : x))
+    menu = { ...menuPoint(e), nodeId: id }
+  }
+  function nodeMenuItems(id: string): MenuItem[] {
+    const node = nodes.find((n) => n.id === id)?.data.node
+    if (!node) return []
+    const requestId = node.type === 'request' ? (node.config as { requestId: string | null }).requestId : null
+    return [
+      ...(requestId && app.requestById(requestId) ? [{ label: 'Open request', icon: 'external', action: () => openRequest(requestId) }, { separator: true, label: '' }] : []),
+      { label: 'Delete node', icon: 'trash', danger: true, hint: 'Del', action: () => deleteNode(id) },
+    ]
+  }
+
   function onDrop(e: DragEvent) {
     const type = e.dataTransfer?.getData(DRAG_TYPE) as NodeType | undefined
     if (!type || !(NODE_TYPES as readonly string[]).includes(type)) return
@@ -294,6 +318,7 @@
         {isValidConnection}
         onbeforeconnect={beforeConnect}
         onmoveend={(_e, vp) => (viewport = vp)}
+        onnodecontextmenu={({ event, node }) => onNodeMenu(event, node.id)}
         initialViewport={parsed.viewport}
         fitView={!parsed.viewport}
         fitViewOptions={{ maxZoom: 1 }}
@@ -319,10 +344,7 @@
             run={session?.node(selected.id) ?? null}
             onchange={updateNode}
             ondelete={() => deleteNode(selected.id)}
-            onopenrequest={(id) => {
-              const r = app.requestById(id)
-              if (r) tabsStore.openRequest(r)
-            }}
+            onopenrequest={openRequest}
           />
         {/key}
       </aside>
@@ -333,3 +355,7 @@
     <WorkflowRunLog {session} {problems} onselect={focusNode} onclear={() => ((problems = []), workflowRuns.clear(workflowId))} />
   {/if}
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={nodeMenuItems(menu.nodeId)} onclose={() => (menu = null)} />
+{/if}

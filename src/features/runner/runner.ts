@@ -7,6 +7,7 @@ import { errorInfo } from '../../lib/ipc'
 import { testCounts } from '../../lib/scripts'
 import { buildTree, type TreeNode } from '../../lib/tree'
 import type { ExecuteOutcome } from '../requests/execute'
+import { formatLimit } from '../../../shared/responseLimit'
 
 export interface RunItem {
   id: string
@@ -383,7 +384,13 @@ export class CollectionRun {
       const res = outcome.response
       const text = res.bodyText
       const preview =
-        text !== null ? text.slice(0, BODY_PREVIEW_CHARS) : res.bodyBase64 !== null ? `(binary body, ${res.bodyByteLength} bytes)` : null
+        text !== null
+          ? text.slice(0, BODY_PREVIEW_CHARS)
+          : res.bodyBase64 !== null
+            ? `(binary body, ${res.bodyByteLength} bytes)`
+            : res.bodyTooLarge
+              ? `(body not loaded: larger than ${formatLimit(res.bodyTooLarge.limitBytes)})`
+              : null
       const verdict = classifyStatus(res.status, { treat3xxAsPass: this.#options.treat3xxAsPass })
       const counts = testCounts(scripts)
       const detail = res.statusText ? ` ${res.statusText}` : ''

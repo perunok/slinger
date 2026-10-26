@@ -8,12 +8,29 @@
  *
  * The folder's own scripts and documentation become the collection's; the caller may pass merged scripts instead
  * (the original collection's and parent folders' scripts that used to run before it). Collection variables of the
- * original collection can be copied.
+ * original collection can be copied. The new collection's auth is what the folder's requests inherited (its own, else
+ * the nearest parent folder's, else the original collection's), so requests set to "inherit" keep sending the same auth;
+ * subfolders keep their own.
  */
 import type { Collection, ExtractFolderInput, ExtractFolderResult } from '../../shared/types'
 import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
+import { copyCollectionTrust } from '../repositories/trust'
+import { containerAuthFromPostman, parseContainerAuthJson } from '../../shared/containerAuth'
 import { cleanScriptsJson, requireCollection, requireFolder, toCollection, type Db, type FolderRow } from '../repositories/common'
+
+/** The auth requests in `folder` inherit (JSON for a collection: null = none). */
+function inheritedAuthJson(db: Db, folder: FolderRow, collectionAuth: string | null | undefined): string | null {
+  const seen = new Set<string>()
+  let f: FolderRow | undefined = folder
+  while (f && !seen.has(f.id)) {
+    seen.add(f.id)
+    const own = parseContainerAuthJson(f.auth_json)
+    if (own) return containerAuthFromPostman(own, 'collection')
+    f = f.parent_folder_id ? (db.prepare('SELECT * FROM folders WHERE id = ?').get(f.parent_folder_id) as FolderRow | undefined) : undefined
+  }
+  return containerAuthFromPostman(parseContainerAuthJson(collectionAuth), 'collection')
+}
 
 export function extractFolderToCollection(db: Db, input: ExtractFolderInput): ExtractFolderResult {
   const root = requireFolder(db, input.folderId)
@@ -21,6 +38,7 @@ export function extractFolderToCollection(db: Db, input: ExtractFolderInput): Ex
   const name = cleanName(input.name, 'collection name')
   // undefined: the folder's own scripts; null or a JSON event array: exactly that.
   const scriptsJson = input.scriptsJson === undefined ? (root.scripts_json ?? null) : cleanScriptsJson(input.scriptsJson)
+  const authJson = inheritedAuthJson(db, root, source.auth_json)
   const now = nowSeconds()
   const collectionId = newId()
   let folderCount = 0
@@ -29,9 +47,10 @@ export function extractFolderToCollection(db: Db, input: ExtractFolderInput): Ex
 
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
-    ).run(collectionId, root.workspace_id, name, scriptsJson, root.description ?? null, root.description_type ?? null, now, now)
+      `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, auth_json, version, deleted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+    ).run(collectionId, root.workspace_id, name, scriptsJson, root.description ?? null, root.description_type ?? null, authJson, now, now)
+    copyCollectionTrust(db, source.id, collectionId)
 
     // Subfolders, parents first, recreated under the new collection.
     const descendants = db
@@ -47,12 +66,13 @@ export function extractFolderToCollection(db: Db, input: ExtractFolderInput): Ex
     const newIdOf = new Map<string, string | null>([[root.id, null]])
     const insertFolder = db.prepare(
       `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
-         version, deleted, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+         auth_json, version, deleted, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     )
     for (const f of descendants) {
       const id = newId()
-      insertFolder.run(id, f.workspace_id, collectionId, newIdOf.get(f.parent_folder_id!) ?? null, f.name, f.sort_order, f.scripts_json ?? null, f.description ?? null, f.description_type ?? null, now, now)
+      insertFolder.run(id, f.workspace_id, collectionId, newIdOf.get(f.parent_folder_id!) ?? null, f.name, f.sort_order, f.scripts_json ?? null, f.description ?? null, f.description_type ?? null,
+        f.auth_json ?? null, now, now)
       newIdOf.set(f.id, id)
     }
     folderCount = descendants.length

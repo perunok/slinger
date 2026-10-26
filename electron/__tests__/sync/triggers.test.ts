@@ -135,11 +135,16 @@ describe('change capture triggers', () => {
     expect(dirtyOf('collection_version')).toEqual([ver.id])
     clear()
 
+    // replace works in place: unchanged rows are not touched, changed / re-created ones are captured under their own id
     await env.api.restoreCollectionVersion(ver.id, 'replace')
-    expect(dirtyOf('folder')).toContain(f.id) // old row soft-deleted
-    expect(dirtyOf('request')).toContain(r.id)
-    expect(dirtyOf('folder')).toHaveLength(2) // + the re-created copy
-    expect(dirtyOf('request')).toHaveLength(2)
+    expect(dirtyOf('folder')).toEqual([])
+    expect(dirtyOf('request')).toEqual([])
+    await env.api.renameRequest(r.id, 'R2')
+    await env.api.deleteFolder(f.id)
+    clear()
+    await env.api.restoreCollectionVersion(ver.id, 'replace')
+    expect(dirtyOf('folder')).toEqual([f.id]) // un-deleted, same id
+    expect(dirtyOf('request')).toEqual([r.id])
     clear()
 
     const copy = await env.api.restoreCollectionVersion(ver.id, 'copy')
@@ -253,8 +258,8 @@ describe('read-only enforcement', () => {
 describe('schema drift guard', () => {
   it('every column of a synced table is classified as synced or ignored', () => {
     const synced: Record<string, string[]> = {
-      collections: ['name', 'deleted', 'scripts_json', 'description', 'description_type'],
-      folders: ['collection_id', 'parent_folder_id', 'name', 'sort_order', 'deleted', 'scripts_json', 'description', 'description_type'],
+      collections: ['name', 'deleted', 'scripts_json', 'description', 'description_type', 'auth_json'],
+      folders: ['collection_id', 'parent_folder_id', 'name', 'sort_order', 'deleted', 'scripts_json', 'description', 'description_type', 'auth_json'],
       requests: ['collection_id', 'folder_id', 'name', 'method', 'url', 'document_json', 'sort_order', 'deleted'],
       environments: ['name', 'deleted'],
       environment_variables: ['environment_id', 'key', 'value', 'is_secret', 'deleted'],
@@ -277,6 +282,8 @@ describe('schema drift guard', () => {
     }
     // 0009 captures the scripts/docs columns in separate triggers (0004's stay untouched)
     const extras: Record<string, string[]> = { collections: ['scripts_json', 'description', 'description_type'], folders: ['scripts_json', 'description', 'description_type'] }
+    // 0018 captures auth_json in its own trigger
+    const auth: Record<string, string[]> = { collections: ['auth_json'], folders: ['auth_json'] }
     for (const table of Object.keys(synced)) {
       const cols = (env.core.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name)
       const known = new Set([...synced[table]!, ...ignored[table]!])
@@ -284,7 +291,7 @@ describe('schema drift guard', () => {
       const trigger = (name: string) => (env.core.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name) as { sql: string }).sql
       const trig = trigger(`sync_dirty_${table}_u`)
       for (const c of synced[table]!) {
-        const sql = extras[table]?.includes(c) ? trigger(`sync_dirty_${table}_extras_u`) : trig
+        const sql = extras[table]?.includes(c) ? trigger(`sync_dirty_${table}_extras_u`) : auth[table]?.includes(c) ? trigger(`sync_dirty_${table}_auth_u`) : trig
         expect(sql, `${table}.${c}`).toMatch(new RegExp(`\\b${c}\\b`))
       }
     }

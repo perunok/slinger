@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UpdateInstallState } from '../../shared/types'
 import { assetName, detectInstall, parseAssets, UpdateInstaller, type DetectInput, type InstallTarget } from '../services/updateInstall'
@@ -63,15 +63,18 @@ describe('UpdateInstaller', () => {
   const states: UpdateInstallState[] = []
   const spawned: Array<{ command: string; args: string[]; detached?: boolean }> = []
   let exitCode = 0
+  let stagedCheck: ((path: string) => void) | null = null
   const quit = vi.fn()
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'slinger-update-'))
+    mkdirSync(join(dir, 'staging'))
     payload = Buffer.alloc(300_000, 7)
     slowMs = 0
     states.length = 0
     spawned.length = 0
     exitCode = 0
+    stagedCheck = null
     quit.mockReset()
     server = createServer((req, res) => {
       if (req.url === '/latest') {
@@ -113,6 +116,7 @@ describe('UpdateInstaller', () => {
       emit: (s) => void states.push(s),
       spawn: (command, args, options) => {
         spawned.push({ command, args, detached: options.detached })
+        if (command === 'pkexec') stagedCheck?.(args[2]!)
         const handlers: Record<string, (a: unknown) => void> = {}
         setTimeout(() => handlers.exit?.(exitCode), 5)
         return { on: (e: string, cb: (a: unknown) => void) => void (handlers[e] = cb), unref: () => {} } as never
@@ -120,6 +124,7 @@ describe('UpdateInstaller', () => {
       pid: 4242,
       execPath: '/opt/Slinger/slinger',
       quit,
+      stagingRoot: join(dir, 'staging'),
     })
   }
   const settled = (u: UpdateInstaller) => expect.poll(() => u.state().phase, { timeout: 5000 }).not.toMatch(/downloading|verifying/)
@@ -137,8 +142,18 @@ describe('UpdateInstaller', () => {
     const u = make()
     u.download()
     await settled(u)
+    let staged: { path: string; dirMode: number; bytes: Buffer } | null = null
+    stagedCheck = (path) => {
+      staged = { path, dirMode: statSync(dirname(path)).mode & 0o777, bytes: readFileSync(path) }
+    }
     await u.install()
-    expect(spawned[0]).toEqual({ command: 'pkexec', args: ['dpkg', '-i', join(dir, 'updates', 'Slinger-0.20.0-linux-amd64.deb')], detached: undefined })
+    // Installed from a verified copy in a fresh private directory, not from the user-writable updates folder.
+    expect(spawned[0]).toMatchObject({ command: 'pkexec', args: ['dpkg', '-i', expect.stringMatching(/slinger-update-.*Slinger-0\.20\.0-linux-amd64\.deb$/)] })
+    expect(staged!.path).toBe(spawned[0]!.args[2])
+    expect(dirname(dirname(staged!.path))).toBe(join(dir, 'staging'))
+    if (process.platform !== 'win32') expect(staged!.dirMode).toBe(0o700)
+    expect(staged!.bytes.equals(payload)).toBe(true)
+    expect(readdirSync(join(dir, 'staging'))).toEqual([]) // removed after dpkg
     expect(spawned[1]!.command).toBe('/bin/sh')
     expect(spawned[1]!.args[1]).toContain('while kill -0 4242')
     expect(spawned[1]!.args.at(-1)).toBe('/opt/Slinger/slinger')
@@ -178,6 +193,41 @@ describe('UpdateInstaller', () => {
     await u.install()
     expect(spawned).toEqual([{ command: join(dir, 'updates', 'Slinger-0.20.0-win-x64.exe'), args: ['/S', '--updated', '--force-run'], detached: true }])
     expect(quit).toHaveBeenCalledOnce()
+  })
+
+  it('re-verifies the installer right before installing: a file changed after the download is not installed', async () => {
+    const cases: Array<[InstallTarget, string]> = [
+      [{ method: 'deb', reason: null, target: null }, 'Slinger-0.20.0-linux-amd64.deb'],
+      [{ method: 'nsis', reason: null, target: null }, 'Slinger-0.20.0-win-x64.exe'],
+      [{ method: 'appimage', reason: null, target: join(dir, 'Slinger.AppImage') }, 'Slinger-0.20.0-linux-x86_64.AppImage'],
+    ]
+    writeFileSync(join(dir, 'Slinger.AppImage'), 'old')
+    for (const [install, name] of cases) {
+      release = asRelease('0.20.0', name)
+      const u = make(install)
+      u.download()
+      await settled(u)
+      expect(u.state().phase).toBe('ready')
+      // Same size, different bytes (a swapped installer).
+      writeFileSync(join(dir, 'updates', name), Buffer.alloc(payload.length, 9))
+      await expect(u.install()).rejects.toMatchObject({ code: 'io_error', message: expect.stringContaining('changed after it was verified') })
+      expect(u.state()).toMatchObject({ phase: 'error' })
+    }
+    expect(spawned).toEqual([])
+    expect(quit).not.toHaveBeenCalled()
+    expect(readFileSync(join(dir, 'Slinger.AppImage'), 'utf8')).toBe('old')
+    expect(readdirSync(dir)).not.toContain('Slinger.AppImage.new')
+    expect(readdirSync(join(dir, 'staging'))).toEqual([])
+  })
+
+  it('deb: a staged copy that differs from the verified download is refused', async () => {
+    const u = make()
+    u.download()
+    await settled(u)
+    // Truncated file: the size check fails before hashing.
+    writeFileSync(join(dir, 'updates', 'Slinger-0.20.0-linux-amd64.deb'), 'short')
+    await expect(u.install()).rejects.toThrow('changed after it was verified')
+    expect(spawned).toEqual([])
   })
 
   it('refuses a download that does not match the checksum, or is larger than said', async () => {

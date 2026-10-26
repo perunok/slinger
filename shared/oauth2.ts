@@ -97,7 +97,9 @@ export function stripOAuth2TokensFromDocumentJson(documentJson: string): string 
 }
 
 /** A collection snapshot (`CollectionSnapshot`-shaped) whose request documents carry no OAuth 2.0 tokens; same reference when unchanged. */
-export function stripOAuth2TokensFromSnapshot<T extends { requests: Array<{ documentJson: string }> }>(snapshot: T): T {
+export function stripOAuth2TokensFromSnapshot<
+  T extends { requests: Array<{ documentJson: string }>; collectionAuthJson?: string | null; folders?: Array<{ authJson?: string | null }> },
+>(snapshot: T): T {
   let changed = false
   const requests = snapshot.requests.map((r) => {
     const documentJson = stripOAuth2TokensFromDocumentJson(r.documentJson)
@@ -105,5 +107,31 @@ export function stripOAuth2TokensFromSnapshot<T extends { requests: Array<{ docu
     changed = true
     return { ...r, documentJson }
   })
-  return changed ? { ...snapshot, requests } : snapshot
+  // Collection and folder auth (container auth) is a bare Postman `auth` object.
+  const stripAuthJson = (json: string | null | undefined): string | null | undefined => {
+    if (typeof json !== 'string') return json
+    let auth: unknown
+    try {
+      auth = JSON.parse(json)
+    } catch {
+      return json
+    }
+    const stripped = stripOAuth2Tokens(auth)
+    return stripped === auth ? json : JSON.stringify(stripped)
+  }
+  const collectionAuthJson = stripAuthJson(snapshot.collectionAuthJson)
+  if (collectionAuthJson !== snapshot.collectionAuthJson) changed = true
+  const folders = snapshot.folders?.map((f) => {
+    const authJson = stripAuthJson(f.authJson)
+    if (authJson === f.authJson) return f
+    changed = true
+    return { ...f, authJson }
+  })
+  if (!changed) return snapshot
+  return {
+    ...snapshot,
+    requests,
+    ...(snapshot.collectionAuthJson !== undefined ? { collectionAuthJson } : {}),
+    ...(folders ? { folders } : {}),
+  }
 }

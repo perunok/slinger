@@ -63,7 +63,8 @@
   import ConflictDialog from '../requests/ConflictDialog.svelte'
   import DocsPanel from '../requests/DocsPanel.svelte'
   import ScriptsPanel from '../requests/ScriptsPanel.svelte'
-  import { MCP_TOKEN_WHERE, oauth2TokenMessage, untrustedCommandOf } from '../requests/execute'
+  import { authChainFor, MCP_TOKEN_WHERE, oauth2TokenMessage, untrustedCommandOf } from '../requests/execute'
+  import { withEffectiveAuth } from '../../lib/authInheritance'
   import { tabsStore, type RequestTab } from '../requests/tabs.svelte'
   import ReadOnlyNote from '../sync/ReadOnlyNote.svelte'
   import { sync } from '../sync/syncStore.svelte'
@@ -102,7 +103,7 @@
     const connectionBadge =
       mcp.transport === 'stdio'
         ? count(dataRows(mcp.env).filter((r) => r.enabled).length)
-        : (count(dataRows(d.headers).filter((r) => r.enabled).length) ?? (d.auth.kind !== 'none' ? '•' : undefined))
+        : (count(dataRows(d.headers).filter((r) => r.enabled).length) ?? (d.auth.kind !== 'none' && d.auth.kind !== 'inherit' ? '•' : undefined))
     return [
       { id: 'call', label: 'Call' },
       { id: 'connection', label: 'Connection', badge: connectionBadge },
@@ -125,7 +126,7 @@
   async function resolveConnect(): Promise<Resolved> {
     const workspaceId = app.workspaceId
     if (!workspaceId) return { ok: false, error: 'Open a workspace first.' }
-    const snapshot = $state.snapshot(tab.draft) as RequestDraft
+    const snapshot = withEffectiveAuth($state.snapshot(tab.draft) as RequestDraft, authChainFor(tab.collectionId, tab.folderId))
     const draft: RequestDraft = { ...snapshot, mcp: { ...(snapshot.mcp as McpDraft), operation: 'prompts/get', prompt: 'connect', promptArguments: [] } }
     const scope = scopeStore.scopeFor(tab.collectionId)
     const secrets = new Map<string, string>()

@@ -1,4 +1,5 @@
 import { IpcError, type DescriptionType, type IpcErrorPayload } from '../../../shared/types'
+import { cleanContainerAuthJson, type ContainerLevel } from '../../../shared/containerAuth'
 
 export const nowSec = (): number => Math.floor(Date.now() / 1000)
 
@@ -46,6 +47,13 @@ export function base64ToBytes(b64: string): Uint8Array {
 /** Sort key for "ordered by sortOrder, then createdAt, id" lists. */
 export function bySortOrder<T extends { sortOrder: number; createdAt: number; id: string }>(a: T, b: T): number {
   return a.sortOrder - b.sortOrder || a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+}
+
+/** Same rules as the main process (repositories/common.ts cleanAuthJson, shared/containerAuth.ts). */
+export function cleanAuthJson(value: string | null, level: ContainerLevel): string | null {
+  const r = cleanContainerAuthJson(value, level)
+  if (!r.ok) fail('invalid_input', r.error)
+  return r.json
 }
 
 /** Same rules as the main process (repositories/common.ts cleanScriptsJson): null or a JSON array; [] -> null. */

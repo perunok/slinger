@@ -45,3 +45,53 @@ describe('environment names are unique per workspace', () => {
     expect((await env.api.renameEnvironment(x.id, 'PROD')).name).toBe('PROD')
   })
 })
+
+describe('environment variable writes use optimistic concurrency', () => {
+  async function setup() {
+    const ws = await env.api.createWorkspace('WS')
+    const e = await env.api.createEnvironment(ws.id, 'Dev')
+    return e
+  }
+
+  it('updates with the current expectedVersion and rejects a stale one', async () => {
+    const e = await setup()
+    const v1 = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'host', value: 'a', isSecret: false })
+    const v2 = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'host', value: 'b', isSecret: false, variableId: v1.id, expectedVersion: v1.version })
+    expect(v2.version).toBe(v1.version + 1)
+    await expect(
+      env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'host', value: 'c', isSecret: false, variableId: v1.id, expectedVersion: v1.version }),
+    ).rejects.toMatchObject({ code: 'version_conflict', details: { expectedVersion: v1.version, currentVersion: v2.version } })
+    expect((await env.api.listEnvironmentVariables(e.id)).map((v) => v.value)).toEqual(['b'])
+    // Without expectedVersion (scripts, assistants) the write still goes through.
+    const v3 = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'host', value: 'd', isSecret: false, variableId: v1.id })
+    expect(v3.value).toBe('d')
+  })
+
+  it('a stale secret write leaves the keychain untouched', async () => {
+    const e = await setup()
+    const v1 = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'token', value: 'one', isSecret: true })
+    await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'token', value: 'two', isSecret: true, variableId: v1.id, expectedVersion: v1.version })
+    await expect(
+      env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'token', value: 'three', isSecret: true, variableId: v1.id, expectedVersion: v1.version }),
+    ).rejects.toMatchObject({ code: 'version_conflict' })
+    expect(await env.api.revealEnvironmentVariable(v1.id)).toBe('two')
+  })
+
+  it('a keychain failure rolls the row back', async () => {
+    const e = await setup()
+    const v1 = await env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'token', value: 'plain', isSecret: false })
+    const set = env.secrets.set.bind(env.secrets)
+    env.secrets.set = () => {
+      throw new Error('keyring locked')
+    }
+    try {
+      await expect(
+        env.api.upsertEnvironmentVariable({ environmentId: e.id, key: 'token', value: 's3cret', isSecret: true, variableId: v1.id, expectedVersion: v1.version }),
+      ).rejects.toThrow()
+    } finally {
+      env.secrets.set = set
+    }
+    const [row] = await env.api.listEnvironmentVariables(e.id)
+    expect(row).toMatchObject({ isSecret: false, value: 'plain', version: v1.version })
+  })
+})

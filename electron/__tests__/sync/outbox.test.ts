@@ -64,11 +64,14 @@ describe('buildOps', () => {
     const version = await env.api.createCollectionVersion({ collectionId: c.id, version: '1.0.0' })
     ack(build().ops)
     await env.api.restoreCollectionVersion(version.id, 'replace')
-    const r = build()
-    // replace = old rows deleted + copies with new ids; the collection UPDATE itself is a wire no-op
-    expect(r.ops.filter((o) => o.type === 'collection')).toEqual([])
-    // (the old request's delete is folded into the old folder's delete: the server cascades)
-    expect(r.ops.map(label).sort()).toEqual(['delete:folder', 'upsert:folder', 'upsert:request'])
+    // replace works in place: nothing changed, so nothing is sent (the collection UPDATE is a wire no-op)
+    expect(build().ops).toEqual([])
+    const req = (await env.api.listRequests(c.id))[0]!
+    await env.api.renameRequest(req.id, 'R2')
+    ack(build().ops)
+    await env.api.restoreCollectionVersion(version.id, 'replace')
+    // only the request that differs from the version goes out, as an update of the same id
+    expect(build().ops.map((o) => `${label(o)}:${o.id === req.id}`)).toEqual(['upsert:request:true'])
   })
 
   it('orders variable deletes first, parents before children (folders by depth), upserts before deletes, leaves first', async () => {

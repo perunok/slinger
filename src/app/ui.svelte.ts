@@ -3,7 +3,7 @@ class UiState {
   /** Settings scrolls to this section when it opens (then clears it). */
   settingsFocus = $state<'titlebar' | null>(null)
   /** The Settings section shown (kept while the app runs). */
-  settingsSection = $state<'appearance' | 'layout' | 'editor' | 'scripts' | 'updates' | 'mcp'>('appearance')
+  settingsSection = $state<'appearance' | 'layout' | 'editor' | 'requests' | 'scripts' | 'updates' | 'mcp'>('appearance')
   sidebar = $state<'collections' | 'history' | 'workflows'>('collections')
   settingsOpen = $state(false)
   cloudOpen = $state(false)
@@ -51,5 +51,10 @@ class UiState {
   workspacesOpen = $state(false)
   shortcutsOpen = $state(false)
   aboutOpen = $state(false)
+  /**
+   * The Release notes dialog: `all` (Help > Release Notes, Ctrl+K, About) shows every released version; `new` (What's
+   * new, once after an update) the versions after `after` up to the running one.
+   */
+  releaseNotes = $state<{ mode: 'all' } | { mode: 'new'; after: string | null; current: string } | null>(null)
 }
 export const ui = new UiState()

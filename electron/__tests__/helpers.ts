@@ -22,6 +22,8 @@ export interface TestEnv {
   exportDir: string
   opened: string[]
   picked: { result: string | null; calls: unknown[] }
+  /** The save dialog (saveFile): what it returns, and what it was asked. */
+  saved: { result: string | null; calls: unknown[] }
   cleanup(): void
 }
 
@@ -33,11 +35,13 @@ export function makeEnv(): TestEnv {
   const core = createCore({ db, secrets, migrationsDir: MIGRATIONS_DIR, exportFiles: new ExportFiles(exportDir), scriptExecutor: new InlineExecutor() })
   const opened: string[] = []
   const picked: { result: string | null; calls: unknown[] } = { result: null, calls: [] }
+  const saved: { result: string | null; calls: unknown[] } = { result: null, calls: [] }
   const api = createIpcApi(core, {
     appVersion: '0.0.0-test',
     openExternal: async (url) => void opened.push(url),
     chooseDirectory: async () => exportDir,
     pickFile: async (options) => (picked.calls.push(options), picked.result),
+    saveFile: async (options) => (saved.calls.push(options), saved.result),
   })
   return {
     core,
@@ -46,6 +50,7 @@ export function makeEnv(): TestEnv {
     exportDir,
     opened,
     picked,
+    saved,
     cleanup() {
       core.authCallbacks.closeAll()
       void core.mockServers.stopAll()

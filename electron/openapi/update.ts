@@ -11,14 +11,15 @@ import { nowSeconds } from '../lib/text'
 import { requireCollection } from '../repositories/common'
 import { FolderRepository, RequestRepository } from '../repositories/tree'
 import { CollectionVariableRepository } from '../repositories/variables'
-import { createCollectionVersion, listCollectionVersions } from '../services/collectionVersions'
-import { nextPatchVersion, requestFromPostmanItem } from '../services/postmanImport'
+import { createAutomaticVersion } from '../services/collectionVersions'
+import { requestFromPostmanItem } from '../services/postmanImport'
 import type {
   CollectionVersion, CollectionVersionAuthor, OpenApiFolderMode, OpenApiLink, OpenApiSource, OpenApiUpdateInput, OpenApiUpdatePlan, OpenApiUpdateResult,
 } from '../../shared/types'
 import type { LoadedSpec } from '../../shared/openapi/load'
 import { generate, planChanges, planStamp, writesFor, type Generated, type ItemToRequest, type LiveFolder, type LiveRequest, type PlanInput } from '../../shared/openapi/update'
 import { loadSpec, type OpenApiService } from './service'
+import { containerAuthFromPostman, parseContainerAuthJson } from '../../shared/containerAuth'
 
 export const PLAN_TTL_MS = 10 * 60 * 1000
 
@@ -35,7 +36,7 @@ export function clearPlans(): void {
   plans.clear()
 }
 
-const toRequest: ItemToRequest = (item, inheritedAuth) => requestFromPostmanItem(item, inheritedAuth)
+const toRequest: ItemToRequest = (item) => requestFromPostmanItem(item)
 
 interface Snapshot {
   input: PlanInput
@@ -66,8 +67,9 @@ function snapshot(db: Db, service: OpenApiService, collectionId: string, next: G
     }
   }
   const baseUrl = variables.find((v) => v.key === 'baseUrl')?.value ?? null
+  const collectionAuth = parseContainerAuthJson(collection.auth_json)
   return {
-    input: { next, previous, requests, folders: liveFolders, variables, toRequest },
+    input: { next, previous, requests, folders: liveFolders, variables, collectionAuth, toRequest },
     stamp: planStamp(requests, baseUrl),
     workspaceId: collection.workspace_id,
   }
@@ -143,14 +145,12 @@ export function applyUpdate(db: Db, service: OpenApiService, input: OpenApiUpdat
     } catch (e) {
       throw invalidInput((e as Error).message)
     }
-    const changesSomething = writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null
+    const changesSomething =
+      writes.add.length + writes.update.length + writes.link.length + writes.remove.length + writes.variables.length > 0 || writes.baseUrl !== null ||
+      writes.collectionAuth !== undefined
     let safetyVersion: CollectionVersion | null = null
     if (changesSomething) {
-      safetyVersion = createCollectionVersion(db, {
-        collectionId: plan.collectionId,
-        version: nextPatchVersion(listCollectionVersions(db, plan.collectionId).map((v) => v.version)),
-        notes: 'Automatic snapshot before updating from the OpenAPI document',
-      }, author)
+      safetyVersion = createAutomaticVersion(db, plan.collectionId, 'updating from the OpenAPI document', author)
     }
     const folderRepo = new FolderRepository(db)
     const requestRepo = new RequestRepository(db)
@@ -184,6 +184,10 @@ export function applyUpdate(db: Db, service: OpenApiService, input: OpenApiUpdat
       vars.upsert({ collectionId: plan.collectionId, key: 'baseUrl', value: writes.baseUrl, ...(snap.input.variables.some((v) => v.key === 'baseUrl') ? {} : { description: 'Server URL from the API description' }) })
     }
     for (const v of writes.variables) vars.upsert({ collectionId: plan.collectionId, key: v.key, value: v.value, description: v.description || null })
+    if (writes.collectionAuth !== undefined) {
+      db.prepare('UPDATE collections SET auth_json = ?, updated_at = ? WHERE id = ?')
+        .run(containerAuthFromPostman(writes.collectionAuth, 'collection'), now, plan.collectionId)
+    }
 
     const link: OpenApiLink = service.saveLink(plan.collectionId, snap.workspaceId, spec, plan.text, plan.source, folders)
     return { added: writes.add.length, updated: writes.update.length, deleted: writes.remove.length, kept: writes.kept, safetyVersion, link }

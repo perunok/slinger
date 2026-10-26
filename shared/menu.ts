@@ -18,6 +18,7 @@ export const MENU_COMMANDS = [
   'toggleRightPanel',
   'toggleSidebar',
   'checkForUpdates',
+  'releaseNotes',
 ] as const
 
 export type MenuCommand = (typeof MENU_COMMANDS)[number]

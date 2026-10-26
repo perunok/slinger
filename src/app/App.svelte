@@ -9,6 +9,7 @@
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
   import McpHost from '../features/mcp/McpHost.svelte'
+  import SecurityPromptHost from '../features/security/SecurityPromptHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
@@ -20,8 +21,9 @@
   import RequestView from '../features/requests/RequestView.svelte'
   import McpRequestView from '../features/mcpRequests/McpRequestView.svelte'
   import SaveAsDialog from '../features/requests/SaveAsDialog.svelte'
-  import { tabsStore } from '../features/requests/tabs.svelte'
+  import { tabsStore, trackPersisted } from '../features/requests/tabs.svelte'
   import { cancelScheduledSave, flushSave, scheduleSave, serializeTabs } from '../features/requests/tabsPersistence'
+  import { reportUnsaved, unsavedAtRisk } from '../features/requests/unsavedOnQuit.svelte'
   import UnsavedDialog from '../features/requests/UnsavedDialog.svelte'
   import ScriptsDialogHost from '../features/scripts/ScriptsDialogHost.svelte'
   import MockServersHost from '../features/mockServers/MockServersHost.svelte'
@@ -38,6 +40,7 @@
   import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
   import { updates } from '../features/updates/updates.svelte'
+  import { checkWhatsNew } from '../features/releaseNotes/whatsNew'
   import { windowChrome } from './windowChrome.svelte'
   import { ui } from './ui.svelte'
 
@@ -56,6 +59,7 @@
     versions: () => import('../features/versions/VersionsDialog.svelte'),
     workspaces: () => import('../features/workspaces/WorkspacesDialog.svelte'),
     update: () => import('../features/updates/UpdateDialog.svelte'),
+    releaseNotes: () => import('../features/releaseNotes/ReleaseNotesDialog.svelte'),
   }
 
   onMount(() => {
@@ -72,6 +76,7 @@
     void windowChrome.init()
     const offMenu = subscribeMenuCommands()
     const stopUpdates = updates.start()
+    void checkWhatsNew()
     return () => {
       stopUpdates()
       scopeStore.createVariable = null
@@ -105,9 +110,10 @@
   })
 
   /**
-   * Debounced autosave of open tabs, per workspace (see tabsPersistence.ts). Reading `tabsStore.tabs`
-   * and each tab's fields (inside serializeTabs) is what makes this effect re-run on every relevant
-   * change, including keystrokes in a draft; only the localStorage write itself is delayed.
+   * Debounced autosave of open tabs, per workspace (see tabsPersistence.ts). Reading `tabsStore.tabs` and each tab's
+   * persisted fields (`trackPersisted`, cheap: the draft's fingerprint is already computed for the dirty check) makes
+   * this effect re-run on every relevant change, including keystrokes in a draft; serializing the tabs happens only
+   * when the debounced write runs. Nothing is written while the workspace's stored tabs still wait to be restored.
    */
   $effect(() => {
     const workspaceId = app.workspaceId
@@ -116,7 +122,16 @@
       cancelScheduledSave(workspaceId)
       return
     }
-    scheduleSave(workspaceId, serializeTabs(tabsStore.tabs, tabsStore.activeId))
+    if (tabsStore.restorePending(workspaceId)) return
+    const tabs = tabsStore.tabs
+    const activeId = tabsStore.activeId
+    for (const t of tabs) trackPersisted(t)
+    scheduleSave(workspaceId, () => serializeTabs(tabs, activeId))
+  })
+
+  // Unsaved edits that quitting would lose: main asks before quitting while there are any.
+  $effect(() => {
+    reportUnsaved(unsavedAtRisk(app.workspaceId))
   })
 </script>
 
@@ -183,9 +198,13 @@
 {#if ui.shortcutsOpen}<Lazy load={load.shortcuts} />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
 {#if ui.aboutOpen}<Lazy load={load.about} />{/if}
+{#if ui.releaseNotes}
+  <Lazy load={load.releaseNotes} props={{ view: ui.releaseNotes, onclose: () => (ui.releaseNotes = null), onshowall: () => (ui.releaseNotes = { mode: 'all' }) }} />
+{/if}
 {#if ui.cloudOpen}<Lazy load={load.cloud} />{/if}
 <SyncHost />
 <McpHost />
+<SecurityPromptHost />
 <EnvironmentEditor />
 {#if ui.versionsFor}<Lazy load={load.versions} />{/if}
 <MockServersHost />

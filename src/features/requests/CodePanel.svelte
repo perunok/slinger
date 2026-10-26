@@ -1,15 +1,13 @@
 <script lang="ts">
-  import { app } from '../../app/state.svelte'
-  import { scopeStore } from '../../app/scope.svelte'
   import { settings } from '../../app/settings.svelte'
   import { toast } from '../../app/toast.svelte'
   import CodeEditor from '../../components/editor/CodeEditor.svelte'
   import Button from '../../components/ui/Button.svelte'
   import { saveExport } from '../../lib/exportFile'
   import { errorInfo } from '../../lib/ipc'
-  import { prepareRequest } from '../../lib/prepare'
-  import { generateSnippet, MCP_SNIPPET_LANG, mcpInspectorSnippet, prepareMcpSnippet, SNIPPET_LANGS, type SnippetLang } from '../../lib/snippets'
+  import { MCP_SNIPPET_LANG, SNIPPET_LANGS, type SnippetLang } from '../../lib/snippets'
   import { sanitizeFileStem } from '../importexport/fileName'
+  import { snippetFor } from './snippet'
   import type { RequestTab } from './tabs.svelte'
 
   /** `idPrefix` keeps element ids unique when the right panel's Code view shows next to the Code section. */
@@ -19,15 +17,7 @@
   // MCP requests have one snippet, an MCP Inspector CLI command line; the HTTP languages do not apply to them.
   const isMcp = $derived(tab.draft.mcp !== undefined)
   // Regenerated on every draft/environment change; built-ins get a fresh sample value each time.
-  const prepared = $derived.by((): { ok: true; snippet: string } | { ok: false; error: string } => {
-    const ctx = { workspaceId: app.workspaceId ?? '', requestId: tab.requestId, scope: scopeStore.scopeFor(tab.collectionId) }
-    if (isMcp) {
-      const mcp = prepareMcpSnippet(tab.draft, ctx)
-      return mcp.ok ? { ok: true, snippet: mcpInspectorSnippet(mcp.input) } : mcp
-    }
-    const http = prepareRequest(tab.draft, { ...ctx, allowUnresolved: true })
-    return http.ok ? { ok: true, snippet: generateSnippet(lang, http.input) } : http
-  })
+  const prepared = $derived(snippetFor(tab.draft, tab, lang))
   const snippet = $derived(prepared.ok ? prepared.snippet : '')
   const info = $derived(isMcp ? MCP_SNIPPET_LANG : SNIPPET_LANGS.find((l) => l.id === lang))
   const fileExtension = $derived(info && 'fileExtension' in info ? info.fileExtension : undefined)

@@ -2,25 +2,45 @@
   import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
   import Icon from '../../components/ui/Icon.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
+  import { copyText } from '../../app/clipboard'
+  import { isMenuKey, menuPoint } from '../../components/ui/contextMenu'
   import { methodColor } from './method'
+  import { copyAsCurl } from './snippet'
   import { tabsStore } from './tabs.svelte'
 
   let menu = $state<{ x: number; y: number; id: string } | null>(null)
 
   function items(id: string): MenuItem[] {
     const t = tabsStore.find(id)
+    const right = tabsStore.tabs.slice(tabsStore.tabs.findIndex((x) => x.id === id) + 1).map((x) => x.id)
+    // Request and example tabs (not workflows or overviews): copy what the tab shows now, unsaved edits included.
+    const request = t && !t.workflowId && !t.overview ? t : null
     return [
       { label: 'Close', icon: 'x', hint: 'Ctrl+W', action: () => tabsStore.requestClose([id]) },
       { label: 'Close others', disabled: tabsStore.tabs.length < 2, action: () => tabsStore.closeOthers(id) },
+      { label: 'Close to the right', disabled: right.length === 0, action: () => tabsStore.requestClose(right) },
       { label: 'Close all', action: () => tabsStore.closeAll() },
       { separator: true, label: '' },
       { label: 'Save', icon: 'save', disabled: !t?.dirty || (!t?.requestId && !t?.overview), action: () => t && void tabsStore.save(t) },
+      ...(request
+        ? [
+            { separator: true, label: '' },
+            { label: 'Copy URL', icon: 'link', disabled: !request.draft.url, action: () => void copyText(request.draft.url, 'URL copied') },
+            ...(request.draft.mcp ? [] : [{ label: 'Copy as cURL', icon: 'code', action: () => void copyAsCurl(request.draft, request) }]),
+          ]
+        : []),
     ]
+  }
+
+  function openMenu(e: MouseEvent | KeyboardEvent, id: string, el?: Element | null) {
+    e.preventDefault()
+    menu = { ...menuPoint(e, el), id }
   }
 
   function onkeydown(e: KeyboardEvent, id: string) {
     const i = tabsStore.tabs.findIndex((t) => t.id === id)
     let n = -1
+    if (isMenuKey(e)) return openMenu(e, id, e.currentTarget as Element)
     if (e.key === 'ArrowRight') n = (i + 1) % tabsStore.tabs.length
     else if (e.key === 'ArrowLeft') n = (i - 1 + tabsStore.tabs.length) % tabsStore.tabs.length
     else if (e.key === 'Delete') return tabsStore.requestClose([id])
@@ -38,10 +58,7 @@
       <div
         class="group flex max-w-56 shrink-0 items-center border-r border-border {active ? 'bg-surface' : 'bg-bg hover:bg-hover'}"
         style={active ? 'box-shadow: inset 0 2px 0 var(--accent)' : ''}
-        oncontextmenu={(e) => {
-          e.preventDefault()
-          menu = { x: e.clientX, y: e.clientY, id: t.id }
-        }}
+        oncontextmenu={(e) => openMenu(e, t.id)}
         role="presentation"
       >
         <button

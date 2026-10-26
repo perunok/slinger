@@ -47,8 +47,8 @@
     const d = tab.draft
     const count = (n: number) => (n > 0 ? String(n) : undefined)
     return [
-      { id: 'params', label: 'Params', badge: count(dataRows(d.params).filter((r) => r.enabled).length) },
-      { id: 'auth', label: 'Authorization', badge: d.auth.kind !== 'none' ? '•' : undefined },
+      { id: 'params', label: 'Params', badge: count(dataRows(d.params).filter((r) => r.enabled).length + d.pathVariables.length) },
+      { id: 'auth', label: 'Authorization', badge: d.auth.kind !== 'none' && d.auth.kind !== 'inherit' ? '•' : undefined },
       { id: 'headers', label: 'Headers', badge: count(dataRows(d.headers).filter((r) => r.enabled).length) },
       { id: 'body', label: 'Body', badge: d.body.kind !== 'none' ? '•' : undefined },
       ...(parentDocs?.text.trim() ? [{ id: 'docs', label: 'Docs' }] : []),

@@ -9,6 +9,7 @@ import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import type { MenuCommand } from '../../shared/menu'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
+import { createSecurityApi } from './mock/security'
 import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
 import { createOAuth2Api } from './mock/oauth2'
@@ -45,8 +46,11 @@ export interface MockControls {
   calls: MockCall[]
   /** Delivers an application-menu command, as the native menu does in Electron. */
   menuCommand(command: MenuCommand): void
-  /** The version checkForUpdates reports as the latest release (null: none published, the default). */
-  setLatestRelease(version: string | null): void
+  /**
+   * The version checkForUpdates reports as the latest release (null: none published, the default), with its release
+   * notes (default: a short sample; null: a release without notes).
+   */
+  setLatestRelease(version: string | null, notes?: string | null): void
   /** Mock servers: play requests against a running one (`hit`), occupy a port, crash one. */
   mockServers: MockServerControls
 }
@@ -110,7 +114,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createWorkflowsApi(state),
     ...mockServers.api,
     ...createOpenApiApi(state, openapiLinks),
-    ...createScriptsApi(),
+    ...createScriptsApi(state),
+    ...createSecurityApi(state),
     ...createOAuth2Api(state, () => latency),
     ...misc,
     ...sync.api,
@@ -199,7 +204,6 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     reset() {
       Object.assign(state, emptyState())
       if (seed) seedState(state)
-      misc.resetSecureStore()
       misc.setLatestRelease(null)
       sync.reset()
       mcpClient.controls.reset()
@@ -225,8 +229,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     menuCommand(command) {
       for (const listener of [...menuListeners]) listener(command)
     },
-    setLatestRelease(version) {
-      misc.setLatestRelease(version)
+    setLatestRelease(version, notes) {
+      misc.setLatestRelease(version, notes)
     },
   }
   controls.reset()

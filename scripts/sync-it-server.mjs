@@ -72,6 +72,7 @@ export async function startSyncItServer(opts = {}) {
     SLINGER_ADMIN_BOOTSTRAP: JSON.stringify([{ email: adminEmail, password: adminPassword, display_name: 'Admin', platform_role: 'super_admin' }]),
     SLINGER_SYNC_RATE_LIMIT_PER_MINUTE: '100000',
     SLINGER_LOGIN_RATE_MAX: '10000',
+    SLINGER_DEVICE_START_RATE_MAX: '10000',
     SLINGER_LOG_LEVEL: 'warn',
     NODE_ENV: 'development',
     ...(opts.env ?? {}),

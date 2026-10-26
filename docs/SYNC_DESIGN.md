@@ -337,7 +337,7 @@ If after 4 rounds ops are still being rejected with `sync_conflict` although a f
 ### 7.6 Auth in main (`cloudHttp.ts`, `cloudAuth.ts`)
 
 - HTTP: `fetch` (Electron `net.fetch` in the app for system proxy support; injectable `fetchImpl` for tests), 30 s timeout via `AbortController`, JSON only, never logs headers/bodies. Not `executeHttp*`, so no history rows (D11).
-- Tokens: same keychain key scheme `slinger.cloud.tokens:<normalizedBaseUrl>` but the prefix `slinger.cloud.tokens:` is added to the RESERVED namespaces in `assertGenericSecureKey`, so the renderer can no longer read them via `secureStoreGet`. `secureStore*` stays for backward compatibility of other keys.
+- Tokens: same keychain key scheme `slinger.cloud.tokens:<normalizedBaseUrl>` but the prefix `slinger.cloud.tokens:` is added to the RESERVED namespaces in `assertGenericSecureKey`, so the renderer can no longer read them via `secureStoreGet`. (0.27: the whole `secureStore*` passthrough was removed.)
 - Sign-in (device flow) moves to main: `startCloudSignIn` calls `/v1/auth/device/start`, returns the user code + URI for the renderer to display/open, and main polls `/v1/auth/device/poll` on the server-given `interval`; result is delivered as an `auth` event. Tokens go straight to the keychain.
 - Refresh: single in-process mutex (`refreshing: Promise`). Proactive when the access JWT `exp` is < 60 s away, reactive on `401`. Refresh tokens are single-use with reuse detection: after a refresh network failure the engine does NOT retry the same refresh token immediately (it might have been consumed); it marks `offline` and retries on the next cycle after re-reading the keychain (which may already hold the new pair if the process persisted it before the crash: persist the new pair to the keychain BEFORE using it). A definitive `401` from `/refresh` -> tokens deleted, session `signedOut`; links stay, dirty rows keep accumulating.
 - Client registration: `POST /v1/sync/clients/register` once per `(apiBaseUrl, userId, device)`; id cached in `app_settings` (`cloud.client:<base>:<userId>`) and copied to `cloud_links.sync_client_id`. On `invalid_request: unknown client_id` (different account / server reset) re-register and retry.
@@ -873,6 +873,20 @@ Other differences
 - The scheduler also announces local edits (a `status` event when the pending/conflict counts change, at most once per second,
   also with auto sync off), so the renderer never polls.
 
+Remote changes that cannot be applied (desktop 0.27, migration 0017)
+- The snapshot sends parents before children. Older servers ordered folders by id, so a folder nested under a folder with a
+  larger id came first; the desktop skipped it (and everything inside it) and moved the cursor on, losing it for good. Servers
+  now order folders by depth from the collection root, then id (keyset cursor `"<depth>:<id>"`, opaque to the client; a folder
+  cursor without the depth restarts the folders). The fake server does the same (`legacyFolderOrder` simulates the old order),
+  and `wireContract.ts` `checkSnapshotOrderContract` runs against both.
+- The desktop never drops a remote change: an upsert whose parent is missing, or any change that fails to apply, is kept in
+  `sync_deferred` and applied again after every snapshot page and pull page (failed ones before the page, waiting ones after it,
+  in passes) until it succeeds or a newer change of the same entity (log order) replaces it. A failure is noted once in the
+  conflict history (`auto_resolved`); a change still waiting for its parent after a complete download likewise. Unlink drops them.
+- A pull page with `has_more: true` whose checkpoint does not advance fails the cycle (backoff) instead of looping.
+- Discarding or keeping pending changes waits until the workspace's running cycle ends: a push answer arriving after the
+  discard would otherwise record the uploaded copy as agreed while the row shows the old content.
+
 Server issues found while integrating (both fixed server-side in slinger-admin 9ce4b08, verified while writing section 21)
 - A request/folder upsert naming a folder that does not exist was rejected `invalid`, not `not_found`. Fixed: a folder missing
   from the workspace is `not_found`; one that exists in another collection of the workspace is still `invalid`. The desktop keeps
@@ -1017,3 +1031,36 @@ created_by: { id: string | null, display_name: string } | null
   On the server a pushed `created_at` is capped at the server's clock and the REST create ignores it.
 - Tests: `wireContract.ts` `checkVersionAuthorsContract` (fake and real server), `sync/versionAuthors.test.ts` (two devices, older
   server and its upgrade, deleted account, no false immutable clash, base/conflict copies free of the field).
+
+### 21.6 `container_auth`: collection and folder auth (desktop 0.27, Slinger Cloud server alongside it)
+
+A sixth capability flag, `container_auth`, advertised and declared like the others. It adds ONE field to `collection` and
+`folder` payloads:
+
+```
+auth_json: string | null   // Postman `auth` object as JSON text; null = none set
+```
+
+- Meaning (desktop migration 0018, `shared/containerAuth.ts`): on a folder `null` = inherit from the parent folder or the
+  collection, `{"type":"noauth"}` = no auth (stops inheritance); on a collection `null` = no auth. Requests whose own auth is
+  absent/`null` in `document_json` inherit it at send time; the desktop never copies it into requests. Never an OAuth 2.0 token
+  (stripped before it is stored). Literal credentials typed into it travel like typed credentials in `document_json` today;
+  secret values belong in secret variables, which never sync.
+- Field group `auth` (label "Authorization") on both types, so an auth edit merges cleanly with a rename, scripts or docs edit on
+  another device, and two different auths are an ordinary `edit_edit` conflict of that group (display: the type, then one line
+  per setting). Limit: at most 1,048,576 bytes (the desktop's input cap), a JSON object.
+- Desktop (done): `FIELD_FEATURE.auth_json = 'container_auth'`, `toWire` adds the field only when the link has the feature,
+  activation re-bases (`null`) and marks rows with a local value dirty, deactivation removes it from bases; capture triggers
+  `sync_dirty_{collections,folders}_auth_u` (0018). With a server that does not advertise it the column stays on the device,
+  nothing is pushed or reported (exactly like scripts/docs with a server before 21.1).
+- Server (slinger-admin, migration `container_auth`): `container_auth` in `EXTENSION_FEATURES`, `FIELD_FEATURE.auth_json`,
+  nullable `authJson` on `Collection` and `Folder`, `auth_json` in `containerExtras` (JSON object with a string `type`,
+  <= 1 MiB, nullable, absent = unchanged; stored as sent like `document_json`) and in `syncPayload`. Clients that do not
+  declare the feature never see the field (shaping), and an older client never sends it, so it is never wiped.
+- Tests: the fake server has it on by default (`new FakeCloud({ containerAuth: false })` = a server before it);
+  `wireContract.ts` `checkContainerAuthContract` runs against the fake and the real server; `sync/containerAuth.test.ts` covers
+  a server without it, the upgrade and two-device merges/conflicts; slinger-admin `test/syncContainerAuth.test.ts`.
+- Old desktop versions (<= 0.26) on the same workspace: they neither send nor receive `auth_json`. They treat a request's
+  `auth: null` as "No auth", so an inheriting request is sent WITHOUT the collection/folder auth there; a request they save with
+  "No auth" stores `null`, which newer versions read as inherit. Requests imported by 0.26 or older carry their own copies of
+  the container auth and behave the same everywhere.

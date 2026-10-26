@@ -10,17 +10,23 @@
  * - Installing: AppImage: the file is replaced in place (same folder, atomic rename). deb: `pkexec dpkg -i` (the desktop asks
  *   for the administrator password; cancelling it cancels the update). Windows: the installer runs silently (`/S`) and starts
  *   Slinger again (`--force-run`). macOS: after Slinger quits, a helper mounts the disk image and replaces the app bundle.
+ * - Re-verified before installing: the download sits in the user-writable <userData>/updates, so the file is hashed again
+ *   right before it is used (size + SHA-256). The .deb, installed as root, is first copied into a fresh private directory
+ *   (mkdtemp, 0700) and the copy is verified and installed; the AppImage's replacement is verified after the copy, before
+ *   the rename.
  *   Linux and macOS restart through a detached helper that waits for this process to exit first (the single-instance lock
  *   would otherwise send the new start back to this one).
  *
  * Pure Node (no Electron): fetch, spawn and the file system checks are injected; main.ts supplies quit().
  */
 import { createHash } from 'node:crypto'
-import { accessSync, chmodSync, constants, copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { accessSync, chmodSync, constants, copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
 import type { SpawnOptions } from 'node:child_process'
 import type { UpdateInstallMethod, UpdateInstallState } from '../../shared/types'
 import { ioError } from '../lib/errors'
+import { readLimitedBody } from '../lib/limitedBody'
 import { compare, parse } from './semver'
 import { LATEST_RELEASE_API, parseRelease, RELEASES_REPO } from './updateCheck'
 
@@ -125,12 +131,41 @@ export interface UpdateInstallerDeps {
   /** Quits Slinger (the normal quit path). */
   quit(): void
   now?: () => number
+  /** Where the .deb is staged in a private directory before `pkexec dpkg -i` (default: the OS temp dir). */
+  stagingRoot?: string
+}
+
+/** Size and lower-case hex SHA-256 the installer must have (from GitHub's release JSON). */
+interface Expected {
+  size: number
+  sha256: string
+}
+
+/** Hashes `path` and throws unless it has exactly the expected size and SHA-256. */
+export async function verifyInstaller(path: string, expected: Expected): Promise<void> {
+  const bad = () => new Error('The downloaded installer changed after it was verified; it was not installed. Download the update again.')
+  let size: number
+  try {
+    size = statSync(path).size
+  } catch {
+    throw bad()
+  }
+  if (size !== expected.size) throw bad()
+  const hash = createHash('sha256')
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(path)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolve())
+      .on('error', () => reject(bad()))
+  })
+  if (hash.digest('hex') !== expected.sha256) throw bad()
 }
 
 export class UpdateInstaller {
   #state: UpdateInstallState
   #abort: AbortController | null = null
   #file: string | null = null
+  #expected: Expected | null = null
 
   constructor(private readonly deps: UpdateInstallerDeps) {
     this.#state = {
@@ -155,6 +190,7 @@ export class UpdateInstaller {
     if (!method) throw ioError(this.#state.unsupportedReason ?? 'This installation cannot update itself.')
     if (this.#state.phase === 'downloading' || this.#state.phase === 'verifying' || this.#state.phase === 'installing') return this.state()
     this.#file = null
+    this.#expected = null
     this.#set({ phase: 'downloading', version: null, received: 0, total: null, bytesPerSec: null, error: null })
     const abort = new AbortController()
     this.#abort = abort
@@ -180,7 +216,8 @@ export class UpdateInstaller {
   async install(): Promise<UpdateInstallState> {
     const method = this.#state.method
     const file = this.#file
-    if (!method || this.#state.phase !== 'ready' || !file || !existsSync(file)) throw ioError('No downloaded update is ready to install.')
+    const expected = this.#expected
+    if (!method || this.#state.phase !== 'ready' || !file || !expected || !existsSync(file)) throw ioError('No downloaded update is ready to install.')
     this.#set({ phase: 'installing', error: null })
     try {
       switch (method) {
@@ -188,23 +225,42 @@ export class UpdateInstaller {
           const target = this.deps.install.target!
           const next = `${target}.new`
           copyFileSync(file, next)
+          try {
+            await verifyInstaller(next, expected)
+          } catch (err) {
+            rmSync(next, { force: true })
+            throw err
+          }
           chmodSync(next, 0o755)
           renameSync(next, target)
           this.#restartAfterQuit(`exec "$0"`, target)
           break
         }
         case 'deb': {
-          const code = await this.#run('pkexec', ['dpkg', '-i', file])
-          if (code === 126 || code === 127) throw new Error('Installing was cancelled: the administrator password was not given.')
-          if (code !== 0) throw new Error(`dpkg could not install the update (exit code ${code}).`)
+          // dpkg runs as root: install from a copy in a directory only this user can write, verified after the copy.
+          const staging = mkdtempSync(join(this.deps.stagingRoot ?? tmpdir(), 'slinger-update-'))
+          try {
+            chmodSync(staging, 0o700)
+            const staged = join(staging, basename(file))
+            copyFileSync(file, staged, constants.COPYFILE_EXCL)
+            chmodSync(staged, 0o600)
+            await verifyInstaller(staged, expected)
+            const code = await this.#run('pkexec', ['dpkg', '-i', staged])
+            if (code === 126 || code === 127) throw new Error('Installing was cancelled: the administrator password was not given.')
+            if (code !== 0) throw new Error(`dpkg could not install the update (exit code ${code}).`)
+          } finally {
+            rmSync(staging, { recursive: true, force: true })
+          }
           this.#restartAfterQuit(`exec "$0"`, this.deps.execPath)
           break
         }
         case 'nsis':
+          await verifyInstaller(file, expected)
           // Silent install over the existing one; the installer starts Slinger again when it is done.
           this.deps.spawn(file, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore' }).unref()
           break
         case 'dmg': {
+          await verifyInstaller(file, expected)
           const bundle = this.deps.install.target!
           const script = [
             'mnt=$(mktemp -d)',
@@ -237,8 +293,9 @@ export class UpdateInstaller {
       throw new Error('Could not reach GitHub to download the update.')
     }
     if (!res.ok) throw new Error(`GitHub answered HTTP ${res.status} for the latest release.`)
-    const text = await res.text()
-    if (text.length > MAX_RELEASE_JSON) throw new Error('The release information from GitHub is too large.')
+    const read = await readLimitedBody(res, MAX_RELEASE_JSON)
+    if (!read.ok) throw new Error('The release information from GitHub is too large.')
+    const text = read.bytes.toString('utf8')
     let body: unknown
     try {
       body = JSON.parse(text)
@@ -306,6 +363,7 @@ export class UpdateInstaller {
     }
     renameSync(part, file)
     this.#file = file
+    this.#expected = { size: asset.size, sha256: asset.sha256 }
     this.#set({ phase: 'ready' })
   }
 

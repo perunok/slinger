@@ -6,7 +6,7 @@ import type { Db } from '../db/database'
  * locally (so the delete never becomes a delete storm on the remote and never trips the read-only triggers).
  */
 export function detachSync(db: Db, workspaceId: string): void {
-  for (const table of ['sync_conflicts', 'sync_sent_ops', 'sync_dirty', 'sync_kept', 'sync_entities', 'cloud_links']) {
+  for (const table of ['sync_conflicts', 'sync_sent_ops', 'sync_dirty', 'sync_kept', 'sync_deferred', 'sync_entities', 'cloud_links']) {
     db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(workspaceId)
   }
 }

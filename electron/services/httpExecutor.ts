@@ -3,6 +3,8 @@ import { withDefaultScheme } from '../../shared/urlScheme'
 import { basename } from 'node:path'
 import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
 import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
+import { FileWriteError, readLimitedBody, streamBodyToFile } from '../lib/limitedBody'
+import { DEFAULT_MAX_RESPONSE_MB, formatLimit, MB } from '../../shared/responseLimit'
 import type { FileAccess } from './fileGrants'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
@@ -96,17 +98,26 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   try {
     url = new URL(normalized)
   } catch {
-    throw invalidInput(`"${input.url}" is not a valid URL`)
+    // Never the resolved URL: it may hold secret values. The renderer's historyUrl keeps them as {{name}}.
+    throw invalidInput(input.historyUrl ? `"${input.historyUrl}" is not a valid URL` : 'The request URL is not a valid URL')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw invalidInput('only http and https URLs can be requested')
   }
 
   const headers = new Headers()
-  try {
-    for (const h of headerList(input)) headers.append(h.key.trim(), h.value.trim())
-  } catch (err) {
-    throw invalidInput(`Invalid header: ${err instanceof Error ? err.message : String(err)}`)
+  for (const h of headerList(input)) {
+    try {
+      headers.append(h.key.trim(), h.value.trim())
+    } catch {
+      // The platform's message quotes the value, which may be a secret: name the header, never its value.
+      const name = h.key.trim()
+      throw invalidInput(
+        /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)
+          ? `Invalid header "${name}": its value contains characters that are not allowed in HTTP headers`
+          : 'Invalid header: a header name contains characters that are not allowed in HTTP headers',
+      )
+    }
   }
 
   // Auth is server-side so credentials never have to be assembled in the renderer.
@@ -126,7 +137,7 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
         const o = auth.oauth2
         if (!o || !OAUTH2_TOKEN_KEY_RE.test(o.tokenKey)) throw invalidInput('OAuth 2.0 token key is invalid')
         if (!oauth2Token) throw invalidInput('OAuth 2.0 authorization is not available for this request')
-        const token = oauth2Token(o.tokenKey)
+        const token = oauth2Token(o.tokenKey, url.origin)
         if (o.addTo === 'query') url.searchParams.append('access_token', token)
         else headers.set('Authorization', o.headerPrefix.trim() ? `${o.headerPrefix.trim()} ${token}` : token)
         break
@@ -143,7 +154,8 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'IpcError') throw err
-    throw invalidInput(`Invalid auth: ${err instanceof Error ? err.message : String(err)}`)
+    // Not the platform's message: it quotes the credential.
+    throw invalidInput(`Invalid auth: the ${auth?.kind === 'apiKey' ? 'API key name or value' : 'credentials'} contain characters that are not allowed in HTTP headers`)
   }
 
   let body: BuiltRequest['body']
@@ -199,6 +211,49 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   return { url: url.toString(), method, headers, body }
 }
 
+/**
+ * Removes every value of the outgoing request that the safe form of its URL (`historyUrl`: secrets as `{{name}}`) does
+ * not show from an error message: the resolved URL and its parts, header values and credentials. Platform messages can
+ * quote them ("Request cannot be constructed from a URL that includes credentials: https://user:secret@host/",
+ * "getaddrinfo ENOTFOUND <host from a secret>"), and the message goes to history and the window.
+ */
+export function scrubRequestValues(message: string, input: HttpRequestInput): string {
+  const shown = input.historyUrl ?? null
+  const values = new Set<string>()
+  const add = (v: string | undefined | null) => {
+    const t = v?.trim()
+    if (t && t.length >= 4 && !(shown && shown.includes(t))) values.add(t)
+  }
+  add(input.url)
+  try {
+    const u = new URL(normalizeUrl(input.url ?? ''))
+    for (const v of [u.href, u.origin, u.host, u.hostname, u.username, u.password, u.pathname, u.search]) {
+      add(v)
+      try {
+        add(decodeURIComponent(v))
+      } catch {
+        /* not percent-encoded text */
+      }
+    }
+    u.searchParams.forEach((value) => add(value))
+  } catch {
+    /* not a URL: the raw string above covers it */
+  }
+  for (const h of input.headers ?? []) add(h.value)
+  const a = input.auth
+  if (a?.kind === 'basic') {
+    add(a.basic?.password)
+    add(Buffer.from(`${a.basic?.username ?? ''}:${a.basic?.password ?? ''}`, 'utf8').toString('base64'))
+  }
+  if (a?.kind === 'bearer') add(a.bearer?.token)
+  if (a?.kind === 'apiKey') add(a.apiKey?.value)
+  let out = message
+  for (const v of [...values].sort((x, y) => y.length - x.length)) {
+    if (out.includes(v)) out = out.split(v).join('•••')
+  }
+  return out
+}
+
 function describeNetworkError(err: unknown): string {
   if (err instanceof Error) {
     const cause = (err as Error & { cause?: unknown }).cause
@@ -237,37 +292,24 @@ export interface ExecuteOptions {
   files?: FileAccess
   /** Reads the stored OAuth 2.0 access token for `auth.oauth2.tokenKey`; without it OAuth 2.0 auth is rejected. */
   oauth2Token?: OAuth2TokenLookup
-  /** Fails with network_error instead of reading a larger response body (internal requests such as token calls). */
+  /** The most body bytes read into memory (default 50 MB); the download stops as soon as the body passes it. */
   maxResponseBytes?: number
+  /**
+   * What a larger body does: 'error' (default; internal requests, pm.sendRequest) fails with network_error, 'report' (user
+   * sends) returns the response with `bodyTooLarge` and no body.
+   */
+  oversize?: 'error' | 'report'
+  /** Streams the body into this file (chosen by the user in main's save dialog) instead of returning it; no size limit. */
+  toFile?: string
 }
 
-/** Returns the access token stored under a token key, or throws a user-facing IpcError (missing, expired). */
-export type OAuth2TokenLookup = (tokenKey: string) => string
+/**
+ * Returns the access token stored under a token key for a send to `origin`, or throws a user-facing IpcError (missing,
+ * expired, not allowed for that origin).
+ */
+export type OAuth2TokenLookup = (tokenKey: string, origin: string) => string
 
-async function readBody(response: Response, max: number | undefined): Promise<Uint8Array> {
-  if (max === undefined) return new Uint8Array(await response.arrayBuffer())
-  const tooLarge = () => networkError(`The response is larger than ${max} bytes`)
-  const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > max) {
-    await response.body?.cancel().catch(() => {})
-    throw tooLarge()
-  }
-  const reader = response.body?.getReader()
-  if (!reader) return new Uint8Array(0)
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > max) {
-      await reader.cancel().catch(() => {})
-      throw tooLarge()
-    }
-    chunks.push(value)
-  }
-  return Buffer.concat(chunks)
-}
+const tooLargeError = (max: number) => networkError(`The response is larger than ${formatLimit(max)}, so it was not loaded`, { tooLarge: true })
 
 /**
  * Performs the HTTP request. Non-UTF-8 bodies come back as base64. durationMs covers connect,
@@ -300,19 +342,38 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
       signal: controller.signal,
       redirect: 'follow',
     })
-    const bytes = await readBody(response, options.maxResponseBytes)
-    const durationMs = Math.max(0, Math.round(performance.now() - started))
-    const text = decodeBody(bytes, response.headers)
     const headers: RequestHeader[] = []
     response.headers.forEach((value, key) => headers.push({ key, value }))
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      durationMs,
-      headers,
-      bodyText: text,
-      bodyBase64: text === null ? Buffer.from(bytes).toString('base64') : null,
-      bodyByteLength: bytes.byteLength,
+    const head = { status: response.status, statusText: response.statusText, headers }
+    const elapsed = () => Math.max(0, Math.round(performance.now() - started))
+
+    if (options.toFile) {
+      let written: number
+      try {
+        written = await streamBodyToFile(response, options.toFile)
+      } catch (err) {
+        if (!(err instanceof FileWriteError)) throw err
+        throw ioError(`Could not write the response to "${options.toFile}": ${err.message}`)
+      }
+      return { ...head, durationMs: elapsed(), bodyText: null, bodyBase64: null, bodyByteLength: written, savedToFile: options.toFile }
+    }
+
+    const max = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_MB * MB
+    const tooLarge = (size: number) => {
+      if (options.oversize !== 'report') throw tooLargeError(max)
+      return { ...head, durationMs: elapsed(), bodyText: null, bodyBase64: null, bodyByteLength: size, bodyTooLarge: { limitBytes: max } }
+    }
+    const body = await readLimitedBody(response, max)
+    if (!body.ok) return tooLarge(body.declared ?? body.received)
+    const bytes = body.bytes
+    const durationMs = elapsed()
+    try {
+      const text = decodeBody(bytes, response.headers)
+      return { ...head, durationMs, bodyText: text, bodyBase64: text === null ? bytes.toString('base64') : null, bodyByteLength: bytes.byteLength }
+    } catch (err) {
+      // Too long for one JavaScript string (base64 of a very large binary body): same as passing the limit.
+      if (err instanceof RangeError) return tooLarge(bytes.byteLength)
+      throw err
     }
   } catch (err) {
     if (cancelled) throw networkError('Request cancelled', { cancelled: true })

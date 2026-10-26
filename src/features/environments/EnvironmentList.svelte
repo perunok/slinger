@@ -1,5 +1,7 @@
 <script lang="ts">
   import Button from '../../components/ui/Button.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { isMenuKey, menuPoint } from '../../components/ui/contextMenu'
   import Icon from '../../components/ui/Icon.svelte'
   import IconButton from '../../components/ui/IconButton.svelte'
   import type { Environment } from '../../../shared/types'
@@ -28,6 +30,25 @@
     globalsSelected = false, onselectglobals,
   }: Props = $props()
   const selected = $derived(globalsSelected ? undefined : environments.find((e) => e.id === selectedId))
+
+  let menu = $state<{ x: number; y: number; env: Environment } | null>(null)
+  /** Right-click / Shift+F10 on an environment: the buttons under the list, for that environment. */
+  function menuItems(env: Environment): MenuItem[] {
+    return [
+      { label: 'Set active', icon: 'check', disabled: env.id === activeId, action: () => onsetactive(env.id) },
+      { separator: true, label: '' },
+      { label: 'Rename…', icon: 'edit', disabled: readOnly, action: () => onrename(env) },
+      { label: 'Duplicate', icon: 'copy', disabled: readOnly, action: () => onduplicate(env) },
+      ...(onexport ? [{ label: 'Export…', icon: 'download', action: () => onexport(env) }] : []),
+      { separator: true, label: '' },
+      { label: 'Delete…', icon: 'trash', danger: true, disabled: readOnly, action: () => ondelete(env) },
+    ]
+  }
+  function openMenu(e: MouseEvent | KeyboardEvent, env: Environment) {
+    if (disabled) return
+    e.preventDefault()
+    menu = { ...menuPoint(e), env }
+  }
 </script>
 
 <div class="flex h-full min-h-0 w-56 shrink-0 flex-col gap-2">
@@ -58,6 +79,8 @@
           {disabled}
           class="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-sm hover:bg-hover disabled:opacity-60 {env.id === selectedId && !globalsSelected ? 'bg-accent-soft' : ''}"
           onclick={() => onselect(env.id)}
+          oncontextmenu={(e) => openMenu(e, env)}
+          onkeydown={(e) => isMenuKey(e) && openMenu(e, env)}
         >
           <span class="truncate">{env.name}</span>
           {#if env.id === activeId}
@@ -78,3 +101,7 @@
     <p class="text-[11px] text-faint">Duplicating copies plain variables only; secrets are not copied.</p>
   {/if}
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.env)} onclose={() => (menu = null)} />
+{/if}

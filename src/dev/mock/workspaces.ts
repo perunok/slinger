@@ -12,7 +12,7 @@ import {
   type MockState,
   type VariableRow,
 } from './store'
-import { cleanName, cleanScriptsJson, fail, nowSec, setDescription, uuid } from './util'
+import { cleanAuthJson, cleanName, cleanScriptsJson, fail, nowSec, setDescription, uuid } from './util'
 
 export const SECRET_MASK = '••••••••'
 
@@ -28,6 +28,7 @@ type WorkspaceApi = Pick<
   | 'deleteCollection'
   | 'setCollectionScripts'
   | 'setCollectionDescription'
+  | 'setCollectionAuth'
   | 'listEnvironments'
   | 'ensureDefaultEnvironment'
   | 'createEnvironment'
@@ -135,6 +136,11 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
       setDescription(row, description)
       return touch(row)
     },
+    async setCollectionAuth(collectionId, authJson) {
+      const row = must(s.collections, collectionId, 'Collection')
+      row.authJson = cleanAuthJson(authJson, 'collection')
+      return touch(row)
+    },
 
     async listEnvironments(workspaceId) {
       workspace(workspaceId)
@@ -184,6 +190,9 @@ export function createWorkspaceApi(s: MockState): WorkspaceApi {
       }
       const existing = must(s.variables, input.variableId, 'Variable')
       if (existing.environmentId !== input.environmentId) fail('invalid_input', 'Variable belongs to a different environment')
+      if (input.expectedVersion !== undefined && existing.version !== input.expectedVersion) {
+        fail('version_conflict', 'environment variable was modified elsewhere; reload and retry', { expectedVersion: input.expectedVersion, currentVersion: existing.version })
+      }
       existing.value = applyValue(existing, value, input.isSecret)
       if (!input.isSecret || !isKeepMarker(value)) existing.secretMissing = false
       existing.key = key

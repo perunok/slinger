@@ -10,7 +10,6 @@ import { importPostmanCollection, replaceCollectionFromPostman } from '../servic
 import { extractFolderToCollection } from '../services/extractFolder'
 import { applyUpdate, linkSpec, planUpdateFrom } from '../openapi/update'
 import * as versions from '../services/collectionVersions'
-import { assertGenericSecureKey } from '../services/secrets'
 import { OAUTH2_GRANT_TYPES } from '../../shared/oauth2'
 import type { Core } from '../services/core'
 import { cssColorSchema } from '../lib/windowState'
@@ -164,7 +163,16 @@ const httpRequestInput = z.object({
   historyUrl: z.string().max(100_000).nullish(),
   historySource: z.literal('mcp').nullish(),
   scriptSessionId: z.string().max(128).nullish(),
+  maxResponseBytes: z.number().int().positive().optional(),
+  downloadId: z.string().uuid().optional(),
 })
+
+/** A file name for the save dialog's suggestion: no folders, no control or reserved characters. */
+export function safeDownloadName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? ''
+  const clean = base.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^[.\s]+/, '').trim().slice(0, 200)
+  return clean || 'response'
+}
 
 // ---- OAuth 2.0 ----------------------------------------------------------------
 
@@ -241,6 +249,7 @@ const upsertVariableInput = z.object({
   value: z.string().max(1_000_000),
   isSecret: z.boolean(),
   variableId: uuid.optional(),
+  expectedVersion: z.number().int().min(1).optional(),
 })
 // ---- persisted variables (collection variables + globals) --------------------------
 
@@ -338,6 +347,7 @@ const runScriptsInput = z.object({
   timeoutMs: z.number().int().min(1).max(60_000).optional(),
   sendRequestTimeoutMs: z.number().int().min(1).max(10 * 60_000).optional(),
   continueOnError: z.boolean().optional(),
+  denySecrets: z.string().min(1).max(1000).optional(),
 })
 const scriptsJson = z.string().max(4 * 1024 * 1024).nullable()
 const extractFolderInput = z.object({
@@ -347,6 +357,8 @@ const extractFolderInput = z.object({
   copyCollectionVariables: z.boolean(),
 })
 const description = z.string().max(4 * 1024 * 1024).nullable()
+/** ADDED (container auth): Postman `auth` JSON of a collection/folder; validated and token-stripped by the repository. */
+const authJson = z.string().max(2 * 1024 * 1024).nullable()
 
 /** Parses `args` against a tuple schema and turns zod failures into invalid_input errors. */
 function parseArgs<T extends z.ZodType>(schema: T, args: unknown[]): z.infer<T> {
@@ -365,6 +377,8 @@ export interface PlatformDeps {
   chooseDirectory(): Promise<string | null>
   /** Shows a native open-file dialog (single selection); resolves to the chosen absolute path or null. */
   pickFile(options: PickFileOptions): Promise<string | null>
+  /** Shows a native save dialog (`defaultName` in the Downloads folder); the chosen absolute path or null. Optional: tests. */
+  saveFile?(options: { title: string; defaultName: string }): Promise<string | null>
   appVersion: string
   /** Paints + remembers the window background (already validated and normalised to `#rrggbb`). Optional: tests omit it. */
   setWindowBackground?(color: string): void
@@ -389,6 +403,8 @@ export interface WindowControls {
   control(action: WindowAction): void
   /** CSS pixels within the page. */
   showAppMenu(x: number, y: number): void
+  /** The window's unsaved edits that would be lost on quit (titles); quitting asks first while there are any. */
+  setUnsavedChanges?(titles: string[]): void
 }
 
 const assistantEdit = z
@@ -401,6 +417,30 @@ const assistantEdit = z
     detail: z.string().min(1).max(1000),
   })
   .strict()
+const assistantChangeRef = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('request'), requestId: uuid, created: z.boolean().optional(), pending: z.boolean().optional() }).strict(),
+  z.object({ kind: z.literal('variable'), environmentId: uuid, key: z.string().min(1).max(500), pending: z.boolean().optional() }).strict(),
+  z.object({ kind: z.literal('container'), containerKind: z.enum(['collection', 'folder']), id: uuid, pending: z.boolean().optional() }).strict(),
+])
+const redactSecretsInput = z
+  .object({
+    scriptSessionId: z.string().max(128).nullable(),
+    oauth2TokenKey: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+    texts: z.array(z.string().max(64 * 1024 * 1024)).max(10_000),
+  })
+  .strict()
+/** An origin as `new URL(x).origin` prints it: http(s)://host[:port]. */
+const httpOrigin = z
+  .string()
+  .max(2048)
+  .refine((v) => {
+    try {
+      const u = new URL(v)
+      return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === v
+    } catch {
+      return false
+    }
+  }, { message: 'must be an http(s) origin' })
 const mcpClientId = z.enum(['claude-desktop', 'claude-code', 'cursor', 'vscode', 'windsurf'])
 const mcpSettings = z.object({ enabled: z.boolean(), port: z.number().int().min(1024).max(65535) }).strict()
 const mcpCallResult = z.union([
@@ -576,6 +616,7 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       return core.collections.rename(id, n)
     },
     deleteCollection: async (...a) => core.collections.softDelete(parseArgs(z.tuple([uuid]), a)[0]),
+    trustCollectionScripts: async (...a) => core.trust.trustCollection(parseArgs(z.tuple([uuid]), a)[0]),
     setCollectionScripts: async (...a) => {
       const [id, json] = parseArgs(z.tuple([uuid, scriptsJson]), a)
       return core.collections.setScripts(id, json)
@@ -583,6 +624,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     setCollectionDescription: async (...a) => {
       const [id, text] = parseArgs(z.tuple([uuid, description]), a)
       return core.collections.setDescription(id, text)
+    },
+    setCollectionAuth: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, authJson]), a)
+      return core.collections.setAuth(id, json)
     },
 
     // Folders
@@ -602,6 +647,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     setFolderDescription: async (...a) => {
       const [id, text] = parseArgs(z.tuple([uuid, description]), a)
       return core.folders.setDescription(id, text)
+    },
+    setFolderAuth: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, authJson]), a)
+      return core.folders.setAuth(id, json)
     },
 
     // Requests
@@ -626,6 +675,13 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [e] = parseArgs(z.tuple([assistantEdit]), a)
       return core.history.record({ ...e, statusCode: null, ok: true, errorMessage: null, durationMs: 0, kind: 'edit', source: 'mcp' })
     },
+    markAssistantChange: async (...a) => core.trust.markAssistantChange(parseArgs(z.tuple([assistantChangeRef]), a)[0]),
+    clearAssistantChange: async (...a) => core.trust.clearAssistantChange(parseArgs(z.tuple([assistantChangeRef]), a)[0]),
+    listAssistantChanges: async (...a) => core.trust.listAssistantChanges(parseArgs(z.tuple([uuid]), a)[0]),
+    redactSecrets: async (...a) => {
+      const [input] = parseArgs(z.tuple([redactSecretsInput]), a)
+      return input.texts.map((t) => core.oauth2.redactToken(input.oauth2TokenKey, core.scripts.redact(input.scriptSessionId, t)))
+    },
 
     // HTTP execution
     executeHttpRequest: async (...a) => core.http.execute(parseArgs(z.tuple([httpRequestInput]), a)[0]),
@@ -634,6 +690,12 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [runId] = parseArgs(z.tuple([z.string().max(128)]), a)
       core.http.cancel(runId)
       core.scripts.cancel(runId)
+    },
+    chooseResponseDownloadFile: async (...a) => {
+      const [name] = parseArgs(z.tuple([z.string().max(1000)]), a)
+      if (!platform.saveFile) throw invalidInput('Saving files is not available here')
+      const path = await platform.saveFile({ title: 'Download the response to', defaultName: safeDownloadName(name) })
+      return path ? core.http.registerDownload(path) : null
     },
     runScripts: async (...a) => core.scripts.run(parseArgs(z.tuple([runScriptsInput]), a)[0]),
 
@@ -717,13 +779,6 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     getMockServerLog: async (...a) => core.mockServers.log(parseArgs(z.tuple([uuid]), a)[0]),
     clearMockServerLog: async (...a) => core.mockServers.clearLog(parseArgs(z.tuple([uuid]), a)[0]),
 
-    secureStoreGet: async (...a) => core.secrets.get(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
-    secureStoreSet: async (...a) => {
-      const [key, value] = parseArgs(z.tuple([z.string(), z.string().max(1_000_000)]), a)
-      core.secrets.set(assertGenericSecureKey(key), value)
-    },
-    secureStoreDelete: async (...a) => core.secrets.delete(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
-
     // Misc
     openExternalUrl: async (...a) => platform.openExternal(assertExternalUrl(parseArgs(z.tuple([z.string()]), a)[0])),
     prepareBrowserAuthCallback: async (...a) => (parseArgs(z.tuple([]), a), core.authCallbacks.prepare()),
@@ -772,7 +827,14 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     },
     getOAuth2TokenStatus: async (...a) => core.oauth2.status(parseArgs(z.tuple([oauth2Config]), a)[0]),
     deleteOAuth2Token: async (...a) => core.oauth2.delete(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
-    revealOAuth2Token: async (...a) => core.oauth2.reveal(parseArgs(z.tuple([oauth2TokenKey]), a)[0]),
+    revealOAuth2Token: async (...a) => {
+      const [key, origin] = parseArgs(z.tuple([oauth2TokenKey, httpOrigin.optional()]), a)
+      return core.oauth2.reveal(key, origin)
+    },
+    allowOAuth2Origin: async (...a) => {
+      const [key, origin] = parseArgs(z.tuple([oauth2TokenKey, httpOrigin]), a)
+      core.oauth2.allowOrigin(key, origin)
+    },
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),
@@ -840,6 +902,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     showAppMenu: async (...a) => {
       const [x, y] = parseArgs(z.tuple([pagePoint, pagePoint]), a)
       platform.window?.showAppMenu(x, y)
+    },
+    setUnsavedChanges: async (...a) => {
+      const [titles] = parseArgs(z.tuple([z.array(z.string().max(1000)).max(10_000)]), a)
+      platform.window?.setUnsavedChanges?.(titles)
     },
   }
 

@@ -2,6 +2,7 @@ import type { ApiFolder, ApiRequest, Collection, DescriptionType, Environment, W
 import type { Db } from '../db/database'
 import { invalidInput, notFound } from '../lib/errors'
 import { assertUuid } from '../lib/ids'
+import { cleanContainerAuthJson, type ContainerLevel } from '../../shared/containerAuth'
 
 export type { Db }
 
@@ -20,6 +21,7 @@ export interface CollectionRow {
   scripts_json?: string | null
   description?: string | null
   description_type?: string | null
+  auth_json?: string | null
   source_postman_id?: string | null
   version: number
   created_at: number
@@ -35,6 +37,7 @@ export interface FolderRow {
   scripts_json?: string | null
   description?: string | null
   description_type?: string | null
+  auth_json?: string | null
   version: number
   created_at: number
   updated_at: number
@@ -77,6 +80,7 @@ export const toCollection = (r: CollectionRow): Collection => ({
   scriptsJson: r.scripts_json ?? null,
   description: r.description ?? null,
   descriptionType: descriptionTypeOf(r.description_type),
+  authJson: r.auth_json ?? null,
   sourcePostmanId: r.source_postman_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -92,6 +96,7 @@ export const toFolder = (r: FolderRow): ApiFolder => ({
   scriptsJson: r.scripts_json ?? null,
   description: r.description ?? null,
   descriptionType: descriptionTypeOf(r.description_type),
+  authJson: r.auth_json ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
@@ -200,6 +205,13 @@ export function cleanScriptsJson(value: unknown): string | null {
   return parsed.length === 0 ? null : value
 }
 
+/** Validates a collection/folder `auth_json` value (shared/containerAuth.ts); OAuth 2.0 tokens are stripped. */
+export function cleanAuthJson(value: unknown, level: ContainerLevel): string | null {
+  const r = cleanContainerAuthJson(value, level)
+  if (!r.ok) throw invalidInput(r.error)
+  return r.json
+}
+
 export const MAX_DESCRIPTION_BYTES = 2 * 1024 * 1024
 const DESCRIPTION_TYPES = new Set(['text/markdown', 'text/plain'])
 
@@ -216,17 +228,5 @@ export function cleanDescription(value: unknown): string | null {
   return value.trim() === '' ? null : value
 }
 
-/**
- * A Postman `description` (a string, or `{content, type}`) -> stored text + type. The type is kept only for
- * the object form so export can write the same shape back; an unknown type is treated as Markdown.
- */
-export function descriptionFromPostman(value: unknown): { text: string | null; type: DescriptionType | null } {
-  if (typeof value === 'string') return { text: value.trim() === '' ? null : value, type: null }
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const o = value as Record<string, unknown>
-    const content = typeof o.content === 'string' ? o.content : ''
-    if (content.trim() === '') return { text: null, type: null }
-    return { text: content, type: o.type === 'text/plain' ? 'text/plain' : 'text/markdown' }
-  }
-  return { text: null, type: null }
-}
+/** A Postman `description` -> stored text + type (shared with the renderer). */
+export { descriptionFromPostman } from '../../shared/postmanDescription'

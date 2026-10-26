@@ -9,9 +9,15 @@
   import { settings } from '../../app/settings.svelte'
   import { toast } from '../../app/toast.svelte'
   import type CodeEditor from '../../components/editor/CodeEditor.svelte'
+  import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
+  import { menuPoint } from '../../components/ui/contextMenu'
   import IconButton from '../../components/ui/IconButton.svelte'
+  import Button from '../../components/ui/Button.svelte'
+  import InfoTip from '../../components/ui/InfoTip.svelte'
+  import { formatLimit } from '../../../shared/responseLimit'
   import Tabs from '../../components/ui/Tabs.svelte'
   import { errorInfo } from '../../lib/ipc'
+  import { copyText } from '../../app/clipboard'
   import { saveExport } from '../../lib/exportFile'
   import { suggestFileName } from '../../lib/hex'
   import { analyzeResponse, formatBytes, formatDuration, parseSetCookies, statusTone, textToBase64 } from '../../lib/response'
@@ -37,8 +43,11 @@
     /** Script results of this response; adds the Tests and Console tabs (live responses only). */
     scripts?: ScriptOutput | null
     onclearconsole?: () => void
+    /** "Send and download to file" for a body over the size limit (live responses only). */
+    onsendtofile?: () => void
   }
-  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions, chips, scripts = null, onclearconsole }: Props = $props()
+  let { data, view = 'pretty', onviewchange, mimeHint = '', showTiming = true, actions, chips, scripts = null, onclearconsole, onsendtofile }: Props =
+    $props()
 
   const info = $derived(analyzeResponse(data, mimeHint))
   const cookieCount = $derived(parseSetCookies(data.headers).length)
@@ -103,6 +112,24 @@
     }
   }
 
+  let menu = $state<{ x: number; y: number; selection: string } | null>(null)
+  /** Right-click on the body: the toolbar's copy / save / search, plus copying the selected text (the menu replaces Chromium's). */
+  function bodyMenu(selection: string): MenuItem[] {
+    return [
+      ...(selection ? [{ label: 'Copy', icon: 'copy', action: () => void copyText(selection) }, { separator: true, label: '' }] : []),
+      { label: 'Copy response body', icon: 'copy', disabled: info.text === null, action: () => void copyBody() },
+      { label: 'Save response to file…', icon: 'download', disabled: info.kind === 'empty', action: () => void saveBody() },
+      { label: 'Search in response', icon: 'search', hint: 'Ctrl+F', disabled: !editor || info.text === null, action: () => editor?.openSearch() },
+    ]
+  }
+  function openBodyMenu(e: MouseEvent) {
+    e.preventDefault()
+    const view = editor?.getView()
+    const sel = view?.state.selection.main
+    const selection = view && sel && !sel.empty ? view.state.sliceDoc(sel.from, sel.to) : (window.getSelection()?.toString() ?? '')
+    menu = { ...menuPoint(e), selection }
+  }
+
   const canEdit = $derived(effectiveView !== 'headers' && effectiveView !== 'cookies' && effectiveView !== 'tests' && effectiveView !== 'console')
 </script>
 
@@ -131,8 +158,32 @@
       <HeadersTable headers={data.headers} />
     {:else if effectiveView === 'cookies'}
       <CookiesTable headers={data.headers} />
+    {:else if data.bodyTooLarge || data.savedToFile}
+      <div class="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-sm" data-testid="body-not-loaded">
+        {#if data.savedToFile}
+          <p class="font-medium text-fg">Saved {formatBytes(data.bodyByteLength)} to a file</p>
+          <p class="break-all text-xs text-muted" data-testid="saved-path">{data.savedToFile}</p>
+        {:else if data.bodyTooLarge}
+          <div class="flex items-center gap-1.5">
+            <p class="font-medium text-fg">Response larger than {formatLimit(data.bodyTooLarge.limitBytes)} — not loaded</p>
+            <InfoTip label="About large responses">
+              Slinger stopped downloading the body at the Maximum response size (Settings &gt; Requests); the status and headers
+              are shown. Send and download to file sends the request again and saves the whole body straight to a file you choose.
+            </InfoTip>
+          </div>
+          {#if onsendtofile}
+            <Button size="sm" icon="download" onclick={onsendtofile} data-testid="send-to-file">Send and download to file</Button>
+          {/if}
+        {/if}
+      </div>
     {:else}
-      <BodyView {info} mode={bodyMode} {wrap} {showAll} onshowall={() => (showAll = true)} bind:editor />
+      <div class="h-full min-h-0" role="presentation" oncontextmenu={openBodyMenu} data-testid="response-body">
+        <BodyView {info} mode={bodyMode} {wrap} {showAll} onshowall={() => (showAll = true)} bind:editor />
+      </div>
     {/if}
   </div>
 </div>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={bodyMenu(menu.selection)} onclose={() => (menu = null)} />
+{/if}

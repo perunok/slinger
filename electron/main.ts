@@ -15,12 +15,14 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { createIpcApi } from './ipc/api'
 import { APP_NAME, buildAppMenuTemplate, deliverMenuCommand, nextZoomLevel, type ZoomDirection } from './lib/appMenu'
 import { contentSecurityPolicy } from './lib/csp'
+import { editMenuTemplate } from './lib/editMenu'
 import { ioError } from './lib/errors'
 import { migrateLegacyDataDir } from './lib/legacyDataDir'
 import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
-import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
+import { discardPrompt, needsDiscardConfirm } from './lib/quitGuard'
+import { acquireInstanceGuard, guardSecret, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -83,9 +85,36 @@ let quitting = false
 let shutdown: 'running' | 'draining' | 'done' = 'running'
 /** Windows is logging off or shutting down: not the user quitting Slinger. */
 let sessionEnding = false
+/** Tabs whose unsaved edits would be lost on quit, as last reported by the window (lib/quitGuard.ts). */
+let unsavedTitles: readonly string[] = []
+/** The user chose "Discard and Quit" (or closed the window that way) for the quit under way. */
+let discardConfirmed = false
+let discardPromptOpen: Promise<boolean> | null = null
 const closeToTray = () => windowState.closeToTray !== false
 /** Automated runs (smoke test, e2e) use a hidden/off-screen window: never remember its geometry. */
 const automatedWindow = () => !!(process.env.SLINGER_SMOKE_TEST || process.env.SLINGER_HIDE_WINDOW)
+const mustConfirmDiscard = () => needsDiscardConfirm({ titles: unsavedTitles, automated: automatedWindow(), sessionEnding, confirmed: discardConfirmed })
+
+/**
+ * Asks (once at a time) whether to quit and discard the unsaved edits the window reported; true when there is nothing to
+ * ask, or the user chose to discard them. The window comes back from the tray first so the user sees what is meant.
+ */
+function confirmDiscardUnsaved(): Promise<boolean> {
+  if (!mustConfirmDiscard()) return Promise.resolve(true)
+  discardPromptOpen ??= (async () => {
+    try {
+      if (hiddenToTray) showMainWindow()
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const prompt = discardPrompt(unsavedTitles)
+      const { response } = win ? await dialog.showMessageBox(win, prompt) : await dialog.showMessageBox(prompt)
+      if (response === 0) discardConfirmed = true
+      return response === 0
+    } finally {
+      discardPromptOpen = null
+    }
+  })()
+  return discardPromptOpen
+}
 
 // SLINGER_STARTUP_TIMING=1 prints one `STARTUP_TIMING {...}` line: main-process milestones (ms since process start)
 // and the renderer's own marks (ms since navigation start; see src/app/bootSkeleton.ts).
@@ -229,6 +258,12 @@ function createWindow(): BrowserWindow {
     if (hidesOnClose({ closeToTray: closeToTray(), quitting, reopening: reopeningWindow, sessionEnding })) {
       event.preventDefault()
       hideToTray(win)
+    } else if (!quitting && !reopeningWindow && mustConfirmDiscard()) {
+      // Closing the window for good (closing to the tray is off) loses what the page could not keep: ask first.
+      event.preventDefault()
+      void confirmDiscardUnsaved().then((ok) => {
+        if (ok && !win.isDestroyed()) win.close()
+      })
     }
   })
   win.on('session-end', () => {
@@ -255,6 +290,11 @@ function createWindow(): BrowserWindow {
   })
   win.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) event.preventDefault()
+  })
+  // Cut / Copy / Paste on text fields and selected text (the app's own right-click menus stop this event in the page).
+  win.webContents.on('context-menu', (_event, params) => {
+    const template = editMenuTemplate(params)
+    if (template) Menu.buildFromTemplate(template).popup({ window: win })
   })
   timeMark('loadURL')
   void win.loadURL(devServerUrl ?? `${APP_ORIGIN}/index.html`)
@@ -399,6 +439,9 @@ function createUpdater(feedUrl: string): UpdateInstaller {
     execPath: process.execPath,
     quit: () => setTimeout(() => app.quit(), 100),
   })
+  // Installing ends with a restart: ask about unsaved edits before anything is installed (Cancel keeps the update ready).
+  const install = installer.install.bind(installer)
+  installer.install = async () => ((await confirmDiscardUnsaved()) ? install() : installer.state())
   return installer
 }
 
@@ -435,8 +478,11 @@ function showMainWindow(): void {
 
 /** Quit chosen by the user (tray or menu): connected assistants must not start Slinger again until it is opened. */
 function quitByUser(): void {
-  if (!quitting) core?.mcp.markQuit()
-  app.quit()
+  void confirmDiscardUnsaved().then((ok) => {
+    if (!ok) return
+    if (!quitting) core?.mcp.markQuit()
+    app.quit()
+  })
 }
 
 function setCloseToTray(enabled: boolean): WindowChrome {
@@ -483,6 +529,9 @@ function installAppMenu(): void {
 function openMainWindow(): BrowserWindow {
   const win = createWindow()
   mainWindow = win
+  // A new page reports its own unsaved edits; a discard chosen for the previous window does not carry over.
+  unsavedTitles = []
+  discardConfirmed = false
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null
@@ -516,7 +565,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     try { await window.slinger.renameWorkspace('not-a-uuid', 'x') } catch (e) {
       out.error = { isError: e instanceof Error, name: e.name, code: e.code, message: e.message }
     }
-    try { await window.slinger.secureStoreGet('slinger:env-var:x') } catch (e) { out.reserved = e.code }
+    out.noKeychainPassthrough = typeof window.slinger.secureStoreGet === 'undefined'
     try { await window.slinger.updateRequest({ requestId: '11111111-1111-4111-8111-111111111111', name: 'x', method: 'GET', url: '', documentJson: '{}', expectedVersion: 1 }) } catch (e) { out.notFound = e.code }
     out.csp = (await fetch(location.href)).headers.get('content-security-policy')
     const ws = (await window.slinger.listWorkspaces())[0]
@@ -588,7 +637,9 @@ function instanceGuardTarget(): string | null {
   } catch {
     /* no passwd entry: the uid (POSIX) still makes the path unique */
   }
-  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir() })
+  // Windows: the pipe name includes a random secret kept in the user's own AppData (not readable by other users).
+  const secret = process.platform === 'win32' ? guardSecret(join(app.getPath('appData'), 'Slinger', 'instance-guard.key')) : undefined
+  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir(), secret })
 }
 let instanceGuard: InstanceGuard | null = null
 
@@ -692,6 +743,11 @@ if (!app.requestSingleInstanceLock()) {
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, dialogOptions) : await dialog.showOpenDialog(dialogOptions)
         return result.canceled ? null : (result.filePaths[0] ?? null)
       },
+      saveFile: async ({ title, defaultName }) => {
+        const options = { title, defaultPath: join(app.getPath('downloads'), defaultName) }
+        const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+        return result.canceled || !result.filePath ? null : result.filePath
+      },
       chooseDirectory: async () => {
         const options = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
@@ -702,7 +758,15 @@ if (!app.requestSingleInstanceLock()) {
         ? () => checkForUpdate({ currentVersion: app.getVersion(), fetchImpl: netFetch, feedUrl })
         : undefined,
       updates: feedUrl ? createUpdater(feedUrl) : undefined,
-      window: { chrome: windowChrome, setTitleBarStyle, setCloseToTray, reopen: reopenMainWindow, control: windowControl, showAppMenu },
+      window: {
+        chrome: windowChrome,
+        setTitleBarStyle,
+        setCloseToTray,
+        reopen: reopenMainWindow,
+        control: windowControl,
+        showAppMenu,
+        setUnsavedChanges: (titles) => void (unsavedTitles = titles),
+      },
     })
     registerIpcHandlers(api, isTrustedUrl)
     if (!devServerUrl) serveRenderer()
@@ -732,6 +796,14 @@ if (!app.requestSingleInstanceLock()) {
     app.quit()
   })
   app.on('before-quit', (event) => {
+    // Any other way of quitting (macOS Dock, app.quit() elsewhere): unsaved edits that would be lost are asked about first.
+    if (shutdown === 'running' && !quitting && mustConfirmDiscard()) {
+      event.preventDefault()
+      void confirmDiscardUnsaved().then((ok) => {
+        if (ok) app.quit()
+      })
+      return
+    }
     quitting = true
     if (shutdown === 'done') return
     event.preventDefault()

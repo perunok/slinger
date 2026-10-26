@@ -107,6 +107,7 @@
         onviewchange={(v) => (tab.responseView = v)}
         scripts={tab.scriptOutput}
         onclearconsole={() => tab.scriptOutput && (tab.scriptOutput = { ...tab.scriptOutput, console: [] })}
+        onsendtofile={() => void tabsStore.sendToFile(tab)}
       >
         {#snippet chips()}
           {#if specResult}<SpecChip result={specResult} />{/if}

@@ -12,6 +12,7 @@ import { isLoaderSetting, type LoaderSetting } from '../lib/loader'
 import { reportWindowBackground } from '../lib/windowBackground'
 import { THEME_DEFAULT_ACCENT, findTheme, isAccent, resolveTheme, type Scheme } from '../lib/themes'
 import { clearAllPersisted } from '../features/requests/tabsPersistence'
+import { clampMaxResponseMb } from '../../shared/responseLimit'
 import { DEFAULT_TITLE_BAR_LAYOUT, TITLE_BAR_LAYOUT_KEY, loadTitleBarLayout, serializeTitleBarLayout, type TitleBarLayout } from '../lib/titleBarLayout'
 
 const K = {
@@ -19,6 +20,7 @@ const K = {
   wrap: 'slinger.editorWrap',
   scriptTimeout: 'slinger.scriptTimeoutMs',
   scriptContinue: 'slinger.scriptContinueOnError',
+  maxResponseMb: 'slinger.maxResponseMb',
   restoreTabs: 'slinger.restoreTabsOnStartup',
   responsePosition: 'slinger.responsePosition',
   statusBar: 'slinger.statusBar',
@@ -80,6 +82,8 @@ class Settings {
   editorWrap = $state<boolean>(read(K.wrap) === 'true')
   /** Time limit per script (pre-request / test), enforced in the main-process sandbox. */
   scriptTimeoutMs = $state<number>(clampTimeout(Number(read(K.scriptTimeout)) || SCRIPT_TIMEOUT_DEFAULT_MS))
+  /** Largest response body loaded (MB, 1-256, default 50); main stops the download there (shared/responseLimit.ts). */
+  maxResponseMb = $state<number>(clampMaxResponseMb(read(K.maxResponseMb) ?? undefined))
   /** Send the request even when a pre-request script fails (off by default). */
   scriptContinueOnError = $state<boolean>(read(K.scriptContinue) === 'true')
   /** Reopen tabs (with their unsaved drafts) as they were left, per workspace, on the next startup. */
@@ -163,6 +167,10 @@ class Settings {
   setScriptTimeoutMs(n: number) {
     this.scriptTimeoutMs = clampTimeout(n)
     write(K.scriptTimeout, String(this.scriptTimeoutMs))
+  }
+  setMaxResponseMb(n: number) {
+    this.maxResponseMb = clampMaxResponseMb(n)
+    write(K.maxResponseMb, String(this.maxResponseMb))
   }
   setScriptContinueOnError(v: boolean) {
     this.scriptContinueOnError = v

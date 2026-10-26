@@ -227,7 +227,8 @@ describe('buildPostmanCollection', () => {
     expect(raw.request!.url.port).toBe('8443')
   })
   it('omits empty optional parts and keeps source url variables', () => {
-    const r = reqFromDraft('x', null, 0, newDraft({ name: 'n', url: '{{h}}/:id' }), {
+    // A document saved before path variables were editable (no pathVariables key): the imported item's url.variable.
+    const r = reqFromDraft('x', null, 0, { ...newDraft({ name: 'n', url: '{{h}}/:id' }), pathVariables: [] }, {
       source: { request: { url: { variable: [{ key: 'id', value: '5', description: 'the id' }, { key: '  ' }] } } },
     })
     const c = buildPostmanCollection({ collection, folders: [], requests: [r] })
@@ -238,6 +239,12 @@ describe('buildPostmanCollection', () => {
     expect(c.item[0]).not.toHaveProperty('event')
     expect(req.url.variable).toEqual([{ key: 'id', value: '5', description: 'the id' }])
     expect(req.url.path).toEqual([':id'])
+  })
+  it('exports the request\'s own path variables (edited values win over the imported ones)', () => {
+    const d = newDraft({ name: 'n', url: '{{h}}/pets/:petId', pathVariables: [{ key: 'petId', value: '{{pet}}', description: 'Pet' }] })
+    const r = reqFromDraft('x', null, 0, d, { source: { request: { url: { variable: [{ key: 'petId', value: '5' }] } } } })
+    const req = buildPostmanCollection({ collection, folders: [], requests: [r] }).item[0].request!
+    expect(req.url.variable).toEqual([{ key: 'petId', value: '{{pet}}', description: 'Pet' }])
   })
   it('does not lose folders in a parent cycle', () => {
     const c = buildPostmanCollection({ collection, folders: [fld('a', 'b', 0, 'a'), fld('b', 'a', 0, 'b')], requests: [] })

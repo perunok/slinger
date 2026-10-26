@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * OAuth 2.0 settings of a request (Authorization tab) plus the token actions. The settings are part of the request
-   * document; the token is not: main gets and keeps it (OS keychain) and this panel only sees its status, except
+   * OAuth 2.0 settings (a request's Authorization tab, or a collection's / folder's Authorization section) plus the
+   * token actions. The settings are part of the request document (or the container's auth); the token is not: main gets and keeps it (OS keychain) and this panel only sees its status, except
    * after an explicit Reveal.
    */
   import { onDestroy } from 'svelte'
@@ -18,12 +18,15 @@
   import { describeTokenStatus, GRANT_LABELS, isAuthCodeGrant, isSupportedGrant, unsupportedGrantMessage, type OAuth2Purpose } from '../../lib/oauth2'
   import { oauth2IdentityTexts, type OAuth2Draft } from '../../lib/request'
   import { uuid } from '../../lib/template'
-  import type { RequestTab } from '../requests/tabs.svelte'
   import { resolveOAuth2 } from './oauth2Actions'
 
-  let { tab }: { tab: RequestTab } = $props()
-  const o = $derived(tab.draft.auth.oauth2)
-  const set = <K extends keyof OAuth2Draft>(key: K, value: OAuth2Draft[K]) => (tab.draft.auth.oauth2[key] = value)
+  /**
+   * `oauth2`: the settings being edited (mutated in place); `collectionId`: whose collection variables resolve them. The
+   * token is keyed by the resolved settings, so a token fetched here serves every request that inherits these settings.
+   */
+  let { oauth2 = $bindable(), collectionId }: { oauth2: OAuth2Draft; collectionId: string | null } = $props()
+  const o = $derived(oauth2)
+  const set = <K extends keyof OAuth2Draft>(key: K, value: OAuth2Draft[K]) => (oauth2[key] = value)
 
   const supported = $derived(isSupportedGrant(o.grantType))
   const authCode = $derived(isAuthCodeGrant(o.grantType))
@@ -40,9 +43,9 @@
   let revealed = $state<string | null>(null)
   let destroyed = false
 
-  const ctx = () => ({ workspaceId: app.workspaceId ?? '', collectionId: tab.collectionId })
+  const ctx = () => ({ workspaceId: app.workspaceId ?? '', collectionId })
 
-  const resolved = (purpose: OAuth2Purpose) => resolveOAuth2($state.snapshot(tab.draft.auth.oauth2) as OAuth2Draft, ctx(), purpose)
+  const resolved = (purpose: OAuth2Purpose) => resolveOAuth2($state.snapshot(oauth2) as OAuth2Draft, ctx(), purpose)
 
   let statusSeq = 0
   async function loadStatus() {

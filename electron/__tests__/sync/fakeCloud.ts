@@ -8,6 +8,8 @@
  * workspaces (list/get/publish), members (paginated, active only), sync client registration, push, pull, snapshot.
  * Section 21 extensions (scripts/docs fields, collection_variable, global_variable) are on by default; with
  * `extensions: false` it behaves like a server from before them (no `features` in pull/snapshot, unknown types refused).
+ * `container_auth` (section 21.6: `auth_json` on collections and folders) is on by default too; `containerAuth: false` is a
+ * server from before it.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -20,10 +22,10 @@ type Payload = Record<string, unknown>
 
 const TYPE_ORDER: ResourceType[] = ['collection', 'environment', 'folder', 'request', 'environment_variable', 'collection_version', 'collection_variable', 'global_variable']
 const BASE_FEATURES = ['sort_order', 'snapshot', 'collection_version', 'secret_metadata', 'op_reasons', 'request_move']
-const EXTENSIONS = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors']
+const EXTENSIONS = ['folder_scripts', 'docs', 'collection_variables', 'globals', 'version_authors', 'container_auth']
 /** Declared-feature gating, exactly like the server's services/syncFeatures.ts. */
 const TYPE_FEATURE: Partial<Record<ResourceType, string>> = { collection_variable: 'collection_variables', global_variable: 'globals' }
-const FIELD_FEATURE: Record<string, string> = { scripts_json: 'folder_scripts', description: 'docs', description_type: 'docs' }
+const FIELD_FEATURE: Record<string, string> = { scripts_json: 'folder_scripts', description: 'docs', description_type: 'docs', auth_json: 'container_auth' }
 const declared = (raw: unknown): Set<string> =>
   new Set((Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? raw.split(',') : []).map((s) => s.trim()).filter((s) => EXTENSIONS.includes(s)))
 const typeVisible = (type: ResourceType, f: Set<string>) => !TYPE_FEATURE[type] || f.has(TYPE_FEATURE[type]!)
@@ -137,6 +139,8 @@ export interface FakeCloudOptions {
   extensions?: boolean
   /** Feature `version_authors` (default true); false = a server before it. */
   versionAuthors?: boolean
+  /** Feature `container_auth` (default true, like Slinger Cloud since 0.5); false = a server before it. */
+  containerAuth?: boolean
   pushBodyLimit?: number
   accessTtlMs?: number
 }
@@ -152,8 +156,12 @@ export class FakeCloud {
   extensions: boolean
   /** Feature `version_authors` (default true; needs `extensions`): the server records and reports who created a version. Can be flipped at runtime. */
   versionAuthors = true
+  /** Feature `container_auth` (needs `extensions`): `auth_json` on collections and folders. Can be flipped at runtime. */
+  containerAuth = true
   /** Servers before slinger-admin 9ce4b08 reported a folder missing from the workspace as `invalid`, not `not_found`. */
   legacyMissingFolder = false
+  /** Older servers sent snapshot folders by id only, so a nested folder could come before its parent. */
+  legacyFolderOrder = false
   pushBodyLimit: number
   /** Test hook: runs right before a push is applied (simulates another writer racing between our pull and push). */
   beforePush: ((workspaceId: string) => void) | null = null
@@ -170,6 +178,7 @@ export class FakeCloud {
     this.protocolVersion = opts.protocolVersion ?? 2
     this.extensions = opts.extensions ?? true
     this.versionAuthors = opts.versionAuthors ?? true
+    this.containerAuth = opts.containerAuth ?? true
     this.pushBodyLimit = opts.pushBodyLimit ?? 8 * 1024 * 1024
     this.accessTtlMs = opts.accessTtlMs ?? 15 * 60_000
   }
@@ -415,7 +424,9 @@ export class FakeCloud {
   }
 
   serverFeatures(): string[] {
-    return this.extensions ? [...BASE_FEATURES, ...EXTENSIONS.filter((f) => f !== 'version_authors' || this.versionAuthors)] : [...BASE_FEATURES]
+    return this.extensions
+      ? [...BASE_FEATURES, ...EXTENSIONS.filter((f) => (f !== 'version_authors' || this.versionAuthors) && (f !== 'container_auth' || this.containerAuth))]
+      : [...BASE_FEATURES]
   }
 
   /** The features a client declared that this server honours. */
@@ -423,6 +434,7 @@ export class FakeCloud {
     if (!this.extensions) return new Set()
     const f = declared(raw)
     if (!this.versionAuthors) f.delete('version_authors')
+    if (!this.containerAuth) f.delete('container_auth')
     return f
   }
 
@@ -530,14 +542,14 @@ export class FakeCloud {
     switch (e.type) {
       case 'collection':
         return this.extensions
-          ? { name: d.name, scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null }
+          ? { name: d.name, scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null, ...this.authWire(d) }
           : { name: d.name }
       case 'environment':
         return { name: d.name }
       case 'folder':
         return {
           collection_id: d.collection_id, parent_folder_id: d.parent_folder_id ?? null, name: d.name, sort_order: d.sort_order ?? 0,
-          ...(this.extensions ? { scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null } : {}),
+          ...(this.extensions ? { scripts_json: d.scripts_json ?? null, description: d.description ?? null, description_type: d.description_type ?? null, ...this.authWire(d) } : {}),
         }
       case 'request':
         return { collection_id: d.collection_id, folder_id: d.folder_id ?? null, name: d.name, method: d.method, url: d.url, document_json: d.document_json, sort_order: d.sort_order ?? 0 }
@@ -550,6 +562,10 @@ export class FakeCloud {
       case 'global_variable':
         return { key: d.key, value: d.is_secret ? null : (d.value ?? ''), is_secret: d.is_secret === true, enabled: d.enabled !== false, description: d.description ?? null, sort_order: d.sort_order ?? 0 }
     }
+  }
+
+  private authWire(d: Payload): Payload {
+    return this.containerAuth ? { auth_json: d.auth_json ?? null } : {}
   }
 
   /** Mirrors the server's zod schemas: an exceeded cap is `too_large`, anything else malformed is `invalid`. */
@@ -596,6 +612,19 @@ export class FakeCloud {
         if (!Array.isArray(v)) throw invalid('scripts_json scripts_json must be a JSON array (Postman event list)')
       }
       bytes('description', 2 * 1024 * 1024)
+      if (this.containerAuth && p.auth_json !== undefined && p.auth_json !== null) {
+        if (typeof p.auth_json !== 'string') throw invalid('auth_json Expected string')
+        bytes('auth_json', 1024 * 1024)
+        let v: unknown
+        try {
+          v = JSON.parse(p.auth_json)
+        } catch {
+          /* below */
+        }
+        if (!v || typeof v !== 'object' || Array.isArray(v) || typeof (v as { type?: unknown }).type !== 'string') {
+          throw invalid('auth_json auth_json must be a JSON object with a string type (Postman auth)')
+        }
+      }
       if (p.description_type !== undefined && p.description_type !== null && p.description_type !== 'text/markdown' && p.description_type !== 'text/plain') {
         throw invalid('description_type Invalid enum value')
       }
@@ -663,7 +692,12 @@ export class FakeCloud {
       this.cascadeDelete(w, cur, clientId, op.operation_id)
       return cur.version
     }
-    let p = this.extensions ? op.payload : shape(op.resource_type, op.payload, new Set()) // an older server's zod drops unknown keys
+    // An older server's zod drops unknown keys (all extension fields; auth_json while it lacks container_auth).
+    let p = this.extensions ? op.payload : shape(op.resource_type, op.payload, new Set())
+    if (!this.containerAuth && 'auth_json' in p) {
+      const { auth_json: _dropped, ...rest } = p
+      p = rest
+    }
     if ('created_by' in p) {
       // Never client-supplied: the author is the authenticated user (a real server's zod strips the unknown key).
       const { created_by: _ignored, ...rest } = p
@@ -829,7 +863,24 @@ export class FakeCloud {
     }
   }
 
-  /** Current entities (no tombstones) in type order then id; `checkpoint` is read before the first page and echoed via the cursor. */
+  /**
+   * Snapshot position of an entity inside its type: the id, except folders, which go parent-first (depth from the
+   * collection root, then id) like the real server. The depth is zero-padded so positions compare as strings.
+   */
+  private snapshotKey(e: Entity): string {
+    if (e.type !== 'folder' || this.legacyFolderOrder) return e.id
+    let depth = 0
+    let parent = e.data.parent_folder_id as string | null | undefined
+    while (parent && depth < 10_000) {
+      const p = this.entities.get(parent)
+      if (!p || p.ws !== e.ws) break
+      depth++
+      parent = p.data.parent_folder_id as string | null | undefined
+    }
+    return `${String(depth).padStart(6, '0')}:${e.id}`
+  }
+
+  /** Current entities (no tombstones) in type order then position (`snapshotKey`); `checkpoint` is read before the first page and echoed via the cursor. */
   private snapshot(w: Workspace, userId: string, q: URLSearchParams) {
     this.assertClient(q.get('client_id'), userId)
     const limit = Math.min(500, Math.max(1, Number(q.get('limit') ?? 200)))
@@ -839,17 +890,22 @@ export class FakeCloud {
     let t = cursor.t
     let after = cursor.a
     let next: string | null = null
+    let lastKey = ''
     const f = this.declaredBy(q.get('features'))
     outer: for (; t < TYPE_ORDER.length; t++) {
       if (!typeVisible(TYPE_ORDER[t]!, f)) continue
-      const rows = this.live(w.id, TYPE_ORDER[t]).filter((e) => e.id > after)
-      for (const e of rows) {
+      const rows = this.live(w.id, TYPE_ORDER[t])
+        .map((e) => ({ e, key: this.snapshotKey(e) }))
+        .filter((r) => r.key > after)
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      for (const { e, key } of rows) {
         if (entities.length === limit) {
           const last = entities[entities.length - 1]!
-          next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: last.resource_id })).toString('base64url')
+          next = Buffer.from(JSON.stringify({ c: cursor.c, t: TYPE_ORDER.indexOf(last.resource_type), a: lastKey })).toString('base64url')
           break outer
         }
         entities.push({ resource_type: e.type, resource_id: e.id, version: e.version, payload: this.authored(e.type, shape(e.type, this.wire(e), f), f, e.author) })
+        lastKey = key
       }
       after = ''
     }

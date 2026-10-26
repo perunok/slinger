@@ -490,7 +490,10 @@ export function createSyncApi(
         if (c) {
           c.name = String(p.name)
           bump(c)
-        } else s.collections.push({ id, workspaceId, name: String(p.name), createdAt: now, updatedAt: now, version: 1 })
+        } else {
+          s.collections.push({ id, workspaceId, name: String(p.name), createdAt: now, updatedAt: now, version: 1 })
+          s.untrustedCollections[id] = true // arrived through sync: not trusted on this device yet
+        }
         return
       }
       case 'environment': {
@@ -995,9 +998,11 @@ export function createSyncApi(
       case 'setCollectionScripts':
       case 'setFolderScripts':
       case 'setCollectionDescription':
-      case 'setFolderDescription': {
+      case 'setFolderDescription':
+      case 'setCollectionAuth':
+      case 'setFolderAuth': {
         // Synced by the real engine (design section 21; this mock does not simulate that), refused for viewers like 0005/0006.
-        const target = method === 'setCollectionScripts' || method === 'setCollectionDescription' ? wsOfCollection(String(a0(args))) : (s.folders.find((f) => f.id === a0(args))?.workspaceId ?? null)
+        const target = method === 'setCollectionScripts' || method === 'setCollectionDescription' || method === 'setCollectionAuth' ? wsOfCollection(String(a0(args))) : (s.folders.find((f) => f.id === a0(args))?.workspaceId ?? null)
         if (target && links.get(target)?.role === 'viewer') fail('read_only', 'This workspace is read-only (viewer access): changes are not allowed.')
         return null
       }

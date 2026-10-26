@@ -112,7 +112,10 @@ describe('diffSnapshots', () => {
     const d = diffSnapshots(snap([r('1', 'x', null, bearer('a'))]), snap([r('1', 'x', null, bearer('b'))]))
     expect(d.requests[0].changes).toEqual([{ field: 'auth', before: 'bearer\ntoken: a', after: 'bearer\ntoken: b' }])
     const off = diffSnapshots(snap([r('1', 'x', null, bearer('a'))]), snap([r('1', 'x', null, {})]))
-    expect(off.requests[0].changes[0]).toMatchObject({ field: 'auth', after: 'none' })
+    // No auth in the document = inherit from the folder / collection (Postman); {type: 'noauth'} = none.
+    expect(off.requests[0].changes[0]).toMatchObject({ field: 'auth', after: 'inherit from parent' })
+    const none = diffSnapshots(snap([r('1', 'x', null, bearer('a'))]), snap([r('1', 'x', null, { auth: { type: 'noauth' } })]))
+    expect(none.requests[0].changes[0]).toMatchObject({ field: 'auth', after: 'none' })
   })
 
   it('compares disabled params and description; ignores source and responses noise', () => {

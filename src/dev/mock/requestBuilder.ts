@@ -33,12 +33,18 @@ function withApiKeyQuery(url: string, key: string, value: string): string {
   }
 }
 
-function applyAuth(input: HttpRequestInput, headers: RequestHeader[], oauth2Token?: (tokenKey: string) => string): string {
+function applyAuth(input: HttpRequestInput, headers: RequestHeader[], oauth2Token?: (tokenKey: string, origin: string) => string): string {
   const { auth } = input
   let url = input.url
   if (auth.kind === 'oauth2' && auth.oauth2) {
     if (!oauth2Token) return fail('invalid_input', 'OAuth 2.0 authorization is not available for this request')
-    const token = oauth2Token(auth.oauth2.tokenKey)
+    let origin = ''
+    try {
+      origin = new URL(url).origin
+    } catch {
+      /* the mock sends anything; main validates the URL first */
+    }
+    const token = oauth2Token(auth.oauth2.tokenKey, origin)
     const prefix = auth.oauth2.headerPrefix.trim()
     if (auth.oauth2.addTo === 'query') return withApiKeyQuery(url, 'access_token', token)
     headers.push({ key: 'Authorization', value: prefix ? `${prefix} ${token}` : token })
@@ -98,7 +104,7 @@ function buildBody(input: HttpRequestInput, headers: RequestHeader[]): { body?: 
   }
 }
 
-export function buildRequest(input: HttpRequestInput, oauth2Token?: (tokenKey: string) => string): BuiltRequest {
+export function buildRequest(input: HttpRequestInput, oauth2Token?: (tokenKey: string, origin: string) => string): BuiltRequest {
   const method = input.method.toUpperCase()
   const headers = input.headers.filter((h) => h.key.trim()).map((h) => ({ ...h }))
   const url = applyAuth(input, headers, oauth2Token)

@@ -1,6 +1,6 @@
 import type { ApiFolder, ApiRequest, Collection, CollectionSnapshot, CollectionVersionAuthor } from '../../../shared/types'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
-import { compareSemver, validateVersion } from '../../lib/semver'
+import { compareSemver, suggestBumps, validateVersion } from '../../lib/semver'
 import { addCollection, must, removeCollectionContents, touch, type MockState, type VersionRow } from './store'
 import { clone, fail, nowSec, uuid } from './util'
 import { collectionVariablesData, setCollectionVariables } from './variables'
@@ -19,6 +19,7 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
   return {
     collectionName: collection.name,
     ...(collection.scriptsJson ? { collectionScriptsJson: collection.scriptsJson } : {}),
+    ...(collection.authJson ? { collectionAuthJson: collection.authJson } : {}),
     ...(collection.description ? { collectionDescription: collection.description } : {}),
     ...(collection.description && collection.descriptionType ? { collectionDescriptionType: collection.descriptionType } : {}),
     ...(collectionVariablesData(s, collectionId).length > 0 ? { collectionVariables: collectionVariablesData(s, collectionId) } : {}),
@@ -32,6 +33,7 @@ export function takeSnapshot(s: MockState, collectionId: string): CollectionSnap
         ...(f.scriptsJson ? { scriptsJson: f.scriptsJson } : {}),
         ...(f.description ? { description: f.description } : {}),
         ...(f.description && f.descriptionType ? { descriptionType: f.descriptionType } : {}),
+        ...(f.authJson ? { authJson: f.authJson } : {}),
       })),
     requests: s.requests
       .filter((r) => r.collectionId === collectionId)
@@ -74,6 +76,30 @@ export function addVersion(
 
 const summary = ({ snapshot: _snapshot, ...rest }: VersionRow) => rest
 
+/** Mirror of electron/services/collectionVersions.ts: automatic safety versions, the newest 10 kept per collection. */
+export const AUTOMATIC_VERSION_NOTES_PREFIX = 'Automatic snapshot before '
+export const MAX_AUTOMATIC_VERSIONS = 10
+
+export function addAutomaticVersion(s: MockState, collectionId: string, what: string): VersionRow {
+  const versions = s.versions.filter((v) => v.collectionId === collectionId).map((v) => v.version)
+  const row = addVersion(s, collectionId, suggestBumps(versions).patch, `${AUTOMATIC_VERSION_NOTES_PREFIX}${what}`)
+  const automatic = s.versions
+    .map((v, i) => ({ v, i }))
+    .filter(({ v }) => v.collectionId === collectionId && v.notes?.startsWith(AUTOMATIC_VERSION_NOTES_PREFIX))
+    .sort((a, b) => b.v.createdAt - a.v.createdAt || b.i - a.i)
+  const pruned = new Set(automatic.slice(MAX_AUTOMATIC_VERSIONS).map(({ v }) => v.id).filter((id) => id !== row.id))
+  if (pruned.size) s.versions = s.versions.filter((v) => !pruned.has(v.id))
+  return row
+}
+
+/** The live folders and requests of a collection by id (before they are swapped), for created/version bookkeeping. */
+function previousOf(s: MockState, collectionId: string) {
+  return {
+    folders: new Map(s.folders.filter((f) => f.collectionId === collectionId).map((f) => [f.id, f])),
+    requests: new Map(s.requests.filter((r) => r.collectionId === collectionId).map((r) => [r.id, r])),
+  }
+}
+
 function materialize(
   s: MockState,
   collection: Collection,
@@ -94,6 +120,7 @@ function materialize(
       scriptsJson: f.scriptsJson ?? null,
       description: f.description ?? null,
       descriptionType: f.description ? (f.descriptionType ?? null) : null,
+      authJson: f.authJson ?? null,
       createdAt: previous.folders.get(id)?.createdAt ?? now,
       updatedAt: now,
       version: (previous.folders.get(id)?.version ?? 0) + 1,
@@ -119,12 +146,15 @@ function materialize(
 }
 
 function restoreReplace(s: MockState, collection: Collection, snapshot: CollectionSnapshot): Collection {
+  const previous = previousOf(s, collection.id)
   removeCollectionContents(s, collection.id)
-  // Like the real main process: every restored folder/request gets a fresh id.
+  // Like the real main process: snapshot ids are kept (in place), unless another collection uses the id now.
+  const taken = new Set([...s.folders.map((f) => f.id), ...s.requests.map((r) => r.id)])
   const fresh = new Map<string, string>()
-  const resolve = (id: string) => fresh.get(id) ?? (fresh.set(id, uuid()), fresh.get(id) as string)
-  materialize(s, collection, clone(snapshot), resolve, { folders: new Map(), requests: new Map() })
+  const resolve = (id: string) => fresh.get(id) ?? (fresh.set(id, taken.has(id) ? uuid() : id), fresh.get(id) as string)
+  materialize(s, collection, clone(snapshot), resolve, previous)
   collection.scriptsJson = snapshot.collectionScriptsJson ?? null
+  collection.authJson = snapshot.collectionAuthJson ?? null
   collection.description = snapshot.collectionDescription ?? null
   collection.descriptionType = snapshot.collectionDescription ? (snapshot.collectionDescriptionType ?? null) : null
   setCollectionVariables(s, collection.id, collection.workspaceId, snapshot.collectionVariables ?? [])
@@ -133,7 +163,9 @@ function restoreReplace(s: MockState, collection: Collection, snapshot: Collecti
 
 function restoreCopy(s: MockState, source: VersionRow): Collection {
   const copy = addCollection(s, source.workspaceId, `${source.snapshot.collectionName} (v${source.version})`)
+  if (s.untrustedCollections[source.collectionId]) s.untrustedCollections[copy.id] = true
   copy.scriptsJson = source.snapshot.collectionScriptsJson ?? null
+  copy.authJson = source.snapshot.collectionAuthJson ?? null
   copy.description = source.snapshot.collectionDescription ?? null
   copy.descriptionType = source.snapshot.collectionDescription ? (source.snapshot.collectionDescriptionType ?? null) : null
   const resolve = (): ((id: string) => string) => {

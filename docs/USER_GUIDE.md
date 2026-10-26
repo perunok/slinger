@@ -100,7 +100,9 @@ In the **Collections** sidebar:
 - Right-click a folder for **Overview & docs**, **New request**, **New MCP request**, **New subfolder**, **Run folder...**, **Scripts...**,
   **Extract to new collection...**, **Rename**, **Delete**.
 - Hovering a collection or folder shows an (i) button that also opens its overview (see [Documentation](#documentation-markdown)).
-- Right-click a request for **Open**, **Duplicate**, **Rename**, **Delete** (and **Add example**, except for MCP requests).
+- Right-click a request for **Open**, **Duplicate**, **Copy URL**, **Copy as cURL** (HTTP requests), **Rename**, **Delete** (and
+  **Add example**, except for MCP requests). Copy URL copies the URL as saved, with its `{{variables}}`; Copy as cURL copies the
+  same command as the Code panel's cURL snippet.
 - Drag and drop to reorder or move folders and requests (a folder cannot be dropped into itself or its own subfolders).
 - **Extract to new collection** turns a folder into a collection of its own, named after it (you can change the name). Its
   requests move with it, keeping their history, examples and docs, its subfolders come along, and the folder leaves the original
@@ -116,22 +118,25 @@ In the **Collections** sidebar:
 This section is about HTTP requests; for requests to MCP servers see [MCP requests](#mcp-requests).
 
 Ctrl+T opens a new tab. The URL bar has the method selector, the URL, **Send** (Ctrl+Enter, becomes cancel while running) and
-**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as"). A URL typed without
+**Save** (Ctrl+S). Saving a request that is not in a collection yet asks where to put it ("Save as"). Saving again while a save
+is still running (or holding Ctrl+S) does not save twice: one more save follows only if you changed something meanwhile. A URL typed without
 `http://` or `https://` is sent as http, as in Postman (`localhost:3000/users`, `api.example.com/x`, `//cdn.example.com/a`);
 with port 443 (`api.example.com:443/x`) as https. The same goes for the other address fields: MCP request URLs, OAuth 2.0
 endpoints, the cloud server address (`172.16.0.236:8088`) and OpenAPI document URLs.
 
 The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **Scripts**, **Docs**, **Settings** and **Code**.
 
-- **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent.
+- **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent. Below
+  them, **Path Variables** (see [Path variables](#path-variables)) when the URL has `:name` segments.
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
   the body mode and `User-Agent: Slinger`); a header you set yourself wins.
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
   (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
   a body.
-- **Authorization:** No Auth, Basic Auth, Bearer Token, API Key (added to a header or as a query parameter) or
-  [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman requests with other auth types (for example Digest or
-  AWS Signature) are sent without authorization and a warning says so.
+- **Authorization:** **Inherit auth from parent** (the default for new requests), No Auth, Basic Auth, Bearer Token, API Key
+  (added to a header or as a query parameter) or [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman
+  requests with other auth types (for example Digest or AWS Signature) are sent without authorization and a warning says so.
+  See [Collection and folder authorization](#collection-and-folder-authorization) for inheriting.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
   see [Documentation](#documentation-markdown).
@@ -143,6 +148,24 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
   export folder (Downloads unless you chose another one in an export dialog).
+
+### Path variables
+
+As in Postman, a whole path segment written `:name` is a **path variable**: `{{baseUrl}}/pets/:petId` has the variable
+`petId`. Each one gets a row under **Params > Path Variables**, with its value and an optional description; typing or deleting
+`:name` in the URL adds or removes its row (values of the names that stay are kept), and the key itself is only edited in the
+URL. Values may contain `{{variables}}`.
+
+When the request is sent, each `:name` segment is replaced by its value, with `{{variables}}` resolved and the result
+URL-encoded (`a b/c` is sent as `a%20b%2Fc`). Only whole segments of the path count: not the host or port
+(`localhost:3000`), not `::name`, not text after `?` or `#`. A path variable without a value is sent as written (`:petId`) and
+the response shows a warning. The same values are used by the collection runner, workflows, the Code snippets (cURL and the
+others; `.http` exports put the values, `{{variables}}` kept, into the URL) and assistants (`send_request`).
+
+Path variables are imported from Postman (`url.variable`) and from OpenAPI documents (`/pets/{petId}` becomes `/pets/:petId`
+with the documented example as its value), exported to Postman as `url.variable` and to OpenAPI as path parameters, and a
+pasted cURL command with `:id` in its URL keeps it as a path variable. Mock servers treat a `:name` segment as a wildcard, as
+before.
 
 ### OAuth 2.0
 
@@ -180,13 +203,45 @@ shows the token itself, **Refresh** uses the refresh token, **Clear** deletes th
   example every request of an imported collection whose collection-level auth was OAuth 2.0), per workspace. The collection
   runner behaves the same. Code snippets show `<access token>` in place of the token (`.http` snippets and exports use the
   variable `{{oauth2_access_token}}` instead, to define in the `.http` tool's environment).
+- **Where a token may go.** A token is sent to the host (scheme, host and port) it was first used with. When a request would
+  send it somewhere else (another environment's `{{baseUrl}}`, an edited URL), Slinger asks **Send the access token to a new
+  host?** first; **Allow** adds that host for this token, **Cancel** sends nothing. The list is kept when the token is
+  refreshed or replaced. Requests sent by an AI assistant or in the runner do not ask: they fail with that message, and you
+  allow the host by sending the request once from its tab.
 - **Where tokens live.** Tokens are stored only in your OS keychain (like secret variables), never in the request, history,
   exports, version snapshots or cloud sync; the settings (without any token) are saved with the request like other auth. If
   the keychain is not available, getting a token fails with a message and the rest of the app keeps working.
 - **Not supported:** the implicit grant (deprecated; Slinger keeps imported settings and asks you to use Authorization Code
   (With PKCE)), and `pm.sendRequest` with OAuth 2.0 auth in scripts.
 
-Tabs: right-click a tab for Close / Close others / Close all / Save. Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
+### Collection and folder authorization
+
+Collections and folders have an **Authorization** setting of their own, as in Postman: open the collection's or folder's
+overview (right-click > **Overview & docs**) and choose the **Authorization** section. It offers the same types and fields as a
+request's Authorization tab, including OAuth 2.0 with **Get New Access Token**; **Save** (Ctrl+S) stores it together with the
+documentation.
+
+- A request set to **Inherit auth from parent** uses the authorization of the nearest folder above it that sets one, else the
+  collection's. A folder is set to inherit by default too; a folder set to **No Auth** stops the lookup (its requests are sent
+  without authorization). A collection cannot inherit: without a setting it has no authorization.
+- The lookup happens when the request is sent, so changing the token on the collection changes it for every request that
+  inherits it. Everything that sends a request does the same: Send, the collection runner, workflows, AI assistants
+  (`send_request`), code snippets, the auto-generated headers list and the MCP connect of an MCP request.
+- While a request inherits, its Authorization tab shows **Inherited from** *folder or collection* with the type in use; click
+  the name to open that folder's or collection's Authorization section. The (i) next to it explains the lookup.
+- OAuth 2.0: get the token in the collection's or folder's Authorization section. Requests that inherit the same settings use
+  the same stored token.
+- Credentials typed directly into a collection's or folder's authorization are stored like a request's (use `{{variables}}`,
+  secret ones stay in your keychain); OAuth 2.0 tokens never are.
+- New requests inherit; a request with **No Auth** is sent without authorization whatever its folders and collection say.
+  Requests saved by Slinger 0.26 or older with "No Auth" are shown as **Inherit**: they keep behaving the same until you give
+  their collection or a folder an authorization.
+- Cloud sync: collection and folder authorization syncs with Slinger Cloud servers that support it (released together with
+  this version); with an older server it stays on this device (nothing is sent, no warning), like scripts and docs did with
+  older servers, and other devices send inheriting requests without it until the server is upgraded.
+
+Tabs: right-click a tab (or Shift+F10 on it) for Close / Close others / Close to the right / Close all / Save, and on request
+tabs Copy URL / Copy as cURL (of what the tab shows, unsaved edits included). Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
 with unsaved edits shows a marker, and closing it asks before discarding. If a saved request changed underneath you (for
 example in another window), Save reports "Request changed elsewhere" and lets you **Reload from stored** or **Overwrite**.
 Open tabs (including new, never-saved ones, and any unsaved edits) are restored per workspace the next time you start Slinger
@@ -238,7 +293,9 @@ revealed on request) and **On**. They are not part of any collection export; imp
 
 **Environments.** Click the gear next to the environment switcher (or use the switcher) to open the Environments dialog: create,
 rename, duplicate and delete environments, **Set active**, and edit variables in a table (or **bulk edit** as text). Changes
-save automatically with a status indicator. The active environment is remembered per workspace. Variable names are unique
+save automatically with a status indicator. If a variable changed elsewhere since the table loaded it (sync, a script, an
+assistant), its row shows *Changed elsewhere* instead of overwriting it; **Retry** saves your value over it. The same applies to
+collection variables and globals. The active environment is remembered per workspace. Variable names are unique
 within an environment, and environment names are unique within a workspace (ignoring case and surrounding spaces; renaming
 an environment to its own name in a different case is fine). The create/rename dialog flags a taken name as you type. Only
 sync can bring two same-named environments into one workspace (for example when two devices created one offline); rename or
@@ -282,6 +339,13 @@ After Send the pane shows status, time and size. Views: **Pretty** (formatted, f
 (hex preview for binary content), **Preview** (HTML in a fully sandboxed frame, images, PDF), **Headers** and **Cookies**
 (parsed from `Set-Cookie`). Toolbar: search in response, toggle word wrap, copy body, **Save response to file** (to the export
 folder). Non-2xx responses are shown normally; network errors, timeouts and cancellations appear as inline errors.
+
+**Large responses.** Slinger loads at most the **Maximum response size** (Settings > Requests, default 50 MB like Postman,
+1-256 MB). For a larger body it stops the download and shows *Response larger than 50 MB — not loaded*, with the status and
+headers still there. **Send and download to file** asks where to save, sends the request again and writes the whole body
+straight to that file (no size limit); the response pane then shows where it was saved and how big it is. Test scripts do not
+run for such a download (there is no body to test). In the collection runner and for AI assistants a body over the limit is
+reported as not loaded.
 
 When the request (or its folder or collection) has scripts, two more views appear: **Tests** (every `pm.test` with pass/fail/skip,
 the assertion message of failures, script errors, a filter, and a `passed/total` badge on the tab that turns red when something
@@ -681,7 +745,8 @@ pm.sendRequest({
   `pm.variables.replaceIn(...)` work too. An unresolved `{{name}}` fails that request with an error naming it.
 - **When it runs.** Requests from one script run in parallel. The script (and so the main request) waits until every
   `pm.sendRequest` it started has answered and its callbacks ran, including requests started from callbacks.
-- **Limits.** At most 20 `pm.sendRequest` calls per script run; only `http`/`https` URLs (a URL without a scheme gets `http://`,
+- **Limits.** At most 20 `pm.sendRequest` calls per script run; a response body over 10 MB is not loaded (the call fails with
+  an error saying so); only `http`/`https` URLs (a URL without a scheme gets `http://`,
   like the main request). Each call times out after the request's own timeout (its Settings tab), 60 s by default, at most 120 s;
   a call's `timeout` can only lower that. Waiting for responses does not use the script's time limit, but a script is stopped if it
   is still waiting after its time limit + 20 × the request timeout (5 minutes at most). Redirects are followed.
@@ -732,7 +797,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.collectionVariables.*`, `pm.globals.*` | same methods (plus `clear`); saved, see above |
 | `pm.iterationData.get/has/toObject`, legacy `data` | the current row of a data-driven collection run (read-only); empty otherwise |
 | `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
-| `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
+| `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings (for a request that inherits, its folder's or collection's) with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
 | `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |
 | `pm.response.to.have.status(code or reason)`, `.header(name[, value])`, `.body([text or regexp or object])`, `.jsonBody([path[, value]])` | response assertions |
 | `pm.response.to.be.ok / success / error / clientError / serverError / notFound / json / withBody` (and `.not`) | response assertions |
@@ -802,6 +867,13 @@ the `pm` API described here. Details are in [ARCHITECTURE.md](ARCHITECTURE.md#sc
 a script can read the environment and send what it reads in the request it is attached to, **or to any http(s) address with
 `pm.sendRequest`** (exactly as in Postman), so review scripts from sources you do not trust before sending their requests.
 
+**Allowing a collection's scripts.** Scripts of a collection you made on this device run right away. A collection you
+imported (Postman, Slinger export) or one that arrived through cloud sync is different: the first time one of its requests
+would run a script (collection, folder or request script, from a tab, the runner or a workflow), Slinger asks **Run this
+collection's scripts?** once. **Allow scripts** remembers the answer for that collection on this device only (it is not
+synced or exported); **Cancel** sends nothing. A collection you extract from it or restore from one of its versions as a copy
+keeps its answer. AI assistants cannot allow scripts: their sends of such a collection are refused until you allowed it here.
+
 ## History
 
 The **History** sidebar tab lists recent requests of the current workspace grouped by day (last 200 shown; the app keeps up to 1000
@@ -819,7 +891,7 @@ in History, so they start empty).
 ## Collection versions
 
 Right-click a collection and choose **Versions...**. A version is an immutable snapshot of that collection's folders, requests,
-scripts, documentation and collection variables (not environments or globals) labelled with a semantic version. There is no git
+scripts, documentation, authorization and collection variables (not environments or globals) labelled with a semantic version. There is no git
 involved. Restoring a version also restores its collection variables (a version made before Slinger stored collection
 variables restores the collection without any).
 
@@ -836,7 +908,9 @@ variables restores the collection without any).
 - **Compare:** pick a version and compare it against another version or the current collection to see added, removed and changed
   requests and folders. The two sides are headed with their version, author and date.
 - **Restore:** *as a new collection* named `<name> (vX.Y.Z)` (the live collection is untouched), or *replace the live collection*
-  (asks for confirmation; suggests creating a version first). Replacing gives requests new ids, so open tabs for them are closed.
+  (asks for confirmation; suggests creating a version first). Replacing updates the requests and folders in place: those that
+  are in the version keep their identity, so open tabs, workflow nodes, history and synced copies keep pointing at them, and
+  deleted ones come back as they were; only what the version does not have is removed.
 - **Delete** removes a version (it cannot be edited).
 - **Versions travel with exports:** exporting a collection writes its version history into the file, and importing that file
   into Slinger (on this or another machine) restores every version with its number, notes, date and snapshot, so you can
@@ -890,13 +964,17 @@ collection name, then **Import API**. The new collection opens with its overview
 
 - one request per operation, named after its summary (else its operationId, else `GET /path`), deprecated ones marked;
 - URLs on `{{baseUrl}}` (a collection variable set to the first server URL; server variables such as `{region}` become
-  collection variables too), path parameters as `:petId` with an example value, query and header parameters (the required ones
+  collection variables too), path parameters as `:petId` path variables (see [Path variables](#path-variables)) with an
+  example value, query and header parameters (the required ones
   enabled, the others present but disabled), cookie parameters as a `Cookie` header;
 - the body as JSON (the document's first example, else one generated from the schema), a url-encoded form or a multipart form
   (file fields for binary properties), with `Content-Type` and `Accept` headers;
 - auth from the document's security schemes: bearer (`{{bearerToken}}`), basic (`{{username}}`/`{{password}}`), API key in a
   header or the query (`{{apiKey}}`), OAuth 2.0 (authorization code with PKCE, client credentials or password, with the
-  document's URLs and scopes and `{{clientId}}`); the variables are added empty, set them in the collection's variables;
+  document's URLs and scopes and `{{clientId}}`); the variables are added empty, set them in the collection's variables.
+  When every operation uses the same scheme it becomes the collection's authorization and the requests inherit it; otherwise
+  each request gets its own. An update from a newer document changes the collection's authorization too, unless you changed it
+  here (the review lists it);
 - one **saved example per documented response** (several when the document names several examples), filled from the
   document's examples or generated from its schemas, so a [mock server](#mock-servers) answers right away.
 
@@ -938,7 +1016,7 @@ and path (`{{baseUrl}}/pets/:id` matches `GET /pets/{petId}`). **Unlink** forget
 OpenAPI…** in the OpenAPI dialog) to save the collection as `<collection>.openapi.yaml` / `.openapi.json`. Each saved request
 becomes an operation: the server comes from the `baseUrl` collection variable (or the URL's scheme and host), `:id` and
 `{{id}}` path segments become path parameters, query/header/cookie rows become parameters, the body becomes a request body,
-auth becomes a security scheme, and the top-level folder becomes the tag. Saved examples become the responses, with JSON
+auth (a request that inherits: its folder's or collection's) becomes a security scheme, and the top-level folder becomes the tag. Saved examples become the responses, with JSON
 Schemas inferred from their JSON; a request without examples gets a `default` response. Requests with the same method and path
 are merged into one operation. Requests imported from an OpenAPI document keep their operationId and required parameters. MCP
 requests, scripts, tests and versions are not exported, and `{{variables}}` stay as written.
@@ -990,7 +1068,8 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   (for example `Environment "UAT" updated: 3 added, 16 kept`). Pre-request and test scripts are imported at every level (collection, folders,
   requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
   collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). OAuth 2.0
-  settings are imported (a collection's or folder's auth is copied into its requests); an access or refresh token that Postman
+  settings are imported. A collection's or folder's auth stays on the collection or folder, and requests without their own auth
+  inherit it (see [Collection and folder authorization](#collection-and-folder-authorization)); an access or refresh token that Postman
   embedded in the file is dropped, so click **Get New Access Token** once. A Postman
   **globals** file (`*.postman_globals.json`) is imported into the workspace's **Globals** with the environment-file rules
   (missing variables added, existing ones updated, an empty value keeps the stored one); `secret` values become secret globals and
@@ -1002,7 +1081,10 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   - **Replace existing "X"** (default): the collection's folders, requests (with their saved examples), scripts,
     descriptions and collection variables are replaced by the file's content. The collection itself stays, with its name, versions and sync link. First
     an automatic version snapshot of the current content is created (the next patch version, notes
-    `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Expanded
+    `Automatic snapshot before re-import from <file>`), so you can get it back from **Versions...** with **Restore**. Folders
+    and requests whose name (and method) match the file are updated in place and keep their identity, so open tabs, workflow
+    nodes and history entries keep working; the rest are added or removed. Only the 10 newest automatic snapshots of a collection
+    are kept (older automatic ones are deleted; versions you made yourself are never removed). Expanded
     folders stay expanded and open request tabs without unsaved changes switch to the new content; tabs with unsaved changes keep
     your edits (save them again to keep them). If several collections match, pick which one to replace. Not available in a
     read-only (viewer) workspace.
@@ -1024,8 +1106,9 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
   imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
-  collection's `variable` list, in order (`disabled: true` for disabled ones). OAuth 2.0 settings are exported in Postman's
-  format without any token. Globals and environments are never part of a collection export.
+  collection's `variable` list, in order (`disabled: true` for disabled ones). Collection and folder authorization is exported
+  as their `auth`; a request that inherits has no `auth`, a request with **No Auth** has `{"type": "noauth"}`, as in Postman.
+  OAuth 2.0 settings are exported in Postman's format without any token. Globals and environments are never part of a collection export.
 - **MCP requests** are exported with the method `MCP` and their settings under the item key `_slinger_mcp`, which Slinger's
   import reads back and Postman ignores (see [MCP requests](#mcp-requests)).
 - **Export as a .http file:** in the Export dialog, set **Format** to **HTTP file (.http)** to save the collection as one
@@ -1130,6 +1213,10 @@ cloud changes regularly and uploads your edits shortly after you save) and **Syn
   created in it too (also what you add later), and keeping a deleted collection or folder keeps the cloud's copy of its
   contents. If someone changes a kept item in the cloud, you get the usual conflict and choose which version to keep. Kept
   changes stay kept across restarts; editing a kept item back to the cloud's version ends it.
+- Changes from the cloud that cannot be applied yet (for example an item whose folder has not arrived) are not lost: Slinger
+  keeps them and applies them on a later sync, and if one is still waiting after a sync it shows up once in the conflict
+  history as an automatically handled item. The same goes for a cloud change that failed to apply.
+  **Cancel**, **Keep here** and **Upload** wait for a sync that is running to finish, so its answer cannot undo your choice.
 - **Recent syncs:** each sync since Slinger started (kept while it runs, also in the tray), newest first, with its time, what
   started it (*Sync now*, *Automatic*, *First sync*), what it uploaded and downloaded, conflicts it opened, how long it took, and
   why it failed. Click a sync to see its items one by one; click a request to open it. Changes from teammates or your other
@@ -1203,7 +1290,14 @@ Settings (Ctrl+, or the gear icon) lists its sections at the left: **Appearance*
 - **Wrap long lines in editors** (request body, response, code).
 - **Restore open tabs on startup** (default on): reopens each workspace's tabs, in the same order with the same unsaved
   changes and dirty markers, the next time you start Slinger or switch to that workspace. Turning it off stops saving tabs
-  and erases what is already stored; response panes are never part of what is saved or restored either way.
+  and erases what is already stored; response panes are never part of what is saved or restored either way. A request's saved
+  examples are not part of its kept unsaved changes: they come back from the saved request. If an unsaved change cannot be
+  kept (a single tab's edits over 256 KB, or this setting off), quitting Slinger or closing its window asks first: **Quit and
+  discard N unsaved changes?** with **Discard and Quit** or **Cancel** (go back and save). Installing an update asks the same
+  before it restarts.
+
+**Requests:** **Maximum response size** (MB; default 50, 1-256): larger response bodies are not loaded; see
+[Reading the response](#reading-the-response) (Large responses).
 
 **Scripts:** **Time limit per script** (default 5000 ms, 100-60000) and **Send the request even when a pre-request script
 fails** (off by default).
@@ -1316,6 +1410,9 @@ assistants and advanced**: copy a ready-made command setup (works with any assis
 Assistants can find, read, send and run [MCP requests](#mcp-requests) as saved (and rename, move or delete them), but cannot
 create or edit them, and a command (stdio) runs only after you allowed it in the window.
 
+Assistants read and set a request's [path variables](#path-variables) too (`path_variables` in `get_request`,
+`create_request`, `update_request` and, for one send, `send_request`).
+
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
 send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a
 version, and restore one as a copy or in place (assistants that ask before destructive actions ask you first). Everything an assistant changes or sends appears in **History** with an **AI assistant** badge (changes show what was
@@ -1323,7 +1420,23 @@ edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
 change their values, and requests they send use them inside Slinger, but a secret value is never shown to them; credentials typed
-literally into a request's authorization are hidden too (use `{{variables}}`). Sends and runs work in the workspace that is open in
+literally into a request's authorization are hidden too (use `{{variables}}`). In what a send returns to an assistant (response
+body and headers, console output, test results, errors) the send's secret values, credentials and OAuth 2.0 tokens appear as
+`{{name}}`, `[hidden]` or `<access token>`, so a server that echoes your token back does not hand it to the assistant.
+
+**What an assistant may send with your credentials.** Your credentials (secret variables, a request's saved authorization or
+the authorization it inherits from its folder or collection, OAuth 2.0 tokens) go out with an assistant's send only when it sends a request **you** saved, **as you saved it**. It is
+refused, with a message the assistant can pass on to you, when the send would carry them and:
+
+- it is an ad-hoc request, or the assistant changes the URL, headers, body, auth or scripts for this one send;
+- the assistant created or edited the request and you have not saved it since (open it and press **Save**, Ctrl+S, after
+  checking it; a request the assistant created may still use authorization the assistant typed in itself, or a collection or
+  folder authorization that came with an assistant's import or restore, until you change or save that authorization);
+- the request's host comes from an environment variable the assistant set and you have not changed since (edit the value in
+  the environment, even to the same text, to confirm it).
+
+A secret variable the assistant set itself holds its own value, so it may use that one. Scripts in such sends cannot read
+secret variables. You can always send the request yourself from its tab. Sends and runs work in the workspace that is open in
 the window (an assistant can open another one with "Show in Slinger"). An assistant's deletes are the same as yours, so keep an
 eye on what it does to important collections (a collection version is a good backup before big changes).
 
@@ -1334,9 +1447,11 @@ which version is the latest release of Slinger. When there is a newer one than y
 now**: at every start while you have not installed it, and once per version during the day. The request carries nothing about you or your data, and nothing is
 downloaded until you click.
 
-- **Update now** opens **Update Slinger**: it downloads the new version for your system from GitHub with a progress bar (size,
+- **Update now** opens **Update Slinger**, which first shows what is new in that version (or a link to its release notes on
+  GitHub). It downloads the new version for your system from GitHub with a progress bar (size,
   speed, time left; **Cancel** stops it, **Hide** lets it continue in the background) and checks it against GitHub's
-  checksum. Then **Restart to update** installs it and starts Slinger again; your open tabs come back. **Later** keeps the
+  checksum. Then **Restart to update** checks the file again (an installer that changed since the download is refused) and
+  installs it and starts Slinger again; your open tabs come back. **Later** keeps the
   download: Settings > Updates then offers **Restart to update**.
 - How it installs:
   - Linux, installed from the **.deb**: with your system's package manager (`pkexec dpkg`), which asks for your password in a
@@ -1351,11 +1466,20 @@ downloaded until you click.
 - Settings > Updates: turn **Check for new releases automatically** off, or **Check now**; it shows the result and when Slinger
   last checked, and **Update now** (or the download progress, or **Restart to update**) when there is a newer version.
 
+## Release notes
+
+**Help > Release Notes** (or Ctrl+K, then `release notes`, or **Release notes** in About Slinger) shows what changed in every
+version of Slinger: new features, improvements and fixes. The notes ship with the app, so they work offline.
+
+The first time a new version starts after an update, **What's new** opens by itself with the notes of every version since the
+one you had (**All release notes** shows the rest; **Close** dismisses it). It does not open on a fresh install or on later
+starts of the same version.
+
 ## About Slinger
 
 The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) opens **About Slinger**:
 
-- The app version and **Copy version info**, which copies the Slinger, Electron, Chromium, Node and V8 versions and the OS
+- The app version, **Release notes** (see [Release notes](#release-notes)) and **Copy version info**, which copies the Slinger, Electron, Chromium, Node and V8 versions and the OS
   (name, release, architecture) for a bug report. Nothing else is included: no host name, user name, paths or data.
 - The developer, and links to the source code, releases, the issue tracker, the licence and the cloud server. Links open in your
   web browser.
@@ -1388,6 +1512,28 @@ the left of the title bar (or in the menu bar, with the system title bar).
 - Menu items for dialogs do nothing while another dialog is open (Settings and Keyboard Shortcuts still open), the same as the
   keyboard shortcuts.
 - Development builds also show Reload and Toggle Developer Tools under View.
+
+## Right-click menus
+
+Right-click menus are shortcuts to actions that also have a button, a key or a menu entry elsewhere, plus copying. Where the
+item can take keyboard focus, **Shift+F10** or the **Menu** key opens the same menu; the arrow keys move, Enter chooses,
+Escape closes.
+
+| Where | Items |
+| --- | --- |
+| Collections tree: collection, folder, request, example | see [Collections, folders and requests](#collections-folders-and-requests) and [Saved examples](#saved-examples) |
+| Request tabs | Close, Close others, Close to the right, Close all, Save, Copy URL, Copy as cURL |
+| History entry | Open, Copy URL, Delete |
+| Environments list (Manage environments) | Set active, Rename…, Duplicate, Export…, Delete… |
+| Response body | Copy (the selected text), Copy response body, Save response to file…, Search in response |
+| Response headers / cookies row | Copy (the selected text), Copy name, Copy value, Copy as "Name: value" / "name=value" |
+| Collection versions list | Copy version number, Restore…, Delete… |
+| Workflows list | Open, Rename…, Duplicate, Delete… |
+| Workflow canvas node | Open request (Send request nodes), Delete node |
+| Title bar, status bar (run and mock server items) | see [Layout](#layout) |
+
+Text fields (the URL bar, key/value tables, variables, editors) get the usual Undo / Redo / Cut / Copy / Paste / Select all
+menu, and selected text elsewhere gets Copy. Pasting a cURL command into the URL bar this way still opens the import.
 
 ## Keyboard shortcuts
 

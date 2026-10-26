@@ -10,11 +10,16 @@ import { stripOAuth2TokensFromItem } from '../../shared/oauth2'
 import { dataRows, ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { writeDescription } from './description'
 import { mergeParamsFromUrl } from './urlParams'
+import { mergePathVariables, pathVariableNames, type PathVariable } from './pathVariables'
 import { MCP_METHOD, mcpDisplayUrl, mcpTemplateTexts, parseMcp, serializeMcp, type McpDraft } from './mcpRequest'
 
 export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
-export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
+/**
+ * `inherit` (Postman: `auth` absent or null): use the nearest folder's or the collection's auth at send time
+ * (src/lib/authInheritance.ts); the default for new requests. `none` (Postman `{type: 'noauth'}`): no auth at all.
+ */
+export type AuthKind = 'inherit' | 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
 
 export interface BodyDraft {
   kind: BodyKind
@@ -77,6 +82,11 @@ export interface RequestDraft {
    */
   descriptionSource?: unknown
   params: KvRow[]
+  /**
+   * Path variables (Postman `url.variable`): one per `:name` path segment of `url`, in order (see pathVariables.ts).
+   * Kept in sync with the URL like `params`; document key `pathVariables`.
+   */
+  pathVariables: PathVariable[]
   headers: KvRow[]
   body: BodyDraft
   auth: AuthDraft
@@ -143,7 +153,7 @@ export function emptyOAuth2(): OAuth2Draft {
 
 export function emptyAuth(): AuthDraft {
   return {
-    kind: 'none',
+    kind: 'inherit',
     basic: { username: '', password: '' },
     bearer: { token: '' },
     apiKey: { key: '', value: '', addTo: 'header' },
@@ -164,7 +174,15 @@ export function newDraft(partial: Partial<RequestDraft> = {}): RequestDraft {
     timeoutMs: null,
     extras: {},
     ...partial,
+    // A URL with `:name` segments (cURL / .http imports, MCP create_request) gets its path variable rows.
+    pathVariables: partial.mcp ? [] : mergePathVariables(partial.url ?? '', partial.pathVariables ?? []),
   }
+}
+
+/** A draft kept by an older Slinger (persisted tabs) gets the fields added since, derived as a fresh parse would. */
+export function upgradeDraft(d: RequestDraft): RequestDraft {
+  if (Array.isArray(d.pathVariables)) return d
+  return { ...d, pathVariables: d.mcp ? [] : mergePathVariables(d.url ?? '', []) }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,8 +325,11 @@ export function parseAuth(auth: unknown): AuthDraft {
   if (!isObj(auth)) return out
   switch (auth.type) {
     case undefined:
+    case 'inherit':
+      return out
     case 'noauth':
     case 'none':
+      out.kind = 'none'
       return out
     case 'basic':
       out.kind = 'basic'
@@ -338,7 +359,23 @@ export function parseAuth(auth: unknown): AuthDraft {
   }
 }
 
-const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'mcp'])
+const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'pathVariables', 'mcp'])
+
+function pathVariableList(list: unknown): PathVariable[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((v): v is Json => isObj(v) && typeof v.key === 'string')
+    .map((v) => ({ key: v.key as string, value: str(v.value), description: descriptionText(v.description) }))
+}
+
+/**
+ * Path variable rows for the `:name` segments of the URL: the saved `pathVariables` first, then (imports, and names an
+ * OpenAPI update added) Postman's `url.variable` of the imported item.
+ */
+export function seedPathVariables(doc: Json, url: string): PathVariable[] {
+  const source = isObj(doc.source) && isObj(doc.source.request) && isObj(doc.source.request.url) ? doc.source.request.url : null
+  return mergePathVariables(url, [...pathVariableList(doc.pathVariables), ...pathVariableList(source?.variable)])
+}
 
 function seedParams(doc: Json, url: string): KvRow[] {
   let prev: KvRow[] = rowsFromList(doc.params)
@@ -381,6 +418,7 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     description: descriptionText(doc.description),
     descriptionSource: doc.description,
     params: seedParams(doc, url),
+    pathVariables: seedPathVariables(doc, url),
     headers: ensureTrailingEmpty(rowsFromList(doc.headers)),
     body: parseBody(doc.body),
     auth: parseAuth(doc.auth),
@@ -395,6 +433,7 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     method: MCP_METHOD,
     url: mcp.transport === 'stdio' ? '' : url,
     params: ensureTrailingEmpty([]),
+    pathVariables: [],
     body: emptyBody(),
     mcp,
   }
@@ -469,10 +508,13 @@ export function serializeOAuth2(o: OAuth2Draft): Array<Record<string, unknown>> 
   return [...attrList(kept), ...o.extra.filter((e) => !own.has(str(e.key)))]
 }
 
+/** Postman `auth`: null (= inherit, written as `auth: null`) or the auth object; "No auth" is `{type: 'noauth'}`. */
 export function serializeAuth(a: AuthDraft): unknown {
   switch (a.kind) {
-    case 'none':
+    case 'inherit':
       return null
+    case 'none':
+      return { type: 'noauth' }
     case 'basic':
       return { type: 'basic', basic: attrList([['username', a.basic.username], ['password', a.basic.password]]) }
     case 'bearer':
@@ -487,6 +529,11 @@ export function serializeAuth(a: AuthDraft): unknown {
     case 'unsupported':
       return a.preserved ?? null
   }
+}
+
+/** Postman `url.variable` entries (`{key, value, description?}`), the document's `pathVariables`. */
+export function serializePathVariables(list: readonly PathVariable[]): Json[] {
+  return list.map((v) => (v.description ? { key: v.key, value: v.value, description: v.description } : { key: v.key, value: v.value }))
 }
 
 export interface SerializedRequest {
@@ -507,6 +554,8 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   doc.body = serializeBody(d.body)
   doc.auth = serializeAuth(d.auth)
   doc.params = rowsToList(dataRows(d.params))
+  const pathVariables = serializePathVariables(d.pathVariables)
+  if (pathVariables.length > 0) doc.pathVariables = pathVariables
   // Keep any other Postman request settings (followRedirects...) and only own `timeoutMs`.
   const settings: Json = isObj(d.extras.settings) ? { ...d.extras.settings } : {}
   if (d.timeoutMs != null) settings.timeoutMs = d.timeoutMs
@@ -516,6 +565,7 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   if (d.mcp) {
     const url = mcpDisplayUrl(d)
     Object.assign(doc, { method: MCP_METHOD, url, body: null, params: [], mcp: serializeMcp(d.mcp) })
+    delete doc.pathVariables
     return { name, method: MCP_METHOD, url, documentJson: JSON.stringify(doc) }
   }
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
@@ -531,6 +581,8 @@ export function draftFingerprint(d: RequestDraft): string {
 export function templateTexts(d: RequestDraft): string[] {
   if (d.mcp) return mcpRequestTemplateTexts(d, d.mcp)
   const out: string[] = [d.url]
+  const inUrl = new Set(pathVariableNames(d.url))
+  for (const v of d.pathVariables) if (inUrl.has(v.key)) out.push(v.value)
   for (const h of dataRows(d.headers)) if (h.enabled) out.push(h.key, h.value)
   const b = d.body
   if (b.kind === 'raw') out.push(b.raw)

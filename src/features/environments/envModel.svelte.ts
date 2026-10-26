@@ -3,7 +3,7 @@
  * a collection's variables or the workspace's globals (see varBackends.ts). `environmentId` is the owner id.
  * Secrets: a row only ever holds plaintext the user typed or explicitly revealed.
  */
-import { errorInfo } from '../../lib/ipc'
+import { errorInfo, isVersionConflict } from '../../lib/ipc'
 import {
   bulkEligible, diffBulk, duplicateKeys, findDuplicates, isBlank, newRow, parseBulk, rowIssue, serializeBulk, summarizeStatus,
   valueToSend, type BulkParse, type Row,
@@ -22,9 +22,12 @@ export interface FocusRequest {
 function fromRecord(ownerId: string, v: VarRecord): Row {
   return newRow(ownerId, {
     id: v.id, key: v.key, value: v.isSecret ? '' : (v.value ?? ''), isSecret: v.isSecret, serverSecret: v.isSecret, secretMissing: v.isSecret && v.secretMissing,
-    enabled: v.enabled,
+    enabled: v.enabled, version: v.version,
   })
 }
+
+/** Shown on a row whose variable changed elsewhere (sync, a script, an assistant) since the editor loaded it. */
+export const VARIABLE_CONFLICT_MESSAGE = 'Changed elsewhere since you opened it. Retry saves your value over it.'
 
 export class EnvModel {
   environmentId = $state<string | null>(null)
@@ -298,6 +301,7 @@ export class EnvModel {
       const cur = this.rows.find((r) => r.key === rec.key && !r.deleted)
       if (!cur) continue
       cur.id = rec.id
+      cur.version = rec.version
       cur.serverSecret = rec.isSecret
       if (cur.isSecret && !cur.revealed) {
         cur.value = ''
@@ -330,17 +334,30 @@ export class EnvModel {
       return
     }
     const sent = { key: row.key, value: row.value, isSecret: row.isSecret }
-    const res = await this.backend.upsert(envId, {
-      key: row.key,
-      value: valueToSend(row),
-      isSecret: row.isSecret,
-      enabled: row.enabled,
-      variableId: row.id,
-    })
+    let res: VarRecord
+    try {
+      res = await this.backend.upsert(envId, {
+        key: row.key,
+        value: valueToSend(row),
+        isSecret: row.isSecret,
+        enabled: row.enabled,
+        variableId: row.id,
+        ...(row.id && row.version !== undefined ? { expectedVersion: row.version } : {}),
+      })
+    } catch (e) {
+      // Like a request's "changed elsewhere": nothing is overwritten silently. The row keeps the user's value and shows
+      // the conflict; Retry is the explicit "overwrite" (it is based on the version that is stored now).
+      if (!isVersionConflict(e)) throw e
+      const current = errorInfo(e).details?.currentVersion
+      const cur = this.#row(rid)
+      if (cur && typeof current === 'number') cur.version = current
+      throw new Error(VARIABLE_CONFLICT_MESSAGE)
+    }
     // Merge only server-owned fields; never overwrite what the user may have typed meanwhile.
     const cur = this.#row(rid)
     if (cur) {
       cur.id = res.id
+      cur.version = res.version
       cur.serverSecret = res.isSecret
       cur.secretMissing = res.isSecret && res.secretMissing
       if (cur.isSecret && cur.value === sent.value && !cur.revealed) {

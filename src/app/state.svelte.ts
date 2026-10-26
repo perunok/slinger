@@ -28,6 +28,13 @@ function lsSet(k: string, v: string | null) {
   }
 }
 
+/** How each kind of stored variable enters the template scope (secrets without their value; ids for revealing). */
+export const envVariableInfo = (v: EnvironmentVariable): VariableInfo => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id })
+export const globalVariableInfos = (vars: readonly GlobalVariable[]): VariableInfo[] =>
+  vars.filter((v) => v.enabled).map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id }))
+export const collectionVariableInfos = (vars: readonly CollectionVariable[]): VariableInfo[] =>
+  vars.filter((v) => v.enabled).map((v) => ({ key: v.key, value: v.value, secret: false, id: v.id }))
+
 class AppState {
   ready = $state(false)
   loading = $state(false)
@@ -39,6 +46,19 @@ class AppState {
   collections = $state<Collection[]>([])
   folders = $state<ApiFolder[]>([])
   requests = $state<ApiRequest[]>([])
+  /** The workspace's collections, folders and requests have loaded (a disk restore of its tabs waits for this). */
+  collectionsLoaded = $state(false)
+
+  /**
+   * Bumped every time a workspace becomes active (also when switching back to one). Code that awaits and then writes
+   * workspace data into this state compares it before and after: a different value means the lists now belong to
+   * another workspace (or were reloaded from scratch) and the result must be dropped.
+   */
+  workspaceGeneration = 0
+  /** True when no workspace switch happened since `generation` was read. */
+  isCurrent(generation: number): boolean {
+    return this.workspaceGeneration === generation
+  }
 
   /** ADDED (workflows): the workspace's workflows, without their graphs (features/workflows). */
   workflows = $state<WorkflowSummary[]>([])
@@ -51,8 +71,12 @@ class AppState {
   environments = $state<Environment[]>([])
   activeEnvironmentId = $state<string | null>(null)
   envVariables = $state<EnvironmentVariable[]>([])
+  /** The environment `envVariables` were loaded for (it lags `activeEnvironmentId` while they load). */
+  envVariablesOf: string | null = null
   /** ADDED (persisted variables): the workspace's globals and every collection's variables (by collection id). */
   globals = $state<GlobalVariable[]>([])
+  /** The workspace `globals` were loaded for (null while they load after a switch). */
+  globalsOf: string | null = null
   collectionVariables = $state<Record<string, CollectionVariable[]>>({})
 
   workspace = $derived(this.workspaces.find((w) => w.id === this.workspaceId) ?? null)
@@ -105,14 +129,17 @@ class AppState {
   }
 
   async selectWorkspace(id: string) {
+    this.workspaceGeneration++
     for (const listener of this.workspaceWillChange) listener(id)
     this.workspaceId = id
     lsSet(LS_WORKSPACE, id)
+    this.collectionsLoaded = false
     this.collections = []
     this.folders = []
     this.requests = []
     this.collectionVariables = {}
     this.globals = []
+    this.globalsOf = null
     this.workflows = []
     this.workflowsLoaded = false
     await Promise.all([this.reloadCollections(), this.reloadEnvironments(), this.reloadGlobals(), this.reloadWorkflows()])
@@ -130,15 +157,16 @@ class AppState {
 
   async reloadWorkflows(): Promise<void> {
     const ws = this.workspaceId
+    const generation = this.workspaceGeneration
     if (!ws) return
     try {
       const list = await api().listWorkflows(ws)
-      if (this.workspaceId !== ws) return
+      if (!this.isCurrent(generation)) return
       this.workflows = list
     } catch (e) {
-      toast.error('Could not load workflows', errorInfo(e).message)
+      if (this.isCurrent(generation)) toast.error('Could not load workflows', errorInfo(e).message)
     } finally {
-      if (this.workspaceId === ws) this.workflowsLoaded = true
+      if (this.isCurrent(generation)) this.workflowsLoaded = true
     }
   }
 
@@ -161,6 +189,7 @@ class AppState {
 
   async reloadCollections(): Promise<void> {
     const ws = this.workspaceId
+    const generation = this.workspaceGeneration
     if (!ws) return
     try {
       const cols = await api().listCollections(ws)
@@ -170,11 +199,12 @@ class AppState {
           return { id: c.id, f, r, v }
         }),
       )
-      if (this.workspaceId !== ws) return // switched meanwhile
+      if (!this.isCurrent(generation)) return // switched meanwhile
       this.collections = cols
       this.folders = perCollection.flatMap((x) => x.f)
       this.requests = perCollection.flatMap((x) => x.r)
       this.collectionVariables = Object.fromEntries(perCollection.map((x) => [x.id, x.v]))
+      this.collectionsLoaded = true
       this.publishScope()
       this.onRequestsReloaded?.()
       this.onLocalData?.()
@@ -190,6 +220,7 @@ class AppState {
    */
   async reloadCollectionsById(collectionIds: string[]): Promise<void> {
     const ids = [...new Set(collectionIds)]
+    const generation = this.workspaceGeneration
     try {
       const loaded = await Promise.all(
         ids.map(async (id) => {
@@ -197,6 +228,8 @@ class AppState {
           return { id, f, r, v }
         }),
       )
+      // Switched workspace meanwhile: these collections belong to the other one (the new one loads its own).
+      if (!this.isCurrent(generation)) return
       const set = new Set(ids)
       this.folders = [...this.folders.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.f)]
       this.requests = [...this.requests.filter((x) => !set.has(x.collectionId)), ...loaded.flatMap((x) => x.r)]
@@ -205,6 +238,7 @@ class AppState {
       this.onRequestsReloaded?.()
       this.onLocalData?.()
     } catch (e) {
+      if (!this.isCurrent(generation)) return
       toast.error('Could not refresh collection', errorInfo(e).message)
     }
   }
@@ -214,6 +248,8 @@ class AppState {
   }
 
   upsertRequest(req: ApiRequest) {
+    // A write that finished after a workspace switch must not put its request into the other workspace's tree.
+    if (req.workspaceId && req.workspaceId !== this.workspaceId) return
     const i = this.requests.findIndex((r) => r.id === req.id)
     if (i >= 0) this.requests[i] = req
     else this.requests.push(req)
@@ -241,6 +277,7 @@ class AppState {
 
   async reloadEnvironments(): Promise<void> {
     const ws = this.workspaceId
+    const generation = this.workspaceGeneration
     if (!ws) return
     try {
       let envs = await api().listEnvironments(ws)
@@ -252,7 +289,7 @@ class AppState {
           if (!isReadOnly(e)) throw e
         }
       }
-      if (this.workspaceId !== ws) return
+      if (!this.isCurrent(generation)) return
       this.environments = envs
       const saved = lsGet(lsKeyEnv(ws))
       const keep = envs.find((e) => e.id === this.activeEnvironmentId && e.workspaceId === ws)
@@ -274,6 +311,7 @@ class AppState {
     const id = this.activeEnvironmentId
     if (!id) {
       this.envVariables = []
+      this.envVariablesOf = null
       this.publishScope()
       return
     }
@@ -281,8 +319,10 @@ class AppState {
       const vars = await api().listEnvironmentVariables(id)
       if (this.activeEnvironmentId !== id) return
       this.envVariables = vars
+      this.envVariablesOf = id
     } catch (e) {
       this.envVariables = []
+      this.envVariablesOf = null
       toast.error('Could not load environment variables', errorInfo(e).message)
     }
     this.publishScope()
@@ -306,13 +346,17 @@ class AppState {
   /** Reloads the workspace's globals and republishes the scope. */
   async reloadGlobals(): Promise<void> {
     const ws = this.workspaceId
+    const generation = this.workspaceGeneration
     if (!ws) return
     try {
       const vars = await api().listGlobalVariables(ws)
-      if (this.workspaceId !== ws) return
+      if (!this.isCurrent(generation)) return
       this.globals = vars
+      this.globalsOf = ws
     } catch (e) {
+      if (!this.isCurrent(generation)) return
       this.globals = []
+      this.globalsOf = null
       toast.error('Could not load globals', errorInfo(e).message)
     }
     this.publishScope()
@@ -322,14 +366,11 @@ class AppState {
   publishScope() {
     const env = this.activeEnvironment
     scopeStore.environmentName = env?.name ?? null
-    scopeStore.environment = this.envVariables.map((v) => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id }))
-    scopeStore.globals = this.globals
-      .filter((v) => v.enabled)
-      .map((v): VariableInfo => ({ key: v.key, value: v.isSecret ? null : (v.value ?? ''), secret: v.isSecret, id: v.id }))
+    scopeStore.environment = this.envVariables.map(envVariableInfo)
+    scopeStore.globals = globalVariableInfos(this.globals)
     const collections = new Map<string, CollectionScopeLayer>()
     for (const c of this.collections) {
-      const vars = (this.collectionVariables[c.id] ?? []).filter((v) => v.enabled)
-      collections.set(c.id, { name: c.name, vars: vars.map((v) => ({ key: v.key, value: v.value, secret: false, id: v.id })) })
+      collections.set(c.id, { name: c.name, vars: collectionVariableInfos(this.collectionVariables[c.id] ?? []) })
     }
     scopeStore.collections = collections
   }

@@ -40,6 +40,12 @@ export interface Collection {
   description?: string | null
   descriptionType?: DescriptionType | null
   /**
+   * ADDED (container auth): the collection's Postman `auth` object as JSON text, or null for "no auth". Requests whose
+   * own auth is "inherit" use it unless a folder on the way sets its own (src/lib/authInheritance.ts). Never holds an
+   * OAuth 2.0 token. Synced only with a server that has the `container_auth` feature. Optional so older fixtures stay valid.
+   */
+  authJson?: string | null
+  /**
    * ADDED (re-import): the Postman `info._postman_id` of the file this collection was imported (or last replaced)
    * from, used to recognise the same file on a later import. Local-only (never synced); null for collections
    * created here, imported as a copy, or downloaded from the cloud. Optional so older fixtures stay valid.
@@ -62,6 +68,11 @@ export interface ApiFolder {
   /** ADDED (docs): the folder's documentation, see Collection.description. */
   description?: string | null
   descriptionType?: DescriptionType | null
+  /**
+   * ADDED (container auth): the folder's Postman `auth` object as JSON text; null = inherit from the parent folder or
+   * the collection, '{"type":"noauth"}' = no auth (stops inheritance). See Collection.authJson.
+   */
+  authJson?: string | null
   createdAt: number
   updatedAt: number
   version: number
@@ -209,6 +220,35 @@ export interface AssistantEditInput {
   detail: string
 }
 
+/**
+ * ADDED (assistant changes, 0019): a request or environment variable an AI assistant writes through the MCP server.
+ * markAssistantChange only: `created` = the assistant made the request; `pending` = recorded before the write, so it
+ * counts whatever the content is until the record after the write replaces it (a failed write never leaves the change
+ * unrecorded).
+ */
+export type AssistantChangeRef =
+  | { kind: 'request'; requestId: string; created?: boolean; pending?: boolean }
+  | { kind: 'variable'; environmentId: string; key: string; pending?: boolean }
+  /** ADDED (container auth, migration 0020): the auth of a collection or folder as an assistant wrote it. */
+  | { kind: 'container'; containerKind: 'collection' | 'folder'; id: string; pending?: boolean }
+
+/** The assistant changes of a workspace whose content is still exactly what the assistant wrote (not reviewed since). */
+export interface AssistantChanges {
+  requests: Array<{ requestId: string; created: boolean }>
+  variables: Array<{ environmentId: string; key: string }>
+  /** Collections / folders whose auth is still what an assistant wrote (absent in older shapes = none). */
+  containers?: Array<{ kind: 'collection' | 'folder'; id: string }>
+}
+
+/** ADDED (MCP): texts to return to an AI assistant, with the secrets of one send replaced (redactSecrets). */
+export interface RedactSecretsInput {
+  /** The send's script session: secret values its scripts read or wrote become `{{name}}`. */
+  scriptSessionId: string | null
+  /** The OAuth 2.0 token the send used: its access and refresh tokens become `<access token>` / `<refresh token>`. */
+  oauth2TokenKey: string | null
+  texts: string[]
+}
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
@@ -284,6 +324,8 @@ export interface UpsertEnvironmentVariableInput {
   isSecret: boolean
   /** Set when updating an existing variable; omit to create a new one. */
   variableId?: string
+  /** When given, the stored variable's version must match (version_conflict otherwise), like updateRequest. */
+  expectedVersion?: number
 }
 
 /**
@@ -411,6 +453,22 @@ export interface HttpRequestInput {
    * that scripts of the session read are replaced by `{{name}}` in the history entry.
    */
   scriptSessionId?: string | null
+  /**
+   * ADDED (0.27): the most body bytes to load (Settings > Maximum response size), clamped by main to 1-256 MB; absent:
+   * 50 MB. A larger body is not loaded: the response comes back with `bodyTooLarge` (status and headers still there).
+   */
+  maxResponseBytes?: number
+  /**
+   * ADDED (0.27): "Send and download to file": the id chooseResponseDownloadFile returned. Main streams the body into the
+   * file the user picked (no size limit); the response then has `savedToFile` and no body.
+   */
+  downloadId?: string
+}
+
+/** chooseResponseDownloadFile's result: an opaque one-time id for executeHttpRequest, and the chosen file's name. */
+export interface ResponseDownloadTarget {
+  downloadId: string
+  fileName: string
 }
 
 export interface HttpResponseData {
@@ -423,6 +481,13 @@ export interface HttpResponseData {
   /** Present when the body is not valid UTF-8; base64-encoded raw bytes. */
   bodyBase64: string | null
   bodyByteLength: number
+  /**
+   * ADDED (0.27): the body was larger than the limit (`limitBytes`) and was not loaded (download stopped there):
+   * bodyText and bodyBase64 are null, bodyByteLength is the declared Content-Length, else the bytes received so far.
+   */
+  bodyTooLarge?: { limitBytes: number }
+  /** ADDED (0.27): "Send and download to file": the body was written to this file (bodyByteLength bytes), not returned. */
+  savedToFile?: string
   /**
    * ADDED (MCP requests): set by the renderer on the synthetic response of an MCP request (executeDraft), never by main.
    * `bodyText` then holds the JSON-RPC result; `operation` is 'tools/call' | 'resources/read' | 'prompts/get' and `name`
@@ -673,12 +738,14 @@ export interface CollectionSnapshot {
   /** ADDED (docs): collection description at snapshot time; absent in older snapshots or when empty. */
   collectionDescription?: string | null
   collectionDescriptionType?: DescriptionType | null
+  /** ADDED (container auth): the collection's auth (Postman `auth` JSON) at snapshot time; absent in older snapshots or when none. */
+  collectionAuthJson?: string | null
   /**
    * ADDED (persisted variables): the collection variables at snapshot time, in order; absent in older snapshots
    * (restoring one of those leaves the collection without variables) and when there were none.
    */
   collectionVariables?: import('./postmanVariables').CollectionVariableData[]
-  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType'>>
+  folders: Array<Pick<ApiFolder, 'id' | 'parentFolderId' | 'name' | 'sortOrder' | 'scriptsJson' | 'description' | 'descriptionType' | 'authJson'>>
   requests: Array<
     Pick<ApiRequest, 'id' | 'folderId' | 'name' | 'method' | 'url' | 'documentJson' | 'sortOrder'>
   >
@@ -817,6 +884,11 @@ export interface RunScriptsInput {
   sendRequestTimeoutMs?: number
   /** Pre-request only: keep running the remaining scripts after one fails (default false). */
   continueOnError?: boolean
+  /**
+   * ADDED (MCP send policy): reading a secret variable throws inside the script with this message (a send an AI
+   * assistant controls: ad-hoc, changed, or using variables it set). Absent: secrets are read as usual.
+   */
+  denySecrets?: string
 }
 
 export type ScriptConsoleLevel = 'log' | 'info' | 'warn' | 'error'
@@ -1019,7 +1091,7 @@ export type SyncResolution = 'keep_local' | 'keep_remote' | 'merge' | 'duplicate
 /** One field group of a conflicting entity. Values are display strings; secret values never appear. */
 export interface SyncConflictGroup {
   /** `scripts`, `docs` (collections/folders) and `details` (variables: enabled + description): sync design section 21. */
-  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details'
+  group: 'name' | 'content' | 'location' | 'order' | 'key' | 'value' | 'scripts' | 'docs' | 'details' | 'auth'
   label: string
   conflicting: boolean
   base: string | null
@@ -1166,6 +1238,11 @@ export interface ReleaseInfo {
   url: string
   /** Unix seconds, or null when the feed did not say. */
   publishedAt: number | null
+  /**
+   * The release notes (the GitHub release body: Markdown, untrusted, capped in main at MAX_NOTES_CHARS), or null when the
+   * release has none. Shown only through the sanitising Markdown renderer.
+   */
+  notes: string | null
 }
 
 /** ADDED (update notice): answer of `checkForUpdates`. */
