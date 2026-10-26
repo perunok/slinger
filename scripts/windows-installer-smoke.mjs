@@ -84,8 +84,9 @@ const uninstallEntry = () =>
 rmSync(work, { recursive: true, force: true })
 mkdirSync(work, { recursive: true })
 
-// 1. The installer's signature.
+// 1. The installer's signature and version info (SignPath's artifact configurations restrict both files' metadata).
 checkSignature(installer, 'installer')
+console.log(`info installer version info: ${powershell(`(Get-Item -LiteralPath '${installer}').VersionInfo | ForEach-Object { "$($_.ProductName)|$($_.ProductVersion)|$($_.FileVersion)" }`)}`)
 
 // 2. Silent install. /D must be the last argument and is never quoted (NSIS rule); the path has no spaces.
 const installed = spawnSync(installer, ['/S', `/D=${dir}`], { stdio: 'inherit', timeout: 300_000 })
