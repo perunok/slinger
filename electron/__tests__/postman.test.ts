@@ -39,19 +39,57 @@ describe('Postman import', () => {
     exported.item.forEach((item, i) => expect(JSON.stringify(item.response)).toBe(JSON.stringify(original.item[i].response)))
   })
 
-  it('gives requests the nearest folder auth (folder auth is not stored on its own)', async () => {
+  it('keeps collection and folder auth on the collection and folders; requests without their own inherit (no copies)', async () => {
     const payload = JSON.stringify({
       info: { name: 'Auth C', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
       auth: { type: 'bearer', bearer: [{ key: 'token', value: 'root' }] },
       item: [
         { name: 'F', auth: { type: 'bearer', bearer: [{ key: 'token', value: 'folder' }] }, item: [{ name: 'in', request: { method: 'GET', url: 'http://x' } }] },
+        { name: 'N', auth: { type: 'noauth' }, item: [{ name: 'open', request: { method: 'GET', url: 'http://x' } }] },
+        { name: 'I', item: [{ name: 'deep', request: { method: 'GET', url: 'http://x', auth: null } }] },
         { name: 'top', request: { method: 'GET', url: 'http://x' } },
       ],
     })
     const imported = await env.api.importPostmanCollection(wsId, payload)
+    expect(JSON.parse(imported.collection.authJson!)).toEqual({ type: 'bearer', bearer: [{ key: 'token', value: 'root' }] })
+    const folders = Object.fromEntries((await env.api.listFolders(imported.collection.id)).map((f) => [f.name, f.authJson]))
+    expect(JSON.parse(folders.F!)).toEqual({ type: 'bearer', bearer: [{ key: 'token', value: 'folder' }] })
+    expect(folders.N).toBe('{"type":"noauth"}')
+    expect(folders.I).toBeNull()
     const docs = Object.fromEntries((await env.api.listRequests(imported.collection.id)).map((r) => [r.name, JSON.parse(r.documentJson)]))
-    expect(docs.in.auth.bearer[0].value).toBe('folder')
-    expect(docs.top.auth.bearer[0].value).toBe('root')
+    for (const name of ['in', 'open', 'deep', 'top']) expect(docs[name].auth, name).toBeNull()
+  })
+
+  it('round-trips container auth: export writes it back, re-import keeps the inheritance', async () => {
+    const payload = JSON.stringify({
+      info: { name: 'RT' },
+      auth: { type: 'apikey', apikey: [{ key: 'key', value: 'X-Key' }, { key: 'value', value: '{{k}}' }] },
+      item: [{ name: 'F', auth: { type: 'noauth' }, item: [{ name: 'a', request: { method: 'GET', url: 'http://a' } }] }, { name: 'b', request: { method: 'GET', url: 'http://b' } }],
+    })
+    const first = await env.api.importPostmanCollection(wsId, payload)
+    const folders = await env.api.listFolders(first.collection.id)
+    const requests = await env.api.listRequests(first.collection.id)
+    const exported = buildPostmanCollection({ collection: first.collection, folders, requests })
+    expect(exported.auth).toEqual(JSON.parse(payload).auth)
+    expect(exported.item[0]!.auth).toEqual({ type: 'noauth' })
+    expect(exported.item[0]!.item![0]!.request!.auth).toBeUndefined()
+    expect(exported.item[1]!.request!.auth).toBeUndefined()
+    const again = await env.api.importPostmanCollection(wsId, JSON.stringify(exported), { name: 'copy' })
+    expect(again.collection.authJson).toBe(first.collection.authJson)
+    expect((await env.api.listFolders(again.collection.id))[0]!.authJson).toBe('{"type":"noauth"}')
+  })
+
+  it('drops OAuth 2.0 tokens from container auth and treats {type: inherit} as none set', async () => {
+    const payload = JSON.stringify({
+      info: { name: 'O' },
+      auth: { type: 'oauth2', oauth2: [{ key: 'accessToken', value: 'SECRET' }, { key: 'grant_type', value: 'client_credentials' }] },
+      item: [{ name: 'F', auth: { type: 'inherit' }, item: [{ name: 'a', request: { method: 'GET', url: 'http://a', auth: { type: 'inherit' } } }] }],
+    })
+    const imported = await env.api.importPostmanCollection(wsId, payload)
+    expect(imported.collection.authJson).not.toContain('SECRET')
+    expect(JSON.parse(imported.collection.authJson!).oauth2).toEqual([{ key: 'grant_type', value: 'client_credentials' }])
+    expect(imported.folders[0]!.authJson).toBeNull()
+    expect(JSON.parse(imported.requests[0]!.documentJson).auth).toBeNull()
   })
 
   it('preserves nested folders and their parent links', async () => {
@@ -110,21 +148,19 @@ describe('Postman import', () => {
     expect(doc.source).toEqual(item)
   })
 
-  it('inherits auth from the nearest folder or collection when the request has none', async () => {
-    const collectionAuth = { type: 'bearer', bearer: [{ key: 'token', value: 'root' }] }
-    const folderAuth = { type: 'basic', basic: [{ key: 'username', value: 'u' }] }
+  it('keeps a request\'s own auth (including an explicit "no auth") as it is', async () => {
     const own = { type: 'apikey', apikey: [] }
     const payload = JSON.stringify({
       info: { name: 'c' },
-      auth: collectionAuth,
+      auth: { type: 'bearer', bearer: [{ key: 'token', value: 'root' }] },
       item: [
-        { name: 'top', request: { method: 'GET', url: 'http://a' } },
-        { name: 'F', auth: folderAuth, item: [{ name: 'inF', request: { method: 'GET', url: 'http://b' } }, { name: 'own', request: { method: 'GET', url: 'http://c', auth: own } }] },
+        { name: 'top', request: { method: 'GET', url: 'http://a', auth: { type: 'noauth' } } },
+        { name: 'F', item: [{ name: 'own', request: { method: 'GET', url: 'http://c', auth: own } }] },
       ],
     })
     const { requests } = await env.api.importPostmanCollection(wsId, payload)
     const auth = Object.fromEntries(requests.map((r) => [r.name, JSON.parse(r.documentJson).auth]))
-    expect(auth).toEqual({ top: collectionAuth, inF: folderAuth, own })
+    expect(auth).toEqual({ top: { type: 'noauth' }, own })
   })
 
   it('applies defaults for missing names/methods and preserves sibling order', async () => {

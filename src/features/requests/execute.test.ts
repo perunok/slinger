@@ -10,7 +10,7 @@ import { settings } from '../../app/settings.svelte'
 import { createMockBackend } from '../../dev/mockBackend'
 import { newRow } from '../../lib/kv'
 import { newMcpDraft, newMcpRequestDraft, type McpDraft } from '../../lib/mcpRequest'
-import { draftFingerprint, parseDocument, type RequestDraft } from '../../lib/request'
+import { draftFingerprint, emptyAuth, parseDocument, type RequestDraft } from '../../lib/request'
 import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { cancelRun, executeDraft, newScriptRun, UNTRUSTED_COMMAND_MESSAGE } from './execute'
 import { tabsStore } from './tabs.svelte'
@@ -68,6 +68,44 @@ const withScripts = (events: unknown[]) => {
   return { r, draft }
 }
 const ctx = (r: ReturnType<typeof getUser>) => ({ workspaceId: app.workspaceId!, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId })
+
+describe('executeDraft with inherited auth', () => {
+  const bearer = (token: string) => JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: token, type: 'string' }] })
+
+  it('sends the nearest folder\'s or the collection\'s auth, resolving its variables, and scripts see it', async () => {
+    const r = getUser()
+    await backend.setCollectionAuth(r.collectionId, bearer('{{userId}}-root'))
+    await app.reloadCollections()
+    const draft = { ...parseDocument(r), auth: emptyAuth() }
+    draft.extras = { ...draft.extras, scripts: pre('p()') }
+    expect((await executeDraft(draft, ctx(r))).ok).toBe(true)
+    expect(sent[0].auth).toEqual({ kind: 'bearer', bearer: { token: '42-root' } }) // userId = 42 in the Local environment
+    expect(calls[0].request.auth).toMatchObject({ type: 'bearer' })
+
+    await backend.setFolderAuth(r.folderId!, bearer('folder'))
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {} }, ctx(r))
+    expect(sent[1].auth).toEqual({ kind: 'bearer', bearer: { token: 'folder' } })
+
+    // A folder set to "No auth" stops inheritance; a request's own "No auth" ignores the chain.
+    await backend.setFolderAuth(r.folderId!, '{"type":"noauth"}')
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {} }, ctx(r))
+    expect(sent[2].auth).toEqual({ kind: 'none' })
+    await backend.setFolderAuth(r.folderId!, null)
+    await app.reloadCollections()
+    await executeDraft({ ...draft, extras: {}, auth: { ...emptyAuth(), kind: 'none' } }, ctx(r))
+    expect(sent[3].auth).toEqual({ kind: 'none' })
+    // The stored document still says inherit: nothing was copied into it.
+    expect(JSON.parse(app.requests.find((x) => x.id === r.id)!.documentJson).auth ?? null).not.toEqual(JSON.parse(bearer('folder')))
+  })
+
+  it('a request outside a collection that inherits is sent without auth', async () => {
+    const out = await executeDraft({ ...parseDocument(getUser()), auth: emptyAuth() }, { workspaceId: app.workspaceId! })
+    expect(out.ok).toBe(true)
+    expect(sent[0].auth).toEqual({ kind: 'none' })
+  })
+})
 
 describe('executeDraft with scripts', () => {
   it('does not call runScripts when there are no scripts', async () => {

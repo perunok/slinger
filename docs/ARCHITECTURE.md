@@ -201,6 +201,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0014_conflict_remote_author` | nullable `sync_conflicts.remote_author` (JSON `{id, name}`: the cloud's author of the remote side of a version `immutable_clash`) |
 | `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
 | `0016_collection_openapi` | `collection_openapi`: the OpenAPI document a collection is linked to on this device (source, text, hash, title, versions, folder mode, operation count); local only, see [OpenAPI](#openapi) |
+| `0018_container_auth` | nullable `auth_json` on `collections` and `folders` (Postman `auth` object, never an OAuth 2.0 token; see [Collection and folder auth](#collection-and-folder-auth)), read-only and capture triggers (synced only with the `container_auth` feature, sync design section 21.6) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -219,6 +220,46 @@ requests among requests); moving a folder into itself or a descendant is refused
 additions `params` and `settings.timeoutMs`). The main process treats it as an opaque string; the renderer model is
 `src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save. Request scripts are the Postman `event`
 array under the key `scripts` (the key the importer has always used, so existing and synced documents need no migration).
+
+## Collection and folder auth
+
+Postman-style inheritance. Collections and folders store their auth in `auth_json` (0018): the Postman `auth` object as JSON
+text, validated and stripped of OAuth 2.0 tokens by `shared/containerAuth.ts` (main repositories and the mock use the same
+rules). `NULL` = nothing set: a folder then inherits from its parent, a collection has no auth; a folder with
+`{"type":"noauth"}` stops inheritance (on a collection `noauth` is stored as `NULL`); Postman's `{"type":"inherit"}` reads as
+`NULL`. IPC: `setCollectionAuth` / `setFolderAuth` (refused on read-only workspaces by triggers). Credentials typed into it
+are stored like a request's typed credentials (in the document / row, synced and exported alike); secret values belong in
+secret variables, which never leave the keychain.
+
+A request's own auth in `document_json` follows Postman too: `auth` absent or `null` = **inherit** (`AuthKind 'inherit'`, the
+default of `emptyAuth()` / new requests), `{"type":"noauth"}` = no auth. Requests saved by 0.26 or older with "No Auth" stored
+`null`, so they read as inherit; that only changes anything once a folder or the collection gets an auth.
+
+Resolution is renderer-side and happens at send time on a copy: `src/lib/authInheritance.ts` `resolveEffectiveAuth` walks
+folder -> parent folders -> collection (cycle safe) and `withEffectiveAuth` replaces an `inherit` auth before anything else
+(`executeDraft` step 0, so pre-request scripts' `pm.request.auth`, `secretsNeeded`, `prepareRequest` / `prepareMcp` and the
+OAuth 2.0 token lookup all see the auth that is sent; single send, runner, workflows and MCP `send_request` all go through it).
+The chain comes from the loaded tree (`execute.ts` `authChainFor`); the same call feeds code snippets (`CodePanel`), the
+auto-generated headers list, the MCP connect (`McpRequestView`), the `.http` export and the OpenAPI export (effective auth ->
+security scheme). Inherited auth is never copied into a request document.
+
+Postman import (main and mock) keeps collection/folder `auth` on the container and stores requests without their own auth as
+`null`; the Postman export writes collection/folder `auth` back. OpenAPI import already produced a collection-level `auth` when
+every operation shares one security requirement; it now stays there (request fingerprints no longer include it), and an update
+plan (`shared/openapi/update.ts`) sets the collection auth to the document's when it is unset or still what the previous
+document generated (so collections imported before 0018, whose requests carried copies, get it back while their clean requests
+return to inherit). Extract to new collection gives the new collection what the folder inherited. OAuth 2.0 tokens are keyed by
+the resolved settings (`OAuth2Service` token key), so every request inheriting the same container settings shares one token;
+the container's Authorization section has the same Get New Access Token panel.
+
+UI: the overview tab of a collection or folder has an **Authorization** section (`features/overview/OverviewView.svelte`,
+draft `RequestTab.overviewAuth`, saved by the overview's Save together with the docs; not restored with the tab after a
+restart); the editor is `features/requests/AuthEditor.svelte`, shared with the request's Authorization tab (`AuthPanel.svelte`),
+which shows "Inherited from <name>" and the effective type while inheriting. MCP: `get_request` returns `type: 'inherit'` with
+`inherited_from` and the masked `effective` auth; `get_tree` lists a container's own auth type; `create_request` /
+`update_request` accept `auth.type: 'inherit'`. Versions snapshot `collectionAuthJson` and folder `authJson` and restore them
+(older snapshots restore with none). Sync: `auth_json` is a collection/folder field of the `container_auth` extension
+(sync design section 21.6), which today's server does not offer, so it stays on the device.
 
 ## Secrets
 
@@ -244,7 +285,8 @@ array under the key `scripts` (the key the importer has always used, so existing
 
 ## HTTP execution pipeline
 
-0. **Pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
+0. **Inherited auth.** A draft whose auth is `inherit` gets its folder's / collection's auth on the outgoing copy
+   ([Collection and folder auth](#collection-and-folder-auth)). Then the **pre-request scripts** (only when the collection, a folder on the path or the request has one): `features/requests/execute.ts`
    calls `runScripts` with the chain and the draft; environment writes are persisted in main, request mutations are applied to an
    outgoing copy of the draft, collection variable / global writes are persisted in main too (the renderer reloads the scopes a
    script changed), and `pm.variables` is layered on top of the template scope (local > environment > collection > globals).
@@ -345,6 +387,9 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   a global created elsewhere has `secretMissing` until this device sets a value (keychain `slinger:global-var:<id>`). Equal
   never-synced variables with a clashing key fold into the remote one; different ones are renamed `<key>_conflict`.
   `source_postman_id` (0007) stays device-local.
+- **Collection and folder auth** (`auth_json`, 0018; feature `container_auth`, design section 21.6): same mechanism, own field
+  group `auth`. No server offers the feature yet, so today the column stays on the device (nothing pushed, nothing reported);
+  it starts syncing on its own once the server adds it.
 - **Version authors** (feature `version_authors`, design section 21): the server records who created every collection version
   and sends `created_by: {id|null, display_name} | null` on `collection_version` payloads to clients that declared the feature
   (`CLIENT_FEATURES`). The desktop never sends it and it is not part of `toWire`. `apply.ts` `splitAuthor` removes it at EVERY

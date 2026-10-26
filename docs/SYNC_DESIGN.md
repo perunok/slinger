@@ -1017,3 +1017,36 @@ created_by: { id: string | null, display_name: string } | null
   On the server a pushed `created_at` is capped at the server's clock and the REST create ignores it.
 - Tests: `wireContract.ts` `checkVersionAuthorsContract` (fake and real server), `sync/versionAuthors.test.ts` (two devices, older
   server and its upgrade, deleted account, no false immutable clash, base/conflict copies free of the field).
+
+### 21.6 `container_auth`: collection and folder auth (desktop 0.27; server: not yet)
+
+A sixth capability flag, `container_auth`, advertised and declared like the others. It adds ONE field to `collection` and
+`folder` payloads:
+
+```
+auth_json: string | null   // Postman `auth` object as JSON text; null = none set
+```
+
+- Meaning (desktop migration 0018, `shared/containerAuth.ts`): on a folder `null` = inherit from the parent folder or the
+  collection, `{"type":"noauth"}` = no auth (stops inheritance); on a collection `null` = no auth. Requests whose own auth is
+  absent/`null` in `document_json` inherit it at send time; the desktop never copies it into requests. Never an OAuth 2.0 token
+  (stripped before it is stored). Literal credentials typed into it travel like typed credentials in `document_json` today;
+  secret values belong in secret variables, which never sync.
+- Field group `auth` (label "Authorization") on both types, so an auth edit merges cleanly with a rename, scripts or docs edit on
+  another device, and two different auths are an ordinary `edit_edit` conflict of that group (display: the type, then one line
+  per setting). Limit: at most 1,048,576 bytes (the desktop's input cap), a JSON object.
+- Desktop (done): `FIELD_FEATURE.auth_json = 'container_auth'`, `toWire` adds the field only when the link has the feature,
+  activation re-bases (`null`) and marks rows with a local value dirty, deactivation removes it from bases; capture triggers
+  `sync_dirty_{collections,folders}_auth_u` (0018). The client already declares `container_auth`; until a server advertises
+  it the column stays on the device, nothing is pushed or reported (exactly like scripts/docs with a server before 21.1).
+  The fake server implements it behind `new FakeCloud({ containerAuth: true })`; `sync/containerAuth.test.ts` covers today's
+  server, the upgrade and two-device merges/conflicts.
+- Server (TO DO in slinger-admin, not part of desktop 0.27): add `container_auth` to `EXTENSION_FEATURES` and
+  `FIELD_FEATURE.auth_json` (`services/syncFeatures.ts`), a nullable `authJson` column on `Collection` and `Folder` (Prisma
+  migration), `auth_json` in `containerExtras` (`z.string()` JSON object, <= 1 MB, `.nullable().optional()`, absent =
+  unchanged) and in `syncPayload`. Clients that do not declare the feature never see the field (shaping), and an older client
+  never sends it, so it is never wiped.
+- Old desktop versions (<= 0.26) on the same workspace: they neither send nor receive `auth_json`. They treat a request's
+  `auth: null` as "No auth", so an inheriting request is sent WITHOUT the collection/folder auth there; a request they save with
+  "No auth" stores `null`, which newer versions read as inherit. Requests imported by 0.26 or older carry their own copies of
+  the container auth and behave the same everywhere.
