@@ -70,6 +70,9 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Shown as the installer's licence page: the privacy summary (update check and how to turn it off) and the MIT licence.
+  # SignPath Foundation's signing terms ask for the privacy policy to be shown during installation.
+  license: build/installer-license.txt
 mac:
   target: [dmg]
   category: public.app-category.developer-tools

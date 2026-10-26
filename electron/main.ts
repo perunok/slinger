@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, screen, session, shell, Tray } from 'electron'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHmac } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
 import { homedir, hostname, tmpdir, userInfo } from 'node:os'
@@ -550,6 +550,16 @@ function openMainWindow(): BrowserWindow {
   return win
 }
 
+function smokeResultFile(text: string): void {
+  const file = process.env.SLINGER_SMOKE_RESULT_FILE
+  if (!file) return
+  try {
+    writeFileSync(file, text)
+  } catch (err) {
+    console.log('SMOKE_FAILED could not write SLINGER_SMOKE_RESULT_FILE: ' + (err instanceof Error ? err.message : String(err)))
+  }
+}
+
 /** Headless self-check used by `SLINGER_SMOKE_TEST=1`: exercises preload + IPC + error transport. */
 async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const target = createServer((_req, res) => {
@@ -615,10 +625,13 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     if (result) result.menu = { top, about: !!aboutHost?.submenu?.items.some((i) => i.label === `About ${APP_NAME}`) }
     if (result?.sendRequest) result.sendRequest.ok = result.sendRequest.value === '200 smoke-ok' && result.sendRequest.notInHistory
     console.log('SMOKE_RESULT ' + JSON.stringify(result))
+    // A GUI process's stdout is not always readable (a packaged Windows build): SLINGER_SMOKE_RESULT_FILE gets it too.
+    smokeResultFile(JSON.stringify({ ok: true, result }))
     target.close()
     app.exit(0)
   } catch (err) {
     console.log('SMOKE_FAILED ' + (err instanceof Error ? err.message : String(err)))
+    smokeResultFile(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }))
     app.exit(1)
   }
 }

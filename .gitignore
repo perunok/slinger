@@ -5,6 +5,7 @@ node_modules/
 !/build/entitlements.mac.plist
 !/build/icons/
 !/build/tray/
+!/build/installer-license.txt
 *.log
 .env
 .DS_Store

@@ -7,6 +7,9 @@ you opt into the (still minimal) cloud panel.
 
 Small, fast, yours: read [the Sling Manifesto](#manifesto).
 
+**Download:** [GitHub Releases](https://github.com/perunok/slinger/releases) (Windows installer, macOS DMG, Linux AppImage and deb).
+[Code signing policy](docs/CODE_SIGNING.md) · [Privacy policy](PRIVACY.md)
+
 ![Slinger main window: collection tree, request editor and a pretty-printed JSON response (Tokyo Night theme)](docs/screenshots/01-main.png)
 
 ## Screenshots
@@ -159,7 +162,9 @@ See its root `README.md` and `server/README.md` (OpenAPI in `server/openapi.yaml
 
 `npm run electron:build` uses [electron-builder](https://www.electron.build/) with `electron-builder.yml`:
 NSIS installer (Windows), DMG (macOS), AppImage and deb (Linux). Native modules are unpacked from the asar archive.
-No auto-update is configured; signing is optional (see `.github/workflows/release.yml`).
+Installed releases update themselves from GitHub Releases (Help > Check for Updates…). Release builds run in GitHub
+Actions (`.github/workflows/release.yml`); the Windows installer and the programs in it are signed through SignPath, see the
+[Code signing policy](docs/CODE_SIGNING.md).
 
 `install.sh` installs a build for the current user and adds a `slinger` terminal command that opens the app. Without an
 argument it takes the newest matching build in `release/`; pass a path to install a downloaded one instead.
@@ -220,6 +225,12 @@ Work on a branch, keep `npm run typecheck` and `npm test` green, and add tests n
 (`electron/__tests__/` for main, `*.test.ts` beside renderer code, `e2e/` for whole-app flows). Never edit a released SQL
 migration; add the next numbered file. Adding an IPC method is a four-file change, described in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#adding-an-ipc-method-end-to-end).
+
+## Code signing policy
+
+Windows releases are signed for free by [SignPath.io](https://about.signpath.io) with a certificate issued to SignPath
+Foundation, from builds made by this repository's GitHub Actions workflow and approved by hand for each release. Team roles,
+the build process and how to check a signature: [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). Privacy: [PRIVACY.md](PRIVACY.md).
 
 ## License
 
