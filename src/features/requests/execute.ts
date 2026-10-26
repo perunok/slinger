@@ -18,6 +18,12 @@
  * secret reveals take a while) never mixes in the other one's variables or secrets; what the pre-request scripts write is
  * read back by the ids taken at the start.
  *
+ * Sends by an AI assistant (`ctx.source === 'mcp'`) also go through the MCP send policy (lib/assistantPolicy.ts): what
+ * the assistant wrote never carries the user's credentials, and the outcome comes back with the send's secret values,
+ * credentials and tokens replaced. Scripts of a collection that was imported or synced in run only after the user allowed
+ * them (the window asks; an assistant's send is refused instead), and a stored OAuth 2.0 token goes to a new origin only
+ * after the user allowed that.
+ *
  * An MCP request (`draft.mcp`) takes the same steps, but step 3 opens (or reuses) an MCP client session and runs its
  * operation (`sendMcp`); its outcome is a synthetic HttpResponseData (JSON result, `mcp` set), so the runner,
  * workflows, assistants and test scripts (`pm.response.json()`) handle it like any response.
@@ -25,7 +31,9 @@
 import type {
   ApiFolder,
   Collection,
+  HttpRequestInput,
   HttpResponseData,
+  RunScriptsResult,
   McpCallOutcome,
   McpConnectInput,
   McpTrustCommandInput,
@@ -54,7 +62,10 @@ import {
   type ScriptOutput,
 } from '../../lib/scripts'
 import { EMPTY_SCOPE, layeredScope, uuid, type TemplateScope, type VariableInfo } from '../../lib/template'
+import { assistantControl, redactValues, refusal, scriptSecretDenial, type AssistantControl, type AssistantSendInfo } from '../../lib/assistantPolicy'
+import { withDefaultScheme } from '../../../shared/urlScheme'
 import { mcpConnections, type McpConnection } from '../mcpRequests/connections.svelte'
+import { securityPrompts } from '../security/prompts.svelte'
 
 export type ExecuteOutcome =
   | { ok: true; response: HttpResponseData; warnings: string[]; runId: string; elapsedMs: number; scripts: ScriptOutput }
@@ -76,6 +87,8 @@ export type ExecuteOutcome =
     }
   /** A pre-request script failed, so the request was not sent. */
   | { ok: false; kind: 'script'; error: string; scripts: ScriptOutput }
+  /** An AI assistant's send that the MCP send policy does not allow (it would carry the user's credentials). */
+  | { ok: false; kind: 'refused'; error: string; scripts: ScriptOutput }
 
 /** State shared by the requests of one collection run (a single send uses a fresh one). */
 export interface ScriptRunContext {
@@ -135,7 +148,23 @@ export interface ExecuteContext {
    * scripts do not run (there is no body to test).
    */
   downloadId?: string
+  /** Sends by an AI assistant: how send_request built the draft (ad-hoc, overrides); see lib/assistantPolicy.ts. */
+  assistant?: AssistantSendInfo
 }
+
+/** What an assistant's send must not see: values to replace in its outcome. */
+interface Sensitive {
+  values: Set<string>
+  oauth2TokenKey: string | null
+}
+
+/** Thrown inside a send when the scripts of the request's collection are not allowed on this device. */
+class ScriptTrustError extends Error {}
+
+/** For an AI assistant: the user allows a collection's scripts in the window (sending a request of it there asks). */
+export const untrustedScriptsMessage = (collection: string) =>
+  `The scripts of the collection “${collection}” have not been allowed on this device yet (it was imported or synced in). ` +
+  'The user has to allow them in the Slinger window: open_in_app shows the request, and sending it there asks.'
 
 /** Where an MCP request's OAuth 2.0 token is fetched (its Authorization panel lives in the Connection section). */
 export const MCP_TOKEN_WHERE = 'the Connection section'
@@ -246,6 +275,32 @@ function scriptsOf(draft: RequestDraft, s: SendScope, folderId: string | null, e
 }
 
 export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Promise<ExecuteOutcome> {
+  if (ctx.source !== 'mcp') return executeOnce(input, ctx, null)
+  const run = ctx.run ?? newScriptRun()
+  const sensitive: Sensitive = { values: new Set(), oauth2TokenKey: null }
+  const outcome = await executeOnce(input, { ...ctx, run }, sensitive)
+  return redactOutcome(outcome, sensitive, run.sessionId)
+}
+
+/** Asks the user (or tells an assistant) about a collection whose scripts are not allowed yet; throws when they stay so. */
+async function ensureScriptTrust(e: unknown, ctx: ExecuteContext): Promise<void> {
+  const info = errorInfo(e)
+  if (info.details?.reason !== 'untrusted_scripts') throw e
+  const collectionId = String(info.details.collectionId ?? '')
+  const name = String(info.details.collectionName ?? '')
+  if (ctx.source === 'mcp') throw new ScriptTrustError(untrustedScriptsMessage(name))
+  const ok = await securityPrompts.ask(`scripts:${collectionId}`, {
+    title: 'Run this collection’s scripts?',
+    message:
+      `“${name}” was imported or synced in, and its requests run scripts (pre-request or tests). Scripts can read your ` +
+      'environment, including secret variables, and send requests to any host.\n\nAllow its scripts on this device? You are asked once per collection.',
+    confirmLabel: 'Allow scripts',
+  })
+  if (!ok) throw new ScriptTrustError(`The scripts of “${name}” were not allowed, so the request was not sent.`)
+  await api().trustCollectionScripts(collectionId)
+}
+
+async function executeOnce(input: RequestDraft, ctx: ExecuteContext, sensitive: Sensitive | null): Promise<ExecuteOutcome> {
   const scripts = emptyScriptOutput()
   const run = ctx.run ?? newScriptRun()
   const runId = uuid()
@@ -261,10 +316,22 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     return { ok: false, kind: 'failed', error: `Could not read ${what}: ${errorInfo(e).message}`, scripts }
   }
 
+  // An AI assistant's send: what it controls (lib/assistantPolicy.ts). Fails closed when the changes cannot be read.
+  let control: AssistantControl | null = null
+  let denySecrets: string | null = null
+  if (sensitive) {
+    try {
+      control = assistantControl(ctx.assistant, await api().listAssistantChanges(ctx.workspaceId), ctx.requestId, environmentId)
+    } catch (e) {
+      return { ok: false, kind: 'failed', error: `Could not check what an AI assistant changed: ${errorInfo(e).message}`, scripts }
+    }
+    denySecrets = scriptSecretDenial(control)
+  }
+
   const runScripts = async (event: ScriptEventName, draft: RequestDraft, extra: Partial<RunScriptsInput> = {}) => {
     const chain = scriptsOf(draft, send, ctx.folderId ?? null, event)
     if (chain.length === 0) return null
-    const result = await api().runScripts({
+    const call = (): Promise<RunScriptsResult> => api().runScripts({
       runId,
       sessionId: run.sessionId,
       workspaceId: ctx.workspaceId,
@@ -281,8 +348,16 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       timeoutMs: settings.scriptTimeoutMs,
       sendRequestTimeoutMs: draft.timeoutMs ?? undefined,
       continueOnError: settings.scriptContinueOnError,
+      ...(denySecrets ? { denySecrets } : {}),
       ...extra,
     })
+    let result: RunScriptsResult
+    try {
+      result = await call()
+    } catch (e) {
+      await ensureScriptTrust(e, ctx)
+      result = await call()
+    }
     run.variables = result.variables
     if (!ctx.collectionId) run.collectionVariables = result.collectionVariables
     scripts.console.push(...result.console)
@@ -321,6 +396,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       if (pre.request && !input.mcp) draft = applyRequestData(draft, pre.request)
     }
   } catch (e) {
+    if (e instanceof ScriptTrustError) return { ok: false, kind: 'script', error: e.message, scripts }
     return { ok: false, kind: 'failed', error: `Could not run the pre-request scripts: ${errorInfo(e).message}`, scripts }
   }
   if (ctx.wasCancelled?.()) return cancelled()
@@ -331,6 +407,12 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
     data: run.iterationData,
     local: run.variables,
   })
+  // An AI assistant's send that would carry the user's credentials where the assistant decides: refused, nothing revealed.
+  if (control) {
+    const why = refusal(draft, scope, control, ctx.assistant?.savedAuthKind)
+    if (why) return { ok: false, kind: 'refused', error: why, scripts }
+  }
+
   // Reveal only the secrets this request references; they live in memory for this call only.
   const secrets = new Map<string, string>()
   try {
@@ -341,8 +423,9 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   } catch (e) {
     return { ok: false, kind: 'failed', error: `Could not read a secret variable: ${errorInfo(e).message}`, scripts }
   }
+  for (const value of secrets.values()) sensitive?.values.add(value)
 
-  if (draft.mcp) return sendMcp(draft, ctx, { runId, scriptSessionId: run.sessionId, scope, secrets, scripts, cancelled, runScripts })
+  if (draft.mcp) return sendMcp(draft, ctx, { runId, scriptSessionId: run.sessionId, scope, secrets, scripts, cancelled, runScripts, sensitive })
 
   const prepared = prepareRequest(draft, { workspaceId: ctx.workspaceId, requestId: ctx.requestId, scope, secrets })
   if (!prepared.ok) {
@@ -351,31 +434,38 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       : { ok: false, kind: 'invalid', error: prepared.error, scripts }
   }
 
+  if (sensitive) for (const v of authValues(prepared.input.auth)) sensitive.values.add(v)
+
   // OAuth 2.0: main keeps the token; find it for these settings, refreshing it first when it is about to expire.
   if (prepared.oauth2 && prepared.input.auth.oauth2) {
     const token = await oauth2TokenKey(prepared.oauth2)
     if (!token.ok) return { ...token.failure, scripts }
     prepared.input.auth.oauth2.tokenKey = token.tokenKey
+    if (sensitive) sensitive.oauth2TokenKey = token.tokenKey
     if (ctx.wasCancelled?.()) return cancelled()
   }
 
-  // 3. The request.
+  // 3. The request. A stored OAuth 2.0 token on its way to a new origin: the user may allow it once and it is sent again.
   const started = performance.now()
   let response: HttpResponseData
-  try {
-    response = await api().executeHttpRequest({
-      ...prepared.input,
-      requestRunId: runId,
-      scriptSessionId: run.sessionId,
-      ...(ctx.source ? { historySource: ctx.source } : {}),
-      // Settings > Requests: main stops downloading a larger body (the response then has bodyTooLarge).
-      maxResponseBytes: settings.maxResponseMb * MB,
-      ...(ctx.downloadId ? { downloadId: ctx.downloadId } : {}),
-    })
-  } catch (e) {
-    const info = errorInfo(e)
-    if (ctx.wasCancelled?.()) return cancelled()
-    return { ok: false, kind: 'failed', error: info.message, code: info.code, scripts }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await api().executeHttpRequest({
+        ...prepared.input,
+        requestRunId: runId,
+        scriptSessionId: run.sessionId,
+        ...(ctx.source ? { historySource: ctx.source } : {}),
+        // Settings > Requests: main stops downloading a larger body (the response then has bodyTooLarge).
+        maxResponseBytes: settings.maxResponseMb * MB,
+        ...(ctx.downloadId ? { downloadId: ctx.downloadId } : {}),
+      })
+      break
+    } catch (e) {
+      const info = errorInfo(e)
+      if (ctx.wasCancelled?.()) return cancelled()
+      if (attempt === 0 && ctx.source !== 'mcp' && (await allowTokenOrigin(info.details))) continue
+      return { ok: false, kind: 'failed', error: info.message, code: info.code, scripts }
+    }
   }
   const elapsedMs = Math.round(performance.now() - started)
 
@@ -388,10 +478,111 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
         response: responseDataFrom(response),
       })
     } catch (e) {
-      scripts.errors.push({ source: 'Tests', kind: 'internal', message: `Could not run the test scripts: ${errorInfo(e).message}` })
+      scripts.errors.push({ source: 'Tests', kind: 'internal', message: e instanceof ScriptTrustError ? e.message : `Could not run the test scripts: ${errorInfo(e).message}` })
     }
   }
   return { ok: true, response, warnings: prepared.warnings, runId, elapsedMs, scripts }
+}
+
+/** The credential values of a resolved auth (an assistant's outcome must not echo them). */
+function authValues(a: HttpRequestInput['auth']): string[] {
+  if (a.kind === 'basic') {
+    const user = a.basic?.username ?? ''
+    const pass = a.basic?.password ?? ''
+    return pass ? [pass, btoa(String.fromCharCode(...new TextEncoder().encode(`${user}:${pass}`)))] : []
+  }
+  if (a.kind === 'bearer') return a.bearer?.token ? [a.bearer.token] : []
+  if (a.kind === 'apiKey') return a.apiKey?.value ? [a.apiKey.value] : []
+  return []
+}
+
+/**
+ * Main refused to send a stored OAuth 2.0 token to an origin it was not used with (details.reason
+ * 'oauth2_new_origin'): asks the user, and allows it when they agree. False: not that error, or not allowed.
+ */
+async function allowTokenOrigin(details: Record<string, unknown> | undefined): Promise<boolean> {
+  if (details?.reason !== 'oauth2_new_origin') return false
+  const tokenKey = String(details.tokenKey ?? '')
+  const origin = String(details.origin ?? '')
+  const used = Array.isArray(details.origins) ? details.origins.map(String) : []
+  const ok = await securityPrompts.ask(`oauth2-origin:${tokenKey}:${origin}`, {
+    title: 'Send the access token to a new host?',
+    message:
+      `This OAuth 2.0 access token has been sent to ${used.join(', ') || 'another host'} so far. This request would send it to ${origin}.\n\n` +
+      'Allow the token for that host? Anyone who receives it can act with your authorization.',
+    confirmLabel: 'Allow',
+  })
+  if (!ok) return false
+  try {
+    await api().allowOAuth2Origin(tokenKey, origin)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** An assistant's outcome with every secret of the send replaced (texts that main can redact go through it first). */
+async function redactOutcome(outcome: ExecuteOutcome, sensitive: Sensitive, scriptSessionId: string): Promise<ExecuteOutcome> {
+  const s = outcome.scripts
+  const texts: string[] = [
+    outcome.ok ? '' : outcome.error,
+    ...s.console.map((c) => c.message),
+    ...s.tests.flatMap((t) => [t.name, t.error ?? '']),
+    ...s.errors.map((e) => e.message),
+  ]
+  const response = outcome.ok ? outcome.response : null
+  const warnings = outcome.ok ? outcome.warnings : []
+  if (response) texts.push(response.statusText, response.bodyText ?? '', ...response.headers.map((h) => h.value), ...warnings, response.mcp?.error?.message ?? '')
+  let out: string[]
+  try {
+    out = await api().redactSecrets({ scriptSessionId, oauth2TokenKey: sensitive.oauth2TokenKey, texts })
+    if (out.length !== texts.length) throw new Error('unexpected answer')
+  } catch (e) {
+    return { ok: false, kind: 'failed', error: `Could not hide the secret values of the result: ${errorInfo(e).message}`, scripts: emptyScriptOutput() }
+  }
+  let i = 0
+  const next = () => redactValues(out[i++]!, sensitive.values)
+  const error = next()
+  const scriptsOut: ScriptOutput = {
+    ...s,
+    console: s.console.map((c) => ({ ...c, message: next() })),
+    tests: s.tests.map((t) => {
+      const name = next()
+      const err = next()
+      return { ...t, name, error: t.error === null ? null : err }
+    }),
+    errors: s.errors.map((e) => ({ ...e, message: next() })),
+  }
+  if (!outcome.ok) return { ...outcome, error, scripts: scriptsOut }
+  const statusText = next()
+  const body = next()
+  const headers = outcome.response.headers.map((h) => ({ ...h, value: next() }))
+  const warned = outcome.warnings.map(() => next())
+  const mcpError = next()
+  const bodyText = outcome.response.bodyText === null ? null : body
+  const mcp = outcome.response.mcp
+  return {
+    ...outcome,
+    response: {
+      ...outcome.response,
+      statusText,
+      bodyText,
+      headers,
+      ...(mcp ? { mcp: { ...mcp, result: bodyText === null ? null : safeJson(bodyText), error: mcp.error ? { ...mcp.error, message: mcpError } : null } } : {}),
+    },
+    warnings: warned,
+    scripts: scriptsOut,
+  }
+}
+
+/** The redacted result object of an MCP call (its JSON text with the values replaced). */
+const safeJson = (text: string): Record<string, unknown> | null => {
+  try {
+    const v: unknown = JSON.parse(text)
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
 }
 
 type Failure = { ok: false; kind: 'invalid' | 'failed'; error: string; code?: string }
@@ -426,6 +617,8 @@ interface McpSendState {
   scripts: ScriptOutput
   cancelled: () => ExecuteOutcome
   runScripts: (event: ScriptEventName, draft: RequestDraft, extra?: Partial<RunScriptsInput>) => Promise<unknown>
+  /** An assistant's send: collects the values its outcome must not show. */
+  sensitive: Sensitive | null
 }
 
 /** Steps 2-4 of an MCP request: resolve, connect (or reuse the session), run the operation, then the test scripts. */
@@ -443,13 +636,30 @@ async function sendMcp(draft: RequestDraft, ctx: ExecuteContext, s: McpSendState
   if (prepared.oauth2) {
     const token = await oauth2TokenKey(prepared.oauth2.config, MCP_TOKEN_WHERE)
     if (!token.ok) return { ...token.failure, scripts }
+    if (s.sensitive) s.sensitive.oauth2TokenKey = token.tokenKey
+    // The token goes to the server's origin: the same check as an HTTP send (main records or refuses the origin).
+    let tokenOrigin: string | undefined
     try {
-      connect = withMcpOAuth2Token(connect, prepared.oauth2, await api().revealOAuth2Token(token.tokenKey))
-    } catch (e) {
-      const info = errorInfo(e)
-      return { ok: false, kind: 'failed', error: info.message, code: info.code, scripts }
+      tokenOrigin = connect.url ? new URL(withDefaultScheme(connect.url)).origin : undefined
+    } catch {
+      tokenOrigin = undefined
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        connect = withMcpOAuth2Token(connect, prepared.oauth2, await api().revealOAuth2Token(token.tokenKey, tokenOrigin))
+        break
+      } catch (e) {
+        const info = errorInfo(e)
+        if (attempt === 0 && ctx.source !== 'mcp' && (await allowTokenOrigin(info.details))) continue
+        return { ok: false, kind: 'failed', error: info.message, code: info.code, scripts }
+      }
     }
     if (ctx.wasCancelled?.()) return cancelled()
+  }
+
+  if (s.sensitive) {
+    for (const value of s.secrets.values()) s.sensitive.values.add(value)
+    for (const h of connect.headers ?? []) if (/^(authorization|proxy-authorization|cookie|x-api-key)$/i.test(h.key)) s.sensitive.values.add(h.value)
   }
 
   // 3. Connect (or reuse the open session), then the operation.

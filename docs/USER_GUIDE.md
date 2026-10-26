@@ -202,6 +202,11 @@ shows the token itself, **Refresh** uses the refresh token, **Clear** deletes th
   example every request of an imported collection whose collection-level auth was OAuth 2.0), per workspace. The collection
   runner behaves the same. Code snippets show `<access token>` in place of the token (`.http` snippets and exports use the
   variable `{{oauth2_access_token}}` instead, to define in the `.http` tool's environment).
+- **Where a token may go.** A token is sent to the host (scheme, host and port) it was first used with. When a request would
+  send it somewhere else (another environment's `{{baseUrl}}`, an edited URL), Slinger asks **Send the access token to a new
+  host?** first; **Allow** adds that host for this token, **Cancel** sends nothing. The list is kept when the token is
+  refreshed or replaced. Requests sent by an AI assistant or in the runner do not ask: they fail with that message, and you
+  allow the host by sending the request once from its tab.
 - **Where tokens live.** Tokens are stored only in your OS keychain (like secret variables), never in the request, history,
   exports, version snapshots or cloud sync; the settings (without any token) are saved with the request like other auth. If
   the keychain is not available, getting a token fails with a message and the rest of the app keeps working.
@@ -835,6 +840,13 @@ the `pm` API described here. Details are in [ARCHITECTURE.md](ARCHITECTURE.md#sc
 a script can read the environment and send what it reads in the request it is attached to, **or to any http(s) address with
 `pm.sendRequest`** (exactly as in Postman), so review scripts from sources you do not trust before sending their requests.
 
+**Allowing a collection's scripts.** Scripts of a collection you made on this device run right away. A collection you
+imported (Postman, Slinger export) or one that arrived through cloud sync is different: the first time one of its requests
+would run a script (collection, folder or request script, from a tab, the runner or a workflow), Slinger asks **Run this
+collection's scripts?** once. **Allow scripts** remembers the answer for that collection on this device only (it is not
+synced or exported); **Cancel** sends nothing. A collection you extract from it or restore from one of its versions as a copy
+keeps its answer. AI assistants cannot allow scripts: their sends of such a collection are refused until you allowed it here.
+
 ## History
 
 The **History** sidebar tab lists recent requests of the current workspace grouped by day (last 200 shown; the app keeps up to 1000
@@ -1376,7 +1388,22 @@ edited, never a value); clicking a change of a request opens it.
 
 What assistants can and cannot see: everything in your workspaces except secret values. They can create secret variables and
 change their values, and requests they send use them inside Slinger, but a secret value is never shown to them; credentials typed
-literally into a request's authorization are hidden too (use `{{variables}}`). Sends and runs work in the workspace that is open in
+literally into a request's authorization are hidden too (use `{{variables}}`). In what a send returns to an assistant (response
+body and headers, console output, test results, errors) the send's secret values, credentials and OAuth 2.0 tokens appear as
+`{{name}}`, `[hidden]` or `<access token>`, so a server that echoes your token back does not hand it to the assistant.
+
+**What an assistant may send with your credentials.** Your credentials (secret variables, a request's saved authorization,
+OAuth 2.0 tokens) go out with an assistant's send only when it sends a request **you** saved, **as you saved it**. It is
+refused, with a message the assistant can pass on to you, when the send would carry them and:
+
+- it is an ad-hoc request, or the assistant changes the URL, headers, body, auth or scripts for this one send;
+- the assistant created or edited the request and you have not saved it since (open it and press **Save**, Ctrl+S, after
+  checking it; a request the assistant created may still use authorization the assistant typed in itself);
+- the request's host comes from an environment variable the assistant set and you have not changed since (edit the value in
+  the environment, even to the same text, to confirm it).
+
+A secret variable the assistant set itself holds its own value, so it may use that one. Scripts in such sends cannot read
+secret variables. You can always send the request yourself from its tab. Sends and runs work in the workspace that is open in
 the window (an assistant can open another one with "Show in Slinger"). An assistant's deletes are the same as yours, so keep an
 eye on what it does to important collections (a collection version is a good backup before big changes).
 

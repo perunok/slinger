@@ -225,6 +225,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0015_sync_kept` | `sync_kept (entity_type, entity_id, workspace_id, created_at)`: changes kept on this device (not pushed); trigger `sync_kept_ends_with_dirty` deletes a row when its `sync_dirty` row goes |
 | `0016_collection_openapi` | `collection_openapi`: the OpenAPI document a collection is linked to on this device (source, text, hash, title, versions, folder mode, operation count); local only, see [OpenAPI](#openapi) |
 | `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
+| `0019_local_trust` | `collection_trust (collection_id, trusted_at)`: collections whose scripts may run here (existing collections are trusted by the migration); `assistant_changes (kind, ref, workspace_id, fingerprint, created, changed_at)`: requests / environment variables an AI assistant wrote and the user has not reviewed. Both local only (`repositories/trust.ts`), see [Scripts sandbox](#scripts-sandbox) and [MCP server](#mcp-server) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -320,7 +321,11 @@ array under the key `scripts` (the key the importer has always used, so existing
    never names a path to write; test scripts do not run for a download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
-   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`).
+   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`). Error messages never quote resolved
+   values: `buildRequest` names an invalid header or credential instead of quoting the platform message, an invalid URL is shown
+   as `historyUrl`, and `HttpService` runs every failure message (also the one thrown back to the renderer) through
+   `scrubRequestValues`, which replaces each value of the outgoing request that `historyUrl` does not show (resolved URL and its
+   parts, header values, credentials) with `•••`.
 7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
    response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
 
@@ -358,6 +363,12 @@ support.
   run through `escapeHtml` (`authCallback.ts` `callbackPage`, also used by the older browser-auth listener) with a
   `default-src 'none'` CSP. Waiting is bounded (5 min default, 10 max) and cancellable by `flowId` (`cancelOAuth2Flow`); app
   quit cancels all flows.
+- **Token origins:** the stored JSON also has `origins` (scheme://host:port). `accessTokenFor(tokenKey, origin)` (the executor
+  passes the request URL's origin) records the first origin a token is sent to and refuses any other with `invalid_input`,
+  `details {reason: 'oauth2_new_origin', origin, origins, tokenKey}`; `allowOAuth2Origin(tokenKey, origin)` adds one (at most 50).
+  `revealOAuth2Token(tokenKey, origin)` applies the same check for an MCP request's connect; a plain reveal (the user's Reveal)
+  does not. Origins survive refreshes and new tokens of the same configuration. In the window, `executeDraft` asks the user
+  (`securityPrompts`, `features/security/`) and retries once when allowed; assistants' sends never ask.
 - **Sending:** see the HTTP pipeline above. History never holds the token (headers are not recorded, the query parameter is
   added in main after the history URL was taken). `pm.request.auth` in scripts is a read-only view of the stored settings
   (templates unresolved, literal credentials masked); `pm.sendRequest` refuses `oauth2` auth. Code snippets print
@@ -569,12 +580,26 @@ script that never asks causes no keychain read (tested). `set` on a secret keeps
 scripts read or wrote (`ScriptService`, per `sessionId`, 1 h TTL, 500 sessions max) and `HttpService` redacts them from history.
 Script console output travels only in the IPC result; main never logs script output or values; the renderer keeps it in memory.
 
+**Trust per collection (0019).** `ScriptService.run` refuses a non-empty chain of a collection without a `collection_trust` row
+(`invalid_input`, `details {reason: 'untrusted_scripts', collectionId, collectionName}`). Rows are added for collections made
+on this device (`CollectionRepository.insert`), copied from the source by extract folder and restore-as-copy
+(`copyCollectionTrust`), and by `trustCollectionScripts` (the user allowed them); Postman/Slinger imports and collections created
+by a sync pull get none. The migration trusts every collection that existed before it. `executeDraft` catches the refusal, asks
+the user once per collection (`securityPrompts`, concurrent asks for the same collection share one dialog), calls
+`trustCollectionScripts` and retries; a declined prompt is a `kind: 'script'` outcome (nothing sent), and an assistant's send gets
+`untrustedScriptsMessage` instead of a prompt. Workflow code nodes (`collectionId: null`) are the user's own and not affected.
+
+**Scripts without secrets.** `RunScriptsInput.denySecrets` (a message) makes every secret read throw that message inside the
+script (`RunHost.read`, `ScriptApiError`), and main's `readSecret` returns null for that job as well. `executeDraft` sets it
+for sends an AI assistant controls (see [MCP server](#mcp-server)).
+
 **Read-only workspaces.** `set/unset/clear` of `pm.environment`, `pm.collectionVariables` and `pm.globals` throw inside the script
 (a clear error that fails it); ScriptService refuses to apply their operations for a read-only workspace as a second line of
 defence (and the 0008 triggers as a third); the 0005 triggers refuse
 `setCollectionScripts` / `setFolderScripts`; the renderer disables the script editors.
 
-**Threat model.** In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
+**Threat model.** Scripts of imported or synced-in collections only run after the user allowed that collection once (above).
+In scope: a malicious or buggy collection script trying to reach the file system, OS, Electron or
 Node APIs, other scripts' state, or the host process (escape, prototype pollution, resource exhaustion: CPU, memory, stack,
 output), or to use `pm.sendRequest` beyond its contract (non-http schemes, ungranted local files, more than 20 requests,
 unbounded waiting, history pollution). Out of scope / accepted: a script can read non-secret environment values and any secret it
@@ -596,7 +621,9 @@ globals as metadata only); script writes are captured like any other write.
 
 **Renderer side.** `src/lib/scripts.ts` (pure: Postman `event` editing that returns the same array when nothing changed, chain
 assembly, request/response snapshots, scope layering, test counts), `features/requests/execute.ts` (the pipeline),
-`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog). The browser
+`features/scripts/` (editors with `pm` completion, Tests and Console views, collection/folder dialog),
+`features/security/` (`securityPrompts`: questions a send asks the user, the script trust and the OAuth 2.0 new-origin
+prompt, shown one at a time by `SecurityPromptHost` in App; the same key waits for the same answer). The browser
 mock's `runScripts` does not execute scripts (it returns the scopes unchanged with a console note).
 
 ## Workflows
@@ -953,6 +980,27 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   (`suggestBumps`) and is checked with `validateVersion`; `get_version` adds `diffSnapshots(version, live)` as `changes_since`; version lines carry `created` (ISO time) and `created_by`
   (`{name, id}` or null);
   `restore_version` replace carries expanded folders and clean open tabs over (`mapRestored`), like the Versions panel.
+- **Send policy** (`lib/assistantPolicy.ts`, enforced by `executeDraft` for `source: 'mcp'`; the window is the trust boundary,
+  main only sees resolved requests). A send is *assistant-controlled* when it is ad-hoc, has overrides (send_request fields other
+  than name/description, `ExecuteContext.assistant`), or its request is in `listAssistantChanges` (an assistant wrote its stored
+  content and the user has not saved it since). Such a send is refused (`kind: 'refused'`, nothing revealed or sent) when it would
+  carry the user's credentials: stored auth (except literal auth of a request the assistant created, `created`, or of an ad-hoc
+  request), any OAuth 2.0 auth, or any secret variable after the pre-request scripts. Environment variables the assistant set and
+  the user has not changed (`assistant_changes` kind `variable`) may not decide the URL's origin of a send with credentials
+  (`originDependsOn` resolves the URL with the variable replaced by a marker). Scripts of an assistant-controlled send, and of any
+  assistant send while such variables are in use, run with `denySecrets`. Recording: tools.ts calls `markAssistantChange` for
+  update_request and set_variable as `pending` before the write (fingerprint `*` matches any content, so a failed
+  write never leaves an unrecorded change) and with the content after it; create_request, import_postman / import_openapi and
+  restore_version record after the write and undo it when recording fails. Main stores a SHA-256 fingerprint (request: method, URL
+  and document without `responses` and `name`; variable: secret flag and value, a secret by its row `version`). A secret variable
+  the assistant set is its own value, not a user credential; `listAssistantChanges` returns only rows whose
+  content still matches, so a user edit or a sync pull ends them. The user's Save of the request (`tabsStore.save`) and a write
+  through the variable editor (`environmentBackend.upsert`) call `clearAssistantChange`. Output: `executeDraft` wraps an assistant
+  send and redacts its outcome (response status text, body, header values, warnings, console, tests, script errors, error, MCP
+  error message): first `redactSecrets` in main (secrets the send's scripts read, `ScriptService.redact`; the stored OAuth 2.0
+  access / refresh token, `OAuth2Service.redactToken`), then the values the renderer revealed (secret variables, resolved
+  credentials incl. the Basic base64, an MCP request's token and auth headers) as `[hidden]` (`redactValues`); if redaction
+  fails the outcome becomes a failure. The runner and workflows get the same for `source: 'mcp'`.
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
   (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel

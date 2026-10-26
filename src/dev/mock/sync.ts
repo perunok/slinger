@@ -490,7 +490,10 @@ export function createSyncApi(
         if (c) {
           c.name = String(p.name)
           bump(c)
-        } else s.collections.push({ id, workspaceId, name: String(p.name), createdAt: now, updatedAt: now, version: 1 })
+        } else {
+          s.collections.push({ id, workspaceId, name: String(p.name), createdAt: now, updatedAt: now, version: 1 })
+          s.untrustedCollections[id] = true // arrived through sync: not trusted on this device yet
+        }
         return
       }
       case 'environment': {

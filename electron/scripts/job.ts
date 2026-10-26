@@ -109,6 +109,8 @@ export interface ScriptJob {
   readOnly: boolean
   /** Pre-request chains stop at the first failing script unless this is set. */
   continueOnError: boolean
+  /** Reading a secret variable throws this message inside the script (main refuses the read as well). */
+  denySecrets?: string
   limits: ScriptLimits
 }
 

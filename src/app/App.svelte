@@ -9,6 +9,7 @@
   import SyncBanner from '../features/sync/SyncBanner.svelte'
   import SyncHost from '../features/sync/SyncHost.svelte'
   import McpHost from '../features/mcp/McpHost.svelte'
+  import SecurityPromptHost from '../features/security/SecurityPromptHost.svelte'
   import EnvironmentEditor from '../features/environments/EnvironmentEditor.svelte'
   import ExampleView from '../features/examples/ExampleView.svelte'
   import OverviewView from '../features/overview/OverviewView.svelte'
@@ -203,6 +204,7 @@
 {#if ui.cloudOpen}<Lazy load={load.cloud} />{/if}
 <SyncHost />
 <McpHost />
+<SecurityPromptHost />
 <EnvironmentEditor />
 {#if ui.versionsFor}<Lazy load={load.versions} />{/if}
 <MockServersHost />

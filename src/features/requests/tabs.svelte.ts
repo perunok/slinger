@@ -698,6 +698,10 @@ class TabsStore {
         app.upsertRequest(updated)
         this.syncWithServer() // example tabs of this request follow their examples
       }
+      // The user saved it: whatever an AI assistant wrote into it is reviewed now (MCP send policy).
+      void api()
+        .clearAssistantChange({ kind: 'request', requestId: updated.id })
+        .catch(() => {})
       return true
     } catch (e) {
       if (isVersionConflict(e)) {

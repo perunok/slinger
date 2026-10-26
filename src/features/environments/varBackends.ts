@@ -56,8 +56,16 @@ export const environmentBackend: VarBackend = {
   secrets: true,
   enabledColumn: false,
   list: async (envId) => (await api().listEnvironmentVariables(envId)).map(fromEnv),
-  upsert: async (envId, r) =>
-    fromEnv(await api().upsertEnvironmentVariable({ environmentId: envId, key: r.key, value: r.value, isSecret: r.isSecret, variableId: r.variableId, expectedVersion: r.expectedVersion })),
+  upsert: async (envId, r) => {
+    const saved = fromEnv(
+      await api().upsertEnvironmentVariable({ environmentId: envId, key: r.key, value: r.value, isSecret: r.isSecret, variableId: r.variableId, expectedVersion: r.expectedVersion }),
+    )
+    // The user wrote it: a value an AI assistant set is reviewed now (MCP send policy).
+    void api()
+      .clearAssistantChange({ kind: 'variable', environmentId: envId, key: saved.key })
+      .catch(() => {})
+    return saved
+  },
   remove: (id) => api().deleteEnvironmentVariable(id),
   reveal: (id) => api().revealEnvironmentVariable(id),
   changed: (envId) => {

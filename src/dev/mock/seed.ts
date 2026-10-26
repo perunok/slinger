@@ -266,7 +266,9 @@ export function seedState(s: MockState): void {
   s.workspaces.push(personal, team)
 
   const demoId = seedDemoApi(s, personal.id)
-  importPostman(s, personal.id, JSON.stringify(PETSTORE))
+  const petstore = importPostman(s, personal.id, JSON.stringify(PETSTORE))
+  // Seeded data stands for the user's own: its scripts are allowed (an import the user makes is not).
+  delete s.untrustedCollections[petstore.collection.id]
   seedEnvironments(s, personal.id)
   seedHistory(s, personal.id)
   addVersion(s, demoId, '1.0.0', 'Initial release of the demo API collection.', { id: 'user-1', name: 'Ana Silva' })

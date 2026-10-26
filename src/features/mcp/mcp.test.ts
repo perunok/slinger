@@ -7,7 +7,8 @@ import { app } from '../../app/state.svelte'
 import { readExamples } from '../../lib/examples'
 import { newRow } from '../../lib/kv'
 import { newMcpDraft, newMcpRequestDraft, type McpDraft } from '../../lib/mcpRequest'
-import { serializeDraft } from '../../lib/request'
+import { parseDocument, serializeDraft } from '../../lib/request'
+import { environmentBackend } from '../environments/varBackends'
 import { mcpConnections } from '../mcpRequests/connections.svelte'
 import { tabsStore } from '../requests/tabs.svelte'
 import { runsStore } from '../runner/runs.svelte'
@@ -389,6 +390,118 @@ describe('sending', () => {
     expect(run).toBe('Users')
     expect(summary.total).toBe(results.length)
     expect(results[0]).toMatchObject({ iteration: 1, result: expect.stringMatching(/passed|failed/) })
+  })
+})
+
+describe('send policy: the user’s credentials never go where an assistant decides', () => {
+  const TOKEN = 'sk_live_demo_123'
+  const useLocal = async () => {
+    const local = app.environments.find((e) => e.name === 'Local')!
+    await app.setActiveEnvironment(local.id)
+    return local
+  }
+  const admin = () => app.requests.find((r) => r.name === 'List admin users (bearer)')!
+
+  it('a saved request sent as saved carries its credentials, and the token never comes back', async () => {
+    await useLocal()
+    const { response } = await call('send_request', { request_id: admin().id })
+    expect(response.status).toBe(200)
+    expect(JSON.stringify(response)).not.toContain(TOKEN)
+    expect(response.body).toContain('Bearer [hidden]')
+  })
+
+  it('overrides, ad-hoc requests and requests the assistant changed are refused when they would carry credentials', async () => {
+    await useLocal()
+    const before = (await call('list_history', { limit: 100 })).history.length
+    expect(await failure('send_request', { request_id: admin().id, url: 'https://mock.slinger.local/echo?to=elsewhere' })).toMatch(/Not sent \(refused\).*saved authorization.*changed url/)
+    expect(await failure('send_request', { request_id: admin().id, headers: [{ key: 'X-Copy', value: '{{apiToken}}' }] })).toContain('refused')
+    expect(await failure('send_request', { url: 'https://mock.slinger.local/echo', headers: [{ key: 'X', value: '{{apiToken}}' }] })).toContain('{{apiToken}}')
+    // Nothing was sent.
+    expect((await call('list_history', { limit: 100 })).history.length).toBe(before)
+    // Without credentials, overrides and ad-hoc requests are fine.
+    const plain = app.requests.find((r) => r.name === 'JSON sample')!
+    expect((await call('send_request', { request_id: plain.id, url: 'https://mock.slinger.local/text' })).response.status).toBe(200)
+
+    // Chaining: edit the saved request, then send it "as saved".
+    await call('update_request', { request_id: admin().id, url: 'https://mock.slinger.local/echo?stolen=1' })
+    expect(await failure('send_request', { request_id: admin().id })).toMatch(/changed it and the user has not saved it since/)
+    // The user saves it in the window: reviewed, so it may go.
+    const tab = tabsStore.openRequest(admin())
+    expect(await tabsStore.save(tab)).toBe(true)
+    await waitFor(async () => expect((await window.slinger.listAssistantChanges(app.workspaceId!)).requests).toEqual([]))
+    expect((await call('send_request', { request_id: admin().id })).response.status).toBe(200)
+  })
+
+  it('a request the assistant created may carry its own literal credentials, never the user’s secrets', async () => {
+    await useLocal()
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const own = (await call('create_request', { collection_id: demo.id, name: 'Mine', method: 'GET', url: 'https://mock.slinger.local/echo', auth: { type: 'bearer', token: 'assistant-own-token' } })).created
+    expect((await call('send_request', { request_id: own.id })).response.status).toBe(200)
+    await call('update_request', { request_id: own.id, auth: { type: 'bearer', token: '{{apiToken}}' } })
+    expect(await failure('send_request', { request_id: own.id })).toContain('{{apiToken}}')
+  })
+
+  it('a secret the assistant set itself is its own value: its request may use it (and it is still hidden in results)', async () => {
+    const { created: env } = await call('create_environment', { name: 'Assistant env' })
+    await call('set_variable', { environment_id: env.id, key: 'apiToken', value: 'sk-assistant-own-77', secret: true })
+    await call('set_active_environment', { environment_id: env.id })
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', { collection_id: demo.id, name: 'Who', method: 'GET', url: 'https://mock.slinger.local/echo', auth: { type: 'bearer', token: '{{apiToken}}' } })
+    const { response } = await call('send_request', { request_id: created.id })
+    expect(response.status).toBe(200)
+    expect(JSON.stringify(response)).not.toContain('sk-assistant-own-77')
+    // Once the user changes the secret, it is the user's credential again.
+    const v = (await window.slinger.listEnvironmentVariables(env.id)).find((x) => x.key === 'apiToken')!
+    await environmentBackend.upsert(env.id, { key: 'apiToken', value: 'sk-user-own-88', isSecret: true, enabled: true, variableId: v.id })
+    await waitFor(async () => expect((await window.slinger.listAssistantChanges(app.workspaceId!)).variables).toEqual([]))
+    expect(await failure('send_request', { request_id: created.id })).toContain('{{apiToken}}')
+  })
+
+  it('a variable the assistant set may not decide where credentials go, but may fill the rest of the URL', async () => {
+    const local = await useLocal()
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    // The user's own request (made in the window, not through MCP).
+    const mine = await window.slinger.createRequest({
+      workspaceId: app.workspaceId!,
+      collectionId: demo.id,
+      folderId: null,
+      ...serializeDraft({ ...parseDocument(admin()), name: 'By user', url: '{{baseUrl}}/echo?id={{userId}}' }),
+    })
+    await app.reloadCollection(demo.id)
+    await call('set_variable', { environment_id: local.id, key: 'userId', value: '7' })
+    expect((await call('send_request', { request_id: mine.id })).response.status).toBe(200)
+    await call('set_variable', { environment_id: local.id, key: 'baseUrl', value: 'https://mock.slinger.local' })
+    expect(await failure('send_request', { request_id: mine.id })).toMatch(/host set by the variable \{\{baseUrl\}\}/)
+    // The user edits the variable in the window: reviewed.
+    const v = (await window.slinger.listEnvironmentVariables(local.id)).find((x) => x.key === 'baseUrl')!
+    await environmentBackend.upsert(local.id, { key: 'baseUrl', value: 'https://mock.slinger.local', isSecret: false, enabled: true, variableId: v.id })
+    await waitFor(async () => expect((await window.slinger.listAssistantChanges(app.workspaceId!)).variables.some((x) => x.key === 'baseUrl')).toBe(false))
+    expect((await call('send_request', { request_id: mine.id })).response.status).toBe(200)
+  })
+
+  it('scripts of a send the assistant controls cannot read secrets', async () => {
+    const spy = vi.spyOn(window.slinger, 'runScripts')
+    await call('send_request', { url: 'https://mock.slinger.local/json', pre_request_script: "console.log(pm.environment.get('apiToken'))" })
+    expect(spy.mock.calls[0]![0].denySecrets).toMatch(/AI assistant/)
+    spy.mockClear()
+    const plain = app.requests.find((r) => r.name === 'JSON sample')!
+    await call('update_request', { request_id: plain.id, test_script: "pm.test('ok', () => {})" })
+    await call('send_request', { request_id: plain.id })
+    expect(spy.mock.calls[0]![0].denySecrets).toBeTruthy()
+  })
+
+  it('the scripts of an imported collection need the user’s permission in the window first', async () => {
+    const { imported } = await call('import_postman', {
+      collection_json: JSON.stringify({
+        info: { name: 'From the web', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+        event: [{ listen: 'prerequest', script: { exec: ['console.log(1)'] } }],
+        item: [{ name: 'Get', request: { method: 'GET', url: 'https://mock.slinger.local/json' } }],
+      }),
+    })
+    const req = app.requests.find((r) => r.collectionId === imported.collection_id)!
+    expect(await failure('send_request', { request_id: req.id })).toMatch(/have not been allowed on this device yet.*open_in_app/)
+    await window.slinger.trustCollectionScripts(imported.collection_id)
+    expect((await call('send_request', { request_id: req.id })).response.status).toBe(200)
   })
 })
 

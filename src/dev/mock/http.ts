@@ -98,7 +98,7 @@ async function runFetch(built: BuiltRequest, method: string, signal: AbortSignal
   }
 }
 
-async function perform(input: HttpRequestInput, run: RunControl, oauth2Token?: (tokenKey: string) => string): Promise<HttpResponseData> {
+async function perform(input: HttpRequestInput, run: RunControl, oauth2Token?: (tokenKey: string, origin: string) => string): Promise<HttpResponseData> {
   const method = input.method.toUpperCase()
   const built = buildRequest(input, oauth2Token)
   const started = performance.now()
@@ -170,7 +170,7 @@ export function createHttpApi(s: MockState): HttpApi {
           : null
       const started = performance.now()
       // perform() is async, so a build error (no OAuth 2.0 token, ...) still rejects and is recorded.
-      return perform(input, run, (key) => mockAccessToken(s, key))
+      return perform(input, run, (key, origin) => mockAccessToken(s, key, origin))
         .then((data) => applyLimit(data, input, savedTo))
         .then(
           (data) => {

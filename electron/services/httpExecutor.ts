@@ -98,17 +98,26 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   try {
     url = new URL(normalized)
   } catch {
-    throw invalidInput(`"${input.url}" is not a valid URL`)
+    // Never the resolved URL: it may hold secret values. The renderer's historyUrl keeps them as {{name}}.
+    throw invalidInput(input.historyUrl ? `"${input.historyUrl}" is not a valid URL` : 'The request URL is not a valid URL')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw invalidInput('only http and https URLs can be requested')
   }
 
   const headers = new Headers()
-  try {
-    for (const h of headerList(input)) headers.append(h.key.trim(), h.value.trim())
-  } catch (err) {
-    throw invalidInput(`Invalid header: ${err instanceof Error ? err.message : String(err)}`)
+  for (const h of headerList(input)) {
+    try {
+      headers.append(h.key.trim(), h.value.trim())
+    } catch {
+      // The platform's message quotes the value, which may be a secret: name the header, never its value.
+      const name = h.key.trim()
+      throw invalidInput(
+        /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)
+          ? `Invalid header "${name}": its value contains characters that are not allowed in HTTP headers`
+          : 'Invalid header: a header name contains characters that are not allowed in HTTP headers',
+      )
+    }
   }
 
   // Auth is server-side so credentials never have to be assembled in the renderer.
@@ -128,7 +137,7 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
         const o = auth.oauth2
         if (!o || !OAUTH2_TOKEN_KEY_RE.test(o.tokenKey)) throw invalidInput('OAuth 2.0 token key is invalid')
         if (!oauth2Token) throw invalidInput('OAuth 2.0 authorization is not available for this request')
-        const token = oauth2Token(o.tokenKey)
+        const token = oauth2Token(o.tokenKey, url.origin)
         if (o.addTo === 'query') url.searchParams.append('access_token', token)
         else headers.set('Authorization', o.headerPrefix.trim() ? `${o.headerPrefix.trim()} ${token}` : token)
         break
@@ -145,7 +154,8 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'IpcError') throw err
-    throw invalidInput(`Invalid auth: ${err instanceof Error ? err.message : String(err)}`)
+    // Not the platform's message: it quotes the credential.
+    throw invalidInput(`Invalid auth: the ${auth?.kind === 'apiKey' ? 'API key name or value' : 'credentials'} contain characters that are not allowed in HTTP headers`)
   }
 
   let body: BuiltRequest['body']
@@ -201,6 +211,49 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   return { url: url.toString(), method, headers, body }
 }
 
+/**
+ * Removes every value of the outgoing request that the safe form of its URL (`historyUrl`: secrets as `{{name}}`) does
+ * not show from an error message: the resolved URL and its parts, header values and credentials. Platform messages can
+ * quote them ("Request cannot be constructed from a URL that includes credentials: https://user:secret@host/",
+ * "getaddrinfo ENOTFOUND <host from a secret>"), and the message goes to history and the window.
+ */
+export function scrubRequestValues(message: string, input: HttpRequestInput): string {
+  const shown = input.historyUrl ?? null
+  const values = new Set<string>()
+  const add = (v: string | undefined | null) => {
+    const t = v?.trim()
+    if (t && t.length >= 4 && !(shown && shown.includes(t))) values.add(t)
+  }
+  add(input.url)
+  try {
+    const u = new URL(normalizeUrl(input.url ?? ''))
+    for (const v of [u.href, u.origin, u.host, u.hostname, u.username, u.password, u.pathname, u.search]) {
+      add(v)
+      try {
+        add(decodeURIComponent(v))
+      } catch {
+        /* not percent-encoded text */
+      }
+    }
+    u.searchParams.forEach((value) => add(value))
+  } catch {
+    /* not a URL: the raw string above covers it */
+  }
+  for (const h of input.headers ?? []) add(h.value)
+  const a = input.auth
+  if (a?.kind === 'basic') {
+    add(a.basic?.password)
+    add(Buffer.from(`${a.basic?.username ?? ''}:${a.basic?.password ?? ''}`, 'utf8').toString('base64'))
+  }
+  if (a?.kind === 'bearer') add(a.bearer?.token)
+  if (a?.kind === 'apiKey') add(a.apiKey?.value)
+  let out = message
+  for (const v of [...values].sort((x, y) => y.length - x.length)) {
+    if (out.includes(v)) out = out.split(v).join('•••')
+  }
+  return out
+}
+
 function describeNetworkError(err: unknown): string {
   if (err instanceof Error) {
     const cause = (err as Error & { cause?: unknown }).cause
@@ -250,8 +303,11 @@ export interface ExecuteOptions {
   toFile?: string
 }
 
-/** Returns the access token stored under a token key, or throws a user-facing IpcError (missing, expired). */
-export type OAuth2TokenLookup = (tokenKey: string) => string
+/**
+ * Returns the access token stored under a token key for a send to `origin`, or throws a user-facing IpcError (missing,
+ * expired, not allowed for that origin).
+ */
+export type OAuth2TokenLookup = (tokenKey: string, origin: string) => string
 
 const tooLargeError = (max: number) => networkError(`The response is larger than ${formatLimit(max)}, so it was not loaded`, { tooLarge: true })
 

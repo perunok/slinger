@@ -8,9 +8,14 @@
  *
  * MCP requests (`draft.mcp`) can be read, sent (as saved), run, renamed, moved and deleted, but not edited here, and
  * they have no saved examples: tools that would change their document refuse them.
+ *
+ * MCP send policy (lib/assistantPolicy.ts, enforced in executeDraft): every request or variable an assistant writes is
+ * recorded with markAssistantChange (before the write as `pending`, after it with the content), and send_request tells
+ * executeDraft whether it is ad-hoc or overrides fields. A send the assistant controls never carries the user's
+ * credentials; results never contain the send's secret values.
  */
 import { MCP_BODY_LIMIT, MCP_TOOLS, type McpCallResult, type McpToolArgs, type McpToolName } from '../../../shared/mcp'
-import type { ApiFolder, ApiRequest, Collection, CollectionVersion, HttpResponseData } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, AssistantChangeRef, Collection, CollectionVersion, HttpResponseData } from '../../../shared/types'
 import { expandedStore } from '../../app/expanded.svelte'
 import { app } from '../../app/state.svelte'
 import { api, errorInfo } from '../../lib/ipc'
@@ -111,6 +116,25 @@ async function logEdit(workspaceId: string, detail: string, request?: Pick<ApiRe
     if (workspaceId === app.workspaceId) app.historyTick++
   } catch {
     /* history is a log; the change itself succeeded */
+  }
+}
+
+/** Records content an assistant wrote (MCP send policy). A failure fails the tool: the change must never go unrecorded. */
+async function markChange(ref: AssistantChangeRef): Promise<void> {
+  try {
+    await api().markAssistantChange(ref)
+  } catch (e) {
+    fail(`Could not record the change as the assistant's: ${errorInfo(e).message}`)
+  }
+}
+
+/** Marks requests the assistant brought in (create, import, restore); when that fails, `undo` removes them again. */
+async function markNew(requestIds: string[], created: boolean, undo: () => Promise<unknown>): Promise<void> {
+  try {
+    for (const id of requestIds) await api().markAssistantChange({ kind: 'request', requestId: id, created })
+  } catch (e) {
+    await undo().catch(() => {})
+    fail(`Could not record the change as the assistant's, so it was undone: ${errorInfo(e).message}`)
   }
 }
 
@@ -563,6 +587,7 @@ const tools: Impls = {
     if (a.folder_id && (await findFolder(a.folder_id)).collectionId !== c.id) fail('folder_id belongs to another collection.')
     const s = serializeDraft(applyFields(newDraft({ name: a.name, method: a.method, url: a.url }), a))
     const r = await api().createRequest({ workspaceId: c.workspaceId, collectionId: c.id, folderId: a.folder_id ?? null, ...s })
+    await markNew([r.id], true, () => api().deleteRequest(r.id))
     await refresh(c.workspaceId, c.id)
     await logEdit(c.workspaceId, `Created request ${q(r.name)} in ${q(c.name)}`, r)
     return done({ created: requestOut(r, parseDocument(r)) })
@@ -572,7 +597,11 @@ const tools: Impls = {
     const r = await findRequest(a.request_id)
     refuseMcp(r, MCP_EDIT_HINT)
     const s = serializeDraft(applyFields(parseDocument(r), a))
+    // A request the assistant created stays its own (its literal credentials are the assistant's).
+    const created = (await api().listAssistantChanges(r.workspaceId)).requests.some((x) => x.requestId === r.id && x.created)
+    await markChange({ kind: 'request', requestId: r.id, created, pending: true })
     const updated = await api().updateRequest({ requestId: r.id, ...s, expectedVersion: r.version })
+    await markChange({ kind: 'request', requestId: r.id, created })
     await refresh(r.workspaceId, r.collectionId)
     await logEdit(r.workspaceId, `Edited request ${q(updated.name)}: ${changedParts(a, ['request_id'])}`, updated)
     return done({ updated: requestOut(updated, parseDocument(updated)) })
@@ -755,6 +784,8 @@ const tools: Impls = {
     const before = { folders: app.foldersOf(c.id).slice(), requests: app.requestsOf(c.id).slice() }
     const openIds = inWindow ? tabsStore.tabs.filter((t) => t.requestId && !t.example && !t.dirty && before.requests.some((r) => r.id === t.requestId)).map((t) => t.requestId!) : []
     const result = await api().restoreCollectionVersion(v.id, a.mode)
+    // The restored requests are what the version holds, which may be content an assistant wrote: treated as changed.
+    await markNew((await api().listRequests(result.id)).map((r) => r.id), false, async () => {})
     await refresh(c.workspaceId)
     if (inWindow && a.mode === 'replace') {
       const map = mapRestored(before, { folders: app.foldersOf(c.id), requests: app.requestsOf(c.id) })
@@ -800,7 +831,11 @@ const tools: Impls = {
     const env = await findEnvironment(a.environment_id)
     const existing = (await api().listEnvironmentVariables(env.id)).find((v) => v.key === a.key)
     const isSecret = a.secret ?? existing?.isSecret ?? false
+    // MCP send policy: a value the assistant sets may not decide where the user's credentials go, and a secret it sets is
+    // its own value (not one of the user's credentials) until the user changes it.
+    await markChange({ kind: 'variable', environmentId: env.id, key: a.key, pending: true })
     await api().upsertEnvironmentVariable({ environmentId: env.id, key: a.key, value: a.value, isSecret, variableId: existing?.id })
+    await markChange({ kind: 'variable', environmentId: env.id, key: a.key })
     if (env.workspaceId === app.workspaceId) await app.refreshEnvVariables()
     await logEdit(env.workspaceId, `${existing ? 'Changed' : 'Added'} ${isSecret ? 'secret ' : ''}variable ${q(a.key)} in ${q(env.name)}`)
     return done({ set: { environment_id: env.id, key: a.key, secret: isSecret, created: !existing } })
@@ -832,17 +867,21 @@ const tools: Impls = {
       const r = await findRequest(a.request_id)
       requireOpen(r.workspaceId, 'Sending')
       draft = parseDocument(r)
+      const given = REQUEST_FIELD_KEYS.filter((k) => (a as Record<string, unknown>)[k] !== undefined)
       if (draft.mcp) {
-        const given = REQUEST_FIELD_KEYS.filter((k) => (a as Record<string, unknown>)[k] !== undefined)
         if (given.length) fail(`${q(r.name)} is an MCP request: it is sent as saved, so ${given.join(', ')} cannot be given.`)
         if (a.save_as_example) fail(`${q(r.name)} is an MCP request: MCP requests have no saved examples.`)
-      } else draft = applyFields(draft, a)
-      ctx = { workspaceId: r.workspaceId, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId }
+      }
+      // What the assistant changes for this send (name and description change nothing that is sent).
+      const overrides = given.filter((k) => k !== 'name' && k !== 'description').map((k) => k.replace(/_/g, ' '))
+      const savedAuthKind = draft.auth.kind
+      if (!draft.mcp) draft = applyFields(draft, a)
+      ctx = { workspaceId: r.workspaceId, requestId: r.id, collectionId: r.collectionId, folderId: r.folderId, assistant: { overrides, savedAuthKind } }
     } else {
       if (!a.url) fail('Give request_id, or method and url for an ad-hoc request.')
       const ws = workspaceOf(undefined)
       draft = applyFields(newDraft({ name: a.name ?? 'MCP request', method: a.method ?? 'GET', url: a.url }), a)
-      ctx = { workspaceId: ws }
+      ctx = { workspaceId: ws, assistant: { adHoc: true } }
     }
     const environment = await environmentArg(a.environment_id, ctx.workspaceId)
     if (environment !== undefined) ctx.environment = environment
@@ -941,6 +980,7 @@ const tools: Impls = {
   async import_postman(a) {
     const ws = workspaceOf(a.workspace_id)
     const res = await api().importPostmanCollection(ws, a.collection_json)
+    await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported collection ${q(res.collection.name)} (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({ imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length } })
@@ -956,6 +996,7 @@ const tools: Impls = {
       folders: a.folders ?? (preview.tags.length ? 'tags' : 'paths'),
       ...(a.name ? { name: a.name } : {}),
     })
+    await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported API ${q(res.collection.name)} from an OpenAPI document (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({

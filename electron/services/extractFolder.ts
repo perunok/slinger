@@ -13,6 +13,7 @@
 import type { Collection, ExtractFolderInput, ExtractFolderResult } from '../../shared/types'
 import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
+import { copyCollectionTrust } from '../repositories/trust'
 import { cleanScriptsJson, requireCollection, requireFolder, toCollection, type Db, type FolderRow } from '../repositories/common'
 
 export function extractFolderToCollection(db: Db, input: ExtractFolderInput): ExtractFolderResult {
@@ -32,6 +33,7 @@ export function extractFolderToCollection(db: Db, input: ExtractFolderInput): Ex
       `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     ).run(collectionId, root.workspace_id, name, scriptsJson, root.description ?? null, root.description_type ?? null, now, now)
+    copyCollectionTrust(db, source.id, collectionId)
 
     // Subfolders, parents first, recreated under the new collection.
     const descendants = db
