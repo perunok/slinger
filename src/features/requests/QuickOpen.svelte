@@ -26,7 +26,7 @@
     /** Swatch: a theme (its background ringed by its accent) or an accent over the current theme. */
     swatch: { theme?: string; accent?: string }
     /** Icon for commands without a swatch (default: settings). */
-    icon?: 'download' | 'upload' | 'help' | 'history' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left' | 'user'
+    icon?: 'download' | 'upload' | 'help' | 'history' | 'layout-rows' | 'layout-columns' | 'panel-right' | 'panel-left' | 'user' | 'list'
     current: () => boolean
     run: () => void
   }
@@ -65,6 +65,15 @@
       icon: 'help',
       current: () => false,
       run: () => (ui.aboutOpen = true),
+    },
+    {
+      key: 'release-notes',
+      label: 'Release notes',
+      hint: 'what changed in each version',
+      swatch: {},
+      icon: 'list',
+      current: () => false,
+      run: () => (ui.releaseNotes = { mode: 'all' }),
     },
     {
       key: 'layout:response-below',

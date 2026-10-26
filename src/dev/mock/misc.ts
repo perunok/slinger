@@ -31,9 +31,11 @@ type MiscApi = Pick<
   | 'showAppMenu'
   | 'pickFile'
   | 'grantedFiles'
-> & { resetSecureStore(): void; setLatestRelease(version: string | null): void }
+> & { resetSecureStore(): void; setLatestRelease(version: string | null, notes?: string | null): void }
 
 const MOCK_VERSION = '0.0.0-dev'
+/** Release notes the pretend latest release carries unless a test passes its own. */
+export const MOCK_RELEASE_NOTES = '### New\n- A pretend feature of the pretend release.\n\n### Fixed\n- A pretend bug.'
 const TITLE_BAR_KEY = 'slinger.mock.titleBar'
 
 function loadTitleBar(): TitleBarStyle {
@@ -86,6 +88,8 @@ export function createMiscApi(): MiscApi {
   let exportDir = '/home/user/Downloads'
   /** The "latest release" checkForUpdates reports; null = none published (no notice in dev and tests by default). */
   let latestRelease: string | null = null
+  /** Its release notes (the GitHub release body); a sample by default. */
+  let latestNotes: string | null = null
   // In-app updater: a pretend .deb installation whose download takes ~1 s in 10 steps (no real file, nothing installed).
   const updateListeners = new Set<(s: UpdateInstallState) => void>()
   let update: UpdateInstallState = { method: 'deb', unsupportedReason: null, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
@@ -155,7 +159,7 @@ export function createMiscApi(): MiscApi {
       if (!latestRelease) return { currentVersion: MOCK_VERSION, latest: null, updateAvailable: false, checkedAt }
       return {
         currentVersion: MOCK_VERSION,
-        latest: { version: latestRelease, url: `https://github.com/perunok/slinger/releases/tag/v${latestRelease}`, publishedAt: checkedAt - 86_400 },
+        latest: { version: latestRelease, url: `https://github.com/perunok/slinger/releases/tag/v${latestRelease}`, publishedAt: checkedAt - 86_400, notes: latestNotes },
         updateAvailable: compareSemver(latestRelease, MOCK_VERSION) > 0,
         checkedAt,
       }
@@ -234,8 +238,9 @@ export function createMiscApi(): MiscApi {
       updateListeners.add(listener)
       return () => updateListeners.delete(listener)
     },
-    setLatestRelease(version) {
+    setLatestRelease(version, notes = MOCK_RELEASE_NOTES) {
       latestRelease = version
+      latestNotes = notes
       if (updateTimer) clearTimeout(updateTimer)
       update = { ...update, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
     },

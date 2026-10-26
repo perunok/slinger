@@ -87,8 +87,8 @@ describe('application menu template', () => {
     const { template, openExternal } = build(platform)
     const items = all(template)
     expect(JSON.stringify(items.map((i) => i.label))).not.toMatch(/electron|Learn More|Documentation|Community|Search Issues/i)
-    for (const label of ['User Guide', 'Release Notes', 'Report an Issue', 'View License']) click(find(items, label))
-    expect(openExternal.mock.calls.map((c) => c[0])).toEqual([HELP_URLS.userGuide, HELP_URLS.releaseNotes, HELP_URLS.reportIssue, HELP_URLS.license])
+    for (const label of ['User Guide', 'Report an Issue', 'View License']) click(find(items, label))
+    expect(openExternal.mock.calls.map((c) => c[0])).toEqual([HELP_URLS.userGuide, HELP_URLS.reportIssue, HELP_URLS.license])
     for (const url of openExternal.mock.calls.map((c) => c[0])) expect(url).toMatch(/^https:\/\/github\.com\/perunok\/slinger\//)
   })
 
@@ -136,6 +136,7 @@ describe('application menu template', () => {
       ['Toggle Right Panel', 'toggleRightPanel'],
       ['Toggle Sidebar', 'toggleSidebar'],
       ['Check for Updates…', 'checkForUpdates'],
+      ['Release Notes', 'releaseNotes'],
     ]
     for (const [label, command] of expected) {
       send.mockClear()

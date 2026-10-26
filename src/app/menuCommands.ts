@@ -55,6 +55,9 @@ export function runMenuCommand(value: unknown): boolean {
     case 'about':
       ui.aboutOpen = true
       return true
+    case 'releaseNotes':
+      ui.releaseNotes = { mode: 'all' }
+      return true
   }
   return false
 }

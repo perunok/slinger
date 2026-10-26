@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CHECK_INTERVAL_MS, DEFAULT_UPDATE_PREFS, isCheckDue, isNewer, loadUpdatePrefs, shouldNotify, type UpdatePrefs } from './updates'
 
-const rel = (version: string) => ({ version, url: `https://github.com/perunok/slinger/releases/tag/v${version}`, publishedAt: 1 })
+const rel = (version: string) => ({ version, url: `https://github.com/perunok/slinger/releases/tag/v${version}`, publishedAt: 1, notes: null })
 const prefs = (p: Partial<UpdatePrefs> = {}): UpdatePrefs => ({ ...DEFAULT_UPDATE_PREFS, ...p })
 
 describe('loadUpdatePrefs', () => {
@@ -25,6 +25,14 @@ describe('loadUpdatePrefs', () => {
       ),
     ).toEqual(DEFAULT_UPDATE_PREFS)
     expect(loadUpdatePrefs(JSON.stringify({ latest: { ...rel('0.10.0'), publishedAt: 'soon' } })).latest).toEqual({ ...rel('0.10.0'), publishedAt: null })
+  })
+
+  it('keeps the release notes as text; non-text, blank or oversized notes become null', () => {
+    const load = (notes: unknown) => loadUpdatePrefs(JSON.stringify({ latest: { ...rel('0.10.0'), notes } })).latest?.notes
+    expect(load('### New\n- Thing')).toBe('### New\n- Thing')
+    for (const bad of [42, ['x'], '   ', 'x'.repeat(30_000)]) expect(load(bad)).toBeNull()
+    // Stored by an older version (no notes field).
+    expect(loadUpdatePrefs(JSON.stringify({ latest: { version: '0.10.0', url: rel('0.10.0').url, publishedAt: 1 } })).latest?.notes).toBeNull()
   })
 })
 

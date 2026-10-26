@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createIpcApi } from '../ipc/api'
-import { checkForUpdate, LATEST_RELEASE_API, parseRelease, releasePageUrl, updateFeedUrl } from '../services/updateCheck'
+import { checkForUpdate, LATEST_RELEASE_API, MAX_NOTES_CHARS, parseRelease, releaseNotesText, releasePageUrl, updateFeedUrl } from '../services/updateCheck'
 import { makeEnv, type TestEnv } from './helpers'
 
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0)
@@ -33,7 +33,7 @@ describe('checkForUpdate', () => {
     const result = await checkForUpdate({ currentVersion: '0.9.0', fetchImpl, now: () => NOW })
     expect(result).toEqual({
       currentVersion: '0.9.0',
-      latest: { version: '0.10.0', url: 'https://github.com/perunok/slinger/releases/tag/v0.10.0', publishedAt: Date.UTC(2026, 9, 1, 10) / 1000 },
+      latest: { version: '0.10.0', url: 'https://github.com/perunok/slinger/releases/tag/v0.10.0', publishedAt: Date.UTC(2026, 9, 1, 10) / 1000, notes: 'notes' },
       updateAvailable: true,
       checkedAt: NOW / 1000,
     })
@@ -125,8 +125,29 @@ describe('checkForUpdate', () => {
 
 describe('parseRelease', () => {
   it('accepts v-prefixed and bare stable versions', () => {
-    expect(parseRelease(release('v1.2.3'))).toEqual({ version: '1.2.3', publishedAt: Date.UTC(2026, 9, 1, 10) / 1000 })
-    expect(parseRelease(release('1.2.3', { published_at: null }))).toEqual({ version: '1.2.3', publishedAt: null })
+    expect(parseRelease(release('v1.2.3'))).toEqual({ version: '1.2.3', publishedAt: Date.UTC(2026, 9, 1, 10) / 1000, notes: 'notes' })
+    expect(parseRelease(release('1.2.3', { published_at: null }))).toEqual({ version: '1.2.3', publishedAt: null, notes: 'notes' })
+  })
+
+  it('reads the body as release notes: missing, empty or non-text bodies are null', () => {
+    for (const body of [undefined, null, '', '  \n ', 42, { text: 'x' }]) expect(parseRelease(release('v1.2.3', { body }))?.notes).toBeNull()
+    expect(parseRelease(release('v1.2.3', { body: '### New\r\n- Thing\r\n' }))?.notes).toBe('### New\n- Thing')
+  })
+})
+
+describe('releaseNotesText', () => {
+  it('drops control characters but keeps tabs and newlines', () => {
+    expect(releaseNotesText('a\u0000b\u0007\tc\nd\u007f')).toBe('ab\tc\nd')
+  })
+
+  it('caps long notes at a line break and marks the cut', () => {
+    const line = `- ${'x'.repeat(98)}\n`
+    const text = releaseNotesText(line.repeat(1000))!
+    expect(text.length).toBeLessThanOrEqual(MAX_NOTES_CHARS + 3)
+    expect(text.endsWith('\n\n…')).toBe(true)
+    expect(text.slice(0, -3).split('\n').every((l) => l === line.trimEnd())).toBe(true)
+    // One huge line: cut hard at the cap.
+    expect(releaseNotesText('y'.repeat(50_000), 100)).toBe(`${'y'.repeat(100)}\n\n…`)
   })
 
   it('refuses drafts, pre-releases and anything that is not a version', () => {

@@ -38,6 +38,7 @@
   import { dismissBootSkeleton } from './bootSkeleton'
   import TopBar from './TopBar.svelte'
   import { updates } from '../features/updates/updates.svelte'
+  import { checkWhatsNew } from '../features/releaseNotes/whatsNew'
   import { windowChrome } from './windowChrome.svelte'
   import { ui } from './ui.svelte'
 
@@ -56,6 +57,7 @@
     versions: () => import('../features/versions/VersionsDialog.svelte'),
     workspaces: () => import('../features/workspaces/WorkspacesDialog.svelte'),
     update: () => import('../features/updates/UpdateDialog.svelte'),
+    releaseNotes: () => import('../features/releaseNotes/ReleaseNotesDialog.svelte'),
   }
 
   onMount(() => {
@@ -72,6 +74,7 @@
     void windowChrome.init()
     const offMenu = subscribeMenuCommands()
     const stopUpdates = updates.start()
+    void checkWhatsNew()
     return () => {
       stopUpdates()
       scopeStore.createVariable = null
@@ -183,6 +186,9 @@
 {#if ui.shortcutsOpen}<Lazy load={load.shortcuts} />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
 {#if ui.aboutOpen}<Lazy load={load.about} />{/if}
+{#if ui.releaseNotes}
+  <Lazy load={load.releaseNotes} props={{ view: ui.releaseNotes, onclose: () => (ui.releaseNotes = null), onshowall: () => (ui.releaseNotes = { mode: 'all' }) }} />
+{/if}
 {#if ui.cloudOpen}<Lazy load={load.cloud} />{/if}
 <SyncHost />
 <McpHost />

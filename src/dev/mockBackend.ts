@@ -45,8 +45,11 @@ export interface MockControls {
   calls: MockCall[]
   /** Delivers an application-menu command, as the native menu does in Electron. */
   menuCommand(command: MenuCommand): void
-  /** The version checkForUpdates reports as the latest release (null: none published, the default). */
-  setLatestRelease(version: string | null): void
+  /**
+   * The version checkForUpdates reports as the latest release (null: none published, the default), with its release
+   * notes (default: a short sample; null: a release without notes).
+   */
+  setLatestRelease(version: string | null, notes?: string | null): void
   /** Mock servers: play requests against a running one (`hit`), occupy a port, crash one. */
   mockServers: MockServerControls
 }
@@ -225,8 +228,8 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     menuCommand(command) {
       for (const listener of [...menuListeners]) listener(command)
     },
-    setLatestRelease(version) {
-      misc.setLatestRelease(version)
+    setLatestRelease(version, notes) {
+      misc.setLatestRelease(version, notes)
     },
   }
   controls.reset()

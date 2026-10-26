@@ -1334,7 +1334,8 @@ which version is the latest release of Slinger. When there is a newer one than y
 now**: at every start while you have not installed it, and once per version during the day. The request carries nothing about you or your data, and nothing is
 downloaded until you click.
 
-- **Update now** opens **Update Slinger**: it downloads the new version for your system from GitHub with a progress bar (size,
+- **Update now** opens **Update Slinger**, which first shows what is new in that version (or a link to its release notes on
+  GitHub). It downloads the new version for your system from GitHub with a progress bar (size,
   speed, time left; **Cancel** stops it, **Hide** lets it continue in the background) and checks it against GitHub's
   checksum. Then **Restart to update** installs it and starts Slinger again; your open tabs come back. **Later** keeps the
   download: Settings > Updates then offers **Restart to update**.
@@ -1351,11 +1352,20 @@ downloaded until you click.
 - Settings > Updates: turn **Check for new releases automatically** off, or **Check now**; it shows the result and when Slinger
   last checked, and **Update now** (or the download progress, or **Restart to update**) when there is a newer version.
 
+## Release notes
+
+**Help > Release Notes** (or Ctrl+K, then `release notes`, or **Release notes** in About Slinger) shows what changed in every
+version of Slinger: new features, improvements and fixes. The notes ship with the app, so they work offline.
+
+The first time a new version starts after an update, **What's new** opens by itself with the notes of every version since the
+one you had (**All release notes** shows the rest; **Close** dismisses it). It does not open on a fresh install or on later
+starts of the same version.
+
 ## About Slinger
 
 The question-mark icon at the right of the top bar (or Ctrl+K, then `about`) opens **About Slinger**:
 
-- The app version and **Copy version info**, which copies the Slinger, Electron, Chromium, Node and V8 versions and the OS
+- The app version, **Release notes** (see [Release notes](#release-notes)) and **Copy version info**, which copies the Slinger, Electron, Chromium, Node and V8 versions and the OS
   (name, release, architecture) for a bug report. Nothing else is included: no host name, user name, paths or data.
 - The developer, and links to the source code, releases, the issue tracker, the licence and the cloud server. Links open in your
   web browser.

@@ -51,5 +51,10 @@ class UiState {
   workspacesOpen = $state(false)
   shortcutsOpen = $state(false)
   aboutOpen = $state(false)
+  /**
+   * The Release notes dialog: `all` (Help > Release Notes, Ctrl+K, About) shows every released version; `new` (What's
+   * new, once after an update) the versions after `after` up to the running one.
+   */
+  releaseNotes = $state<{ mode: 'all' } | { mode: 'new'; after: string | null; current: string } | null>(null)
 }
 export const ui = new UiState()

@@ -29,12 +29,14 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
   __tests__/         vitest suites (plain Node, in-memory SQLite)
 shared/              types.ts, ipc-contract.ts (the API), ipc-errors.ts, menu.ts (menu command names), oauth2.ts (grant types, token
                      scrubbing), mcp.ts (MCP tool catalog), workflowScript.ts (how workflow JavaScript is wrapped for the sandbox), mockMatch.ts (mock server
-                     request matching) - imported by main AND
+                     request matching), changelog.mjs (CHANGELOG.md parser, also used by scripts/) - imported by main AND
                      renderer, no Node/DOM deps
 src/                 renderer (Svelte 5 runes, Tailwind, CodeMirror 6); see src/README.md
   app/  components/  features/  lib/  dev/  styles/
 e2e/                 Playwright-driven tests of the built app (support/app.ts, support/server.ts)
-scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs
+scripts/             build-main.mjs (main, preload, script-worker and mcp-stdio bundles), sandbox-libs.mjs (script libraries), electron-dev.mjs, ensure-native.mjs,
+                     release-notes.mjs (a version's CHANGELOG.md section: the GitHub release body)
+CHANGELOG.md         user-facing release notes, bundled into the renderer (see Release notes)
 test/                renderer test setup
 ```
 
@@ -150,7 +152,7 @@ openExternal, zoom })`, unit-tested per platform without Electron); `main.ts` on
   macOS paste-and-match-style, delete, select all; required for the clipboard on macOS); **View:** Reload / Force Reload / Toggle
   Developer Tools only when not packaged (or `SLINGER_DEVTOOLS=1`), Toggle Sidebar, Toggle Response Position, Toggle Right Panel, Toggle Status
   Bar, Actual Size / Zoom In / Zoom Out, Toggle Full Screen;
-  **Help:** User Guide, Keyboard Shortcuts, Release Notes, Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
+  **Help:** User Guide, Keyboard Shortcuts, Release Notes (command `releaseNotes`, the bundled changelog, see [Release notes](#release-notes)), Check for Updates… (command `checkForUpdates`), Report an Issue, View License (GitHub links opened through
   `assertExternalUrl` + `shell.openExternal`, the same allow-list as `openExternalUrl`).
 - **Commands.** Slinger items never act in main: they send one of `MENU_COMMANDS` (`shared/menu.ts`: `newRequest`, `closeTab`,
   `import`, `exportCollection`, `settings`, `about`, `shortcuts`, `checkForUpdates`, and the View layout toggles `toggleSidebar`,
@@ -1095,8 +1097,9 @@ bundled into main like the server side. User-facing behaviour: [USER_GUIDE.md](U
 
 `checkForUpdates` (`electron/services/updateCheck.ts`) makes one GET to `https://api.github.com/repos/perunok/slinger/releases/latest`
 through `net.fetch` (system proxy), 15 s timeout, `User-Agent: Slinger/<version>`. GitHub's "latest" never returns drafts or
-pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`) and `published_at` are
-read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
+pre-releases. The answer is untrusted: only `tag_name` (a strict, stable semantic version, optional `v`), `published_at` and
+`body` (the release notes, `ReleaseInfo.notes`: control characters dropped, cut at a line break past `MAX_NOTES_CHARS` = 20,000,
+null when empty) are read, at most 1 MB; the link is built from the version (`https://github.com/perunok/slinger/releases/tag/v<version>`), never taken
 from the response. 404 means "no release yet"; other HTTP errors and failures are `network_error`, an unreadable answer
 `io_error`. The check itself downloads nothing.
 
@@ -1128,6 +1131,34 @@ update itself). The store follows `onUpdateState`; the dialog shows progress (`p
 update**, errors with **Try again**. Help > Check for Updates… always answers with a toast; Settings > Updates > Check now answers
 inline and shows the same Update now / progress / Restart to update button. The browser mock pretends to be a .deb install
 whose download takes a second.
+
+## Release notes
+
+`CHANGELOG.md` at the repo root is the curated, user-facing changelog: `## X.Y.Z — YYYY-MM-DD` per version, newest first,
+then short bullets under `### New` / `### Improved` / `### Fixed` (what changed for the user, not internals). While a version
+is in development its section is `## X.Y.Z — unreleased`. `shared/changelog.mjs` (plain JS + `changelog.d.mts`, shared by Node
+scripts and the renderer) parses it: `parseChangelog`, `changelogSection`, `releaseNotesProblem` (missing, undated, empty or
+still `(filled in at release)`).
+
+- **In the app** (works offline): `src/features/releaseNotes/changelog.ts` imports `CHANGELOG.md?raw` at build time; only the
+  lazily loaded `ReleaseNotesDialog.svelte` and the What's new check import it. The dialog renders the sections as one
+  Markdown document with `MarkdownView` (marked + DOMPurify, the docs renderer). `ui.releaseNotes`: `{ mode: 'all' }` (Help >
+  Release Notes via menu command `releaseNotes`, Ctrl+K "Release notes", About's **Release notes** button) lists every dated
+  section; `{ mode: 'new', after, current }` is What's new. Pure rules in `src/lib/releaseNotes.ts`.
+- **What's new** (`features/releaseNotes/whatsNew.ts`, run once from `App.svelte` at startup): `localStorage['slinger.whatsNew']`
+  = `{ seen }`. `decideWhatsNew`: same version: nothing; newer than `seen`: show the dated sections in `(seen, current]` and
+  store `current`; no `seen` on a fresh install (none of `EXISTING_INSTALL_KEYS` present): store silently; no `seen` but an
+  existing install (updated from a version before What's new): show the current version's section; downgrade: store quietly;
+  pre-release/dev version (the browser mock's `0.0.0-dev`): nothing. No matching section: nothing is shown.
+- **Update notice:** `UpdateDialog.svelte` shows the new release's `notes` (the GitHub release body) with the same
+  `MarkdownView` above **Update now**; without notes, "See release notes on GitHub". Notes are kept in
+  `localStorage['slinger.updates'].latest` (same cap). The browser mock's `setLatestRelease(version, notes?)` sets them.
+- **Releasing:** fill in the version's section (replace `unreleased` with the date and the placeholder with the notes) in the
+  `Release X.Y.Z` commit, together with `npm version`. On a `v*` tag, `release.yml`'s `notes` job runs
+  `node scripts/release-notes.mjs "$GITHUB_REF_NAME" --out release-notes.md` (fails fast when the section is not ready) and the
+  `publish` job creates the GitHub release with `body_path: release-notes.md`, so installed apps show the curated notes in their
+  update notice. Then add `## <next> — unreleased` with `- (filled in at release)` at the top. `electron/__tests__/releaseNotes.test.ts`
+  checks the file (ordering, dates, a section for `package.json`'s version) and the script.
 
 ## Files, dialogs and the OS
 

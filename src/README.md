@@ -58,7 +58,9 @@ features/
           MockServerDialog (port, start/stop, base URL, request log); MockServersHost pushes edited examples to running
           servers; collection menu "Mock server…" and a status bar item open it; pure logic in lib/mockServers.ts)
   updates/ (new-release notice: daily check, one toast per version, Help > Check for Updates…, Settings > Updates;
-          pure logic in lib/updates.ts)
+          pure logic in lib/updates.ts; UpdateDialog shows the release notes before installing)
+  releaseNotes/ (Release notes / What's new dialog from the bundled CHANGELOG.md (`changelog.ts`, `?raw` import, lazy);
+          whatsNew.ts opens it once after a version change; pure rules in lib/releaseNotes.ts)
   mcp/ (MCP tool implementations run for LLM clients: tools.ts; McpHost answers main's calls; Settings > AI assistants;
           client setup snippets)
   mcpRequests/ (MCP requests, Slinger as an MCP client: McpRequestView replaces RequestView for drafts with `mcp`; McpBar,

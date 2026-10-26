@@ -48,6 +48,12 @@
     e.preventDefault()
   }
 
+  /** Release notes replace About (one dialog at a time). */
+  function showReleaseNotes() {
+    ui.aboutOpen = false
+    ui.releaseNotes = { mode: 'all' }
+  }
+
   async function copyVersionInfo() {
     try {
       const text = formatVersionInfo(await api().getVersionInfo())
@@ -85,6 +91,7 @@
             Version {version ?? '…'}
           </span>
           <Button size="sm" icon={copied ? 'check' : 'copy'} onclick={copyVersionInfo}>{copied ? 'Copied' : 'Copy version info'}</Button>
+          <Button size="sm" icon="list" onclick={showReleaseNotes}>Release notes</Button>
         </div>
       </div>
     </section>
