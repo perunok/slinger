@@ -75,3 +75,40 @@ describe('redactValues', () => {
     expect(redactValues('id 42', ['42'])).toBe('id 42')
   })
 })
+
+describe('inherited (collection / folder) auth', () => {
+  const inheriting = () => {
+    const d = newDraft({ name: 'R', url: '{{baseUrl}}/x' })
+    // The effective auth executeDraft put in place of "inherit".
+    d.auth = { ...d.auth, kind: 'bearer', bearer: { token: 'from-collection' } }
+    return d
+  }
+  const source = { kind: 'collection' as const, id: 'c1', name: 'Shop' }
+
+  it('is the user\'s saved credential, even in a request the assistant created', () => {
+    const created = assistantControl(undefined, { requests: [{ requestId: 'r1', created: true }], variables: [] }, 'r1', 'e1')
+    expect(created.ownAuth).toBe(true)
+    expect(refusal(inheriting(), scope, created, undefined, { source })).toMatch(/inherits from the collection “Shop”/)
+    // Its own literal auth stays the assistant's.
+    expect(refusal(inheriting(), scope, created)).toBeNull()
+    // Sent with overrides of a request that inherits.
+    const over = assistantControl({ overrides: ['url'] }, none, 'r1', 'e1')
+    expect(refusal(inheriting(), scope, over, 'inherit', { source })).toMatch(/inherits/)
+    // A request that inherits "No auth" carries nothing.
+    const plain = newDraft({ name: 'R', url: 'https://x' })
+    plain.auth = { ...plain.auth, kind: 'none' }
+    expect(refusal(plain, scope, over, 'inherit', { source })).toBeNull()
+  })
+
+  it('an auth an assistant wrote on the collection (import, restore) is the assistant\'s own until the user changes it', () => {
+    const changes = { requests: [{ requestId: 'r1', created: true }], variables: [], containers: [{ kind: 'collection' as const, id: 'c1' }] }
+    const c = assistantControl(undefined, changes, 'r1', 'e1')
+    expect(refusal(inheriting(), scope, c, undefined, { source })).toBeNull()
+    // A secret variable in it is still the user's.
+    const secret = inheriting()
+    secret.auth.bearer.token = '{{token}}'
+    expect(refusal(secret, scope, c, undefined, { source })).toMatch(/\{\{token\}\}/)
+    // Another container (the folder) is not covered.
+    expect(refusal(inheriting(), scope, c, undefined, { source: { kind: 'folder', id: 'f1', name: 'Admin' } })).toMatch(/folder “Admin”/)
+  })
+})

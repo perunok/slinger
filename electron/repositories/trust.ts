@@ -44,6 +44,16 @@ export function requestFingerprint(row: { method: string; url: string; document_
   return sha256(JSON.stringify(['request-v1', row.method, row.url, doc]))
 }
 
+/** A collection's / folder's auth (0018) by its stored text. */
+const containerFingerprint = (authJson: string | null | undefined) => sha256(JSON.stringify(['container-v1', authJson ?? null]))
+
+function containerRow(db: Db, kind: 'collection' | 'folder', id: string): { workspace_id: string; auth_json: string | null } | undefined {
+  const table = kind === 'collection' ? 'collections' : 'folders'
+  return db.prepare(`SELECT workspace_id, auth_json FROM ${table} WHERE id = ? AND deleted = 0`).get(id.toLowerCase()) as
+    | { workspace_id: string; auth_json: string | null }
+    | undefined
+}
+
 interface VariableRow {
   value: string | null
   is_secret: number
@@ -72,7 +82,7 @@ export class TrustRepository {
     trustCollectionRow(this.db, c.id)
   }
 
-  /** Records the current content of a request or variable as written by an AI assistant. */
+  /** Records the current content of a request, variable or collection/folder auth as written by an AI assistant. */
   markAssistantChange(ref: AssistantChangeRef): void {
     const now = nowSeconds()
     const put = (kind: string, key: string, workspaceId: string, fingerprint: string, created: boolean) =>
@@ -88,6 +98,12 @@ export class TrustRepository {
       put('request', r.id, r.workspace_id, ref.pending ? ANY_CONTENT : requestFingerprint(r), ref.created === true)
       return
     }
+    if (ref.kind === 'container') {
+      const row = containerRow(this.db, ref.containerKind, ref.id)
+      if (!row) throw invalidInput(`No ${ref.containerKind} with id "${ref.id}"`)
+      put('container', `${ref.containerKind}:${ref.id.toLowerCase()}`, row.workspace_id, ref.pending ? ANY_CONTENT : containerFingerprint(row.auth_json), false)
+      return
+    }
     const env = requireEnvironment(this.db, ref.environmentId)
     const v = variableRow(this.db, env.id, ref.key)
     if (!v && !ref.pending) throw invalidInput(`No variable "${ref.key}" in this environment`)
@@ -96,7 +112,12 @@ export class TrustRepository {
 
   /** The user reviewed it (saved the request or the variable in the window). Unknown refs are a no-op. */
   clearAssistantChange(ref: AssistantChangeRef): void {
-    const key = ref.kind === 'request' ? assertUuid(ref.requestId, 'requestId').toLowerCase() : `${assertUuid(ref.environmentId, 'environmentId').toLowerCase()}:${ref.key}`
+    const key =
+      ref.kind === 'request'
+        ? assertUuid(ref.requestId, 'requestId').toLowerCase()
+        : ref.kind === 'container'
+          ? `${ref.containerKind}:${assertUuid(ref.id, 'id').toLowerCase()}`
+          : `${assertUuid(ref.environmentId, 'environmentId').toLowerCase()}:${ref.key}`
     this.db.prepare('DELETE FROM assistant_changes WHERE kind = ? AND ref = ?').run(ref.kind, key)
   }
 
@@ -104,14 +125,20 @@ export class TrustRepository {
   listAssistantChanges(workspaceId: string): AssistantChanges {
     const ws = assertUuid(workspaceId, 'workspaceId').toLowerCase()
     const rows = this.db.prepare('SELECT kind, ref, fingerprint, created FROM assistant_changes WHERE workspace_id = ?').all(ws) as Array<{
-      kind: 'request' | 'variable'
+      kind: 'request' | 'variable' | 'container'
       ref: string
       fingerprint: string
       created: number
     }>
-    const out: AssistantChanges = { requests: [], variables: [] }
+    const out: AssistantChanges = { requests: [], variables: [], containers: [] }
     for (const row of rows) {
-      if (row.kind === 'request') {
+      if (row.kind === 'container') {
+        const sep = row.ref.indexOf(':')
+        const kind = row.ref.slice(0, sep) as 'collection' | 'folder'
+        const id = row.ref.slice(sep + 1)
+        const c = containerRow(this.db, kind, id)
+        if (c && (row.fingerprint === ANY_CONTENT || containerFingerprint(c.auth_json) === row.fingerprint)) out.containers!.push({ kind, id })
+      } else if (row.kind === 'request') {
         const r = this.db.prepare('SELECT method, url, document_json FROM requests WHERE id = ? AND deleted = 0').get(row.ref) as
           | { method: string; url: string; document_json: string }
           | undefined

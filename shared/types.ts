@@ -229,11 +229,15 @@ export interface AssistantEditInput {
 export type AssistantChangeRef =
   | { kind: 'request'; requestId: string; created?: boolean; pending?: boolean }
   | { kind: 'variable'; environmentId: string; key: string; pending?: boolean }
+  /** ADDED (container auth, migration 0020): the auth of a collection or folder as an assistant wrote it. */
+  | { kind: 'container'; containerKind: 'collection' | 'folder'; id: string; pending?: boolean }
 
 /** The assistant changes of a workspace whose content is still exactly what the assistant wrote (not reviewed since). */
 export interface AssistantChanges {
   requests: Array<{ requestId: string; created: boolean }>
   variables: Array<{ environmentId: string; key: string }>
+  /** Collections / folders whose auth is still what an assistant wrote (absent in older shapes = none). */
+  containers?: Array<{ kind: 'collection' | 'folder'; id: string }>
 }
 
 /** ADDED (MCP): texts to return to an AI assistant, with the secrets of one send replaced (redactSecrets). */

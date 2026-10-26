@@ -140,6 +140,24 @@ async function markNew(requestIds: string[], created: boolean, undo: () => Promi
   }
 }
 
+/**
+ * Marks the collection and folder auth (container auth) the assistant brought in with an import or a restore: requests
+ * inheriting it send the assistant's value, not the user's credential (lib/assistantPolicy.ts). Only containers that have
+ * an auth are marked. When that fails, `undo` removes the import again.
+ */
+async function markContainers(collectionId: string, workspaceId: string, undo: () => Promise<unknown>): Promise<void> {
+  try {
+    const col = (await api().listCollections(workspaceId)).find((c) => c.id === collectionId)
+    if (col?.authJson) await api().markAssistantChange({ kind: 'container', containerKind: 'collection', id: col.id })
+    for (const f of await api().listFolders(collectionId)) {
+      if (f.authJson) await api().markAssistantChange({ kind: 'container', containerKind: 'folder', id: f.id })
+    }
+  } catch (e) {
+    await undo().catch(() => {})
+    fail(`Could not record the change as the assistant's, so it was undone: ${errorInfo(e).message}`)
+  }
+}
+
 const q = (name: string) => `“${name}”`
 /** Ends a message with a full stop unless it already ends a sentence. */
 const sentence = (s: string) => (/[.!?]$/.test(s) ? s : `${s}.`)
@@ -815,6 +833,7 @@ const tools: Impls = {
     const result = await api().restoreCollectionVersion(v.id, a.mode)
     // The restored requests are what the version holds, which may be content an assistant wrote: treated as changed.
     await markNew((await api().listRequests(result.id)).map((r) => r.id), false, async () => {})
+    await markContainers(result.id, result.workspaceId, async () => {})
     await refresh(c.workspaceId)
     if (inWindow && a.mode === 'replace') {
       const map = mapRestored(before, { folders: app.foldersOf(c.id), requests: app.requestsOf(c.id) })
@@ -1010,6 +1029,7 @@ const tools: Impls = {
     const ws = workspaceOf(a.workspace_id)
     const res = await api().importPostmanCollection(ws, a.collection_json)
     await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
+    await markContainers(res.collection.id, ws, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported collection ${q(res.collection.name)} (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({ imported: { collection_id: res.collection.id, name: res.collection.name, folders: res.folders.length, requests: res.requests.length } })
@@ -1026,6 +1046,7 @@ const tools: Impls = {
       ...(a.name ? { name: a.name } : {}),
     })
     await markNew(res.requests.map((r) => r.id), true, () => api().deleteCollection(res.collection.id))
+    await markContainers(res.collection.id, ws, () => api().deleteCollection(res.collection.id))
     await refresh(ws)
     await logEdit(ws, `Imported API ${q(res.collection.name)} from an OpenAPI document (${res.requests.length} request${res.requests.length === 1 ? '' : 's'})`)
     return done({

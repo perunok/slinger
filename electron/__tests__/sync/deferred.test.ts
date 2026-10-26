@@ -61,6 +61,24 @@ describe('initial download: folders whose parent comes later', () => {
     })
   }
 
+  it('folder auth (container_auth) survives a folder that waited for its parent', async () => {
+    cloud.legacyFolderOrder = true
+    const n = nestedWorkspace()
+    const auth = JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: '{{leaf}}', type: 'string' }] })
+    cloud.restUpsert(n.w.id, 'folder', n.leaf, { auth_json: auth })
+    cloud.restUpsert(n.w.id, 'folder', n.mid, { auth_json: '{"type":"noauth"}' })
+    cloud.restUpsert(n.w.id, 'collection', n.col, { auth_json: auth })
+    const d = dev(n.user.id)
+    const link = await d.api.linkRemoteWorkspace({ remoteWorkspaceId: n.w.id, localWorkspaceId: null })
+    await settle(d, link.workspace.id)
+    const authOf = (table: string, id: string) => (d.db.prepare(`SELECT auth_json FROM ${table} WHERE id = ?`).get(id) as { auth_json: string | null }).auth_json
+    expect(authOf('folders', n.leaf)).toBe(auth)
+    expect(authOf('folders', n.mid)).toBe('{"type":"noauth"}')
+    expect(authOf('collections', n.col)).toBe(auth)
+    expect(deferred(d)).toEqual([])
+    expect((await d.api.getSyncStatus(link.workspace.id)).pendingChanges).toBe(0)
+  })
+
   it('the fake server, like the real one, sends folders parent-first across pages', async () => {
     const n = nestedWorkspace()
     const d = dev(n.user.id)

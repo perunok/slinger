@@ -748,6 +748,8 @@ class TabsStore {
       if (auth !== undefined) {
         if (target.kind === 'collection') app.upsertCollection(await api().setCollectionAuth(target.id, auth))
         else app.upsertFolder(await api().setFolderAuth(target.id, auth))
+        // Saved in the window: no longer what an AI assistant wrote (lib/assistantPolicy.ts). Best effort.
+        void api().clearAssistantChange({ kind: 'container', containerKind: target.kind, id: target.id }).catch(() => {})
         // Reloaded from the stored value unless edited while saving.
         if (tab.overviewAuth && containerAuthJson(tab.overviewAuth, target.kind) === auth) tab.overviewAuth = null
       }

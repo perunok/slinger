@@ -421,7 +421,8 @@ async function executeOnce(original: RequestDraft, ctx: ExecuteContext, sensitiv
   })
   // An AI assistant's send that would carry the user's credentials where the assistant decides: refused, nothing revealed.
   if (control) {
-    const why = refusal(draft, scope, control, ctx.assistant?.savedAuthKind)
+    // A script may have replaced the auth (pm.request.auth is read-only, so it stays the inherited one when it was).
+    const why = refusal(draft, scope, control, ctx.assistant?.savedAuthKind, authInfo.inherited ? { source: authInfo.source } : null)
     if (why) return { ok: false, kind: 'refused', error: why, scripts }
   }
 

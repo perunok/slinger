@@ -227,6 +227,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
 | `0018_container_auth` | nullable `auth_json` on `collections` and `folders` (Postman `auth` object, never an OAuth 2.0 token; see [Collection and folder auth](#collection-and-folder-auth)), read-only and capture triggers (synced only with the `container_auth` feature, sync design section 21.6) |
 | `0019_local_trust` | `collection_trust (collection_id, trusted_at)`: collections whose scripts may run here (existing collections are trusted by the migration); `assistant_changes (kind, ref, workspace_id, fingerprint, created, changed_at)`: requests / environment variables an AI assistant wrote and the user has not reviewed. Both local only (`repositories/trust.ts`), see [Scripts sandbox](#scripts-sandbox) and [MCP server](#mcp-server) |
+| `0020_assistant_container_changes` | rebuilds `assistant_changes` to allow kind `container` (ref `collection:<id>` / `folder:<id>`, fingerprint of its `auth_json`): collection/folder auth an AI assistant wrote (import, restore) and the user has not changed or saved |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -1030,7 +1031,9 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   than name/description, `ExecuteContext.assistant`), or its request is in `listAssistantChanges` (an assistant wrote its stored
   content and the user has not saved it since). Such a send is refused (`kind: 'refused'`, nothing revealed or sent) when it would
   carry the user's credentials: stored auth (except literal auth of a request the assistant created, `created`, or of an ad-hoc
-  request), any OAuth 2.0 auth, or any secret variable after the pre-request scripts. Environment variables the assistant set and
+  request), any OAuth 2.0 auth, an auth the request inherits from its folder or collection (unless that container auth is
+  still what an assistant wrote: `assistant_changes` kind `container`, recorded by import_postman / import_openapi /
+  restore_version and ended by any change or a save in the overview), or any secret variable after the pre-request scripts. Environment variables the assistant set and
   the user has not changed (`assistant_changes` kind `variable`) may not decide the URL's origin of a send with credentials
   (`originDependsOn` resolves the URL with the variable replaced by a marker). Scripts of an assistant-controlled send, and of any
   assistant send while such variables are in use, run with `denySecrets`. Recording: tools.ts calls `markAssistantChange` for

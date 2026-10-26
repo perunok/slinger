@@ -34,7 +34,12 @@ const findVariable = (s: MockState, environmentId: string, key: string) => s.var
 
 const ANY = '*'
 
-const keyOf = (ref: AssistantChangeRef) => (ref.kind === 'request' ? `request:${ref.requestId}` : `variable:${ref.environmentId}:${ref.key}`)
+const keyOf = (ref: AssistantChangeRef) =>
+  ref.kind === 'request' ? `request:${ref.requestId}` : ref.kind === 'container' ? `container:${ref.containerKind}:${ref.id}` : `variable:${ref.environmentId}:${ref.key}`
+/** As main (repositories/trust.ts): a collection's / folder's auth by its stored text. */
+const containerFingerprint = (authJson: string | null | undefined) => JSON.stringify(['container-v1', authJson ?? null])
+const containerOf = (s: MockState, kind: 'collection' | 'folder', id: string) =>
+  kind === 'collection' ? s.collections.find((c) => c.id === id) : s.folders.find((f) => f.id === id)
 
 /** The mock's runScripts refusal for a collection whose scripts are not allowed (same error as main). */
 export function assertScriptsTrusted(s: MockState, collectionId: string | null | undefined, scriptCount: number): void {
@@ -55,6 +60,12 @@ export function createSecurityApi(s: MockState): SecurityApi {
       delete s.untrustedCollections[collectionId]
     },
     async markAssistantChange(ref) {
+      if (ref.kind === 'container') {
+        const c = containerOf(s, ref.containerKind, ref.id)
+        if (!c) fail('invalid_input', `No ${ref.containerKind} with id "${ref.id}"`)
+        s.assistantChanges[keyOf(ref)] = { workspaceId: c.workspaceId, fingerprint: ref.pending ? ANY : containerFingerprint(c.authJson), created: false }
+        return
+      }
       if (ref.kind === 'request') {
         const r = must(s.requests, ref.requestId, 'Request')
         s.assistantChanges[keyOf(ref)] = { workspaceId: r.workspaceId, fingerprint: ref.pending ? ANY : requestFingerprint(r), created: ref.created === true }
@@ -69,10 +80,14 @@ export function createSecurityApi(s: MockState): SecurityApi {
       delete s.assistantChanges[keyOf(ref)]
     },
     async listAssistantChanges(workspaceId): Promise<AssistantChanges> {
-      const out: AssistantChanges = { requests: [], variables: [] }
+      const out: AssistantChanges = { requests: [], variables: [], containers: [] }
       for (const [key, c] of Object.entries(s.assistantChanges)) {
         if (c.workspaceId !== workspaceId) continue
-        if (key.startsWith('request:')) {
+        if (key.startsWith('container:')) {
+          const [, kind, id] = key.split(':') as [string, 'collection' | 'folder', string]
+          const row = containerOf(s, kind, id)
+          if (row && (c.fingerprint === ANY || containerFingerprint(row.authJson) === c.fingerprint)) out.containers!.push({ kind, id })
+        } else if (key.startsWith('request:')) {
           const id = key.slice('request:'.length)
           const r = s.requests.find((x) => x.id === id)
           if (r && (c.fingerprint === ANY || requestFingerprint(r) === c.fingerprint)) out.requests.push({ requestId: id, created: c.created })

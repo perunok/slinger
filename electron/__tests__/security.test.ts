@@ -108,7 +108,7 @@ describe('assistant changes', () => {
   it('a request counts while its content is what the assistant wrote; a user edit or clear ends it', async () => {
     const r = await create()
     await env.api.markAssistantChange({ kind: 'request', requestId: r.id, created: true })
-    expect(await env.api.listAssistantChanges(wsId)).toEqual({ requests: [{ requestId: r.id, created: true }], variables: [] })
+    expect(await env.api.listAssistantChanges(wsId)).toEqual({ requests: [{ requestId: r.id, created: true }], variables: [], containers: [] })
     // Renames and saved examples change nothing that is sent.
     const renamed = await env.api.renameRequest(r.id, 'Renamed')
     const withExample = await env.api.updateRequest({
@@ -137,6 +137,23 @@ describe('assistant changes', () => {
     await env.api.markAssistantChange({ kind: 'variable', environmentId: envId, key: 'newVar', pending: true })
     await env.api.upsertEnvironmentVariable({ environmentId: envId, key: 'newVar', value: 'x', isSecret: false })
     expect((await env.api.listAssistantChanges(wsId)).variables).toEqual([{ environmentId: envId, key: 'newVar' }])
+  })
+
+  it('a collection / folder auth counts until it changes or the user saves it (migration 0020)', async () => {
+    const bearer = JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: 't', type: 'string' }] })
+    await env.api.setCollectionAuth(collectionId, bearer)
+    const folder = await env.api.createFolder({ workspaceId: wsId, collectionId, name: 'F' })
+    await env.api.setFolderAuth(folder.id, '{"type":"noauth"}')
+    await env.api.markAssistantChange({ kind: 'container', containerKind: 'collection', id: collectionId })
+    await env.api.markAssistantChange({ kind: 'container', containerKind: 'folder', id: folder.id })
+    expect((await env.api.listAssistantChanges(wsId)).containers).toEqual(
+      expect.arrayContaining([{ kind: 'collection', id: collectionId }, { kind: 'folder', id: folder.id }]),
+    )
+    await env.api.setCollectionAuth(collectionId, JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: 'user', type: 'string' }] }))
+    expect((await env.api.listAssistantChanges(wsId)).containers).toEqual([{ kind: 'folder', id: folder.id }])
+    await env.api.clearAssistantChange({ kind: 'container', containerKind: 'folder', id: folder.id })
+    expect((await env.api.listAssistantChanges(wsId)).containers).toEqual([])
+    await expect(env.api.markAssistantChange({ kind: 'container', containerKind: 'folder', id: collectionId })).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
   it('a variable counts until its value changes', async () => {

@@ -100,6 +100,36 @@ describe('executeDraft with inherited auth', () => {
     expect(JSON.parse(app.requests.find((x) => x.id === r.id)!.documentJson).auth ?? null).not.toEqual(JSON.parse(bearer('folder')))
   })
 
+  it('requests inheriting one OAuth 2.0 setting share its token, and the token stays bound to the hosts it was used with', async () => {
+    const r = getUser()
+    const oauth2 = JSON.stringify({
+      type: 'oauth2',
+      oauth2: [
+        { key: 'grant_type', value: 'client_credentials' }, { key: 'accessTokenUrl', value: '{{baseUrl}}/token' },
+        { key: 'clientId', value: 'app' }, { key: 'clientSecret', value: '{{apiToken}}' }, { key: 'addTokenTo', value: 'header' },
+      ],
+    })
+    await backend.setCollectionAuth(r.collectionId, oauth2)
+    await app.reloadCollections()
+    const { containerAuthDraft } = await import('../../lib/authInheritance')
+    const { resolveOAuth2 } = await import('../oauth2/oauth2Actions')
+    const got = await resolveOAuth2(containerAuthDraft(oauth2, 'collection').oauth2, { workspaceId: app.workspaceId!, collectionId: r.collectionId }, 'token')
+    if (!got.ok) throw new Error(got.error)
+    const token = await backend.getOAuth2Token(got.config)
+    const draft = { ...parseDocument(r), auth: emptyAuth(), extras: {} }
+    expect((await executeDraft(draft, ctx(r))).ok).toBe(true)
+    // A second inheriting request of the same collection (same host) uses the same stored token, no prompt.
+    const other = app.requests.find((x) => x.collectionId === r.collectionId && x.id !== r.id && /^\{\{baseUrl\}\}/.test(x.url))!
+    expect((await executeDraft({ ...parseDocument(other), auth: emptyAuth(), extras: {} }, ctx(other))).ok).toBe(true)
+    expect(sent.map((s) => s.auth.oauth2?.tokenKey)).toEqual([token.tokenKey, token.tokenKey])
+    // Another host: the token is not sent there unless the user allows it.
+    const { securityPrompts } = await import('../security/prompts.svelte')
+    const ask = vi.spyOn(securityPrompts, 'ask').mockResolvedValue(false)
+    const elsewhere = await executeDraft({ ...draft, url: 'https://elsewhere.example/x' }, ctx(r))
+    expect(elsewhere.ok).toBe(false)
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
   it('a request outside a collection that inherits is sent without auth', async () => {
     const out = await executeDraft({ ...parseDocument(getUser()), auth: emptyAuth() }, { workspaceId: app.workspaceId! })
     expect(out.ok).toBe(true)

@@ -420,6 +420,7 @@ const assistantEdit = z
 const assistantChangeRef = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('request'), requestId: uuid, created: z.boolean().optional(), pending: z.boolean().optional() }).strict(),
   z.object({ kind: z.literal('variable'), environmentId: uuid, key: z.string().min(1).max(500), pending: z.boolean().optional() }).strict(),
+  z.object({ kind: z.literal('container'), containerKind: z.enum(['collection', 'folder']), id: uuid, pending: z.boolean().optional() }).strict(),
 ])
 const redactSecretsInput = z
   .object({

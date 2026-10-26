@@ -1424,13 +1424,14 @@ literally into a request's authorization are hidden too (use `{{variables}}`). I
 body and headers, console output, test results, errors) the send's secret values, credentials and OAuth 2.0 tokens appear as
 `{{name}}`, `[hidden]` or `<access token>`, so a server that echoes your token back does not hand it to the assistant.
 
-**What an assistant may send with your credentials.** Your credentials (secret variables, a request's saved authorization,
-OAuth 2.0 tokens) go out with an assistant's send only when it sends a request **you** saved, **as you saved it**. It is
+**What an assistant may send with your credentials.** Your credentials (secret variables, a request's saved authorization or
+the authorization it inherits from its folder or collection, OAuth 2.0 tokens) go out with an assistant's send only when it sends a request **you** saved, **as you saved it**. It is
 refused, with a message the assistant can pass on to you, when the send would carry them and:
 
 - it is an ad-hoc request, or the assistant changes the URL, headers, body, auth or scripts for this one send;
 - the assistant created or edited the request and you have not saved it since (open it and press **Save**, Ctrl+S, after
-  checking it; a request the assistant created may still use authorization the assistant typed in itself);
+  checking it; a request the assistant created may still use authorization the assistant typed in itself, or a collection or
+  folder authorization that came with an assistant's import or restore, until you change or save that authorization);
 - the request's host comes from an environment variable the assistant set and you have not changed since (edit the value in
   the environment, even to the same text, to confirm it).
 

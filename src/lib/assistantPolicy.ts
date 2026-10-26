@@ -15,6 +15,10 @@
  * - Environment variables an assistant set (set_variable) and the user has not changed since may not decide where
  *   credentials go: a send with credentials whose URL origin depends on one is refused, and the scripts of any send
  *   in that environment cannot read secrets (a script could build a destination from such a variable).
+ * - An auth a request inherits from its folder or collection (container auth) is the user's saved credential like its own,
+ *   unless an assistant wrote that container auth (an import or a version restore through MCP) and the user has not
+ *   changed or saved it since (`assistant_changes` kind 'container', migration 0020). An inherited OAuth 2.0 token always
+ *   counts (the token is the user's even when the settings came from an assistant).
  * - Everything returned to the assistant has the send's secret values, credentials and tokens replaced.
  */
 import type { AssistantChanges } from '../../shared/types'
@@ -22,6 +26,12 @@ import type { RequestDraft } from './request'
 import { templateTexts } from './request'
 import { withDefaultScheme } from '../../shared/urlScheme'
 import { findSecretsUsed, resolveTemplate, type TemplateScope, type VariableInfo } from './template'
+import type { AuthSource } from './authInheritance'
+
+/** The draft's auth came from a folder or collection (its own auth is "inherit"); null: its own auth. */
+export interface InheritedAuth {
+  source: AuthSource | null
+}
 
 /** How an MCP send came about (send_request fills it; a run of saved requests leaves it empty). */
 export interface AssistantSendInfo {
@@ -40,6 +50,8 @@ export interface AssistantControl {
   ownAuth: boolean
   /** Keys of the variables of the environment in use that an assistant set and the user has not changed since. */
   assistantVariables: Set<string>
+  /** `collection:<id>` / `folder:<id>` whose auth is still what an assistant wrote. */
+  assistantContainers?: Set<string>
 }
 
 export function assistantControl(
@@ -54,7 +66,8 @@ export function assistantControl(
   const change = requestId ? changes.requests.find((r) => r.requestId === requestId) : undefined
   if (change) reasons.push(`an AI assistant ${change.created ? 'created' : 'changed'} it and the user has not saved it since`)
   const assistantVariables = new Set(environmentId ? changes.variables.filter((v) => v.environmentId === environmentId).map((v) => v.key) : [])
-  return { reasons, ownAuth: !!info?.adHoc || (!!change?.created && !info?.overrides?.includes('auth')), assistantVariables }
+  const assistantContainers = new Set((changes.containers ?? []).map((c) => `${c.kind}:${c.id}`))
+  return { reasons, ownAuth: !!info?.adHoc || (!!change?.created && !info?.overrides?.includes('auth')), assistantVariables, assistantContainers }
 }
 
 /** The message scripts get when they read a secret in a send the assistant controls; null when they may. */
@@ -70,11 +83,24 @@ export function scriptSecretDenial(c: AssistantControl): string | null {
  * What in the draft is the user's credential: stored auth and secret variables (by name). A secret environment variable the
  * assistant set itself (and the user has not changed since) holds the assistant's own value, not the user's.
  */
-export function credentialsOf(draft: RequestDraft, scope: TemplateScope, ownAuth: boolean, savedAuthKind?: string, assistantVariables?: ReadonlySet<string>): string[] {
+export function credentialsOf(
+  draft: RequestDraft,
+  scope: TemplateScope,
+  ownAuth: boolean,
+  savedAuthKind?: string,
+  assistantVariables?: ReadonlySet<string>,
+  inherited?: InheritedAuth | null,
+  assistantContainers?: ReadonlySet<string>,
+): string[] {
   const out: string[] = []
   const authKind = savedAuthKind ?? draft.auth.kind
+  const sends = draft.auth.kind !== 'none' && draft.auth.kind !== 'inherit' && draft.auth.kind !== 'unsupported'
   if (draft.auth.kind === 'oauth2' || authKind === 'oauth2') out.push('its OAuth 2.0 token')
-  else if (!ownAuth && authKind !== 'none') out.push('its saved authorization')
+  else if (inherited) {
+    const src = inherited.source
+    const assistants = !!src && !!assistantContainers?.has(`${src.kind}:${src.id}`)
+    if (sends && !assistants) out.push(src ? `the authorization it inherits from the ${src.kind} “${src.name}”` : 'its inherited authorization')
+  } else if (!ownAuth && authKind !== 'none' && authKind !== 'inherit') out.push('its saved authorization')
   const isOwn = (v: VariableInfo) => !!assistantVariables?.has(v.key) && (v.source === undefined || v.source === 'environment')
   const secrets = findSecretsUsed(templateTexts(draft), scope)
     .filter((v) => !isOwn(v))
@@ -115,9 +141,9 @@ export function originDependsOn(url: string, scope: TemplateScope, keys: Readonl
 /**
  * Why this MCP send is refused (null: allowed). `draft` and `scope` are the ones after the pre-request scripts.
  */
-export function refusal(draft: RequestDraft, scope: TemplateScope, c: AssistantControl, savedAuthKind?: string): string | null {
+export function refusal(draft: RequestDraft, scope: TemplateScope, c: AssistantControl, savedAuthKind?: string, inherited?: InheritedAuth | null): string | null {
   if (c.reasons.length > 0) {
-    const creds = credentialsOf(draft, scope, c.ownAuth, savedAuthKind, c.assistantVariables)
+    const creds = credentialsOf(draft, scope, c.ownAuth, savedAuthKind, c.assistantVariables, inherited, c.assistantContainers)
     if (creds.length === 0) return null
     return (
       `“${draft.name}” would carry the user's credentials (${creds.join(' and ')}), and ${c.reasons.join('; ')}. ` +
@@ -126,7 +152,7 @@ export function refusal(draft: RequestDraft, scope: TemplateScope, c: AssistantC
     )
   }
   if (c.assistantVariables.size > 0 && !draft.mcp) {
-    const creds = credentialsOf(draft, scope, false, undefined, c.assistantVariables)
+    const creds = credentialsOf(draft, scope, false, undefined, c.assistantVariables, inherited, c.assistantContainers)
     if (creds.length === 0) return null
     const keys = originDependsOn(draft.url, scope, c.assistantVariables)
     if (keys.length === 0) return null
