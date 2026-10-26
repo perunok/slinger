@@ -25,8 +25,8 @@ afterEach(() => {
   ui.updateOpen = false
 })
 
-async function startWith(release: string | null, install?: Awaited<ReturnType<SlingerIpcApi['getUpdateInstallState']>>) {
-  backend.setLatestRelease(release)
+async function startWith(release: string | null, install?: Awaited<ReturnType<SlingerIpcApi['getUpdateInstallState']>>, notes?: string | null) {
+  backend.setLatestRelease(release, notes)
   if (install) vi.spyOn(backend, 'getUpdateInstallState').mockResolvedValue(install)
   stop = updates.start()
   await waitFor(() => expect(updates.install).not.toBeNull())
@@ -86,6 +86,45 @@ describe('Update Slinger', () => {
     expect(screen.getByTestId('update-unsupported')).toHaveTextContent('development build')
     expect(screen.getByRole('button', { name: 'View release' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Update now' })).toBeNull()
+  })
+})
+
+describe('release notes before installing', () => {
+  it('shows the new version’s notes as rendered Markdown before Update now', async () => {
+    await startWith('1.0.0', undefined, '### New\n- **Bold** feature\n\n[Docs](https://example.com/docs)')
+    ui.updateOpen = true
+    render(UpdateDialog)
+    const notes = screen.getByTestId('update-notes')
+    expect(notes).toHaveAccessibleName('What’s new in Slinger 1.0.0')
+    expect(notes.querySelector('h3')).toHaveTextContent('New')
+    expect(notes.querySelector('strong')).toHaveTextContent('Bold')
+    expect(screen.queryByTestId('update-notes-link')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
+    // Links leave through the system browser, never the app window.
+    const open = vi.spyOn(backend, 'openExternalUrl').mockResolvedValue(undefined)
+    await fireEvent.click(screen.getByRole('link', { name: 'Docs' }))
+    expect(open).toHaveBeenCalledWith('https://example.com/docs')
+  })
+
+  it('sanitises the notes: no scripts, handlers or remote images', async () => {
+    await startWith('1.0.0', undefined, '<script>window.pwned = 1</script><img src="https://evil.example/x.png" onerror="window.pwned = 2" alt="x"><a href="javascript:alert(1)">bad</a>')
+    ui.updateOpen = true
+    render(UpdateDialog)
+    const notes = screen.getByTestId('update-notes')
+    expect(notes.querySelector('script')).toBeNull()
+    expect(notes.querySelector('img[src^="https:"]')).toBeNull()
+    expect(notes.innerHTML).not.toMatch(/onerror|javascript:/)
+    expect((window as unknown as { pwned?: number }).pwned).toBeUndefined()
+  })
+
+  it('a release without notes links to its GitHub page instead', async () => {
+    await startWith('1.0.0', undefined, null)
+    ui.updateOpen = true
+    render(UpdateDialog)
+    expect(screen.queryByTestId('update-notes')).toBeNull()
+    const open = vi.spyOn(backend, 'openExternalUrl').mockResolvedValue(undefined)
+    await fireEvent.click(screen.getByRole('button', { name: 'See release notes on GitHub' }))
+    expect(open).toHaveBeenCalledWith('https://github.com/perunok/slinger/releases/tag/v1.0.0')
   })
 })
 

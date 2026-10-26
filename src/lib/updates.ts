@@ -23,6 +23,8 @@ export interface UpdatePrefs {
 export const DEFAULT_UPDATE_PREFS: UpdatePrefs = { auto: true, lastCheckedAt: null, latest: null, notified: null }
 
 const RELEASE_URL_PREFIX = 'https://github.com/perunok/slinger/releases/'
+/** Same cap as main's MAX_NOTES_CHARS (plus its cut marker); longer stored notes are dropped. */
+const MAX_STORED_NOTES = 20_010
 
 const isStableVersion = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && parseSemver(v)?.prerelease.length === 0
 
@@ -31,7 +33,8 @@ function parseRelease(v: unknown): ReleaseInfo | null {
   const o = v as Record<string, unknown>
   if (!isStableVersion(o.version) || typeof o.url !== 'string' || !o.url.startsWith(RELEASE_URL_PREFIX)) return null
   const publishedAt = typeof o.publishedAt === 'number' && Number.isFinite(o.publishedAt) ? o.publishedAt : null
-  return { version: o.version, url: o.url, publishedAt }
+  const notes = typeof o.notes === 'string' && o.notes.trim() && o.notes.length <= MAX_STORED_NOTES ? o.notes : null
+  return { version: o.version, url: o.url, publishedAt, notes }
 }
 
 /** Reads the stored preferences; anything missing or invalid falls back to the default field by field. */

@@ -2,12 +2,15 @@
   /**
    * Update Slinger: download the new release (progress, speed, time left, cancel), then "Restart to update". The work
    * happens in the main process (services/updateInstall.ts); this only shows `updates.install` and calls the store.
+   * The new version's release notes (the GitHub release body, curated from CHANGELOG.md at release) are shown before
+   * installing, through the same sanitising Markdown renderer as docs; without notes, a link to the release page.
    */
   import { ui } from '../../app/ui.svelte'
   import Button from '../../components/ui/Button.svelte'
   import Dialog from '../../components/ui/Dialog.svelte'
   import InfoTip from '../../components/ui/InfoTip.svelte'
   import InlineError from '../../components/ui/InlineError.svelte'
+  import MarkdownView from '../../components/markdown/MarkdownView.svelte'
   import { formatBytes } from '../../lib/response'
   import { updates } from './updates.svelte'
   import { methodNote, percent, timeLeft } from './progress'
@@ -16,6 +19,8 @@
   const version = $derived(s?.version ?? updates.available?.version ?? null)
   const busy = $derived(s?.phase === 'installing')
   const pct = $derived(s ? percent(s) : 0)
+  const release = $derived(updates.available ?? updates.latest)
+  const notes = $derived(release && (!version || release.version === version) ? release.notes : null)
 
   function close() {
     if (!busy) ui.updateOpen = false
@@ -27,7 +32,11 @@
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
       {#if version}
         <span><span class="font-medium">Slinger {version}</span>{updates.currentVersion ? ` · you have ${updates.currentVersion}` : ''}</span>
-        <button type="button" class="text-xs text-accent-text hover:underline" onclick={() => updates.openRelease(updates.available ?? updates.latest)}>Release notes</button>
+        {#if !notes}
+          <button type="button" class="text-xs text-accent-text hover:underline" data-testid="update-notes-link" onclick={() => updates.openRelease(release)}>
+            See release notes on GitHub
+          </button>
+        {/if}
       {:else}
         <span>{updates.currentVersion ? `You have Slinger ${updates.currentVersion}.` : ''}</span>
       {/if}
@@ -35,6 +44,12 @@
         <InfoTip label="How Slinger updates">{methodNote(s.method)}</InfoTip>
       {/if}
     </div>
+
+    {#if version && notes}
+      <section class="max-h-64 overflow-auto rounded border border-border px-3 py-2" aria-label="What’s new in Slinger {version}" data-testid="update-notes">
+        <MarkdownView source={notes} label="Release notes of Slinger {version}" />
+      </section>
+    {/if}
 
     {#if !s?.method}
       <p class="text-muted" data-testid="update-unsupported">{s?.unsupportedReason ?? 'This installation cannot update itself.'} Download the new version from the release page.</p>

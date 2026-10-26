@@ -1166,6 +1166,11 @@ export interface ReleaseInfo {
   url: string
   /** Unix seconds, or null when the feed did not say. */
   publishedAt: number | null
+  /**
+   * The release notes (the GitHub release body: Markdown, untrusted, capped in main at MAX_NOTES_CHARS), or null when the
+   * release has none. Shown only through the sanitising Markdown renderer.
+   */
+  notes: string | null
 }
 
 /** ADDED (update notice): answer of `checkForUpdates`. */

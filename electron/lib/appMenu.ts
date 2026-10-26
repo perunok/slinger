@@ -22,7 +22,6 @@ export const APP_NAME = 'Slinger'
 
 export const HELP_URLS = {
   userGuide: 'https://github.com/perunok/slinger/blob/master/docs/USER_GUIDE.md',
-  releaseNotes: 'https://github.com/perunok/slinger/releases',
   reportIssue: 'https://github.com/perunok/slinger/issues/new',
   license: 'https://github.com/perunok/slinger/blob/master/LICENSE',
 } as const
@@ -152,7 +151,8 @@ export function buildAppMenuTemplate(o: AppMenuOptions): MenuItemConstructorOpti
       link('User Guide', HELP_URLS.userGuide),
       command('Keyboard Shortcuts', 'shortcuts', shown('CmdOrCtrl+/')),
       separator,
-      link('Release Notes', HELP_URLS.releaseNotes),
+      // In the app (the bundled CHANGELOG.md), so it works offline.
+      command('Release Notes', 'releaseNotes'),
       command('Check for Updates…', 'checkForUpdates'),
       link('Report an Issue', HELP_URLS.reportIssue),
       separator,

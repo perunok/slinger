@@ -14,6 +14,7 @@ function resetUi() {
   ui.settingsOpen = false
   ui.shortcutsOpen = false
   ui.aboutOpen = false
+  ui.releaseNotes = null
   ui.closeImport()
   ui.exportCollectionId = null
   tabsStore.tabs = []
@@ -44,6 +45,15 @@ describe('menu commands in the renderer', () => {
     expect(ui.shortcutsOpen).toBe(true)
     expect(runMenuCommand('about')).toBe(true)
     expect(ui.aboutOpen).toBe(true)
+  })
+
+  it('Release Notes opens every release’s notes (not behind a modal dialog)', () => {
+    expect(runMenuCommand('releaseNotes')).toBe(true)
+    expect(ui.releaseNotes).toEqual({ mode: 'all' })
+    ui.releaseNotes = null
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"></div>'
+    expect(runMenuCommand('releaseNotes')).toBe(false)
+    expect(ui.releaseNotes).toBeNull()
   })
 
   it('Import opens the Import dialog empty', () => {
