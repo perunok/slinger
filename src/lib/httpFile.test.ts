@@ -93,6 +93,9 @@ describe('unresolvedInput', () => {
     const apiKey = unresolvedInput(draft({ auth: { ...emptyAuth(), kind: 'apiKey', apiKey: { key: 'key', value: '{{apiKey}}', addTo: 'query' } } }))
     expect(apiKey.auth.apiKey).toEqual({ key: 'key', value: '{{apiKey}}', addTo: 'query' })
     expect(unresolvedInput(draft({ url: ' {{base}}/x ' })).url).toBe('{{base}}/x')
+    // .http clients have no path variables: values go into the URL ({{variables}} kept), an empty one stays :name.
+    const pathVars = draft({ url: '{{base}}/u/:id/:other', pathVariables: [{ key: 'id', value: '{{userId}}', description: '' }] })
+    expect(unresolvedInput(pathVars).url).toBe('{{base}}/u/{{userId}}/:other')
     expect(unresolvedInput(draft({}), 'Folder / R').requestName).toBe('Folder / R')
   })
 

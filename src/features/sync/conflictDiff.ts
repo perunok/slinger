@@ -49,7 +49,7 @@ const FIELD_LABEL: Record<(typeof FIELDS)[number], string> = {
   body: 'Body',
   headers: 'Headers',
   auth: 'Authorization',
-  params: 'Disabled params',
+  params: 'Disabled params and path variables',
   mcp: 'MCP',
   description: 'Description',
   other: 'Other settings',

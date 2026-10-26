@@ -187,4 +187,10 @@ describe('drafts', () => {
     ])
     expect(d.body).toMatchObject({ kind: 'raw', rawLanguage: 'json' })
   })
+
+  it('keeps :name path segments as path variables (empty values)', () => {
+    const d = curlToDraft(one(`curl 'https://h.example:8443/users/:id/posts/:postId?x=1'`))
+    expect(d.url).toBe('https://h.example:8443/users/:id/posts/:postId?x=1')
+    expect(d.pathVariables).toEqual([{ key: 'id', value: '', description: '' }, { key: 'postId', value: '', description: '' }])
+  })
 })

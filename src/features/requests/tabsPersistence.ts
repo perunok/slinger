@@ -14,7 +14,7 @@
  * tabs are written, always including whichever was active.
  */
 import type { ApiFolder, ApiRequest, Collection, WorkflowSummary } from '../../../shared/types'
-import { draftFingerprint, newDraft, type RequestDraft } from '../../lib/request'
+import { draftFingerprint, newDraft, upgradeDraft, type RequestDraft } from '../../lib/request'
 import { exampleFingerprint, locateExample, parseExample, readExamples, type ExampleLocator, type ExampleResponseDraft, type ParsedExample } from '../../lib/examples'
 import type { ExampleSection, OverviewTarget, RequestSection } from './tabs.svelte'
 
@@ -337,7 +337,7 @@ export function restoreTabs(state: PersistedTabsState | null, data: RestoreDataS
 function restoreOne(p: PersistedTab, data: RestoreDataSource): RestoredTabInit | null {
   switch (p.kind) {
     case 'scratch':
-      return { kind: 'scratch', draft: p.draft, collectionId: p.collectionId, folderId: p.folderId, section: p.section }
+      return { kind: 'scratch', draft: upgradeDraft(p.draft), collectionId: p.collectionId, folderId: p.folderId, section: p.section }
 
     case 'workflow':
       return typeof p.workflowId === 'string' && (!data.workflows || data.workflows.some((w) => w.id === p.workflowId))
@@ -352,7 +352,7 @@ function restoreOne(p: PersistedTab, data: RestoreDataSource): RestoredTabInit |
     case 'request': {
       const server = data.requests.find((r) => r.id === p.requestId)
       if (!server) return null // request deleted (or gone via sync): dropped silently
-      return { kind: 'request', requestId: server.id, section: p.section, dirty: p.dirty ?? null }
+      return { kind: 'request', requestId: server.id, section: p.section, dirty: p.dirty ? { ...p.dirty, draft: upgradeDraft(p.dirty.draft) } : null }
     }
 
     case 'example': {
@@ -392,7 +392,7 @@ function restoreOne(p: PersistedTab, data: RestoreDataSource): RestoredTabInit |
         exampleIndex: example.index,
         dirty: {
           example,
-          draft: p.dirty.draft,
+          draft: upgradeDraft(p.dirty.draft),
           exampleDraft: p.dirty.exampleDraft,
           savedFingerprint: draftFingerprint(baseline.request),
           exampleSavedFingerprint: exampleFingerprint(baseline.response),

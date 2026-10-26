@@ -10,6 +10,7 @@ import { mcpDisplayUrl } from './mcpRequest'
 import { rawContentType, templateTexts, type AuthDraft, type RequestDraft } from './request'
 import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesChecked, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
+import { applyPathVariables, missingPathVariablesWarning } from './pathVariables'
 import { withDefaultScheme } from '../../shared/urlScheme'
 
 export type PrepareResult =
@@ -132,9 +133,12 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
   const rHistory = historyResolver(ctx, cache)
   const warnings: string[] = []
 
-  let url = normalizeUrl(r(draft.url))
-  const historyUrl = normalizeUrl(rHistory(draft.url))
+  // Path variables (`:name` segments) first, with their resolved, percent-encoded values; then the URL's own templates.
+  const withPath = applyPathVariables(draft.url, draft.pathVariables, r)
+  let url = normalizeUrl(r(withPath.url))
+  const historyUrl = normalizeUrl(rHistory(applyPathVariables(draft.url, draft.pathVariables, rHistory).url))
   if (!url) return { ok: false, unresolved: [], error: 'Enter a URL to send the request.' }
+  if (withPath.missing.length > 0) warnings.push(missingPathVariablesWarning(withPath.missing))
 
   const headers = dataRows(draft.headers)
     .filter((h) => h.enabled && h.key.trim())

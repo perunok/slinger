@@ -408,8 +408,9 @@ function parametersOf(draft: RequestDraft, pathParams: string[], fromSpec: boole
   const source = sourceRequest(draft.extras)
   const sourceUrl = source && isObj(source.url) ? source.url : null
 
-  // Path: Postman path variables (`url.variable`) carry values and descriptions.
+  // Path: the request's path variables (Postman `url.variable`) carry values and descriptions; then the imported item's.
   const pathVars = new Map<string, Json>()
+  for (const v of draft.pathVariables) if (!pathVars.has(v.key)) pathVars.set(v.key, { key: v.key, value: v.value, description: v.description })
   if (sourceUrl && Array.isArray(sourceUrl.variable)) {
     for (const v of sourceUrl.variable) if (isObj(v) && typeof v.key === 'string' && !pathVars.has(v.key)) pathVars.set(v.key, v)
   }

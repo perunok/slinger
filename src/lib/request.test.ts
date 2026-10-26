@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { dataRows, newRow } from './kv'
 import { makeScope } from './template'
 import { prepareRequest, secretsNeeded } from './prepare'
-import { draftFingerprint, newDraft, parseDocument, serializeDraft } from './request'
+import { draftFingerprint, newDraft, parseDocument, serializeDraft, upgradeDraft, type RequestDraft } from './request'
 import { newMcpRequestDraft } from './mcpRequest'
 
 const base = { name: 'R', method: 'POST', url: 'http://x/y?a=1' }
@@ -334,5 +334,68 @@ describe('OAuth 2.0 auth', () => {
   it('does not treat inherited object keys as settings', () => {
     const d = parseDocument({ ...base, documentJson: doc({ type: 'oauth2', oauth2: [{ key: 'toString', value: 'x' }, { key: '__proto__', value: 'y' }] }) })
     expect(d.auth.oauth2.extra.map((e) => e.key)).toEqual(['toString', '__proto__'])
+  })
+})
+
+describe('path variables', () => {
+  const scope = makeScope('Dev', [
+    { key: 'host', value: 'api.test', secret: false },
+    { key: 'id', value: '42', secret: false },
+    { key: 'tok', value: null, secret: true, id: 'v9' },
+  ])
+  const ctx = { workspaceId: 'w', scope, secrets: new Map([['tok', 'S3']]) }
+  const pv = (key: string, value = '', description = '') => ({ key, value, description })
+
+  it('are seeded from an imported item\'s url.variable, saved as pathVariables, and read back', () => {
+    const documentJson = JSON.stringify({
+      url: '{{host}}/pets/:petId/toys/:toyId',
+      source: { request: { url: { raw: '{{host}}/pets/:petId', variable: [{ key: 'petId', value: '1', description: 'The pet', type: 'any' }, { key: 'other', value: 'x' }] } } },
+    })
+    const d = parseDocument({ name: 'R', method: 'GET', url: '', documentJson })
+    expect(d.pathVariables).toEqual([pv('petId', '1', 'The pet'), pv('toyId')])
+    d.pathVariables = [pv('petId', '{{id}}', 'The pet'), pv('toyId', '7')]
+    const out = JSON.parse(serializeDraft(d).documentJson)
+    expect(out.pathVariables).toEqual([{ key: 'petId', value: '{{id}}', description: 'The pet' }, { key: 'toyId', value: '7' }])
+    expect(out.source.request.url.variable).toHaveLength(2)
+    expect(parseDocument({ name: 'R', method: 'GET', url: '', documentJson: JSON.stringify(out) }).pathVariables).toEqual(d.pathVariables)
+  })
+
+  it('newDraft (cURL and .http imports, MCP create_request) derives rows from the URL; no key is written without any', () => {
+    expect(newDraft({ url: 'http://x/users/:id' }).pathVariables).toEqual([pv('id')])
+    expect(JSON.parse(serializeDraft(newDraft({ url: 'http://x/users' })).documentJson)).not.toHaveProperty('pathVariables')
+    expect(newMcpRequestDraft('M').pathVariables).toEqual([])
+  })
+
+  it('are substituted when sending: resolved, URL-encoded, only whole path segments', () => {
+    const d = newDraft({ url: '{{host}}:8080/pets/:petId/:name?ref=:petId', pathVariables: [pv('petId', '{{id}}'), pv('name', 'a b/c')] })
+    const res = prepareRequest(d, ctx)
+    expect(res.ok && res.input.url).toBe('http://api.test:8080/pets/42/a%20b%2Fc?ref=:petId')
+    expect(res.ok && res.warnings).toEqual([])
+  })
+
+  it('an empty value keeps :name and warns; an unresolved variable in a value blocks the send', () => {
+    const empty = prepareRequest(newDraft({ url: '{{host}}/pets/:petId' }), ctx)
+    expect(empty.ok && empty.input.url).toBe('http://api.test/pets/:petId')
+    expect(empty.ok && empty.warnings.join(' ')).toContain(':petId')
+    const unresolved = prepareRequest(newDraft({ url: '{{host}}/pets/:petId', pathVariables: [pv('petId', '{{nope}}')] }), ctx)
+    expect(unresolved).toMatchObject({ ok: false, unresolved: ['nope'] })
+  })
+
+  it('history keeps secret values out of substituted path variables', () => {
+    const res = prepareRequest(newDraft({ url: '{{host}}/keys/:k', pathVariables: [pv('k', '{{tok}}')] }), ctx)
+    expect(res.ok && res.input.url).toBe('http://api.test/keys/S3')
+    expect(res.ok && res.input.historyUrl).toBe('http://api.test/keys/{{tok}}')
+    expect(secretsNeeded(newDraft({ url: '/keys/:k', pathVariables: [pv('k', '{{tok}}')] }), scope).map((v) => v.key)).toEqual(['tok'])
+  })
+
+  it('a draft persisted by an older version (no pathVariables) gets rows from its URL', () => {
+    const { pathVariables: _omit, ...old } = newDraft({ url: 'http://x/a/:id' })
+    expect(upgradeDraft(old as RequestDraft).pathVariables).toEqual([pv('id')])
+  })
+
+  it('a value for a name no longer in the URL is ignored', () => {
+    const d = newDraft({ url: '{{host}}/pets' })
+    d.pathVariables = [pv('gone', '{{nope}}')]
+    expect(prepareRequest(d, ctx).ok).toBe(true)
   })
 })

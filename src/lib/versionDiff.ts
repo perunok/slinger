@@ -167,7 +167,7 @@ export interface Rendered {
   body: string
   headers: string
   auth: string
-  /** Only disabled rows: enabled params are already part of the URL. */
+  /** Only disabled rows (enabled params are already part of the URL), then the path variables' values. */
   params: string
   /** MCP requests: transport, server command, operation, tool, arguments...; '' for HTTP requests. */
   mcp: string
@@ -185,7 +185,7 @@ export function render(r: Pick<SnapshotRequest, 'name' | 'method' | 'url' | 'doc
     body: d.mcp ? '' : renderBody(d),
     headers: renderRows(d.headers),
     auth: renderAuth(d),
-    params: renderRows(d.params.filter((p) => !p.enabled)),
+    params: [renderRows(d.params.filter((p) => !p.enabled)), ...d.pathVariables.map((v) => `path :${v.key}: ${v.value}`)].filter(Boolean).join('\n'),
     mcp: renderMcp(d),
     description: d.description,
     other: renderOther(d),

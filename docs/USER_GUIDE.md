@@ -123,7 +123,8 @@ endpoints, the cloud server address (`172.16.0.236:8088`) and OpenAPI document U
 
 The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **Scripts**, **Docs**, **Settings** and **Code**.
 
-- **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent.
+- **Params:** query parameters as a table; edits stay in sync with the URL. Disabled rows are kept but not sent. Below
+  them, **Path Variables** (see [Path variables](#path-variables)) when the URL has `:name` segments.
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
   the body mode and `User-Agent: Slinger`); a header you set yourself wins.
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
@@ -143,6 +144,24 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
   export folder (Downloads unless you chose another one in an export dialog).
+
+### Path variables
+
+As in Postman, a whole path segment written `:name` is a **path variable**: `{{baseUrl}}/pets/:petId` has the variable
+`petId`. Each one gets a row under **Params > Path Variables**, with its value and an optional description; typing or deleting
+`:name` in the URL adds or removes its row (values of the names that stay are kept), and the key itself is only edited in the
+URL. Values may contain `{{variables}}`.
+
+When the request is sent, each `:name` segment is replaced by its value, with `{{variables}}` resolved and the result
+URL-encoded (`a b/c` is sent as `a%20b%2Fc`). Only whole segments of the path count: not the host or port
+(`localhost:3000`), not `::name`, not text after `?` or `#`. A path variable without a value is sent as written (`:petId`) and
+the response shows a warning. The same values are used by the collection runner, workflows, the Code snippets (cURL and the
+others; `.http` exports put the values, `{{variables}}` kept, into the URL) and assistants (`send_request`).
+
+Path variables are imported from Postman (`url.variable`) and from OpenAPI documents (`/pets/{petId}` becomes `/pets/:petId`
+with the documented example as its value), exported to Postman as `url.variable` and to OpenAPI as path parameters, and a
+pasted cURL command with `:id` in its URL keeps it as a path variable. Mock servers treat a `:name` segment as a wildcard, as
+before.
 
 ### OAuth 2.0
 
@@ -890,7 +909,8 @@ collection name, then **Import API**. The new collection opens with its overview
 
 - one request per operation, named after its summary (else its operationId, else `GET /path`), deprecated ones marked;
 - URLs on `{{baseUrl}}` (a collection variable set to the first server URL; server variables such as `{region}` become
-  collection variables too), path parameters as `:petId` with an example value, query and header parameters (the required ones
+  collection variables too), path parameters as `:petId` path variables (see [Path variables](#path-variables)) with an
+  example value, query and header parameters (the required ones
   enabled, the others present but disabled), cookie parameters as a `Cookie` header;
 - the body as JSON (the document's first example, else one generated from the schema), a url-encoded form or a multipart form
   (file fields for binary properties), with `Content-Type` and `Accept` headers;
@@ -1315,6 +1335,9 @@ assistants and advanced**: copy a ready-made command setup (works with any assis
 
 Assistants can find, read, send and run [MCP requests](#mcp-requests) as saved (and rename, move or delete them), but cannot
 create or edit them, and a command (stdio) runs only after you allowed it in the window.
+
+Assistants read and set a request's [path variables](#path-variables) too (`path_variables` in `get_request`,
+`create_request`, `update_request` and, for one send, `send_request`).
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
 send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a

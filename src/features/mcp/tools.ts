@@ -32,6 +32,7 @@ import { editorCode, withScript } from '../../lib/scripts'
 import { compareSemver, parseSemver, sortVersionsDesc, suggestBumps, validateVersion } from '../../lib/semver'
 import { diffSnapshots, folderPath as snapshotFolderPath, snapshotFromCollection } from '../../lib/versionDiff'
 import { buildUrlFromParams, mergeParamsFromUrl } from '../../lib/urlParams'
+import { mergePathVariables, type PathVariable } from '../../lib/pathVariables'
 import { executeDraft, type ExecuteContext } from '../requests/execute'
 import { tabsStore } from '../requests/tabs.svelte'
 import { collectRunItems, summarize } from '../runner/runner'
@@ -211,6 +212,7 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
     method: d.method,
     url: d.url,
     query: rowsOut(d.params),
+    path_variables: d.pathVariables.map((v) => (v.description ? { key: v.key, value: v.value, description: v.description } : { key: v.key, value: v.value })),
     headers: rowsOut(d.headers),
     body: bodyOut(d),
     auth: authOut(d),
@@ -261,6 +263,19 @@ type RequestFields = Partial<McpToolArgs<'update_request'>>
 /** The request fields a tool can give (name, method, url, headers, ...). */
 const REQUEST_FIELD_KEYS = Object.keys(MCP_TOOLS.update_request.input.shape).filter((k) => k !== 'request_id')
 
+/** Sets the given path variables by key; each must be a `:name` segment of the request's URL. */
+function pathVariablesIn(d: RequestDraft, given: NonNullable<RequestFields['path_variables']>): PathVariable[] {
+  const rows = mergePathVariables(d.url, d.pathVariables)
+  for (const g of given) {
+    const row =
+      rows.find((r) => r.key === g.key) ??
+      fail(`The URL has no path variable "${g.key}"; write :${g.key} as a path segment of the URL (e.g. /pets/:${g.key}).`)
+    row.value = g.value
+    if (g.description !== undefined) row.description = g.description
+  }
+  return rows
+}
+
 /** Applies the given tool fields to a draft (what is not given stays). */
 function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
   if (f.name !== undefined) d.name = f.name
@@ -271,11 +286,13 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
   if (f.url !== undefined) {
     d.url = f.url
     d.params = mergeParamsFromUrl(f.url, d.params)
+    d.pathVariables = mergePathVariables(f.url, d.pathVariables)
   }
   if (f.query !== undefined) {
     d.params = rowsIn(f.query)
     d.url = buildUrlFromParams(d.url, d.params)
   }
+  if (f.path_variables !== undefined) d.pathVariables = pathVariablesIn(d, f.path_variables)
   if (f.headers !== undefined) d.headers = rowsIn(f.headers)
   if (f.body !== undefined) {
     const b = { ...emptyBody(), preserved: undefined }
