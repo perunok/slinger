@@ -516,7 +516,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     try { await window.slinger.renameWorkspace('not-a-uuid', 'x') } catch (e) {
       out.error = { isError: e instanceof Error, name: e.name, code: e.code, message: e.message }
     }
-    try { await window.slinger.secureStoreGet('slinger:env-var:x') } catch (e) { out.reserved = e.code }
+    out.noKeychainPassthrough = typeof window.slinger.secureStoreGet === 'undefined'
     try { await window.slinger.updateRequest({ requestId: '11111111-1111-4111-8111-111111111111', name: 'x', method: 'GET', url: '', documentJson: '{}', expectedVersion: 1 }) } catch (e) { out.notFound = e.code }
     out.csp = (await fetch(location.href)).headers.get('content-security-policy')
     const ws = (await window.slinger.listWorkspaces())[0]

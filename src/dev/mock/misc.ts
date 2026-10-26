@@ -8,9 +8,6 @@ type MiscApi = Pick<
   | 'defaultExportPath'
   | 'writeExportFile'
   | 'chooseExportDirectory'
-  | 'secureStoreGet'
-  | 'secureStoreSet'
-  | 'secureStoreDelete'
   | 'openExternalUrl'
   | 'prepareBrowserAuthCallback'
   | 'waitForBrowserAuthCallback'
@@ -31,7 +28,7 @@ type MiscApi = Pick<
   | 'showAppMenu'
   | 'pickFile'
   | 'grantedFiles'
-> & { resetSecureStore(): void; setLatestRelease(version: string | null): void }
+> & { setLatestRelease(version: string | null): void }
 
 const MOCK_VERSION = '0.0.0-dev'
 const TITLE_BAR_KEY = 'slinger.mock.titleBar'
@@ -44,27 +41,7 @@ function loadTitleBar(): TitleBarStyle {
   }
 }
 
-const STORAGE_KEY = 'slinger.mock.secureStore'
 const PICK_NAMES = ['sample-upload.png', 'report.pdf', 'data.csv']
-
-/** Dev-only persistence; the real app keeps these values in the OS keychain. */
-function loadSecure(): Map<string, string> {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    if (raw) return new Map(Object.entries(JSON.parse(raw) as Record<string, string>))
-  } catch {
-    /* storage unavailable: start empty */
-  }
-  return new Map()
-}
-
-function saveSecure(store: Map<string, string>): void {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(store)))
-  } catch {
-    /* in-memory only */
-  }
-}
 
 function download(fileName: string, contents: string, encoding: 'utf8' | 'base64'): void {
   if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
@@ -80,7 +57,6 @@ function download(fileName: string, contents: string, encoding: 'utf8' | 'base64
 }
 
 export function createMiscApi(): MiscApi {
-  let secure = loadSecure()
   let pickIndex = 0
   const granted = new Set<string>()
   let exportDir = '/home/user/Downloads'
@@ -109,17 +85,6 @@ export function createMiscApi(): MiscApi {
     async writeExportFile(fileName, contents, encoding = 'utf8') {
       if (!fileName.trim()) fail('invalid_input', 'File name must not be empty')
       download(fileName, contents, encoding)
-    },
-    async secureStoreGet(key) {
-      return secure.get(key) ?? null
-    },
-    async secureStoreSet(key, value) {
-      secure.set(key, value)
-      saveSecure(secure)
-    },
-    async secureStoreDelete(key) {
-      secure.delete(key)
-      saveSecure(secure)
     },
     async openExternalUrl(url) {
       // Same policy as the main process (services/externalUrl.ts): http, https and mailto only.
@@ -238,10 +203,6 @@ export function createMiscApi(): MiscApi {
       latestRelease = version
       if (updateTimer) clearTimeout(updateTimer)
       update = { ...update, phase: 'idle', version: null, received: 0, total: null, bytesPerSec: null, error: null }
-    },
-    resetSecureStore() {
-      secure = new Map()
-      saveSecure(secure)
     },
   }
 }

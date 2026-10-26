@@ -97,7 +97,7 @@ workspaces, environments (+ `revealEnvironmentVariable`), collections and folder
 requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `duplicateWorkflow`, `deleteWorkflow`; see
 [Workflows](#workflows)), mock servers (`startMockServer`, `updateMockServer`, `stopMockServer`, `listMockServers`,
 `getMockServerLog`, `clearMockServerLog`; see [Mock servers](#mock-servers)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
-`writeExportFile`, `chooseExportDirectory`), collection versions, secure store (`secureStoreGet/Set/Delete`),
+`writeExportFile`, `chooseExportDirectory`), collection versions,
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
 `revealOAuth2Token`; see [OAuth 2.0](#oauth-20-request-authorization)), `getAppVersion`, `getVersionInfo` (About dialog: app/Electron/Chromium/Node/V8 versions and OS platform/release/arch only),
@@ -232,9 +232,11 @@ array under the key `scripts` (the key the importer has always used, so existing
   is deleted with the variable (and with its workspace). The keychain is written after the row, inside the same transaction, so a
   refused write (read-only trigger, duplicate key) never changes a stored secret. Collection variables are never secret: they are
   exported and versioned with the collection (`isSecret: true` is rejected).
-- `secureStoreGet/Set/Delete` are a generic passthrough; the reserved prefixes (`RESERVED_SECRET_PREFIXES`) `slinger:env-var:`
-  and `slinger:global-var:` (secret variables), `slinger.cloud.tokens:` (cloud session tokens, `electron/cloud/`) and
-  `slinger:oauth2:` (OAuth 2.0 request tokens) are refused so the renderer cannot bypass the mask or read a token.
+- No generic keychain access over IPC: the former `secureStoreGet/Set/Delete` passthrough (unused by the renderer) was
+  removed in 0.27, because besides the reserved prefixes it reached `mcp.token` (the MCP server's bearer token),
+  `mcp-client.trusted` (the allowed MCP stdio commands) and `cloud.*`. Every entry (`slinger:env-var:`, `slinger:global-var:`,
+  `slinger.cloud.tokens:`, `slinger:oauth2:`, `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
+  written only by the main-process service that owns it.
 - OAuth 2.0 request tokens: `slinger:oauth2:<tokenKey>` holds `{access_token, token_type, expires_at, refresh_token, scope,
   obtained_at, workspace_id}`; `slinger:oauth2:index:<workspaceId>` lists a workspace's token keys so `deleteWorkspace`
   deletes them. Tokens never go to SQLite, history, documents, version snapshots, exports or sync (see below).

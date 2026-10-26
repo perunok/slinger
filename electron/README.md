@@ -105,9 +105,9 @@ false conflicts.
   `value: null, maskedValue: '••••••••'`. The only way to read one is
   `revealEnvironmentVariable(id)`. Deleting a variable, its environment or its workspace removes the
   keychain entries.
-* `secureStoreGet/Set/Delete` are a generic passthrough for other keys. The `slinger:env-var:` and
-  `slinger.cloud.tokens:` namespaces are refused there, so they cannot be used to bypass the mask or read
-  the cloud tokens (which only the main process uses).
+* There is no generic keychain passthrough over IPC (the former `secureStoreGet/Set/Delete` were removed in 0.27: they
+  could read the MCP bearer token and rewrite the allowed MCP stdio commands). Each keychain entry is read and written only
+  by the main-process service that owns it.
 * Collection version snapshots contain folders and requests only, never environments.
 * If the keychain is unavailable (e.g. headless Linux without a Secret Service) secret operations
   fail with `io_error`; the rest of the app keeps working.
@@ -117,7 +117,7 @@ false conflicts.
 Design and protocol: [../docs/SYNC_DESIGN.md](../docs/SYNC_DESIGN.md) (section 20 = implementation notes),
 overview in [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md#cloud-sync-main-process).
 
-* Tokens live only in the keychain (`slinger.cloud.tokens:<baseUrl>`, reserved: `secureStore*` refuses the prefix) and never
+* Tokens live only in the keychain (`slinger.cloud.tokens:<baseUrl>`) and never
   reach the renderer. Cloud calls never write request history.
 * Everything that changes a linked workspace's collections, folders, requests, environments, variables or versions is captured
   by triggers into `sync_dirty`; nothing in the repositories has to remember to call the engine. Writes to a read-only (viewer)

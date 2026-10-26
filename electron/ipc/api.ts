@@ -10,7 +10,6 @@ import { importPostmanCollection, replaceCollectionFromPostman } from '../servic
 import { extractFolderToCollection } from '../services/extractFolder'
 import { applyUpdate, linkSpec, planUpdateFrom } from '../openapi/update'
 import * as versions from '../services/collectionVersions'
-import { assertGenericSecureKey } from '../services/secrets'
 import { OAUTH2_GRANT_TYPES } from '../../shared/oauth2'
 import type { Core } from '../services/core'
 import { cssColorSchema } from '../lib/windowState'
@@ -716,13 +715,6 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     listMockServers: async (...a) => (parseArgs(z.tuple([]), a), core.mockServers.list()),
     getMockServerLog: async (...a) => core.mockServers.log(parseArgs(z.tuple([uuid]), a)[0]),
     clearMockServerLog: async (...a) => core.mockServers.clearLog(parseArgs(z.tuple([uuid]), a)[0]),
-
-    secureStoreGet: async (...a) => core.secrets.get(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
-    secureStoreSet: async (...a) => {
-      const [key, value] = parseArgs(z.tuple([z.string(), z.string().max(1_000_000)]), a)
-      core.secrets.set(assertGenericSecureKey(key), value)
-    },
-    secureStoreDelete: async (...a) => core.secrets.delete(assertGenericSecureKey(parseArgs(z.tuple([z.string()]), a)[0])),
 
     // Misc
     openExternalUrl: async (...a) => platform.openExternal(assertExternalUrl(parseArgs(z.tuple([z.string()]), a)[0])),

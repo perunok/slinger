@@ -1,9 +1,9 @@
 import { IpcError } from '../lib/errors'
-import { ioError, invalidInput } from '../lib/errors'
+import { ioError } from '../lib/errors'
 
 /** Keychain service name for every secret Slinger stores. */
 export const KEYCHAIN_SERVICE = 'Slinger'
-/** Keys under this prefix hold environment secrets and are unreachable via the generic passthrough. */
+/** Keys under this prefix hold environment secrets. */
 export const ENV_VAR_SECRET_PREFIX = 'slinger:env-var:'
 
 /** Cloud session tokens (electron/cloud/auth.ts) live under this prefix, keyed by API base URL. */
@@ -19,8 +19,11 @@ export const GLOBAL_VAR_SECRET_PREFIX = 'slinger:global-var:'
 
 export const globalVarSecretKey = (variableId: string): string => `${GLOBAL_VAR_SECRET_PREFIX}${variableId}`
 
-/** Namespaces the generic secureStore* passthrough refuses (variable secrets, cloud tokens, OAuth 2.0 tokens). */
-export const RESERVED_SECRET_PREFIXES = [ENV_VAR_SECRET_PREFIX, GLOBAL_VAR_SECRET_PREFIX, CLOUD_TOKEN_PREFIX, OAUTH2_TOKEN_PREFIX] as const
+/*
+ * There is deliberately no generic keychain access over IPC (the former secureStoreGet/Set/Delete): every keychain entry
+ * (variable secrets, cloud and OAuth 2.0 tokens, the MCP server's bearer token, the list of allowed MCP stdio commands) is
+ * read and written only by the main-process service that owns it.
+ */
 
 export interface SecretStore {
   get(key: string): string | null
@@ -107,18 +110,6 @@ export class KeychainSecretStore implements SecretStore {
       new this.Entry(this.service, key).deletePassword()
     })
   }
-}
-
-/** Validates a caller-supplied key for the generic secureStore* passthrough. */
-export function assertGenericSecureKey(key: unknown): string {
-  if (typeof key !== 'string' || key.length === 0 || key.length > 256) {
-    throw invalidInput('secure store key must be 1-256 characters')
-  }
-  const lower = key.toLowerCase()
-  if (RESERVED_SECRET_PREFIXES.some((p) => lower.startsWith(p))) {
-    throw invalidInput('this key namespace is reserved')
-  }
-  return key
 }
 
 /**

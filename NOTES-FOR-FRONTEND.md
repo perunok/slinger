@@ -117,8 +117,8 @@ that are not obvious from the types:
   server's value, which can arrive after the version was created); `null` = unknown (signed out, older version, older server; authors from teammates need Slinger Cloud 0.4.0 or newer). `id` is
   `null` for an author whose account was deleted; compare `id` with `getCloudSession().user.id` for "(you)" and never match `null`.
   A sync `applied` event for a `collection_version` can mean only the author changed.
-* `openExternalUrl` only accepts http/https. `secureStore*` cannot touch the reserved
-  `slinger:env-var:`, `slinger:global-var:`, `slinger.cloud.tokens:` and `slinger:oauth2:` key prefixes.
+* `openExternalUrl` only accepts http/https. There is no generic keychain access (the former `secureStore*` methods were
+  removed in 0.27): every keychain entry is owned by one main-process service.
 * Content-Security-Policy: `script-src 'self'` (no inline/eval scripts), no network access from the
   renderer (`connect-src 'self'`): all HTTP goes through `executeHttpRequest`. Inline styles and
   data:/blob: images/workers are allowed.

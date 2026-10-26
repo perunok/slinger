@@ -246,15 +246,6 @@ describe('IPC', () => {
     for (const call of bad) await expect(call()).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
-  it('the generic secure store cannot reach the globals secret namespace', async () => {
-    const { workspace } = await scaffold(env)
-    const g = await env.api.upsertGlobalVariable({ workspaceId: workspace.id, key: 't', value: 'v', isSecret: true })
-    const key = `slinger:global-var:${g.id}`
-    await expect(env.api.secureStoreGet(key)).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(env.api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(env.api.secureStoreDelete('SLINGER:GLOBAL-VAR:x')).rejects.toMatchObject({ code: 'invalid_input' })
-    expect(env.secrets.get(key)).toBe('v')
-  })
 })
 
 describe('import, export and versions', () => {

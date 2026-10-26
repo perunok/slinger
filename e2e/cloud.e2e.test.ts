@@ -47,9 +47,8 @@ describe.skipIf(!BASE)('cloud account and publish against slinger-admin', () => 
 
   it('signs in through the device flow (the renderer never sees tokens)', async () => {
     await signInThroughUi(page)
-    // The renderer cannot read the token keychain entries any more.
-    const leaked = await page.evaluate(async (base) => window.slinger.secureStoreGet(`slinger.cloud.tokens:${base}`).then(() => 'readable', () => 'blocked'), BASE!)
-    expect(leaked).toBe('blocked')
+    // The renderer has no keychain access at all.
+    expect(await page.evaluate(() => 'secureStoreGet' in window.slinger)).toBe(false)
   })
 
   it('publishes the local workspace: uploads its content and links it', async () => {

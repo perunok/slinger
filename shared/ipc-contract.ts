@@ -259,11 +259,6 @@ export interface SlingerIpcApi {
   getMockServerLog(collectionId: string): Promise<MockServerLogEntry[]>
   clearMockServerLog(collectionId: string): Promise<void>
 
-  // Secure storage (OS keychain), used by cloud.ts for tokens instead of localStorage
-  secureStoreGet(key: string): Promise<string | null>
-  secureStoreSet(key: string, value: string): Promise<void>
-  secureStoreDelete(key: string): Promise<void>
-
   // Misc
   openExternalUrl(url: string): Promise<void>
   prepareBrowserAuthCallback(): Promise<{ callbackId: string; redirectUrl: string }>
@@ -518,9 +513,6 @@ export const IPC_CHANNELS = [
   'listMockServers',
   'getMockServerLog',
   'clearMockServerLog',
-  'secureStoreGet',
-  'secureStoreSet',
-  'secureStoreDelete',
   'openExternalUrl',
   'prepareBrowserAuthCallback',
   'waitForBrowserAuthCallback',
