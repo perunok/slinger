@@ -12,6 +12,7 @@ import { restoreVersionHistory } from './versionHistory'
 import { variablesFromPostman, type CollectionVariableData } from '../../shared/postmanVariables'
 import { CollectionVariableRepository } from '../repositories/variables'
 import { stripOAuth2Tokens, stripOAuth2TokensFromItem } from '../../shared/oauth2'
+import { containerAuthFromPostman } from '../../shared/containerAuth'
 
 export const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_DEPTH = 100
@@ -30,6 +31,8 @@ interface FolderDraft {
   /** The folder's Postman `event` array (verbatim JSON), or null. */
   scriptsJson: string | null
   description: { text: string | null; type: DescriptionType | null }
+  /** The folder's Postman `auth` (JSON, no OAuth 2.0 token), or null to inherit (shared/containerAuth.ts). */
+  authJson: string | null
 }
 interface RequestDraft {
   folderTempId: number | null
@@ -69,12 +72,19 @@ export function countScripts(event: unknown): number {
   return n
 }
 
+/** A request's own Postman auth as stored: null (= inherit, Postman's absent auth) or the auth without OAuth 2.0 tokens. */
+export function requestAuth(auth: unknown): unknown {
+  if (!isObject(auth) || typeof auth.type !== 'string' || auth.type === 'inherit') return null
+  return stripOAuth2Tokens(auth)
+}
+
 /**
  * The request a Postman request item becomes (name, method, url and the stored document), or null when the item has no
- * `request`. `inheritedAuth` is the nearest folder/collection auth. Shared by the importer and OpenAPI updates
- * (electron/openapi/update.ts), so an updated request is shaped exactly like an imported one.
+ * `request`. Shared by the importer and OpenAPI updates (electron/openapi/update.ts), so an updated request is shaped
+ * exactly like an imported one. A request without its own auth keeps none (inherit): the folder/collection auth stays on
+ * the folder/collection and is looked up when it is sent.
  */
-export function requestFromPostmanItem(item: Json, inheritedAuth: unknown): { name: string; method: string; url: string; document: Json } | null {
+export function requestFromPostmanItem(item: Json): { name: string; method: string; url: string; document: Json } | null {
   if (!isObject(item.request)) return null
   const request = item.request
   const name = str(item.name) ?? 'Untitled Request'
@@ -92,9 +102,9 @@ export function requestFromPostmanItem(item: Json, inheritedAuth: unknown): { na
     description: request.description ?? null,
     headers: Array.isArray(request.header) ? request.header : [],
     body: mcp ? null : (request.body ?? null),
-    // Requests without their own auth inherit the nearest folder/collection auth, as in Postman. Postman
-    // embeds the current OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
-    auth: stripOAuth2Tokens(request.auth ?? inheritedAuth ?? null),
+    // No own auth = inherit the nearest folder/collection auth at send time, as in Postman. Postman embeds the current
+    // OAuth 2.0 access token in the auth; it is dropped (tokens live in the keychain only).
+    auth: requestAuth(request.auth),
     scripts: Array.isArray(item.event) ? item.event : [],
     responses: Array.isArray(item.response) ? item.response : [],
     source: stripOAuth2TokensFromItem(sourceItem),
@@ -104,13 +114,7 @@ export function requestFromPostmanItem(item: Json, inheritedAuth: unknown): { na
   return { name, method, url, document }
 }
 
-function collect(
-  items: unknown[],
-  parentTempId: number | null,
-  inheritedAuth: unknown,
-  depth: number,
-  out: Collected,
-): void {
+function collect(items: unknown[], parentTempId: number | null, depth: number, out: Collected): void {
   if (depth > MAX_DEPTH) throw invalidInput(`Postman collection is nested deeper than ${MAX_DEPTH} folders`)
   let folderOrder = 0
   let requestOrder = 0
@@ -119,12 +123,12 @@ function collect(
     if (Array.isArray(item.item)) {
       const tempId = out.nextTempId++
       out.folders.push({ tempId, parentTempId, name: str(item.name) ?? 'Untitled Folder', sortOrder: folderOrder++, scriptsJson: eventJson(item.event),
-        description: descriptionFromPostman(item.description) })
+        description: descriptionFromPostman(item.description), authJson: containerAuthFromPostman(item.auth, 'folder') })
       out.scriptCount += countScripts(item.event)
-      collect(item.item, tempId, item.auth ?? inheritedAuth, depth + 1, out)
+      collect(item.item, tempId, depth + 1, out)
       continue
     }
-    const request = requestFromPostmanItem(item, inheritedAuth)
+    const request = requestFromPostmanItem(item)
     if (!request) continue
     out.scriptCount += countScripts(item.event)
     out.requests.push({ folderTempId: parentTempId, ...request, sortOrder: requestOrder++ })
@@ -138,6 +142,8 @@ export interface ParsedPostmanCollection {
   postmanId: string | null
   scriptsJson: string | null
   description: { text: string | null; type: DescriptionType | null }
+  /** The collection's Postman `auth` (JSON, no OAuth 2.0 token), or null for none. */
+  authJson: string | null
   folders: FolderDraft[]
   requests: RequestDraft[]
   scriptCount: number
@@ -168,7 +174,7 @@ export function parsePostmanCollection(fileContents: string): ParsedPostmanColle
   }
   const info = isObject(parsed.info) ? parsed.info : {}
   const out: Collected = { folders: [], requests: [], nextTempId: 1, scriptCount: countScripts(parsed.event) }
-  collect(parsed.item, null, parsed.auth ?? null, 0, out)
+  collect(parsed.item, null, 0, out)
   if (out.requests.length === 0) throw invalidInput('No requests found in Postman collection')
   const postmanId = str(info._postman_id)
   return {
@@ -176,6 +182,7 @@ export function parsePostmanCollection(fileContents: string): ParsedPostmanColle
     postmanId: postmanId && postmanId.length <= MAX_POSTMAN_ID ? postmanId.toLowerCase() : null,
     scriptsJson: eventJson(parsed.event),
     description: descriptionFromPostman(info.description),
+    authJson: containerAuthFromPostman(parsed.auth, 'collection'),
     folders: out.folders,
     requests: out.requests,
     scriptCount: out.scriptCount,
@@ -197,15 +204,15 @@ function insertContent(db: Db, collection: CollectionRow, content: ParsedPostman
   const folderIds = new Map<number, string>()
   const insertFolder = db.prepare(
     `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
-       version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+       auth_json, version, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
   )
   // Drafts are produced parent-before-child, so parents are always inserted first.
   for (const f of content.folders) {
     const id = newId()
     insertFolder.run(id, collection.workspace_id, collection.id,
       f.parentTempId === null ? null : folderIds.get(f.parentTempId)!, f.name.slice(0, 200), f.sortOrder, f.scriptsJson,
-      f.description.text, f.description.type, now, now)
+      f.description.text, f.description.type, f.authJson, now, now)
     folderIds.set(f.tempId, id)
   }
   const insertRequest = db.prepare(
@@ -235,7 +242,7 @@ function replaceContent(db: Db, collection: CollectionRow, content: ParsedPostma
   const { folderIds, requestIds } = replaceCollectionContent(db, collection, {
     folders: content.folders.map((f) => ({
       key: String(f.tempId), parentKey: f.parentTempId === null ? null : String(f.parentTempId), name: f.name.slice(0, 200), sortOrder: f.sortOrder,
-      scriptsJson: f.scriptsJson, description: f.description.text, descriptionType: f.description.type,
+      scriptsJson: f.scriptsJson, description: f.description.text, descriptionType: f.description.type, authJson: f.authJson,
     })),
     requests: content.requests.map((r) => ({
       key: null, folderKey: r.folderTempId === null ? null : String(r.folderTempId), name: r.name.slice(0, 500), method: r.method.slice(0, 32),
@@ -264,11 +271,11 @@ export function importPostmanCollection(db: Db, workspaceId: string, fileContent
     const now = nowSeconds()
     const collectionId = newId()
     db.prepare(
-      `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, source_postman_id, version, deleted,
+      `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, auth_json, source_postman_id, version, deleted,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     ).run(collectionId, workspace.id, nameOverride ?? content.name, content.scriptsJson, content.description.text, content.description.type,
-      nameOverride ? null : content.postmanId, now, now)
+      content.authJson, nameOverride ? null : content.postmanId, now, now)
     const row = readCollection(db, collectionId)
     const { folders, requests } = insertContent(db, row, content, now)
     writeVariables(db, collectionId, content.variables)
@@ -292,7 +299,7 @@ const MAX_SOURCE_LABEL = 500
  * 2. the file's folders and requests are written in place: those that match a live folder / request by name (requests
  *    also by method) keep their id (workflow nodes, history, open tabs and synced copies keep working), the rest get
  *    new ids, and live ones without a match are soft-deleted (the sync dirty-set triggers propagate the changes);
- * 3. collection scripts, description, variables and `source_postman_id` are updated.
+ * 3. collection scripts, description, auth, variables and `source_postman_id` are updated.
  * The collection keeps its id, name and versions. Any failure (bad file, read-only workspace) changes nothing.
  */
 export function replaceCollectionFromPostman(
@@ -311,9 +318,9 @@ export function replaceCollectionFromPostman(
     const safetyVersion = createAutomaticVersion(db, collection.id, `re-import from ${label}`, author)
     const now = nowSeconds()
     db.prepare(
-      `UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, source_postman_id = COALESCE(?, source_postman_id),
+      `UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, auth_json = ?, source_postman_id = COALESCE(?, source_postman_id),
          updated_at = ?, version = version + 1 WHERE id = ?`,
-    ).run(content.scriptsJson, content.description.text, content.description.type, content.postmanId, now, collection.id)
+    ).run(content.scriptsJson, content.description.text, content.description.type, content.authJson, content.postmanId, now, collection.id)
     const row = readCollection(db, collection.id)
     const { folders, requests } = replaceContent(db, row, content, now)
     writeVariables(db, collection.id, content.variables)

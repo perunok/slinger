@@ -11,7 +11,7 @@ import { applyTx, getEntity, getLink } from '../../sync/store'
 import type { PushResponse } from '../../sync/types'
 import { FakeCloud } from './fakeCloud'
 import { DOC, liveState, makeDevice, pendingCount, settle, type Device } from './harness'
-import { checkLocalOnlyContract, checkRejectionContract, checkSnapshotOrderContract } from './wireContract'
+import { checkContainerAuthContract, checkLocalOnlyContract, checkRejectionContract, checkSnapshotOrderContract } from './wireContract'
 
 let cloud: FakeCloud
 let devices: Device[] = []
@@ -87,6 +87,11 @@ describe('wire contract', () => {
         throw new Error('not needed')
       },
     })
+  })
+
+  it('the fake server speaks container_auth (collection/folder auth) exactly like the real one', async () => {
+    const owner = cloud.createUser('ownerauth@contract.test')
+    await checkContainerAuthContract({ baseUrl: cloud.baseUrl, ownerToken: cloud.issueTokens(owner.id).accessToken, viewerToken: async () => '' })
   })
 
   it('the fake server rejects exactly like the real one (same assertions run in sync-it against slinger-admin)', async () => {

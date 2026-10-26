@@ -14,6 +14,7 @@ import { parseDocument, rawContentType, type RequestDraft } from './request'
 import { generateSnippet, HTTP_OAUTH2_TOKEN_VARIABLE } from './snippets'
 import type { TemplateScope } from './template'
 import { buildTree, type TreeNode } from './tree'
+import { withEffectiveAuth } from './authInheritance'
 
 export const HTTP_CLIENT_ENV_FILE = 'http-client.env.json'
 export const HTTP_CLIENT_PRIVATE_ENV_FILE = 'http-client.private.env.json'
@@ -83,6 +84,8 @@ export function unresolvedInput(draft: RequestDraft, name = draft.name): HttpReq
 
 export interface HttpFileExportInput {
   collectionName: string
+  /** The collection's auth (requests set to "inherit" are written with their folder's / collection's). */
+  collectionAuthJson?: string | null
   folders: ApiFolder[]
   requests: ApiRequest[]
 }
@@ -100,7 +103,8 @@ export interface HttpFileExport {
  * path keeps names unique for "run by name" and shows where the request lives). MCP requests are skipped and counted
  * (the file's header says how many).
  */
-export function exportHttpFile({ collectionName, folders, requests }: HttpFileExportInput): HttpFileExport {
+export function exportHttpFile({ collectionName, collectionAuthJson, folders, requests }: HttpFileExportInput): HttpFileExport {
+  const chain = { collection: { id: '', name: collectionName, authJson: collectionAuthJson ?? null }, folders }
   const blocks: string[] = []
   let usesOAuth2 = false
   let skippedMcp = 0
@@ -110,7 +114,7 @@ export function exportHttpFile({ collectionName, folders, requests }: HttpFileEx
         walk(n.children, [...path, n.folder.name])
         continue
       }
-      const draft = parseDocument(n.request)
+      const draft = withEffectiveAuth(parseDocument(n.request), { ...chain, folderId: n.request.folderId })
       if (draft.mcp) {
         skippedMcp++
         continue

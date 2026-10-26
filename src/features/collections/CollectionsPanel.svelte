@@ -177,7 +177,7 @@
       { label: 'Copy URL', icon: 'link', disabled: !r.url, action: () => void copyText(r.url, 'URL copied') },
       ...(isMcpMethod(r.method)
         ? []
-        : [{ label: 'Copy as cURL', icon: 'code', action: () => void copyAsCurl(parseDocument(r), { collectionId: r.collectionId, requestId: r.id }) }]),
+        : [{ label: 'Copy as cURL', icon: 'code', action: () => void copyAsCurl(parseDocument(r), { collectionId: r.collectionId, folderId: r.folderId, requestId: r.id }) }]),
     ]
   }
 

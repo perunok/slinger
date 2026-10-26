@@ -72,6 +72,25 @@ describe('reading', () => {
   })
 })
 
+describe('inherited auth', () => {
+  it('get_request names where an inherited auth comes from and shows it masked; get_tree shows container auth types', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    await window.slinger.setCollectionAuth(demo.id, JSON.stringify({ type: 'bearer', bearer: [{ key: 'token', value: 'sk_live_container' }] }))
+    await app.reloadCollections()
+    const { created } = await call('create_request', { collection_id: demo.id, name: 'Inherits', method: 'GET', url: 'https://x', auth: { type: 'inherit' } })
+    expect(created.auth).toEqual({ type: 'inherit' })
+    const got = await call('get_request', { request_id: created.id })
+    expect(got.auth).toEqual({
+      type: 'inherit',
+      inherited_from: { kind: 'collection', id: demo.id, name: 'Demo API' },
+      effective: { type: 'bearer', token: '•••• (set, hidden)' },
+    })
+    expect(JSON.stringify(got)).not.toContain('sk_live_container')
+    const tree = await call('get_tree', { collection_id: demo.id })
+    expect(tree.collections[0].auth).toBe('bearer')
+  })
+})
+
 describe('editing requests', () => {
   it('creates a request with headers, query, JSON body, auth and scripts; the window shows it; literal secrets are masked', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!

@@ -36,7 +36,10 @@ export interface RequestShape {
   url: string
   document: Json
 }
-/** Item -> stored request, with the auth it inherits from the collection (the mock importer ignores it). */
+/**
+ * Item -> stored request. `inheritedAuth` (the collection's) is not copied into the request: requests without their own
+ * auth inherit it at send time (container auth); the argument is informational.
+ */
 export type ItemToRequest = (item: Json, inheritedAuth: Json | null) => RequestShape | null
 
 /** What a document generates: the items by operation key, the auth requests inherit, the collection variables. */
@@ -73,6 +76,8 @@ export interface PlanInput {
   folders: LiveFolder[]
   /** Collection variables (key, value). */
   variables: Array<{ key: string; value: string }>
+  /** The collection's stored auth (Postman `auth` object, null for none); undefined: not known, never changed. */
+  collectionAuth?: Json | null
   toRequest: ItemToRequest
 }
 
@@ -94,6 +99,8 @@ export interface PlanCore {
   baseUrl: string | null
   /** Collection variables the document needs that the collection lacks. */
   newVariables: Array<{ key: string; value: string; description: string }>
+  /** New collection auth (null: none); undefined: leave it. */
+  collectionAuth?: Json | null
 }
 
 export type Choice = 'apply' | 'keep' | 'delete' | 'skip'
@@ -299,7 +306,20 @@ export function planChanges(input: PlanInput): PlanCore {
   const have = new Set(input.variables.map((v) => v.key))
   const newVariables = next.variables.filter((v) => !have.has(v.key))
   if (newVariables.length) notes.push(`New ${newVariables.length === 1 ? 'variable' : 'variables'}: ${newVariables.map((v) => v.key).join(', ')}`)
-  return { ops, notes, warnings: [...new Set(warnings)], baseUrl, newVariables }
+  // The collection's auth (what requests without their own inherit) follows the document unless it was changed here.
+  // A collection without any (older imports copied it into every request) takes the document's.
+  let collectionAuth: Json | null | undefined
+  if (input.collectionAuth !== undefined && authKey(input.collectionAuth) !== authKey(next.collectionAuth)) {
+    const current = input.collectionAuth
+    const label = (a: Json | null) => (a && typeof a.type === 'string' ? a.type : 'none')
+    if (current === null || (previous && authKey(current) === authKey(previous.collectionAuth))) {
+      collectionAuth = next.collectionAuth
+      notes.push(`Collection authorization: ${label(current)} -> ${label(next.collectionAuth)}`)
+    } else {
+      notes.push(`Collection authorization in the document: ${label(next.collectionAuth)}. The collection keeps ${label(current)} (it was changed here).`)
+    }
+  }
+  return { ops, notes, warnings: [...new Set(warnings)], baseUrl, newVariables, ...(collectionAuth !== undefined ? { collectionAuth } : {}) }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -385,6 +405,8 @@ export interface PlanWrites {
   kept: number
   baseUrl: string | null
   variables: Array<{ key: string; value: string; description: string }>
+  /** New collection auth (null: none); undefined: leave it. */
+  collectionAuth?: Json | null
 }
 
 const ALLOWED: Record<OpenApiPlannedChange['kind'], readonly Choice[]> = {
@@ -396,7 +418,10 @@ const ALLOWED: Record<OpenApiPlannedChange['kind'], readonly Choice[]> = {
 
 /** The writes for `choices` (missing keys: the default). Throws `Error` with a message for an impossible choice. */
 export function writesFor(input: PlanInput, core: PlanCore, choices: Readonly<Record<string, Choice>>): PlanWrites {
-  const out: PlanWrites = { add: [], update: [], link: [], remove: [], kept: 0, baseUrl: core.baseUrl, variables: core.newVariables }
+  const out: PlanWrites = {
+    add: [], update: [], link: [], remove: [], kept: 0, baseUrl: core.baseUrl, variables: core.newVariables,
+    ...(core.collectionAuth !== undefined ? { collectionAuth: core.collectionAuth } : {}),
+  }
   for (const op of core.ops) {
     const c = op.change
     const choice = choices[c.key] ?? c.defaultChoice

@@ -141,6 +141,11 @@ export interface SlingerIpcApi {
   trustCollectionScripts(collectionId: string): Promise<void>
   /** ADDED (docs): replaces the collection's description text (null or blank clears it; the stored type is kept). Local-only. */
   setCollectionDescription(collectionId: string, description: string | null): Promise<Collection>
+  /**
+   * ADDED (container auth): replaces the collection's auth (Postman `auth` object as JSON text; null or '{"type":"noauth"}'
+   * = no auth). OAuth 2.0 tokens are stripped. Requests set to "inherit" use it at send time.
+   */
+  setCollectionAuth(collectionId: string, authJson: string | null): Promise<Collection>
 
   // Folders
   listFolders(collectionId: string): Promise<ApiFolder[]>
@@ -154,6 +159,8 @@ export interface SlingerIpcApi {
   setFolderScripts(folderId: string, scriptsJson: string | null): Promise<ApiFolder>
   /** ADDED (docs): replaces the folder's description text (see setCollectionDescription). Local-only. */
   setFolderDescription(folderId: string, description: string | null): Promise<ApiFolder>
+  /** ADDED (container auth): replaces the folder's auth (null = inherit from the parent; '{"type":"noauth"}' = no auth). */
+  setFolderAuth(folderId: string, authJson: string | null): Promise<ApiFolder>
 
   // Requests
   listRequests(collectionId: string): Promise<ApiRequest[]>
@@ -497,6 +504,7 @@ export const IPC_CHANNELS = [
   'setCollectionScripts',
   'trustCollectionScripts',
   'setCollectionDescription',
+  'setCollectionAuth',
   'listFolders',
   'createFolder',
   'renameFolder',
@@ -505,6 +513,7 @@ export const IPC_CHANNELS = [
   'deleteFolder',
   'setFolderScripts',
   'setFolderDescription',
+  'setFolderAuth',
   'listRequests',
   'createRequest',
   'updateRequest',

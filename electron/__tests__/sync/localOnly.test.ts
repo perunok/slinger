@@ -18,9 +18,9 @@ describe('mapping', () => {
   it('collection/folder extras follow the link features', () => {
     expect(toWire('collection', col, NO_FEATURES)).toEqual({ name: 'C' })
     expect(toWire('collection', col, new Set(['docs']))).toEqual({ name: 'C', description: '# D', description_type: 'text/markdown' })
-    expect(toWire('collection', col, ALL_FEATURES)).toEqual({ name: 'C', scripts_json: SCRIPT('a'), description: '# D', description_type: 'text/markdown' })
+    expect(toWire('collection', col, ALL_FEATURES)).toEqual({ name: 'C', scripts_json: SCRIPT('a'), description: '# D', description_type: 'text/markdown', auth_json: null })
     expect(toWire('folder', { collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 1, scripts_json: null, description: null, description_type: 'bogus' } as AnyRow, ALL_FEATURES))
-      .toEqual({ collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 1, scripts_json: null, description: null, description_type: null })
+      .toEqual({ collection_id: 'c', parent_folder_id: null, name: 'F', sort_order: 1, scripts_json: null, description: null, description_type: null, auth_json: null })
   })
 
   it('variables: collection variables are never secret, a secret global never carries its value', () => {
@@ -31,7 +31,7 @@ describe('mapping', () => {
   })
 
   it('incoming payloads: missing enabled fields are null, disabled ones are dropped', () => {
-    expect(normalizeIncoming('collection', { name: 'C' }, ALL_FEATURES)).toEqual({ name: 'C', scripts_json: null, description: null, description_type: null })
+    expect(normalizeIncoming('collection', { name: 'C' }, ALL_FEATURES)).toEqual({ name: 'C', scripts_json: null, description: null, description_type: null, auth_json: null })
     expect(normalizeIncoming('folder', { name: 'F', scripts_json: 'x', description: 'd' }, new Set(['folder_scripts'])))
       .toEqual({ name: 'F', scripts_json: 'x' })
     const same = { name: 'E' }
@@ -46,7 +46,7 @@ describe('mapping', () => {
     expect(checkLimits('global_variable', { key: 'any name / with: spaces', value: 'v' })).toBeNull()
     expect(checkLimits('collection_variable', { key: 'k', value: 'v'.repeat(1_000_001) })).toMatch(/longer than/)
     expect(groupsOf('folder', NO_FEATURES).map(([g]) => g)).toEqual(['name', 'location', 'order'])
-    expect(groupsOf('folder', ALL_FEATURES).map(([g]) => g)).toEqual(['name', 'location', 'order', 'scripts', 'docs'])
+    expect(groupsOf('folder', ALL_FEATURES).map(([g]) => g)).toEqual(['name', 'location', 'order', 'scripts', 'docs', 'auth'])
   })
 })
 

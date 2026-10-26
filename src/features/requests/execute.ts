@@ -2,6 +2,7 @@
  * Runs one draft exactly the way a manual "Send" does, so request tabs and the collection runner behave
  * identically:
  *
+ *   0. an `inherit` auth becomes the nearest folder's / the collection's (src/lib/authInheritance.ts);
  *   1. pre-request scripts (collection -> folders -> request) run in the main-process sandbox; environment,
  *      collection variable and global writes are persisted there, request mutations apply to an outgoing COPY of
  *      the draft only;
@@ -50,6 +51,7 @@ import { app, collectionVariableInfos, envVariableInfo, globalVariableInfos } fr
 import { api, errorInfo } from '../../lib/ipc'
 import { prepareMcp, prepareRequest, secretsNeeded, withMcpOAuth2Token, type McpPreparedCall } from '../../lib/prepare'
 import type { RequestDraft } from '../../lib/request'
+import { resolveEffectiveAuth, type AuthChain } from '../../lib/authInheritance'
 import {
   applyRequestData,
   emptyScriptOutput,
@@ -274,6 +276,12 @@ function scriptsOf(draft: RequestDraft, s: SendScope, folderId: string | null, e
   })
 }
 
+/** The folders and collection an `inherit` auth is looked up in (src/lib/authInheritance.ts), from the loaded tree. */
+export function authChainFor(collectionId: string | null | undefined, folderId: string | null | undefined): AuthChain | null {
+  if (!collectionId) return null
+  return { collection: app.collections.find((c) => c.id === collectionId) ?? null, folders: app.foldersOf(collectionId), folderId: folderId ?? null }
+}
+
 export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Promise<ExecuteOutcome> {
   if (ctx.source !== 'mcp') return executeOnce(input, ctx, null)
   const run = ctx.run ?? newScriptRun()
@@ -300,7 +308,7 @@ async function ensureScriptTrust(e: unknown, ctx: ExecuteContext): Promise<void>
   await api().trustCollectionScripts(collectionId)
 }
 
-async function executeOnce(input: RequestDraft, ctx: ExecuteContext, sensitive: Sensitive | null): Promise<ExecuteOutcome> {
+async function executeOnce(original: RequestDraft, ctx: ExecuteContext, sensitive: Sensitive | null): Promise<ExecuteOutcome> {
   const scripts = emptyScriptOutput()
   const run = ctx.run ?? newScriptRun()
   const runId = uuid()
@@ -315,6 +323,10 @@ async function executeOnce(input: RequestDraft, ctx: ExecuteContext, sensitive: 
     const what = send.environment === null ? `the environment "${send.environmentName ?? ''}"` : 'the variables'
     return { ok: false, kind: 'failed', error: `Could not read ${what}: ${errorInfo(e).message}`, scripts }
   }
+  // An inherited auth is resolved first (from this send's own folders and collection), so scripts (pm.request.auth),
+  // templates, secrets and the assistant policy see the auth that is sent.
+  const authInfo = resolveEffectiveAuth(original.auth, { collection: send.containers?.collection ?? null, folders: send.containers?.folders ?? [], folderId: ctx.folderId ?? null })
+  const input: RequestDraft = authInfo.inherited ? { ...original, auth: authInfo.auth } : original
 
   // An AI assistant's send: what it controls (lib/assistantPolicy.ts). Fails closed when the changes cannot be read.
   let control: AssistantControl | null = null

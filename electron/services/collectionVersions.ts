@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { stripOAuth2TokensFromDocumentJson } from '../../shared/oauth2'
+import { cleanContainerAuthJson } from '../../shared/containerAuth'
 import type {
   Collection,
   CollectionSnapshot,
@@ -52,6 +53,8 @@ export const snapshotSchema = z.object({
   // Descriptions (migration 0006) likewise.
   collectionDescription: z.string().nullish(),
   collectionDescriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
+  // Collection/folder auth (migration 0018) likewise; older snapshots restore with none (their requests carry their own).
+  collectionAuthJson: z.string().nullish(),
   // Collection variables (migration 0008) likewise; older snapshots restore with none.
   collectionVariables: z
     .array(
@@ -73,6 +76,7 @@ export const snapshotSchema = z.object({
       scriptsJson: z.string().nullish(),
       description: z.string().nullish(),
       descriptionType: z.enum(['text/markdown', 'text/plain']).nullish(),
+      authJson: z.string().nullish(),
     }),
   ),
   requests: z.array(
@@ -195,6 +199,7 @@ export function createCollectionVersion(
       ...(f.scripts_json ? { scriptsJson: f.scripts_json } : {}),
       ...(f.description ? { description: f.description } : {}),
       ...(f.description && descriptionTypeOf(f.description_type) ? { descriptionType: descriptionTypeOf(f.description_type) } : {}),
+      ...(f.auth_json ? { authJson: snapshotAuth(f.auth_json, 'folder') } : {}),
     }))
     const requests = (
       db
@@ -214,6 +219,7 @@ export function createCollectionVersion(
     const snapshot: CollectionSnapshot = {
       collectionName: collection.name,
       ...(collection.scripts_json ? { collectionScriptsJson: collection.scripts_json } : {}),
+      ...(collection.auth_json ? { collectionAuthJson: snapshotAuth(collection.auth_json, 'collection') } : {}),
       ...(collection.description ? { collectionDescription: collection.description } : {}),
       ...(collection.description && descriptionTypeOf(collection.description_type)
         ? { collectionDescriptionType: descriptionTypeOf(collection.description_type) }
@@ -280,6 +286,12 @@ export function createAutomaticVersion(db: Db, collectionId: string, what: strin
   return version
 }
 
+/** Stored container auth as a snapshot keeps it (validated, never an OAuth 2.0 token); null when unusable. */
+function snapshotAuth(json: string | null | undefined, level: 'collection' | 'folder'): string | null {
+  const r = cleanContainerAuthJson(json ?? null, level)
+  return r.ok ? r.json : null
+}
+
 /** The collection description columns a snapshot restores (older snapshots have none: restoring clears it). */
 function snapshotDescription(snapshot: CollectionSnapshot): [string | null, string | null] {
   const text = snapshot.collectionDescription ?? null
@@ -296,6 +308,7 @@ function materialize(db: Db, collection: CollectionRow, snapshot: CollectionSnap
     folders: snapshot.folders.map((f) => ({
       key: f.id, parentKey: f.parentFolderId, name: f.name, sortOrder: f.sortOrder, scriptsJson: f.scriptsJson ?? null,
       description: f.description ?? null, descriptionType: f.description ? (f.descriptionType ?? null) : null,
+      authJson: snapshotAuth(f.authJson, 'folder'),
     })),
     requests: snapshot.requests.map((r) => ({
       key: r.id, folderKey: r.folderId, name: r.name, method: r.method, url: r.url, documentJson: r.documentJson, sortOrder: r.sortOrder,
@@ -318,10 +331,11 @@ export function restoreCollectionVersion(
     if (mode === 'copy') {
       const id = newId()
       db.prepare(
-        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, version, deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+        `INSERT INTO collections (id, workspace_id, name, scripts_json, description, description_type, auth_json, version, deleted, created_at,
+           updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
       ).run(id, source.workspace_id, `${snapshot.collectionName} (v${row.version})`.slice(0, 200), snapshot.collectionScriptsJson ?? null,
-        ...snapshotDescription(snapshot), now, now)
+        ...snapshotDescription(snapshot), snapshotAuth(snapshot.collectionAuthJson, 'collection'), now, now)
       const created = db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as CollectionRow
       copyCollectionTrust(db, source.id, id)
       materialize(db, created, snapshot, now)
@@ -331,8 +345,8 @@ export function restoreCollectionVersion(
     // In place: requests keep their ids, so workflows, history, open tabs and synced copies keep pointing at them.
     materialize(db, source, snapshot, now)
     restoreVariables(db, source.id, snapshot)
-    db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, updated_at = ?, version = version + 1 WHERE id = ?')
-      .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), now, source.id)
+    db.prepare('UPDATE collections SET scripts_json = ?, description = ?, description_type = ?, auth_json = ?, updated_at = ?, version = version + 1 WHERE id = ?')
+      .run(snapshot.collectionScriptsJson ?? null, ...snapshotDescription(snapshot), snapshotAuth(snapshot.collectionAuthJson, 'collection'), now, source.id)
     return toCollection(db.prepare('SELECT * FROM collections WHERE id = ?').get(source.id) as CollectionRow)
   })()
 }

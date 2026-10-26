@@ -31,6 +31,8 @@ export interface FolderSpec {
   scriptsJson: string | null
   description: string | null
   descriptionType: string | null
+  /** Folder auth (Postman `auth` JSON, container auth 0018); null = inherit. */
+  authJson: string | null
 }
 
 export interface RequestSpec {
@@ -72,12 +74,12 @@ export function replaceCollectionContent(
 
   const insertFolder = db.prepare(
     `INSERT INTO folders (id, workspace_id, collection_id, parent_folder_id, name, sort_order, scripts_json, description, description_type,
-       version, deleted, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+       auth_json, version, deleted, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
   )
   const updateFolder = db.prepare(
-    `UPDATE folders SET parent_folder_id = ?, name = ?, sort_order = ?, scripts_json = ?, description = ?, description_type = ?, deleted = 0,
-       version = version + 1, updated_at = ? WHERE id = ?`,
+    `UPDATE folders SET parent_folder_id = ?, name = ?, sort_order = ?, scripts_json = ?, description = ?, description_type = ?, auth_json = ?,
+       deleted = 0, version = version + 1, updated_at = ? WHERE id = ?`,
   )
   const findFolder = (f: FolderSpec, parentId: string | null): FolderRow | undefined => {
     if (match === 'id') {
@@ -99,12 +101,14 @@ export function replaceCollectionContent(
       if (row) {
         usedFolders.add(row.id)
         const same = row.deleted === 0 && row.parent_folder_id === parentId && row.name === f.name && row.sort_order === f.sortOrder &&
-          row.scripts_json === f.scriptsJson && row.description === f.description && row.description_type === f.descriptionType
-        if (!same) updateFolder.run(parentId, f.name, f.sortOrder, f.scriptsJson, f.description, f.descriptionType, now, row.id)
+          row.scripts_json === f.scriptsJson && row.description === f.description && row.description_type === f.descriptionType &&
+          (row.auth_json ?? null) === f.authJson
+        if (!same) updateFolder.run(parentId, f.name, f.sortOrder, f.scriptsJson, f.description, f.descriptionType, f.authJson, now, row.id)
         folderIds.set(f.key, row.id)
       } else {
         const id = newId()
-        insertFolder.run(id, collection.workspace_id, collection.id, parentId, f.name, f.sortOrder, f.scriptsJson, f.description, f.descriptionType, now, now)
+        insertFolder.run(id, collection.workspace_id, collection.id, parentId, f.name, f.sortOrder, f.scriptsJson, f.description, f.descriptionType, f.authJson,
+          now, now)
         folderIds.set(f.key, id)
       }
       pending.splice(i, 1)

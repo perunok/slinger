@@ -357,6 +357,8 @@ const extractFolderInput = z.object({
   copyCollectionVariables: z.boolean(),
 })
 const description = z.string().max(4 * 1024 * 1024).nullable()
+/** ADDED (container auth): Postman `auth` JSON of a collection/folder; validated and token-stripped by the repository. */
+const authJson = z.string().max(2 * 1024 * 1024).nullable()
 
 /** Parses `args` against a tuple schema and turns zod failures into invalid_input errors. */
 function parseArgs<T extends z.ZodType>(schema: T, args: unknown[]): z.infer<T> {
@@ -622,6 +624,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [id, text] = parseArgs(z.tuple([uuid, description]), a)
       return core.collections.setDescription(id, text)
     },
+    setCollectionAuth: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, authJson]), a)
+      return core.collections.setAuth(id, json)
+    },
 
     // Folders
     listFolders: async (...a) => core.folders.list(parseArgs(z.tuple([uuid]), a)[0]),
@@ -640,6 +646,10 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
     setFolderDescription: async (...a) => {
       const [id, text] = parseArgs(z.tuple([uuid, description]), a)
       return core.folders.setDescription(id, text)
+    },
+    setFolderAuth: async (...a) => {
+      const [id, json] = parseArgs(z.tuple([uuid, authJson]), a)
+      return core.folders.setAuth(id, json)
     },
 
     // Requests

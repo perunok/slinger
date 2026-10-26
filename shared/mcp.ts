@@ -33,7 +33,7 @@ const body = z
   .describe('Request body. Omit to keep the current one.')
 const auth = z
   .object({
-    type: z.enum(['none', 'basic', 'bearer', 'apikey']),
+    type: z.enum(['inherit', 'none', 'basic', 'bearer', 'apikey']).describe('inherit = use the folder\'s or collection\'s auth (the default for new requests).'),
     username: z.string().max(4096).optional(),
     password: z.string().max(4096).optional(),
     token: z.string().max(65536).optional(),
@@ -115,7 +115,8 @@ export const MCP_TOOLS = {
     description:
       'Collections with their folders and requests (ids, type, method, URL) in sidebar order. Use the ids with the other tools. ' +
       'type "mcp" marks an MCP request (method MCP): it calls a tool, reads a resource or gets a prompt on an MCP server; its ' +
-      'URL is the server URL, or the command line of a local (stdio) server.',
+      'URL is the server URL, or the command line of a local (stdio) server. A collection or folder with its own auth has `auth` ' +
+      '(its type only); requests set to inherit use it.',
     input: z.object({ workspace_id: optWorkspace, collection_id: id.optional().describe('Only this collection.') }),
     readOnly: true,
   },
@@ -133,7 +134,8 @@ export const MCP_TOOLS = {
       'For an MCP request (type "mcp"): the transport (http = Streamable HTTP, sse, stdio = a local command), the server URL ' +
       'with headers and auth, or the command, args, environment variable names (values hidden) and cwd; then the operation ' +
       '(tools/call, resources/read or prompts/get) with its tool and arguments (JSON text), resource URI, or prompt and ' +
-      'arguments. Literal credentials are masked.',
+      'arguments. Literal credentials are masked. Auth type "inherit" uses the nearest folder\'s or the collection\'s auth: ' +
+      '`inherited_from` names it and `effective` shows it (masked too).',
     input: z.object({ request_id: id }),
     readOnly: true,
   },

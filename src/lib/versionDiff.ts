@@ -95,6 +95,8 @@ function renderBody(d: RequestDraft): string {
 function renderAuth(d: RequestDraft): string {
   const a = d.auth
   switch (a.kind) {
+    case 'inherit':
+      return 'inherit from parent'
     case 'none':
       return 'none'
     case 'basic':

@@ -194,22 +194,26 @@ describe('OAuth 2.0 requests', () => {
 
   it('import keeps the configuration without the token, and the export validates and loads in the SDK', async () => {
     const imported = await env.api.importPostmanCollection(wsId, JSON.stringify(OAUTH_COLLECTION))
-    const rows = JSON.stringify(env.core.db.prepare('SELECT * FROM requests').all())
+    const rows = JSON.stringify([env.core.db.prepare('SELECT * FROM requests').all(), env.core.db.prepare('SELECT * FROM collections').all()])
     expect(rows).not.toContain('POSTMAN-EMBEDDED')
-    const doc = JSON.parse(imported.requests[0]!.documentJson)
-    expect(doc.auth.type).toBe('oauth2')
-    expect(doc.auth.oauth2.map((e: { key: string }) => e.key)).toEqual(['grant_type', 'accessTokenUrl', 'clientId', 'clientSecret', 'scope', 'addTokenTo', 'useBrowser'])
+    // The collection keeps the auth; the request inherits it (Postman's absent auth).
+    expect(JSON.parse(imported.requests[0]!.documentJson).auth).toBeNull()
+    const auth = JSON.parse(imported.collection.authJson!)
+    expect(auth.type).toBe('oauth2')
+    expect(auth.oauth2.map((e: { key: string }) => e.key)).toEqual(['grant_type', 'accessTokenUrl', 'clientId', 'clientSecret', 'scope', 'addTokenTo', 'useBrowser'])
 
     await env.api.createCollectionVersion({ collectionId: imported.collection.id, version: '1.0.0' })
     const file = JSON.parse(JSON.stringify(await exportCollection(env, imported.collection.id))) as PostmanCollectionV21
     expect(JSON.stringify(file)).not.toContain('POSTMAN-EMBEDDED')
     expectValidV21(file)
     const c = new sdk.Collection(file)
-    const items: Array<SdkItem & { request: { auth?: { type: string; parameters(): { get(k: string): unknown } } } }> = []
+    type SdkAuth = { type: string; parameters(): { get(k: string): unknown } }
+    const items: Array<SdkItem & { getAuth(): SdkAuth | undefined }> = []
     c.forEachItem((i) => items.push(i as never))
-    expect(items[0]!.request.auth!.type).toBe('oauth2')
-    expect(items[0]!.request.auth!.parameters().get('clientId')).toBe('app')
-    expect(items[0]!.request.auth!.parameters().get('accessToken')).toBeUndefined()
+    // Postman resolves the item's auth from the collection, exactly as Slinger does at send time.
+    expect(items[0]!.getAuth()!.type).toBe('oauth2')
+    expect(items[0]!.getAuth()!.parameters().get('clientId')).toBe('app')
+    expect(items[0]!.getAuth()!.parameters().get('accessToken')).toBeUndefined()
   })
 
   it('never keeps tokens from a version history block, a re-import, or a document saved before OAuth 2.0 support', async () => {

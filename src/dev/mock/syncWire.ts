@@ -29,6 +29,7 @@ export const GROUP_LABEL: Record<GroupName, string> = {
   scripts: 'Scripts',
   docs: 'Documentation',
   details: 'Enabled & description',
+  auth: 'Authorization',
 }
 
 export const keyOf = (type: SyncEntityType, id: string) => `${type}:${id}`

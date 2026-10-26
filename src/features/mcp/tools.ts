@@ -44,6 +44,8 @@ import { collectRunItems, summarize } from '../runner/runner'
 import { runsStore } from '../runner/runs.svelte'
 import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
 import { formatLimit } from '../../../shared/responseLimit'
+import { resolveEffectiveAuth, type AuthChain } from '../../lib/authInheritance'
+import { parseContainerAuthJson } from '../../../shared/containerAuth'
 
 type Data = Record<string, unknown>
 
@@ -201,8 +203,20 @@ function bodyOut(d: RequestDraft): Data {
   }
 }
 
-function authOut(d: RequestDraft): Data {
+/**
+ * A request's auth, credentials masked. `inherit`: where the auth comes from (folder or collection) and what it is, never
+ * a secret value either; `chain` (the request's collection and folders) is needed for that, else only the type shows.
+ */
+function authOut(d: RequestDraft, chain?: AuthChain | null): Data {
   const a = d.auth
+  if (a.kind === 'inherit') {
+    const eff = chain ? resolveEffectiveAuth(a, chain) : null
+    return {
+      type: 'inherit',
+      ...(eff?.source ? { inherited_from: { kind: eff.source.kind, id: eff.source.id, name: eff.source.name } } : {}),
+      ...(eff ? { effective: authOut({ ...d, auth: eff.auth }) } : {}),
+    }
+  }
   switch (a.kind) {
     case 'none':
       return { type: 'none' }
@@ -226,7 +240,7 @@ function authOut(d: RequestDraft): Data {
   }
 }
 
-function requestOut(r: ApiRequest, d: RequestDraft): Data {
+function requestOut(r: ApiRequest, d: RequestDraft, chain?: AuthChain | null): Data {
   return {
     id: r.id,
     workspace_id: r.workspaceId,
@@ -240,7 +254,7 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
     path_variables: d.pathVariables.map((v) => (v.description ? { key: v.key, value: v.value, description: v.description } : { key: v.key, value: v.value })),
     headers: rowsOut(d.headers),
     body: bodyOut(d),
-    auth: authOut(d),
+    auth: authOut(d, chain),
     pre_request_script: editorCode(d.extras.scripts, 'prerequest'),
     test_script: editorCode(d.extras.scripts, 'test'),
     description: d.description,
@@ -250,12 +264,12 @@ function requestOut(r: ApiRequest, d: RequestDraft): Data {
 }
 
 /** get_request of an MCP request: what it connects to and runs. Environment values of a command are never shown. */
-function mcpRequestOut(r: ApiRequest, d: RequestDraft): Data {
+function mcpRequestOut(r: ApiRequest, d: RequestDraft, chain?: AuthChain | null): Data {
   const m = d.mcp!
   const server: Data =
     m.transport === 'stdio'
       ? { command: m.command, args: [...m.args], env_keys: dataRows(m.env).filter((e) => e.enabled).map((e) => e.key), cwd: m.cwd }
-      : { url: d.url, headers: rowsOut(d.headers), auth: authOut(d) }
+      : { url: d.url, headers: rowsOut(d.headers), auth: authOut(d, chain) }
   const operation: Data =
     m.operation === 'tools/call'
       ? { tool: m.tool, arguments: m.arguments }
@@ -282,7 +296,19 @@ function mcpRequestOut(r: ApiRequest, d: RequestDraft): Data {
   }
 }
 
-const requestOutAny = (r: ApiRequest, d: RequestDraft) => (d.mcp ? mcpRequestOut(r, d) : requestOut(r, d))
+const requestOutAny = (r: ApiRequest, d: RequestDraft, chain?: AuthChain | null) => (d.mcp ? mcpRequestOut(r, d, chain) : requestOut(r, d, chain))
+
+/** The folders and collection a request's `inherit` auth is looked up in (any workspace). */
+async function chainOf(r: ApiRequest): Promise<AuthChain> {
+  const t = await treeOf(r.workspaceId)
+  return { collection: t.collections.find((c) => c.id === r.collectionId) ?? null, folders: t.folders.filter((f) => f.collectionId === r.collectionId), folderId: r.folderId }
+}
+
+/** The type of a collection's / folder's own auth for get_tree (values are not shown): undefined when none is set. */
+function containerAuthType(authJson: string | null | undefined): string | undefined {
+  const a = parseContainerAuthJson(authJson)
+  return a && typeof a.type === 'string' ? a.type : undefined
+}
 
 type RequestFields = Partial<McpToolArgs<'update_request'>>
 /** The request fields a tool can give (name, method, url, headers, ...). */
@@ -339,6 +365,7 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
     const a = { ...d.auth, preserved: undefined, unsupportedType: undefined }
     const t = f.auth.type
     if (t === 'none') a.kind = 'none'
+    else if (t === 'inherit') a.kind = 'inherit'
     else if (t === 'basic') {
       a.kind = 'basic'
       a.basic = { username: f.auth.username ?? a.basic.username, password: f.auth.password ?? a.basic.password }
@@ -478,12 +505,14 @@ function collectionTree(c: Collection, t: Tree): Data {
   const folderNode = (f: ApiFolder): Data => ({
     id: f.id,
     name: f.name,
+    ...(containerAuthType(f.authJson) ? { auth: containerAuthType(f.authJson) } : {}),
     folders: folders.filter((x) => x.parentFolderId === f.id).sort(bySort).map(folderNode),
     requests: requests.filter((r) => r.folderId === f.id).sort(bySort).map(requestLine),
   })
   return {
     id: c.id,
     name: c.name,
+    ...(containerAuthType(c.authJson) ? { auth: containerAuthType(c.authJson) } : {}),
     folders: folders.filter((f) => f.parentFolderId === null).sort(bySort).map(folderNode),
     requests: requests.filter((r) => r.folderId === null).sort(bySort).map(requestLine),
   }
@@ -559,7 +588,7 @@ const tools: Impls = {
 
   async get_request(a) {
     const r = await findRequest(a.request_id)
-    return done(requestOutAny(r, parseDocument(r)))
+    return done(requestOutAny(r, parseDocument(r), await chainOf(r)))
   },
 
   async create_collection(a) {

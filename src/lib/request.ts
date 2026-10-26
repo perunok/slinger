@@ -15,7 +15,11 @@ import { MCP_METHOD, mcpDisplayUrl, mcpTemplateTexts, parseMcp, serializeMcp, ty
 
 export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
-export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
+/**
+ * `inherit` (Postman: `auth` absent or null): use the nearest folder's or the collection's auth at send time
+ * (src/lib/authInheritance.ts); the default for new requests. `none` (Postman `{type: 'noauth'}`): no auth at all.
+ */
+export type AuthKind = 'inherit' | 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
 
 export interface BodyDraft {
   kind: BodyKind
@@ -149,7 +153,7 @@ export function emptyOAuth2(): OAuth2Draft {
 
 export function emptyAuth(): AuthDraft {
   return {
-    kind: 'none',
+    kind: 'inherit',
     basic: { username: '', password: '' },
     bearer: { token: '' },
     apiKey: { key: '', value: '', addTo: 'header' },
@@ -321,8 +325,11 @@ export function parseAuth(auth: unknown): AuthDraft {
   if (!isObj(auth)) return out
   switch (auth.type) {
     case undefined:
+    case 'inherit':
+      return out
     case 'noauth':
     case 'none':
+      out.kind = 'none'
       return out
     case 'basic':
       out.kind = 'basic'
@@ -501,10 +508,13 @@ export function serializeOAuth2(o: OAuth2Draft): Array<Record<string, unknown>> 
   return [...attrList(kept), ...o.extra.filter((e) => !own.has(str(e.key)))]
 }
 
+/** Postman `auth`: null (= inherit, written as `auth: null`) or the auth object; "No auth" is `{type: 'noauth'}`. */
 export function serializeAuth(a: AuthDraft): unknown {
   switch (a.kind) {
-    case 'none':
+    case 'inherit':
       return null
+    case 'none':
+      return { type: 'noauth' }
     case 'basic':
       return { type: 'basic', basic: attrList([['username', a.basic.username], ['password', a.basic.password]]) }
     case 'bearer':

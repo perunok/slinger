@@ -26,7 +26,8 @@ import type { DocsMode } from '../../lib/description'
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
 import { downloadFileName } from '../../lib/hex'
-import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
+import { draftFingerprint, newDraft, parseDocument, serializeDraft, type AuthDraft, type RequestDraft } from '../../lib/request'
+import { containerAuthDraft, containerAuthJson } from '../../lib/authInheritance'
 import type { ScriptOutput } from '../../lib/scripts'
 import { settings } from '../../app/settings.svelte'
 import type { TabNotice } from '../sync/tabNotices'
@@ -70,6 +71,11 @@ export interface OverviewTarget {
 export function overviewEntity(target: OverviewTarget | null): Collection | ApiFolder | undefined {
   if (!target) return undefined
   return target.kind === 'collection' ? app.collections.find((c) => c.id === target.id) : app.folders.find((f) => f.id === target.id)
+}
+
+/** The stored auth of an overview's collection/folder, normalised like an edited one (so merely opening it is no edit). */
+export function storedOverviewAuthJson(target: OverviewTarget): string | null {
+  return containerAuthJson(containerAuthDraft(overviewEntity(target)?.authJson ?? null, target.kind), target.kind)
 }
 
 export class RequestTab {
@@ -129,8 +135,17 @@ export class RequestTab {
   overviewDraft = $state<string | null>(null)
   /** Docs view (request Docs section / overview): null = default (rendered preview). */
   docsMode = $state<DocsMode | null>(null)
-  /** ADDED (persisted variables): which part of a collection overview is shown. */
-  overviewSection = $state<'docs' | 'variables'>('docs')
+  /** ADDED (persisted variables): which part of a collection overview is shown ('variables': collections only). */
+  overviewSection = $state<'docs' | 'variables' | 'auth'>('docs')
+  /**
+   * ADDED (container auth): the collection's / folder's auth being edited in the overview's Authorization section
+   * (null until that section is shown, and again after a save); saved with setCollectionAuth / setFolderAuth.
+   */
+  overviewAuth = $state<AuthDraft | null>(null)
+  /** True when `overviewAuth` differs from the stored auth. */
+  overviewAuthDirty = $derived(
+    this.overview !== null && this.overviewAuth !== null && containerAuthJson(this.overviewAuth, this.overview.kind) !== storedOverviewAuthJson(this.overview),
+  )
   /** A variable name from the "create variable" action, for the collection variables editor to add. */
   pendingVariable = $state<string | null>(null)
   /** ADDED (workflows): set for workflow tabs (features/workflows); the workflow saves itself as it is edited. */
@@ -144,7 +159,7 @@ export class RequestTab {
     this.workflowId
       ? false
       : this.overview
-      ? this.overviewDraft !== null && this.overviewDraft !== (overviewEntity(this.overview)?.description ?? '')
+      ? (this.overviewDraft !== null && this.overviewDraft !== (overviewEntity(this.overview)?.description ?? '')) || this.overviewAuthDirty
       : this.fingerprint !== this.savedFingerprint ||
           (this.exampleDraft !== null && this.exampleDraftFingerprint !== this.exampleSavedFingerprint),
   )
@@ -715,21 +730,30 @@ class TabsStore {
     }
   }
 
-  /** Saves an overview tab's edited description (collection/folder documentation). */
+  /** Saves an overview tab's edited description (collection/folder documentation) and auth. */
   private async saveOverview(tab: RequestTab): Promise<boolean> {
     const target = tab.overview!
     const text = tab.overviewDraft
-    if (text === null) return true
+    const auth = tab.overviewAuthDirty && tab.overviewAuth ? containerAuthJson(tab.overviewAuth, target.kind) : undefined
+    if (text === null && auth === undefined) return true
     tab.saving = true
     try {
-      const value = text.trim() === '' ? null : text
-      if (target.kind === 'collection') app.upsertCollection(await api().setCollectionDescription(target.id, value))
-      else app.upsertFolder(await api().setFolderDescription(target.id, value))
-      // Keystrokes typed while saving stay unsaved.
-      if (tab.overviewDraft === text) tab.overviewDraft = null
+      if (text !== null) {
+        const value = text.trim() === '' ? null : text
+        if (target.kind === 'collection') app.upsertCollection(await api().setCollectionDescription(target.id, value))
+        else app.upsertFolder(await api().setFolderDescription(target.id, value))
+        // Keystrokes typed while saving stay unsaved.
+        if (tab.overviewDraft === text) tab.overviewDraft = null
+      }
+      if (auth !== undefined) {
+        if (target.kind === 'collection') app.upsertCollection(await api().setCollectionAuth(target.id, auth))
+        else app.upsertFolder(await api().setFolderAuth(target.id, auth))
+        // Reloaded from the stored value unless edited while saving.
+        if (tab.overviewAuth && containerAuthJson(tab.overviewAuth, target.kind) === auth) tab.overviewAuth = null
+      }
       return true
     } catch (e) {
-      toast.error('Could not save documentation', errorInfo(e).message)
+      toast.error(text !== null ? 'Could not save documentation' : 'Could not save authorization', errorInfo(e).message)
       return false
     } finally {
       tab.saving = false

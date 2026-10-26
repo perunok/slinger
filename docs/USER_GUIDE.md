@@ -133,9 +133,10 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
   (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
   a body.
-- **Authorization:** No Auth, Basic Auth, Bearer Token, API Key (added to a header or as a query parameter) or
-  [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman requests with other auth types (for example Digest or
-  AWS Signature) are sent without authorization and a warning says so.
+- **Authorization:** **Inherit auth from parent** (the default for new requests), No Auth, Basic Auth, Bearer Token, API Key
+  (added to a header or as a query parameter) or [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman
+  requests with other auth types (for example Digest or AWS Signature) are sent without authorization and a warning says so.
+  See [Collection and folder authorization](#collection-and-folder-authorization) for inheriting.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
   see [Documentation](#documentation-markdown).
@@ -212,6 +213,32 @@ shows the token itself, **Refresh** uses the refresh token, **Clear** deletes th
   the keychain is not available, getting a token fails with a message and the rest of the app keeps working.
 - **Not supported:** the implicit grant (deprecated; Slinger keeps imported settings and asks you to use Authorization Code
   (With PKCE)), and `pm.sendRequest` with OAuth 2.0 auth in scripts.
+
+### Collection and folder authorization
+
+Collections and folders have an **Authorization** setting of their own, as in Postman: open the collection's or folder's
+overview (right-click > **Overview & docs**) and choose the **Authorization** section. It offers the same types and fields as a
+request's Authorization tab, including OAuth 2.0 with **Get New Access Token**; **Save** (Ctrl+S) stores it together with the
+documentation.
+
+- A request set to **Inherit auth from parent** uses the authorization of the nearest folder above it that sets one, else the
+  collection's. A folder is set to inherit by default too; a folder set to **No Auth** stops the lookup (its requests are sent
+  without authorization). A collection cannot inherit: without a setting it has no authorization.
+- The lookup happens when the request is sent, so changing the token on the collection changes it for every request that
+  inherits it. Everything that sends a request does the same: Send, the collection runner, workflows, AI assistants
+  (`send_request`), code snippets, the auto-generated headers list and the MCP connect of an MCP request.
+- While a request inherits, its Authorization tab shows **Inherited from** *folder or collection* with the type in use; click
+  the name to open that folder's or collection's Authorization section. The (i) next to it explains the lookup.
+- OAuth 2.0: get the token in the collection's or folder's Authorization section. Requests that inherit the same settings use
+  the same stored token.
+- Credentials typed directly into a collection's or folder's authorization are stored like a request's (use `{{variables}}`,
+  secret ones stay in your keychain); OAuth 2.0 tokens never are.
+- New requests inherit; a request with **No Auth** is sent without authorization whatever its folders and collection say.
+  Requests saved by Slinger 0.26 or older with "No Auth" are shown as **Inherit**: they keep behaving the same until you give
+  their collection or a folder an authorization.
+- Cloud sync: collection and folder authorization syncs with Slinger Cloud servers that support it (released together with
+  this version); with an older server it stays on this device (nothing is sent, no warning), like scripts and docs did with
+  older servers, and other devices send inheriting requests without it until the server is upgraded.
 
 Tabs: right-click a tab (or Shift+F10 on it) for Close / Close others / Close to the right / Close all / Save, and on request
 tabs Copy URL / Copy as cURL (of what the tab shows, unsaved edits included). Ctrl+W closes, Ctrl+Tab and Ctrl+Shift+Tab cycle. A tab
@@ -770,7 +797,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.collectionVariables.*`, `pm.globals.*` | same methods (plus `clear`); saved, see above |
 | `pm.iterationData.get/has/toObject`, legacy `data` | the current row of a data-driven collection run (read-only); empty otherwise |
 | `pm.request.url`, `.method`, `.headers`, `.body`, `.name`, `.id` | editable in pre-request scripts |
-| `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
+| `pm.request.auth.type`, `.parameters().get(key)`, `.toJSON()` | read-only; the request's auth settings (for a request that inherits, its folder's or collection's) with `{{variables}}` unresolved, typed-in credentials masked, never an OAuth 2.0 token |
 | `pm.response.code`, `.status`, `.responseTime`, `.responseSize`, `.headers.get()`, `.text()`, `.json()` | test scripts |
 | `pm.response.to.have.status(code or reason)`, `.header(name[, value])`, `.body([text or regexp or object])`, `.jsonBody([path[, value]])` | response assertions |
 | `pm.response.to.be.ok / success / error / clientError / serverError / notFound / json / withBody` (and `.not`) | response assertions |
@@ -864,7 +891,7 @@ in History, so they start empty).
 ## Collection versions
 
 Right-click a collection and choose **Versions...**. A version is an immutable snapshot of that collection's folders, requests,
-scripts, documentation and collection variables (not environments or globals) labelled with a semantic version. There is no git
+scripts, documentation, authorization and collection variables (not environments or globals) labelled with a semantic version. There is no git
 involved. Restoring a version also restores its collection variables (a version made before Slinger stored collection
 variables restores the collection without any).
 
@@ -944,7 +971,10 @@ collection name, then **Import API**. The new collection opens with its overview
   (file fields for binary properties), with `Content-Type` and `Accept` headers;
 - auth from the document's security schemes: bearer (`{{bearerToken}}`), basic (`{{username}}`/`{{password}}`), API key in a
   header or the query (`{{apiKey}}`), OAuth 2.0 (authorization code with PKCE, client credentials or password, with the
-  document's URLs and scopes and `{{clientId}}`); the variables are added empty, set them in the collection's variables;
+  document's URLs and scopes and `{{clientId}}`); the variables are added empty, set them in the collection's variables.
+  When every operation uses the same scheme it becomes the collection's authorization and the requests inherit it; otherwise
+  each request gets its own. An update from a newer document changes the collection's authorization too, unless you changed it
+  here (the review lists it);
 - one **saved example per documented response** (several when the document names several examples), filled from the
   document's examples or generated from its schemas, so a [mock server](#mock-servers) answers right away.
 
@@ -986,7 +1016,7 @@ and path (`{{baseUrl}}/pets/:id` matches `GET /pets/{petId}`). **Unlink** forget
 OpenAPI…** in the OpenAPI dialog) to save the collection as `<collection>.openapi.yaml` / `.openapi.json`. Each saved request
 becomes an operation: the server comes from the `baseUrl` collection variable (or the URL's scheme and host), `:id` and
 `{{id}}` path segments become path parameters, query/header/cookie rows become parameters, the body becomes a request body,
-auth becomes a security scheme, and the top-level folder becomes the tag. Saved examples become the responses, with JSON
+auth (a request that inherits: its folder's or collection's) becomes a security scheme, and the top-level folder becomes the tag. Saved examples become the responses, with JSON
 Schemas inferred from their JSON; a request without examples gets a `default` response. Requests with the same method and path
 are merged into one operation. Requests imported from an OpenAPI document keep their operationId and required parameters. MCP
 requests, scripts, tests and versions are not exported, and `{{variables}}` stay as written.
@@ -1038,7 +1068,8 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   (for example `Environment "UAT" updated: 3 added, 16 kept`). Pre-request and test scripts are imported at every level (collection, folders,
   requests) and run like scripts written in Slinger; the preview and the success message show how many. Descriptions of the
   collection, folders and requests are imported as their documentation (Markdown, or plain text for `text/plain`). OAuth 2.0
-  settings are imported (a collection's or folder's auth is copied into its requests); an access or refresh token that Postman
+  settings are imported. A collection's or folder's auth stays on the collection or folder, and requests without their own auth
+  inherit it (see [Collection and folder authorization](#collection-and-folder-authorization)); an access or refresh token that Postman
   embedded in the file is dropped, so click **Get New Access Token** once. A Postman
   **globals** file (`*.postman_globals.json`) is imported into the workspace's **Globals** with the environment-file rules
   (missing variables added, existing ones updated, an empty value keeps the stored one); `secret` values become secret globals and
@@ -1075,8 +1106,9 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   exported as Postman `event` lists on the collection, folders and requests; scripts you did not edit are written back exactly as
   imported. Documentation is exported as the `description` of the collection, folders and requests, in the shape it was imported
   in (a string, or `{content, type}`); docs you did not edit are written back unchanged. Collection variables are exported as the
-  collection's `variable` list, in order (`disabled: true` for disabled ones). OAuth 2.0 settings are exported in Postman's
-  format without any token. Globals and environments are never part of a collection export.
+  collection's `variable` list, in order (`disabled: true` for disabled ones). Collection and folder authorization is exported
+  as their `auth`; a request that inherits has no `auth`, a request with **No Auth** has `{"type": "noauth"}`, as in Postman.
+  OAuth 2.0 settings are exported in Postman's format without any token. Globals and environments are never part of a collection export.
 - **MCP requests** are exported with the method `MCP` and their settings under the item key `_slinger_mcp`, which Slinger's
   import reads back and Postman ignores (see [MCP requests](#mcp-requests)).
 - **Export as a .http file:** in the Export dialog, set **Format** to **HTTP file (.http)** to save the collection as one

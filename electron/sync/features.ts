@@ -33,7 +33,11 @@ export function hasUnattributedVersions(db: Db, workspaceId: string): boolean {
   return db.prepare('SELECT 1 FROM collection_versions WHERE workspace_id = ? AND deleted = 0 AND created_by_name IS NULL LIMIT 1').get(workspaceId) !== undefined
 }
 
-const FIELDS: Partial<Record<SyncFeature, string[]>> = { folder_scripts: ['scripts_json'], docs: ['description', 'description_type'] }
+const FIELDS: Partial<Record<SyncFeature, string[]>> = {
+  folder_scripts: ['scripts_json'],
+  docs: ['description', 'description_type'],
+  container_auth: ['auth_json'],
+}
 
 /**
  * Records the server's features for the link of `ctx` and, when they changed, activates/deactivates them in the

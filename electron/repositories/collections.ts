@@ -3,6 +3,7 @@ import { newId } from '../lib/ids'
 import { cleanName, nowSeconds } from '../lib/text'
 import {
   cleanDescription,
+  cleanAuthJson,
   cleanScriptsJson,
   requireCollection,
   requireWorkspace,
@@ -68,6 +69,14 @@ export class CollectionRepository {
       .prepare(`UPDATE collections SET description = ?, description_type = CASE WHEN ? IS NULL THEN NULL ELSE description_type END, updated_at = ?
                 WHERE id = ? AND deleted = 0`)
       .run(clean, clean, nowSeconds(), row.id)
+    return this.get(row.id)
+  }
+
+  /** Replaces the collection's auth (Postman `auth` JSON; refused on read-only cloud workspaces by a trigger). */
+  setAuth(id: string, authJson: string | null): Collection {
+    const row = requireCollection(this.db, id)
+    const clean = cleanAuthJson(authJson, 'collection')
+    this.db.prepare('UPDATE collections SET auth_json = ?, updated_at = ? WHERE id = ? AND deleted = 0').run(clean, nowSeconds(), row.id)
     return this.get(row.id)
   }
 

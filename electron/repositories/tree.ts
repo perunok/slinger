@@ -12,6 +12,7 @@ import { assertUuid, newId } from '../lib/ids'
 import { cleanMethod, cleanName, nowSeconds } from '../lib/text'
 import {
   cleanDescription,
+  cleanAuthJson,
   cleanScriptsJson,
   MAX_DOCUMENT_JSON_BYTES,
   nextSortOrder,
@@ -148,6 +149,14 @@ export class FolderRepository {
       .prepare(`UPDATE folders SET description = ?, description_type = CASE WHEN ? IS NULL THEN NULL ELSE description_type END, updated_at = ?
                 WHERE id = ? AND deleted = 0`)
       .run(clean, clean, nowSeconds(), row.id)
+    return this.get(row.id)
+  }
+
+  /** Replaces the folder's auth (Postman `auth` JSON; refused on read-only cloud workspaces by a trigger). */
+  setAuth(id: string, authJson: string | null): ApiFolder {
+    const row = requireFolder(this.db, id)
+    const clean = cleanAuthJson(authJson, 'folder')
+    this.db.prepare('UPDATE folders SET auth_json = ?, updated_at = ? WHERE id = ? AND deleted = 0').run(clean, nowSeconds(), row.id)
     return this.get(row.id)
   }
 
