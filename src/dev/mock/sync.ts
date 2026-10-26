@@ -7,6 +7,7 @@
  * in-memory MockState, so every UI state is reachable in a plain browser. Controls for scripting those
  * states live on `window.__slingerMock.cloud`.
  */
+import { withDefaultScheme } from '../../../shared/urlScheme'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import {
   type ApiRequest,
@@ -1223,13 +1224,13 @@ export function createSyncApi(
     async setCloudConfig(c) {
       let ok = false
       try {
-        const p = new URL(c.apiBaseUrl.trim()).protocol
+        const p = new URL(withDefaultScheme(c.apiBaseUrl)).protocol
         ok = p === 'http:' || p === 'https:'
       } catch {
         ok = false
       }
       if (!ok) fail('invalid_input', 'API base URL must start with http:// or https://')
-      const next = { apiBaseUrl: c.apiBaseUrl.trim().replace(/\/+$/, ''), deviceName: c.deviceName.trim() || 'Slinger Desktop' }
+      const next = { apiBaseUrl: withDefaultScheme(c.apiBaseUrl).replace(/\/+$/, ''), deviceName: c.deviceName.trim() || 'Slinger Desktop' }
       if (signInFlow) fail('sync_blocked', 'Finish or cancel the sign-in before changing the server.')
       const changedBase = next.apiBaseUrl !== config.apiBaseUrl
       config = next

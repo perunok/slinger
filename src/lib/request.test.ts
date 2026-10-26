@@ -177,6 +177,17 @@ describe('prepareRequest', () => {
     expect(own.ok && own.input.url).toBe('http://api.test/Gondar')
   })
 
+  it('a URL without a scheme is sent as http (https for port 443), like Postman', () => {
+    const sent = (url: string) => {
+      const r = prepareRequest(newDraft({ url }), ctx)
+      return r.ok ? r.input.url : r.error
+    }
+    expect(sent('example.com/x')).toBe('http://example.com/x')
+    expect(sent('{{host}}/x')).toBe('http://api.test/x')
+    expect(sent('//cdn.example.com/a')).toBe('http://cdn.example.com/a')
+    expect(sent('api.example.com:443/x')).toBe('https://api.example.com:443/x')
+  })
+
   it('gives history a URL without secret values or auth query parameters', () => {
     const d = newDraft({ url: '{{host}}/x?k={{tok}}' })
     d.auth = { ...d.auth, kind: 'apiKey', apiKey: { key: 'api_key', value: '{{tok}}', addTo: 'query' } }

@@ -237,7 +237,7 @@
           {#if sourceKind === 'url'}
             <label class="flex flex-col gap-1">
               <span class="text-xs text-muted">URL (fetched by Slinger, not by this window)</span>
-              <input type="url" bind:value={url} placeholder="https://api.example.com/openapi.yaml" class="rounded border border-border bg-surface px-2 py-1" />
+              <input type="text" inputmode="url" bind:value={url} placeholder="https://api.example.com/openapi.yaml" class="rounded border border-border bg-surface px-2 py-1" />
             </label>
           {:else if sourceKind === 'file'}
             <div class="flex items-center gap-2">

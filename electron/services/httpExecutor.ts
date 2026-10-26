@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { withDefaultScheme } from '../../shared/urlScheme'
 import { basename } from 'node:path'
 import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
 import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
@@ -10,18 +11,14 @@ export const MAX_TIMEOUT_MS = 10 * 60_000
 const PLACEHOLDER_RE = /\{\{[^{}]*\}\}/
 /** OAuth2Service token keys: SHA-256 hex. */
 export const OAUTH2_TOKEN_KEY_RE = /^[0-9a-f]{64}$/
-const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//
 
 /** True if the string still contains an unresolved `{{variable}}` placeholder. */
 export const hasUnresolvedPlaceholder = (value: string | undefined | null): boolean =>
   !!value && PLACEHOLDER_RE.test(value)
 
-/** Adds http:// when the scheme is missing ("localhost:3000/x", "//host/x"). Does not validate. */
+/** Adds a scheme when it is missing ("localhost:3000/x", "//host/x"; shared/urlScheme.ts). Does not validate. */
 export function normalizeUrl(url: string): string {
-  const trimmed = url.trim()
-  if (trimmed.startsWith('//')) return `http:${trimmed}`
-  if (!trimmed || SCHEME_RE.test(trimmed)) return trimmed
-  return `http://${trimmed}`
+  return withDefaultScheme(url)
 }
 
 /** Every string that will go on the wire, labelled so the error can say where the placeholder is. */
