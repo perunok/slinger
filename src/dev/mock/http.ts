@@ -1,4 +1,5 @@
 import { IpcError, type HttpRequestInput, type HttpResponseData, type RequestHeader } from '../../../shared/types'
+import { clampMaxResponseBytes } from '../../../shared/responseLimit'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import { cannedResponse, isMockHost, type CannedResponse } from './canned'
 import { buildRequest, type BuiltRequest } from './requestBuilder'
@@ -6,7 +7,18 @@ import type { MockState } from './store'
 import { mockAccessToken } from './oauth2'
 import { bytesToBase64, nowSec, uuid } from './util'
 
-type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest' | 'cloudFetch'>
+type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest' | 'cloudFetch' | 'chooseResponseDownloadFile'>
+
+/** Where the mock "saves" downloads (nothing is written in the browser). */
+export const MOCK_DOWNLOAD_DIR = '/home/user/Downloads'
+
+/** Like main: a body over the request's limit is not returned (status and headers are); a download has no body. */
+function applyLimit(data: HttpResponseData, input: HttpRequestInput, savedTo: string | null): HttpResponseData {
+  if (savedTo) return { ...data, bodyText: null, bodyBase64: null, savedToFile: savedTo }
+  const limit = clampMaxResponseBytes(input.maxResponseBytes)
+  if (data.bodyByteLength <= limit) return data
+  return { ...data, bodyText: null, bodyBase64: null, bodyTooLarge: { limitBytes: limit } }
+}
 
 const HISTORY_CAP = 500
 
@@ -130,8 +142,21 @@ function record(s: MockState, input: HttpRequestInput, result: { status: number 
 
 export function createHttpApi(s: MockState): HttpApi {
   const runs = new Map<string, RunControl>()
+  const downloads = new Map<string, string>()
   return {
+    async chooseResponseDownloadFile(suggestedName) {
+      const name = suggestedName.split(/[\\/]/).pop()?.trim() || 'response'
+      const downloadId = uuid()
+      downloads.set(downloadId, `${MOCK_DOWNLOAD_DIR}/${name}`)
+      return { downloadId, fileName: name }
+    },
     executeHttpRequest(input) {
+      let savedTo: string | null = null
+      if (input.downloadId) {
+        savedTo = downloads.get(input.downloadId) ?? null
+        downloads.delete(input.downloadId)
+        if (!savedTo) return Promise.reject(new IpcError({ code: 'invalid_input', message: 'The file for this download was not chosen, or it was chosen too long ago: choose it again' }))
+      }
       // Registered synchronously so a cancel issued right after the call always finds it.
       const runId = input.requestRunId ?? uuid()
       const run: RunControl = { controller: new AbortController(), cancelled: false, timedOut: false }
@@ -146,6 +171,7 @@ export function createHttpApi(s: MockState): HttpApi {
       const started = performance.now()
       // perform() is async, so a build error (no OAuth 2.0 token, ...) still rejects and is recorded.
       return perform(input, run, (key) => mockAccessToken(s, key))
+        .then((data) => applyLimit(data, input, savedTo))
         .then(
           (data) => {
             record(s, input, { status: data.status, error: null, ms: data.durationMs })

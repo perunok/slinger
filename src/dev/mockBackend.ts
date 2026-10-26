@@ -202,7 +202,6 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     reset() {
       Object.assign(state, emptyState())
       if (seed) seedState(state)
-      misc.resetSecureStore()
       misc.setLatestRelease(null)
       sync.reset()
       mcpClient.controls.reset()

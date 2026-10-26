@@ -492,15 +492,6 @@ describe('reveal, delete and the reserved keychain namespace', () => {
     await expect(api.revealOAuth2Token('not-a-key')).rejects.toMatchObject({ code: 'invalid_input' })
   })
 
-  it('refuses the slinger:oauth2: prefix in the generic secure store', async () => {
-    const { tokenKey } = await api.getOAuth2Token(config())
-    for (const key of [OAUTH2_TOKEN_PREFIX + tokenKey, 'SLINGER:OAUTH2:x']) {
-      await expect(api.secureStoreGet(key)).rejects.toMatchObject({ code: 'invalid_input' })
-      await expect(api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
-      await expect(api.secureStoreDelete(key)).rejects.toMatchObject({ code: 'invalid_input' })
-    }
-  })
-
   it('reports an unusable keychain as io_error', async () => {
     env.secrets.set = () => {
       throw new Error('keyring locked')

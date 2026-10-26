@@ -35,6 +35,7 @@ import type {
   ScriptRequestData,
   ScriptVariables,
 } from '../../../shared/types'
+import { MB } from '../../../shared/responseLimit'
 import { settings } from '../../app/settings.svelte'
 import { scopeStore } from '../../app/scope.svelte'
 import { app, collectionVariableInfos, envVariableInfo, globalVariableInfos } from '../../app/state.svelte'
@@ -129,6 +130,11 @@ export interface ExecuteContext {
   mcpSessionKey?: string
   /** MCP requests: who opens the connection. Absent: 'mcp' for an assistant, 'runner' within a run, else 'user'. */
   mcpOrigin?: McpConnectInput['origin']
+  /**
+   * "Send and download to file": the id from chooseResponseDownloadFile. Main streams the body into that file; the test
+   * scripts do not run (there is no body to test).
+   */
+  downloadId?: string
 }
 
 /** Where an MCP request's OAuth 2.0 token is fetched (its Authorization panel lives in the Connection section). */
@@ -362,6 +368,9 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
       requestRunId: runId,
       scriptSessionId: run.sessionId,
       ...(ctx.source ? { historySource: ctx.source } : {}),
+      // Settings > Requests: main stops downloading a larger body (the response then has bodyTooLarge).
+      maxResponseBytes: settings.maxResponseMb * MB,
+      ...(ctx.downloadId ? { downloadId: ctx.downloadId } : {}),
     })
   } catch (e) {
     const info = errorInfo(e)
@@ -371,7 +380,7 @@ export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Pr
   const elapsedMs = Math.round(performance.now() - started)
 
   // 4. Test scripts. They see the request as sent, but with secret variables still as {{name}}.
-  if (!ctx.wasCancelled?.()) {
+  if (!ctx.wasCancelled?.() && !response.savedToFile) {
     try {
       const shown = prepareRequest(draft, { workspaceId: ctx.workspaceId, requestId: ctx.requestId, scope, allowUnresolved: true })
       await runScripts('test', draft, {

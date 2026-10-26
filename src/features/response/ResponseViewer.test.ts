@@ -163,3 +163,26 @@ describe('ResponseViewer right-click menus', () => {
     expect(writeText).toHaveBeenCalledWith('sid=42')
   })
 })
+
+describe('ResponseViewer: bodies that were not loaded', () => {
+  it('over the size limit: says so, keeps status and headers, and offers Send and download to file', async () => {
+    let clicked = 0
+    render(ResponseViewer, {
+      data: res({ ct: 'application/zip', bodyByteLength: 80 * 1024 * 1024, bodyTooLarge: { limitBytes: 50 * 1024 * 1024 } }),
+      onsendtofile: () => clicked++,
+    })
+    expect(screen.getByTestId('status-chip')).toHaveTextContent('200 OK')
+    expect(screen.getByTestId('body-not-loaded')).toHaveTextContent('Response larger than 50 MB — not loaded')
+    await fireEvent.click(screen.getByTestId('send-to-file'))
+    expect(clicked).toBe(1)
+    await fireEvent.click(tab('Headers'))
+    expect(screen.getByText('application/zip', { selector: 'td, span, div' })).toBeInTheDocument()
+  })
+
+  it('downloaded to a file: shows where and how much', () => {
+    render(ResponseViewer, { data: res({ bodyByteLength: 2048, savedToFile: '/home/u/Downloads/a.bin' }) })
+    expect(screen.getByTestId('body-not-loaded')).toHaveTextContent('Saved 2.0 KB to a file')
+    expect(screen.getByTestId('saved-path')).toHaveTextContent('/home/u/Downloads/a.bin')
+    expect(screen.queryByTestId('send-to-file')).toBeNull()
+  })
+})

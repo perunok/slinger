@@ -637,3 +637,43 @@ describe('a send keeps the scope it started with', () => {
     expect(sent.at(-1)!.workspaceId).toBe(startWs)
   })
 })
+
+describe('Maximum response size and Send and download to file', () => {
+  it('sends the limit from Settings with every request', async () => {
+    settings.setMaxResponseMb(7)
+    const r = getUser()
+    await executeDraft(parseDocument(r), ctx(r))
+    expect(sent[0].maxResponseBytes).toBe(7 * 1024 * 1024)
+    settings.setMaxResponseMb(0)
+    expect(settings.maxResponseMb).toBe(50) // no "unlimited"
+    settings.setMaxResponseMb(100_000)
+    expect(settings.maxResponseMb).toBe(256)
+  })
+
+  it('a body over the limit keeps status and headers; sendToFile asks main for a file, then sends with its id (no tests run)', async () => {
+    settings.setMaxResponseMb(1)
+    const { r, draft } = withScripts(testEv('t()'))
+    const tab = tabsStore.openRequest(r)
+    tab.draft = { ...draft, url: 'https://mock.slinger.local/huge' }
+    await tabsStore.send(tab)
+    expect(tab.response?.data).toMatchObject({ status: 200, bodyText: null, bodyBase64: null, bodyTooLarge: { limitBytes: 1024 * 1024 } })
+    expect(tab.response?.data.headers.length).toBeGreaterThan(0)
+    calls = []
+
+    const choose = vi.spyOn(backend, 'chooseResponseDownloadFile')
+    await tabsStore.sendToFile(tab)
+    expect(choose).toHaveBeenCalledWith('response.txt')
+    expect(sent.at(-1)?.downloadId).toEqual(expect.any(String))
+    expect(tab.response?.data).toMatchObject({ savedToFile: '/home/user/Downloads/response.txt', bodyText: null })
+    expect(calls.filter((c) => c.event === 'test')).toEqual([])
+    settings.setMaxResponseMb(50)
+  })
+
+  it('a cancelled save dialog sends nothing', async () => {
+    const r = getUser()
+    const tab = tabsStore.openRequest(r)
+    vi.spyOn(backend, 'chooseResponseDownloadFile').mockResolvedValue(null)
+    expect(await tabsStore.sendToFile(tab)).toBeNull()
+    expect(sent).toEqual([])
+  })
+})

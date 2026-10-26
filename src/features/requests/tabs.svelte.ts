@@ -6,7 +6,7 @@
  * part, `exampleDraft` its response part, and saving writes the example back into the parent
  * request's document (`responses`), leaving every other example and the request itself as stored.
  */
-import type { ApiFolder, ApiRequest, Collection, HttpResponseData, McpCallOutcome, McpTrustCommandInput } from '../../../shared/types'
+import type { ApiFolder, ApiRequest, Collection, HttpResponseData, McpCallOutcome, McpTrustCommandInput, ResponseDownloadTarget } from '../../../shared/types'
 import { app } from '../../app/state.svelte'
 import { toast } from '../../app/toast.svelte'
 import {
@@ -25,6 +25,7 @@ import {
 import type { DocsMode } from '../../lib/description'
 import { api, errorInfo, isVersionConflict } from '../../lib/ipc'
 import { nextId } from '../../lib/kv'
+import { downloadFileName } from '../../lib/hex'
 import { draftFingerprint, newDraft, parseDocument, serializeDraft, type RequestDraft } from '../../lib/request'
 import type { ScriptOutput } from '../../lib/scripts'
 import { settings } from '../../app/settings.svelte'
@@ -872,7 +873,24 @@ class TabsStore {
 
   // ---- sending ----------------------------------------------------------
 
-  async send(tab: RequestTab): Promise<ExecuteOutcome | null> {
+  /**
+   * "Send and download to file": main asks where to save (its own save dialog), then the request is sent like Send and its
+   * body is streamed into that file. Nothing is sent when the dialog is cancelled.
+   */
+  async sendToFile(tab: RequestTab): Promise<ExecuteOutcome | null> {
+    if (tab.overview || tab.workflowId || tab.example || tab.draft.mcp || tab.sending || !app.workspaceId) return null
+    let target: ResponseDownloadTarget | null
+    try {
+      target = await api().chooseResponseDownloadFile(downloadFileName(tab.draft.url, tab.response?.data.headers))
+    } catch (e) {
+      tab.error = { message: errorInfo(e).message, unresolved: [] }
+      return null
+    }
+    if (!target) return null
+    return this.send(tab, { downloadId: target.downloadId })
+  }
+
+  async send(tab: RequestTab, opts: { downloadId?: string } = {}): Promise<ExecuteOutcome | null> {
     if (tab.overview || tab.workflowId) return null
     if (tab.example) {
       this.tryExample(tab)
@@ -894,6 +912,7 @@ class TabsStore {
       folderId: tab.folderId,
       onRunId: (id) => (tab.runId = id),
       wasCancelled: () => tab.cancelled,
+      ...(opts.downloadId ? { downloadId: opts.downloadId } : {}),
       // An MCP tab runs on its own connection (the one its Connect button opens), not a shared one.
       ...(tab.draft.mcp ? { mcpSessionKey: mcpTabKey(tab.id) } : {}),
     })

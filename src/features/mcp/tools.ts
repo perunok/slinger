@@ -38,6 +38,7 @@ import { tabsStore } from '../requests/tabs.svelte'
 import { collectRunItems, summarize } from '../runner/runner'
 import { runsStore } from '../runner/runs.svelte'
 import { mapRestored, remapExpandedKeys } from '../versions/restoreRemap'
+import { formatLimit } from '../../../shared/responseLimit'
 
 type Data = Record<string, unknown>
 
@@ -469,7 +470,8 @@ function collectionTree(c: Collection, t: Tree): Data {
 function responseOut(res: HttpResponseData): Data {
   let body: string
   let truncated = false
-  if (res.bodyText === null) body = `(binary body, ${res.bodyByteLength} bytes, not shown)`
+  if (res.bodyTooLarge) body = `(body not loaded: larger than ${formatLimit(res.bodyTooLarge.limitBytes)}, the Maximum response size in Settings)`
+  else if (res.bodyText === null) body = `(binary body, ${res.bodyByteLength} bytes, not shown)`
   else {
     body = res.bodyText
     const isJson = res.headers.some((h) => h.key.toLowerCase() === 'content-type' && /json/i.test(h.value))

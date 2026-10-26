@@ -9,6 +9,7 @@
  */
 import type { UpdateCheckResult } from '../../shared/types'
 import { invalidInput, ioError, networkError } from '../lib/errors'
+import { readLimitedBody } from '../lib/limitedBody'
 import { compare, parse } from './semver'
 
 export const RELEASES_REPO = 'perunok/slinger'
@@ -54,8 +55,9 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
     // 403/429: GitHub's rate limit for unauthenticated calls (60 an hour per address).
     throw networkError(`GitHub answered HTTP ${res.status}`, { status: res.status })
   }
-  const text = await res.text()
-  if (text.length > MAX_BYTES) throw ioError('The release information from GitHub is too large')
+  const read = await readLimitedBody(res, MAX_BYTES)
+  if (!read.ok) throw ioError('The release information from GitHub is too large')
+  const text = read.bytes.toString('utf8')
   let body: unknown
   try {
     body = JSON.parse(text)

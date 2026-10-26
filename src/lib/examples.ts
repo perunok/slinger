@@ -374,6 +374,7 @@ function languageOfResponse(res: HttpResponseData): PreviewLanguage {
  */
 export function exampleFromResponse(input: { name: string; request: RequestDraft; response: HttpResponseData; id?: string }): { example: Json; note: string | null } {
   const res = input.response
+  if (res.bodyTooLarge || res.savedToFile) throw new Error('This response body was not loaded, so it cannot be kept as an example.')
   const binary = res.bodyText === null && !!res.bodyBase64
   let body = binary ? (res.bodyBase64 ?? '') : (res.bodyText ?? '')
   let note: string | null = null

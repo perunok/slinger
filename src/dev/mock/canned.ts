@@ -135,6 +135,9 @@ export function cannedResponse(req: CannedRequest): CannedResponse {
       }
     case '/big':
       return { status: 200, statusText: 'OK', contentType: 'application/json', body: bigJson() }
+    case '/huge':
+      // 3 MB: over the "Maximum response size" when it is set to 1 or 2 MB.
+      return { status: 200, statusText: 'OK', contentType: 'text/plain', body: 'x'.repeat(3 * 1024 * 1024) }
     default:
       return json({ error: 'not_found', message: `No canned route for ${path}` }, 404, 'Not Found')
   }

@@ -22,7 +22,7 @@ import { isPermissionAllowed } from './lib/permissions'
 import { menuPoint, titleBarWindowOptions } from './lib/titleBar'
 import { hidesOnClose, trayIconFiles, trayMenuTemplate } from './lib/tray'
 import { discardPrompt, needsDiscardConfirm } from './lib/quitGuard'
-import { acquireInstanceGuard, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
+import { acquireInstanceGuard, guardSecret, instanceGuardPath, type InstanceGuard } from './lib/instanceGuard'
 import {
   clampBounds,
   DEFAULT_BACKGROUND,
@@ -565,7 +565,7 @@ async function runSmokeTest(win: BrowserWindow): Promise<void> {
     try { await window.slinger.renameWorkspace('not-a-uuid', 'x') } catch (e) {
       out.error = { isError: e instanceof Error, name: e.name, code: e.code, message: e.message }
     }
-    try { await window.slinger.secureStoreGet('slinger:env-var:x') } catch (e) { out.reserved = e.code }
+    out.noKeychainPassthrough = typeof window.slinger.secureStoreGet === 'undefined'
     try { await window.slinger.updateRequest({ requestId: '11111111-1111-4111-8111-111111111111', name: 'x', method: 'GET', url: '', documentJson: '{}', expectedVersion: 1 }) } catch (e) { out.notFound = e.code }
     out.csp = (await fetch(location.href)).headers.get('content-security-policy')
     const ws = (await window.slinger.listWorkspaces())[0]
@@ -637,7 +637,9 @@ function instanceGuardTarget(): string | null {
   } catch {
     /* no passwd entry: the uid (POSIX) still makes the path unique */
   }
-  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir() })
+  // Windows: the pipe name includes a random secret kept in the user's own AppData (not readable by other users).
+  const secret = process.platform === 'win32' ? guardSecret(join(app.getPath('appData'), 'Slinger', 'instance-guard.key')) : undefined
+  return instanceGuardPath({ platform: process.platform, uid: process.getuid?.(), username, runtimeDir: process.env.XDG_RUNTIME_DIR, tmpDir: tmpdir(), secret })
 }
 let instanceGuard: InstanceGuard | null = null
 
@@ -740,6 +742,11 @@ if (!app.requestSingleInstanceLock()) {
         }
         const result = mainWindow ? await dialog.showOpenDialog(mainWindow, dialogOptions) : await dialog.showOpenDialog(dialogOptions)
         return result.canceled ? null : (result.filePaths[0] ?? null)
+      },
+      saveFile: async ({ title, defaultName }) => {
+        const options = { title, defaultPath: join(app.getPath('downloads'), defaultName) }
+        const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+        return result.canceled || !result.filePath ? null : result.filePath
       },
       chooseDirectory: async () => {
         const options = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }

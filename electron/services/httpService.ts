@@ -1,4 +1,7 @@
-import type { CloudFetchInput, HttpRequestInput, HttpResponseData } from '../../shared/types'
+import { randomUUID } from 'node:crypto'
+import { basename } from 'node:path'
+import type { CloudFetchInput, HttpRequestInput, HttpResponseData, ResponseDownloadTarget } from '../../shared/types'
+import { clampMaxResponseBytes } from '../../shared/responseLimit'
 import { toErrorPayload, invalidInput } from '../lib/errors'
 import { assertUuid, isUuid } from '../lib/ids'
 import type { HistoryRepository } from '../repositories/history'
@@ -6,6 +9,8 @@ import type { FileAccess } from './fileGrants'
 import { executeHttp, normalizeUrl, type OAuth2TokenLookup } from './httpExecutor'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
+/** How long a file chosen for "Send and download to file" waits for its request. */
+export const DOWNLOAD_TARGET_TTL_MS = 10 * 60_000
 
 /**
  * Runs requests, tracks cancellable runs, and records every attempt (success or failure) in
@@ -16,6 +21,8 @@ const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
  */
 export class HttpService {
   private readonly runs = new Map<string, AbortController>()
+  /** Files the user picked in main's save dialog, by one-time id (the renderer never names a path to write). */
+  private readonly downloads = new Map<string, { path: string; expires: number }>()
 
   constructor(
     private readonly history: HistoryRepository,
@@ -26,6 +33,21 @@ export class HttpService {
     private readonly oauth2Token?: OAuth2TokenLookup,
   ) {}
 
+  /** Remembers a file the user picked for "Send and download to file"; its id is good for one request. */
+  registerDownload(path: string, now = Date.now()): ResponseDownloadTarget {
+    for (const [id, d] of this.downloads) if (d.expires <= now) this.downloads.delete(id)
+    const downloadId = randomUUID()
+    this.downloads.set(downloadId, { path, expires: now + DOWNLOAD_TARGET_TTL_MS })
+    return { downloadId, fileName: basename(path) }
+  }
+
+  private takeDownload(id: string): string {
+    const d = this.downloads.get(id)
+    this.downloads.delete(id)
+    if (!d || d.expires <= Date.now()) throw invalidInput('The file for this download was not chosen, or it was chosen too long ago: choose it again')
+    return d.path
+  }
+
   async execute(input: HttpRequestInput): Promise<HttpResponseData> {
     const workspaceId = assertUuid(input.workspaceId, 'workspaceId')
     const runId = input.requestRunId ?? null
@@ -33,12 +55,21 @@ export class HttpService {
       if (!RUN_ID_RE.test(runId)) throw invalidInput('requestRunId must be 1-128 characters of [A-Za-z0-9._:-]')
       if (this.runs.has(runId)) throw invalidInput('a request with this requestRunId is already running')
     }
+    const toFile = input.downloadId ? this.takeDownload(input.downloadId) : undefined
     const controller = new AbortController()
     if (runId !== null) this.runs.set(runId, controller)
 
     const started = performance.now()
     try {
-      const response = await executeHttp(input, { signal: controller.signal, files: this.files, oauth2Token: this.oauth2Token })
+      const response = await executeHttp(input, {
+        signal: controller.signal,
+        files: this.files,
+        oauth2Token: this.oauth2Token,
+        // The user's limit (Settings), enforced while the body streams in; a larger body is reported, not loaded.
+        maxResponseBytes: clampMaxResponseBytes(input.maxResponseBytes),
+        oversize: 'report',
+        toFile,
+      })
       this.record(input, workspaceId, {
         statusCode: response.status,
         ok: response.status >= 200 && response.status < 300,
@@ -61,7 +92,7 @@ export class HttpService {
 
   /**
    * Internal transport for the app's own cloud API calls: never recorded in history, never reads
-   * local files, and has no run id (not cancellable). Kept separate from `execute` so history
+   * local files, and has no run id (not cancellable); bodies over 50 MB fail (executeHttp's default). Kept separate from `execute` so history
    * stays a log of the user's requests only.
    */
   async fetchInternal(input: CloudFetchInput): Promise<HttpResponseData> {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { IpcError } from '../../shared/types'
 import { chooseSecretStore, KeychainSecretStore, MemorySecretStore, type SecretStore } from '../services/secrets'
 import { makeEnv, scaffold, type TestEnv } from './helpers'
+import { IPC_CHANNELS } from '../../shared/ipc-contract'
 
 let env: TestEnv
 beforeEach(() => {
@@ -110,23 +111,13 @@ describe('environment secrets', () => {
   })
 })
 
-describe('generic secure store passthrough', () => {
-  it('round-trips arbitrary keys', async () => {
-    expect(await env.api.secureStoreGet('cloud:token')).toBeNull()
-    await env.api.secureStoreSet('cloud:token', 'abc')
-    expect(await env.api.secureStoreGet('cloud:token')).toBe('abc')
-    await env.api.secureStoreDelete('cloud:token')
-    expect(await env.api.secureStoreGet('cloud:token')).toBeNull()
-  })
-
-  it('cannot read, write or delete the environment-secret namespace (mask bypass)', async () => {
-    const { secretVar } = await envWithSecret()
-    const key = `slinger:env-var:${secretVar.id}`
-    await expect(env.api.secureStoreGet(key)).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(env.api.secureStoreSet(key, 'x')).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(env.api.secureStoreDelete(key)).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(env.api.secureStoreGet('SLINGER:ENV-VAR:whatever')).rejects.toMatchObject({ code: 'invalid_input' })
-    expect(env.secrets.get(key)).toBe(SECRET)
+describe('no generic keychain access over IPC', () => {
+  it('the renderer API has no secureStore* methods (MCP token, allowed commands, tokens stay in main)', async () => {
+    const api = env.api as unknown as Record<string, unknown>
+    for (const name of ['secureStoreGet', 'secureStoreSet', 'secureStoreDelete']) {
+      expect(api[name]).toBeUndefined()
+      expect((IPC_CHANNELS as readonly string[]).includes(name)).toBe(false)
+    }
   })
 })
 
