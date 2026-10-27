@@ -150,8 +150,9 @@ describe('CloudDialog workspace section', () => {
     expect(panel).toHaveTextContent('1 change')
     await user.click(within(panel).getByRole('button', { name: 'Sync now' }))
     await waitFor(() => expect(panel).toHaveTextContent('0 changes'))
+    expect(within(panel).getByRole('checkbox', { name: 'Auto sync' })).not.toBeChecked() // off for a new link
     await user.click(within(panel).getByRole('checkbox', { name: 'Auto sync' }))
-    await waitFor(() => expect(sync.current?.autoSync).toBe(false))
+    await waitFor(() => expect(sync.current?.autoSync).toBe(true))
     await b.renameCollection(app.collections[0]!.id, 'again')
     await sync.refreshStatuses()
     await user.click(within(panel).getByRole('button', { name: 'Unlink' }))

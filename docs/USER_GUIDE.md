@@ -1195,8 +1195,9 @@ the date only.
 3/12*, *Downloading 40 changes*), Offline (edits are kept and upload later), Sync error (with a Retry toast; when the server itself fails it says so, e.g.
 *The Slinger Cloud server ran into an error (HTTP 500)… ask its administrator to check the server's logs and free disk space*,
 and your changes stay on this device), conflicts,
-Read-only, Signed out, Access revoked. Click it for **Sync now**, the **Auto sync** switch (on by default: Slinger checks for
-cloud changes regularly and uploads your edits shortly after you save) and **Sync activity…**.
+Read-only, Signed out, Access revoked. Click it for **Sync now**, the **Auto sync** switch (off for a newly linked workspace: it
+syncs once when you link it, then only on **Sync now**; switched on, Slinger checks for cloud changes regularly and uploads your
+edits shortly after you save) and **Sync activity…**.
 
 **Sync activity** (the chip's menu, or Ctrl+K > *Sync activity*) shows what syncs, for the open workspace:
 - **Waiting to upload:** every change on this device the cloud does not have yet, marked **New**, **Edited** or **Deleted**,

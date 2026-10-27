@@ -1096,7 +1096,7 @@ export function createSyncApi(
 
   function makeLink(workspaceId: string, r: RemoteWs): Link {
     const l: Link = {
-      workspaceId, remoteId: r.id, remoteName: r.name, role: r.role, autoSync: true, lastSyncedAt: null, base: new Map(), conflicts: [], kept: new Set(),
+      workspaceId, remoteId: r.id, remoteName: r.name, role: r.role, autoSync: false, lastSyncedAt: null, base: new Map(), conflicts: [], kept: new Set(),
       linkState: 'initial', accessState: 'ok', lastError: null, nextRetryAt: null, progress: null, members: null, running: null, timer: null, apiBaseUrl: base(),
     }
     links.set(workspaceId, l)
