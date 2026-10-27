@@ -10,8 +10,11 @@ beforeEach(async () => {
   const user = cloud.createUser('a@x.com')
   d = makeDevice(cloud, { userId: user.id })
   ws = d.workspace.id
-  await d.api.publishWorkspace(ws)
+  const linked = await d.api.publishWorkspace(ws)
   await settle(d, ws)
+  // A new link starts with auto sync off (it synced once while linking); these tests are about automatic syncing.
+  expect(linked.autoSync).toBe(false)
+  await d.api.setAutoSync(ws, true)
   cloud.clearRecorded()
 })
 afterEach(async () => {
@@ -26,6 +29,28 @@ const cycles = () => cloud.requestsTo(/sync\/pull$/).length
 async function idle() {
   while (running()) await running()
 }
+
+describe('a newly linked workspace', () => {
+  it('starts with auto sync off: it syncs once while linking, then only when asked', async () => {
+    const e = makeDevice(cloud, { userId: cloud.createUser('b@x.com').id })
+    try {
+      const status = await e.api.publishWorkspace(e.workspace.id)
+      await settle(e, e.workspace.id)
+      expect(status.autoSync).toBe(false)
+      expect(e.core.sync.engine.status(e.workspace.id)).toMatchObject({ pendingChanges: 0 }) // linking uploaded it
+      e.core.sync.start()
+      await e.api.createCollection(e.workspace.id, 'Later')
+      const before = cloud.requestsTo(/sync\/(?:push|pull)$/).length
+      e.timers.advance(400_000)
+      while (e.core.sync.engine.rt(e.workspace.id).running) await e.core.sync.engine.rt(e.workspace.id).running
+      expect(cloud.requestsTo(/sync\/(?:push|pull)$/).length).toBe(before)
+      expect(e.core.sync.engine.status(e.workspace.id)).toMatchObject({ autoSync: false, pendingChanges: 1 })
+    } finally {
+      e.core.sync.stop()
+      e.cleanup()
+    }
+  })
+})
 
 describe('auto sync scheduling', () => {
   it('a local edit is picked up by the 5 s poll and pushed after the 1.5 s debounce', async () => {

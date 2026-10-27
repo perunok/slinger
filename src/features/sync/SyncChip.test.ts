@@ -71,8 +71,10 @@ describe('SyncChip', () => {
     const before = b.calls.filter((c) => c.method === 'syncNow').length
     await user.click(screen.getByRole('button', { name: 'Sync now' }))
     await waitFor(() => expect(b.calls.filter((c) => c.method === 'syncNow').length).toBe(before + 1))
+    // A newly linked workspace starts with auto sync off; the switch turns it on.
+    expect(screen.getByRole('checkbox', { name: 'Auto sync' })).not.toBeChecked()
     await user.click(screen.getByRole('checkbox', { name: 'Auto sync' }))
-    await waitFor(() => expect(sync.current?.autoSync).toBe(false))
+    await waitFor(() => expect(sync.current?.autoSync).toBe(true))
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: 'Sync details' })).toBeNull()
     expect(document.activeElement).toBe(chip())

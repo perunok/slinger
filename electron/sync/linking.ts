@@ -28,7 +28,7 @@ export function insertLink(db: Db, l: NewLink): void {
   db.prepare(
     `INSERT INTO cloud_links (workspace_id, api_base_url, remote_workspace_id, sync_client_id, sync_checkpoint, created_at, updated_at,
        remote_name, remote_role, remote_user_id, link_state, auto_sync, read_only, access_state, snapshot_cursor)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'initial', 1, ?, 'ok', ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'initial', 0, ?, 'ok', ?)`,
   ).run(l.workspaceId, l.apiBaseUrl, l.remoteWorkspaceId, l.clientId, l.checkpoint, l.nowS, l.nowS, l.remoteName, l.role, l.userId, l.role === 'viewer' ? 1 : 0, l.snapshotCursor)
 }
 
