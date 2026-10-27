@@ -64,7 +64,8 @@ Right Panel**, or the command palette (`> right panel`, which can also open it d
 - **Docs:** the request's documentation, rendered. **Edit in Docs** switches the request to its Docs section (for an example,
   **Open request** opens the parent request).
 - **Code:** the code snippet for the request (the same generator as the request's Code section), with a language picker and
-  **Copy** (plus **Save** for the `.http` file language). For an MCP request it is an MCP Inspector CLI command instead.
+  **Copy** (plus **Save** for the `.http` file language). Every language is syntax-highlighted (cURL and the MCP Inspector
+  command as shell). For an MCP request it is an MCP Inspector CLI command instead.
 - **Info:** name, method, URL (for an MCP request: the transport and the server or command), collection/folder, saved or
   unsaved, ID, created and updated times, version, and the workspace's sync state.
 
@@ -335,7 +336,7 @@ animation** in Settings), "Sending request…" with the elapsed time, and **Canc
 once; the character plays a short finish on top (under half a second): the runner cheers, the shuttle lands, the pebble hits
 its target. On an error (no response, or a 4xx/5xx status) it stumbles in the error colour; on Cancel it simply disappears.
 
-After Send the pane shows status, time and size. Views: **Pretty** (formatted, foldable JSON/XML/HTML; CSV as a table), **Raw**
+After Send the pane shows status, time and size. Views: **Pretty** (formatted, foldable JSON/XML/HTML; CSV as a table; CSS, JavaScript, YAML and Markdown highlighted), **Raw**
 (hex preview for binary content), **Preview** (HTML in a fully sandboxed frame, images, PDF), **Headers** and **Cookies**
 (parsed from `Set-Cookie`). Toolbar: search in response, toggle word wrap, copy body, **Save response to file** (to the export
 folder). Non-2xx responses are shown normally; network errors, timeouts and cancellations appear as inline errors.

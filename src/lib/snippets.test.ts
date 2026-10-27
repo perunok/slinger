@@ -30,6 +30,19 @@ describe('SNIPPET_LANGS', () => {
     expect(SNIPPET_LANGS.find((l) => l.id === 'fetch')?.editorLanguage).toBe('javascript')
     expect(SNIPPET_LANGS.find((l) => l.id === 'axios')?.editorLanguage).toBe('javascript')
   })
+
+  it('highlights every snippet: no language is shown as plain text', () => {
+    expect(Object.fromEntries(SNIPPET_LANGS.map((l) => [l.id, l.editorLanguage]))).toEqual({
+      curl: 'shell',
+      fetch: 'javascript',
+      axios: 'javascript',
+      python: 'python',
+      go: 'go',
+      php: 'php',
+      powershell: 'powershell',
+      http: 'http',
+    })
+  })
 })
 
 describe('basics for every language', () => {

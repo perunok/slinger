@@ -20,7 +20,7 @@
   import { onMount } from 'svelte'
   import { scopeStore, variableActions } from '../../app/scope.svelte'
   import type { TemplateScope } from '../../lib/template'
-  import { languageExtension, type EditorLanguage } from './cm/languages'
+  import { languageExtension, loadLanguage, needsLoading, type EditorLanguage } from './cm/languages'
   import { applyExternalValue } from './cm/sync'
   import { scopeChanged, templateExtension } from './cm/template'
   import { slingerTheme } from './cm/theme'
@@ -116,6 +116,15 @@
   $effect(() => {
     const l = language
     view?.dispatch({ effects: langC.reconfigure(languageExtension(l)) })
+    // Snippet languages and YAML load on first use: highlight once they are there, unless the language changed meanwhile.
+    if (needsLoading(l)) {
+      void loadLanguage(l).then(
+        (ext) => {
+          if (language === l) view?.dispatch({ effects: langC.reconfigure(ext) })
+        },
+        () => {},
+      )
+    }
   })
   $effect(() => {
     const f = fold

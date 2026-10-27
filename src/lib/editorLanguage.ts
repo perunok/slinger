@@ -1,0 +1,16 @@
+/** The languages the code editor highlights (components/editor/cm/languages.ts); `text` is plain. */
+export type EditorLanguage =
+  | 'json'
+  | 'xml'
+  | 'html'
+  | 'css'
+  | 'javascript'
+  | 'markdown'
+  | 'yaml'
+  | 'shell'
+  | 'python'
+  | 'go'
+  | 'php'
+  | 'powershell'
+  | 'http'
+  | 'text'
