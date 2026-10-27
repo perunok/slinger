@@ -3,9 +3,19 @@
 What changed in each version of Slinger, newest first. Slinger shows these notes in the app (Help > Release Notes, and
 once after an update), and each GitHub release uses its version's section.
 
-## 0.28.0 — unreleased
+## 0.29.0 — unreleased
 
 - (filled in at release)
+
+## 0.28.0 — 2026-10-27
+
+### New
+- Code snippets are syntax-highlighted in every language: cURL, Python, Go, PHP, PowerShell and `.http` files (before, only the JavaScript ones were), and so is the MCP Inspector command.
+- YAML and Markdown responses are highlighted in Pretty view.
+
+### Improved
+- Auto sync is off for a newly linked workspace: it syncs once when you link it, then when you click **Sync now**, until you switch Auto sync on. Workspaces you linked before keep their setting.
+- Exported files and saved responses are written in one step, so another program never sees a half-written file.
 
 ## 0.27.1 — 2026-10-26
 
