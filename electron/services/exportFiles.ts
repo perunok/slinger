@@ -1,6 +1,7 @@
 import { existsSync, statSync } from 'node:fs'
-import { lstat, mkdir, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { basename, join, resolve } from 'node:path'
 import { invalidInput, ioError } from '../lib/errors'
 
@@ -101,7 +102,16 @@ export class ExportFiles {
       const existing = await lstat(target).catch(() => null)
       if (existing?.isSymbolicLink()) throw invalidInput('refusing to overwrite a symbolic link')
       if (existing?.isDirectory()) throw invalidInput('a folder with that name already exists')
-      await writeFile(target, data)
+      // Written next to the target, then renamed: the file never appears half-written (to the user or another program).
+      // A short name of its own: the target's name may already be at the file system's length limit.
+      const tmp = join(this.directory, `.slinger-export-${randomUUID()}.part`)
+      try {
+        await writeFile(tmp, data, { flag: 'wx' })
+        await rename(tmp, target)
+      } catch (err) {
+        await rm(tmp, { force: true })
+        throw err
+      }
     } catch (err) {
       if (err instanceof Error && err.name === 'IpcError') throw err
       throw ioError(`Could not write export file: ${err instanceof Error ? err.message : String(err)}`)

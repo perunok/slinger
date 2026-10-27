@@ -127,6 +127,13 @@ describe('analyzeResponse', () => {
     expect(analyzeResponse(res({ ct: 'application/javascript', bodyText: 'x=1' })).language).toBe('javascript')
     expect(analyzeResponse(res({ ct: 'text/javascript', bodyText: 'x=1' })).kind).toBe('text')
   })
+  it('maps YAML and Markdown bodies', () => {
+    for (const ct of ['application/yaml', 'application/x-yaml', 'text/yaml', 'text/x-yaml', 'application/vnd.oai.openapi+yaml']) {
+      expect(analyzeResponse(res({ ct, bodyText: 'a: 1' })).language).toBe('yaml')
+    }
+    expect(analyzeResponse(res({ ct: 'text/markdown', bodyText: '# Hi' })).language).toBe('markdown')
+    expect(analyzeResponse(res({ ct: 'text/plain', bodyText: 'a: 1' })).language).toBe('text')
+  })
   it('never throws on garbage', () => {
     expect(() => analyzeResponse(res({ bodyBase64: '!!!not base64@@@' }))).not.toThrow()
     expect(() => analyzeResponse(null as unknown as HttpResponseData)).not.toThrow()

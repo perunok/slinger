@@ -4,6 +4,7 @@
  */
 
 import type { HttpResponseData, RequestHeader } from '../../shared/types'
+import type { EditorLanguage } from './editorLanguage'
 
 export type BodyKind =
   | 'json'
@@ -16,7 +17,7 @@ export type BodyKind =
   | 'binary'
   | 'empty'
 
-export type EditorLanguage = 'json' | 'xml' | 'html' | 'css' | 'javascript' | 'text'
+export type { EditorLanguage }
 
 export interface ResponseBodyInfo {
   kind: BodyKind
@@ -190,11 +191,14 @@ function languageFor(kind: BodyKind, mime: string): EditorLanguage {
       if (mime === 'text/javascript' || mime === 'application/javascript' || mime === 'application/x-javascript') {
         return 'javascript'
       }
+      if (YAML_MIME.test(mime)) return 'yaml'
+      if (mime === 'text/markdown' || mime === 'text/x-markdown') return 'markdown'
       return 'text'
   }
 }
 
 const JSON_MIME = /(^|\/|\+)json$/
+const YAML_MIME = /^(?:application|text)\/(?:x-)?yaml$|\+yaml$/
 const XML_MIME = /^(?:application|text)\/xml$|\+xml$/
 
 /**

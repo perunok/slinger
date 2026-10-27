@@ -10,7 +10,8 @@ import type { HttpRequestInput, McpClientTransport, McpOperationName } from '../
 import { prepareRequest, resolveJsonTemplates, templateResolver, type PrepareContext } from './prepare'
 import { dataRows } from './kv'
 import type { RequestDraft } from './request'
-import { textToBase64, type EditorLanguage } from './response'
+import type { EditorLanguage } from './editorLanguage'
+import { textToBase64 } from './response'
 import { mapOutsideTokens } from './urlParams'
 
 /** Stands in for an OAuth 2.0 access token in generated code (the real token never leaves the keychain for this). */
@@ -26,14 +27,14 @@ export type SnippetLang = 'curl' | 'fetch' | 'axios' | 'python' | 'go' | 'php' |
 
 /** `fileExtension`: the snippet can also be saved as a file of that type. */
 export const SNIPPET_LANGS: { id: SnippetLang; label: string; editorLanguage: EditorLanguage; fileExtension?: string }[] = [
-  { id: 'curl', label: 'cURL', editorLanguage: 'text' },
+  { id: 'curl', label: 'cURL', editorLanguage: 'shell' },
   { id: 'fetch', label: 'JavaScript (fetch)', editorLanguage: 'javascript' },
   { id: 'axios', label: 'JavaScript (axios)', editorLanguage: 'javascript' },
-  { id: 'python', label: 'Python (requests)', editorLanguage: 'text' },
-  { id: 'go', label: 'Go (net/http)', editorLanguage: 'text' },
-  { id: 'php', label: 'PHP (cURL)', editorLanguage: 'text' },
-  { id: 'powershell', label: 'PowerShell', editorLanguage: 'text' },
-  { id: 'http', label: 'HTTP file (.http)', editorLanguage: 'text', fileExtension: '.http' },
+  { id: 'python', label: 'Python (requests)', editorLanguage: 'python' },
+  { id: 'go', label: 'Go (net/http)', editorLanguage: 'go' },
+  { id: 'php', label: 'PHP (cURL)', editorLanguage: 'php' },
+  { id: 'powershell', label: 'PowerShell', editorLanguage: 'powershell' },
+  { id: 'http', label: 'HTTP file (.http)', editorLanguage: 'http', fileExtension: '.http' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -549,7 +550,7 @@ export function generateSnippet(lang: SnippetLang, input: HttpRequestInput): str
 // ---------------------------------------------------------------------------
 
 /** The only snippet language of an MCP request. */
-export const MCP_SNIPPET_LANG = { id: 'mcpInspector', label: 'MCP Inspector CLI', editorLanguage: 'text' as EditorLanguage }
+export const MCP_SNIPPET_LANG = { id: 'mcpInspector', label: 'MCP Inspector CLI', editorLanguage: 'shell' as EditorLanguage }
 
 export const MCP_INSPECTOR_PACKAGE = '@modelcontextprotocol/inspector'
 
