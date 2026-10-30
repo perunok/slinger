@@ -158,6 +158,46 @@ export interface SendRequestResponse {
 /** Never a rejection: network failures come back as `ok: false`. `logLine` is redacted for the script console. */
 export type SendRequestOutcome = { ok: true; response: SendRequestResponse; logLine: string } | { ok: false; error: string; logLine: string }
 
+/** A cookie as pm.cookies.jar() hands it to scripts (Postman's Cookie fields). */
+export interface ScriptCookie {
+  name: string
+  value: string
+  domain: string
+  path: string
+  /** ISO time, null for a session cookie. */
+  expires: string | null
+  hostOnly: boolean
+  session: boolean
+  secure: boolean
+  httpOnly: boolean
+  sameSite: 'Strict' | 'Lax' | 'None' | null
+}
+
+/** One pm.cookies.jar() call, validated by the sandbox host; main runs it against the workspace's jar. */
+export type CookieJarCall =
+  | { op: 'get'; url: string; name: string }
+  | { op: 'getAll'; url: string }
+  | {
+      op: 'set'
+      url: string
+      cookie: {
+        name: string
+        value: string
+        domain?: string
+        path?: string
+        /** Unix seconds. */
+        expires?: number
+        secure?: boolean
+        httpOnly?: boolean
+        sameSite?: 'Strict' | 'Lax' | 'None'
+      }
+    }
+  | { op: 'unset'; url: string; name: string }
+  | { op: 'clear'; url: string }
+
+/** Never a rejection: a refused call (domain not allowed, bad cookie) is `ok: false`. */
+export type CookieJarOutcome = { ok: true; value: unknown } | { ok: false; error: string }
+
 /** What the runner needs from its host thread. */
 export interface ScriptRunnerDeps {
   /** Reads a secret variable's value (keychain, via the main thread). null when missing. */
@@ -166,5 +206,7 @@ export interface ScriptRunnerDeps {
   isCancelled(): boolean
   /** Runs one pm.sendRequest (main process). Absent: pm.sendRequest reports that it is unavailable. */
   sendHttp?(call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome>
+  /** Runs one pm.cookies.jar() call (main process). Absent: pm.cookies.jar() reports that it is unavailable. */
+  cookieJar?(call: CookieJarCall): Promise<CookieJarOutcome>
   now?: () => number
 }

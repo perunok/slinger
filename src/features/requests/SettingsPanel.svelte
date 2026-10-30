@@ -111,4 +111,14 @@
       </InfoTip>
     </div>
   </fieldset>
+  <div class="flex items-center gap-1">
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={boolSetting(ppb, 'disableCookies')} onchange={(e) => setBoolSetting(tab.draft, 'disableCookies', e.currentTarget.checked)} />
+      Disable cookie jar
+    </label>
+    <InfoTip label="About the cookie jar">
+      Normally a request sends the workspace's stored cookies for its URL and keeps the cookies its response sets (like a
+      browser). With this on, it does neither. Manage stored cookies with Ctrl+K, Cookies.
+    </InfoTip>
+  </div>
 </div>

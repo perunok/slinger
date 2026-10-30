@@ -9,6 +9,7 @@
 import { toErrorPayload } from '../lib/errors'
 import { MAX_RESPONSE_BODY_CHARS, type SendRequestCall, type SendRequestOutcome } from '../scripts/job'
 import type { FileAccess } from './fileGrants'
+import type { CookieJarPort } from './cookieJarPort'
 import { executeHttp, normalizeUrl } from './httpExecutor'
 import type { NetworkRouter } from './network'
 
@@ -18,6 +19,8 @@ export interface ScriptHttpOptions {
   network?: NetworkRouter
   /** Replaces secret values with `{{name}}` (ScriptService.redact for the run's session). */
   redact(text: string): string
+  /** The workspace's cookie jar (absent: no cookies are sent or stored, e.g. a send an AI assistant controls). */
+  cookieJar?: CookieJarPort
 }
 
 /** pm.sendRequest loads at most this much of a response (the download stops there; the call fails with a clear error). */
@@ -40,7 +43,7 @@ export async function runScriptSendRequest(call: SendRequestCall, signal: AbortS
   try {
     const res = await executeHttp(
       { method: call.method, url: call.url, headers: call.headers, auth: call.auth, body: call.body, timeoutMs: call.timeoutMs, workspaceId: '' },
-      { signal, files: options.files, maxResponseBytes: SCRIPT_MAX_RESPONSE_BYTES, network: options.network },
+      { signal, files: options.files, maxResponseBytes: SCRIPT_MAX_RESPONSE_BYTES, network: options.network, cookieJar: options.cookieJar },
     )
     // Binary bodies: bytes as Latin-1 characters (what a string-based sandbox can hold without loss).
     const text = res.bodyText ?? Buffer.from(res.bodyBase64 ?? '', 'base64').toString('latin1')

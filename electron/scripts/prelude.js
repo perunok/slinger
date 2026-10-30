@@ -853,8 +853,71 @@
       all: function () { return list.slice() },
     }
   }
+  // pm.cookies.jar(): the workspace's cookie jar, for the domains the user allowed (Cookies dialog). Each call is a host
+  // operation answered asynchronously (like pm.sendRequest): callback style, and a Promise as well.
+  function jarApi() {
+    function call(spec, callback, map) {
+      if (callback !== undefined && callback !== null && typeof callback !== 'function') throw new TypeError('pm.cookies.jar(): the callback must be a function')
+      var id = host('cookies.jar', [spec])
+      var resolveJar
+      var rejectJar
+      var promise = new Promise(function (resolve, reject) {
+        resolveJar = resolve
+        rejectJar = reject
+      })
+      if (callback) promise.catch(function () {})
+      sendWaiters[id] = function (out) {
+        if (out.ok) {
+          var v = map ? map(out.value) : out.value
+          resolveJar(v)
+          if (callback) callback(null, v)
+        } else {
+          var err = new Error(out.error)
+          rejectJar(err)
+          if (callback) callback(err)
+        }
+      }
+      return promise
+    }
+    function cookieSpec(c) {
+      var expires = c.expires instanceof Date ? c.expires.getTime() : c.expires
+      return {
+        name: String(c.name === undefined ? (c.key === undefined ? '' : c.key) : c.name),
+        value: c.value === undefined || c.value === null ? '' : String(c.value),
+        domain: typeof c.domain === 'string' ? c.domain : undefined,
+        path: typeof c.path === 'string' ? c.path : undefined,
+        expires: expires === undefined || expires === null || expires === 'Infinity' ? undefined : expires,
+        secure: c.secure === true,
+        httpOnly: c.httpOnly === true,
+        sameSite: typeof c.sameSite === 'string' ? c.sameSite : undefined,
+      }
+    }
+    var undef = function (v) { return v === null ? undefined : v }
+    return {
+      get: function (url, name, callback) { return call({ op: 'get', url: urlText(url), name: String(name) }, callback, undef) },
+      getAll: function (url, callback) { return call({ op: 'getAll', url: urlText(url) }, callback) },
+      set: function (url, name, value, callback) {
+        var cookie
+        if (name && typeof name === 'object') {
+          cookie = cookieSpec(name)
+          callback = value
+        } else {
+          if (typeof value === 'function') {
+            callback = value
+            value = ''
+          }
+          cookie = cookieSpec({ name: name, value: value })
+        }
+        return call({ op: 'set', url: urlText(url), cookie: cookie }, callback, undef)
+      },
+      unset: function (url, name, callback) { return call({ op: 'unset', url: urlText(url), name: String(name) }, callback, undef) },
+      clear: function (url, callback) { return call({ op: 'clear', url: urlText(url) }, callback, undef) },
+    }
+  }
   function cookieJar() {
-    return cookiesFrom(RES ? RES.headers : [])
+    var list = cookiesFrom(RES ? RES.headers : [])
+    list.jar = jarApi
+    return list
   }
 
   // -------------------------------------------------------------------------

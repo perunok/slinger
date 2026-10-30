@@ -12,9 +12,12 @@ export const REQUEST_SETTING_DEFAULTS = {
   followOriginalHttpMethod: false,
   followAuthorizationHeader: false,
   removeRefererHeaderOnRedirect: false,
+  /** Neither send the workspace's cookies nor store the response's (HttpRequestInput.cookies 'off'). */
+  disableCookies: false,
 } as const
 
 export type BoolRequestSetting = keyof typeof REQUEST_SETTING_DEFAULTS
+const REDIRECT_KEYS = ['followRedirects', 'followOriginalHttpMethod', 'followAuthorizationHeader', 'removeRefererHeaderOnRedirect'] as const
 
 export const DEFAULT_MAX_REDIRECTS = 10
 export const MAX_MAX_REDIRECTS = 1000
@@ -66,9 +69,10 @@ export function setMaxRedirects(draft: RequestDraft, text: string): void {
 export function protocolInput(ppb: Behavior): Partial<HttpRequestInput> {
   const out: Partial<HttpRequestInput> = {}
   if (typeof ppb.strictSSL === 'boolean') out.strictSSL = ppb.strictSSL
-  for (const key of Object.keys(REQUEST_SETTING_DEFAULTS) as BoolRequestSetting[]) {
+  for (const key of REDIRECT_KEYS) {
     if (typeof ppb[key] === 'boolean') out[key] = ppb[key] as boolean
   }
+  if (ppb.disableCookies === true) out.cookies = 'off'
   const max = maxRedirectsSetting(ppb)
   if (max !== null) out.maxRedirects = Math.min(max, MAX_MAX_REDIRECTS)
   return out

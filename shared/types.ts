@@ -247,6 +247,11 @@ export interface RedactSecretsInput {
   /** The OAuth 2.0 token the send used: its access and refresh tokens become `<access token>` / `<refresh token>`. */
   oauth2TokenKey: string | null
   texts: string[]
+  /**
+   * ADDED (cookie jar): the values of this workspace's cookie jar are replaced with `[hidden]` too, except values the
+   * response itself set (`responseSetCookies`: its raw Set-Cookie header values, which the assistant sees anyway).
+   */
+  cookies?: { workspaceId: string; responseSetCookies: string[] } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -478,12 +483,50 @@ export interface HttpRequestInput {
   followAuthorizationHeader?: boolean
   /** Remove a Referer header the request set when following a redirect (default false). */
   removeRefererHeaderOnRedirect?: boolean
+  /**
+   * ADDED (0.29 cookie jar): 'jar' (default) sends the workspace's matching cookies and stores the response's
+   * Set-Cookie; 'off' does neither (the request's "Disable cookie jar" setting, and sends an AI assistant controls).
+   */
+  cookies?: 'jar' | 'off'
 }
 
 /** ADDED (0.29): one redirect a send followed: the 3xx status and the absolute URL its Location pointed to. */
 export interface RedirectHop {
   status: number
   location: string
+}
+
+/** ADDED (0.29): one cookie of a workspace's jar as listed (never its value: `revealCookie` reads that). */
+export interface JarCookie {
+  id: string
+  workspaceId: string
+  name: string
+  domain: string
+  /** Sent only to exactly `domain` (the cookie had no Domain attribute), else to its subdomains too. */
+  hostOnly: boolean
+  path: string
+  /** Unix seconds; null = session cookie (kept until deleted). */
+  expiresAt: number | null
+  secure: boolean
+  httpOnly: boolean
+  sameSite: 'Strict' | 'Lax' | 'None' | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** ADDED (0.29): add a cookie (no `id`) or edit one; `value` absent keeps the stored value of an edited cookie. */
+export interface UpsertCookieInput {
+  workspaceId: string
+  id?: string
+  name: string
+  value?: string
+  domain: string
+  hostOnly: boolean
+  path: string
+  expiresAt: number | null
+  secure: boolean
+  httpOnly: boolean
+  sameSite: 'Strict' | 'Lax' | 'None' | null
 }
 
 /** chooseResponseDownloadFile's result: an opaque one-time id for executeHttpRequest, and the chosen file's name. */

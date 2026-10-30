@@ -48,6 +48,7 @@
   const load = {
     about: () => import('../features/about/AboutDialog.svelte'),
     cloud: () => import('../features/cloud/CloudDialog.svelte'),
+    cookies: () => import('../features/cookies/CookiesDialog.svelte'),
     environmentExport: () => import('../features/environments/EnvironmentExportDialog.svelte'),
     workflow: () => import('../features/workflows/WorkflowView.svelte'),
     collectionExport: () => import('../features/importexport/ExportCollectionDialog.svelte'),
@@ -198,6 +199,7 @@
 {#if ui.shortcutsOpen}<Lazy load={load.shortcuts} />{/if}
 {#if ui.quickOpen}<QuickOpen />{/if}
 {#if ui.aboutOpen}<Lazy load={load.about} />{/if}
+{#if ui.cookiesOpen && app.workspaceId}{#key app.workspaceId}<Lazy load={load.cookies} />{/key}{/if}
 {#if ui.releaseNotes}
   <Lazy load={load.releaseNotes} props={{ view: ui.releaseNotes, onclose: () => (ui.releaseNotes = null), onshowall: () => (ui.releaseNotes = { mode: 'all' }) }} />
 {/if}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assistantControl, originDependsOn, redactValues, refusal, scriptSecretDenial } from './assistantPolicy'
+import { assistantControl, cookieJarAllowed, originDependsOn, redactValues, refusal, scriptSecretDenial } from './assistantPolicy'
 import { newDraft } from './request'
 import { layeredScope } from './template'
 
@@ -31,6 +31,14 @@ describe('assistantControl', () => {
     expect(scriptSecretDenial(assistantControl(undefined, none, 'r1', 'e1'))).toBeNull()
     expect(scriptSecretDenial(assistantControl({ adHoc: true }, none, null, null))).toMatch(/AI assistant/)
     expect(scriptSecretDenial(assistantControl(undefined, { requests: [], variables: [{ environmentId: 'e1', key: 'userId' }] }, 'r1', 'e1'))).toMatch(/userId/)
+  })
+
+  it('the user’s cookie jar only for a send exactly as the user saved it', () => {
+    expect(cookieJarAllowed(assistantControl(undefined, none, 'r1', 'e1'))).toBe(true)
+    expect(cookieJarAllowed(assistantControl({ adHoc: true }, none, null, null))).toBe(false)
+    expect(cookieJarAllowed(assistantControl({ overrides: ['headers'] }, none, 'r1', 'e1'))).toBe(false)
+    expect(cookieJarAllowed(assistantControl(undefined, { requests: [{ requestId: 'r1', created: false }], variables: [] }, 'r1', 'e1'))).toBe(false)
+    expect(cookieJarAllowed(assistantControl(undefined, { requests: [], variables: [{ environmentId: 'e1', key: 'userId' }] }, 'r1', 'e1'))).toBe(false)
   })
 })
 

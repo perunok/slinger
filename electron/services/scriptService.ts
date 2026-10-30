@@ -13,12 +13,13 @@ import { requireCollection, requireEnvironment, requireWorkspace } from '../repo
 import { isCollectionTrustedRow } from '../repositories/trust'
 import type { EnvironmentRepository } from '../repositories/environments'
 import type { CollectionVariableRepository, GlobalVariableRepository } from '../repositories/variables'
-import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type EnvOp, type EnvSnapshot, type PersistedScopeSnapshot, type ScriptJob } from '../scripts/job'
+import { DEFAULT_LIMITS, MAX_SCRIPT_WALL_CLOCK_MS, MAX_SEND_REQUEST_TIMEOUT_MS, type CookieJarCall, type EnvOp, type EnvSnapshot, type PersistedScopeSnapshot, type ScriptJob } from '../scripts/job'
 import type { ScriptExecutor } from '../scripts/executor'
 import type { FileAccess } from './fileGrants'
 import { DEFAULT_TIMEOUT_MS } from './httpExecutor'
 import { runScriptSendRequest } from './scriptHttp'
 import type { NetworkRouter } from './network'
+import type { CookieService } from './cookieJar'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 const SESSION_TTL_MS = 60 * 60 * 1000
@@ -75,6 +76,11 @@ export class ScriptService {
     private readonly stores?: ScriptVariableStores,
     /** Settings > Network for pm.sendRequest (absent: direct connections). */
     private readonly network?: NetworkRouter,
+    /**
+     * The workspaces' cookie jars (0.29): pm.sendRequest sends and stores cookies like a normal send, pm.cookies.jar()
+     * reads and writes the allowed domains. Neither for a run with `denySecrets` (an AI assistant controls the send).
+     */
+    private readonly cookies?: CookieService,
   ) {}
 
   private isReadOnly(workspaceId: string): boolean {
@@ -199,7 +205,9 @@ export class ScriptService {
             files: this.files,
             network: this.network,
             redact: (text) => this.redact(input.sessionId, text),
+            cookieJar: this.cookies && !denySecrets ? this.cookies.jar(workspace.id) : undefined,
           }),
+        ...(this.cookies ? { cookieJar: (call: CookieJarCall) => this.cookies!.scriptOp(workspace.id, call) } : {}),
         readSecret: (variableId) => {
           // Only secrets of the environment / globals this run was given; anything else is refused.
           const target = secretIds.get(variableId)

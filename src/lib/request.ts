@@ -596,6 +596,7 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
 }
 
+
 /** Canonical string used for dirty checks. */
 export function draftFingerprint(d: RequestDraft): string {
   const s = serializeDraft(d)

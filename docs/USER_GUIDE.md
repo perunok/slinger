@@ -155,6 +155,8 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
     Host headers are never carried to another origin.
   - **Remove the Referer header on redirects** (off): drops a Referer header the request sets. Slinger never adds one.
   - **Maximum number of redirects** (default 10, 0-1000): one more fails with *Too many redirects*, which ends redirect loops.
+  - **Disable cookie jar** (off; Postman's `disableCookies`): the request neither sends the workspace's stored cookies nor
+    keeps the cookies its responses set (also on redirects).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
   (net/http), PHP (cURL), PowerShell or as an **HTTP file (.http)**, with a Copy button. Unresolved variables are left as-is in
   snippets. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
@@ -361,6 +363,26 @@ headers still there. **Send and download to file** asks where to save, sends the
 straight to that file (no size limit); the response pane then shows where it was saved and how big it is. Test scripts do not
 run for such a download (there is no body to test). In the collection runner and for AI assistants a body over the limit is
 reported as not loaded.
+
+### Cookies
+
+Every workspace has a **cookie jar**, like a browser's. When a response sets cookies (`Set-Cookie`), Slinger keeps them, and
+later requests in the same workspace to a matching URL send them back: log in once and the next request is logged in too. This
+works the same for single sends, the collection runner, workflows and `pm.sendRequest` in scripts, so a login request's cookie is
+used by the next request of a run. A `Cookie` header you set yourself wins over a stored cookie of the same name.
+
+The rules are the browser's (RFC 6265): a cookie without `Domain` goes only to the host that set it, one with `Domain` to that
+domain and its subdomains; `Path` limits it to that path and below; `Secure` cookies go only over https (and to `localhost` /
+`127.0.0.1` over http too, as browsers allow); expired cookies are dropped (`Max-Age=0` or a past `Expires` deletes one). A cookie
+for a public suffix such as `com` or `co.uk` is refused. Cookies without an expiry (session cookies) are kept until you delete
+them, like Postman does. HttpOnly cookies are sent like the others; SameSite is stored and shown but not enforced (there is no
+page). At most 180 cookies per domain (the oldest go first), 3000 per workspace, 4 KB per cookie, expiry at most 400 days ahead.
+
+**Manage cookies** (Ctrl+K, **Cookies**, or **Manage cookies…** in a response's Cookies view) lists the open workspace's
+cookies by domain, with search. Values are hidden until you click the eye. Add or edit a cookie (name, value, domain, path,
+expiry, Include subdomains, Secure, HttpOnly, SameSite), delete one, delete all of a domain, or **Clear all**. Values are stored
+encrypted (the key is in the OS keychain) and never synced, exported or kept in versions; deleting a workspace deletes its jar.
+To stop a single request from using the jar, tick **Disable cookie jar** in its Settings tab.
 
 When the request (or its folder or collection) has scripts, two more views appear: **Tests** (every `pm.test` with pass/fail/skip,
 the assertion message of failures, script errors, a filter, and a `passed/total` badge on the tab that turns red when something
@@ -818,6 +840,7 @@ body; objects become JSON). Changes apply to **this send only**: the saved reque
 | `pm.response.to.have.status(code or reason)`, `.header(name[, value])`, `.body([text or regexp or object])`, `.jsonBody([path[, value]])` | response assertions |
 | `pm.response.to.be.ok / success / error / clientError / serverError / notFound / json / withBody` (and `.not`) | response assertions |
 | `pm.cookies.get/has/toObject` | from the response's `Set-Cookie` headers |
+| `pm.cookies.jar()`: `.get(url, name, cb)`, `.getAll(url, cb)`, `.set(url, name, value, cb)` or `.set(url, {name, value, domain, path, expires, secure, httpOnly, sameSite}, cb)`, `.unset(url, name, cb)`, `.clear(url, cb)` | the workspace's cookie jar, for the domains listed under **Domains scripts may access** in the Cookies dialog (and their subdomains) only; any other domain fails with an error naming it. Callbacks get `(error, result)`; every method also returns a promise |
 | `pm.test(name, fn)`, `pm.test.skip(name)` | `fn` may return a promise or take a `done` callback |
 | `pm.expect(value[, message])` | chai-style: `to.equal/eql/deep.equal`, `a/an`, `include/contain`, `have.property` (also `nested`, `own`), `oneOf`, `above/below/least/most/within`, `length/lengthOf` (also `.lengthOf.above(n)`), `match`, `keys/members`, `exist`, `true/false/null/undefined/NaN/empty`, `throw`, `satisfy`, `closeTo`, `instanceOf`, `not` |
 | `pm.info.eventName/requestName/requestId/iteration/iterationCount` | |
@@ -1477,7 +1500,12 @@ refused, with a message the assistant can pass on to you, when the send would ca
   the environment, even to the same text, to confirm it).
 
 A secret variable the assistant set itself holds its own value, so it may use that one. Scripts in such sends cannot read
-secret variables. You can always send the request yourself from its tab. Sends and runs work in the workspace that is open in
+secret variables.
+
+**Cookies are credentials too.** A send exactly as you saved it uses the workspace's cookie jar. Any send the assistant
+controls (the cases above, or while variables it set are unreviewed) goes out without your cookies and keeps none the response
+sets; its scripts cannot use `pm.cookies.jar()` and their `pm.sendRequest` gets no cookies. The values of your stored cookies
+are `[hidden]` in everything returned to an assistant, except a cookie the response itself sets (its `Set-Cookie` header). You can always send the request yourself from its tab. Sends and runs work in the workspace that is open in
 the window (an assistant can open another one with "Show in Slinger"). An assistant's deletes are the same as yours, so keep an
 eye on what it does to important collections (a collection version is a good backup before big changes).
 
@@ -1590,7 +1618,7 @@ Taken from the shortcut handler and the in-app list (Ctrl+/):
 | Ctrl+S | Save the current request (Save as, if it is not saved yet); workflows save themselves as you edit |
 | Ctrl+T | New request tab |
 | Ctrl+W | Close the current tab |
-| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; About Slinger) |
+| Ctrl+K | Go to request; type `>` for commands (switch theme, accent or loading animation; layout; export a collection or an environment; Cookies; About Slinger) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+Alt+V | Show the response below / beside the request |
 | Ctrl+B | Show / hide the sidebar |

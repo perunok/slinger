@@ -12,6 +12,7 @@ import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
+import { CookieService } from './cookieJar'
 import { MockServers } from './mockServers'
 import { OAuth2Service } from './oauth2'
 import { networkFetch } from './network'
@@ -71,6 +72,8 @@ export interface Core {
   http: HttpService
   /** ADDED (0.29): Settings > Network, and the router every outgoing request of the user's goes through. */
   network: NetworkSettingsService
+  /** ADDED (0.29): the cookie jars, one per workspace (local only). */
+  cookies: CookieService
   oauth2: OAuth2Service
   scripts: ScriptService
   authCallbacks: BrowserAuthCallbacks
@@ -99,6 +102,7 @@ export function createCore(deps: CoreDeps): Core {
   const globals = new GlobalVariableRepository(db, secrets)
   const network = new NetworkSettingsService({ db, secrets, files: fileGrants, ...deps.network })
   const oauth2 = new OAuth2Service(secrets, { network })
+  const cookies = new CookieService(db, secrets)
   const scripts = new ScriptService(
     db,
     environments,
@@ -107,6 +111,7 @@ export function createCore(deps: CoreDeps): Core {
     fileGrants,
     { collectionVariables, globals },
     network,
+    cookies,
   )
   const core: Core = {
     db,
@@ -127,8 +132,10 @@ export function createCore(deps: CoreDeps): Core {
       (sessionId, text) => scripts.redact(sessionId, text),
       (key, origin) => oauth2.accessTokenFor(key, origin),
       network,
+      (workspaceId) => cookies.jar(workspaceId),
     ),
     network,
+    cookies,
     oauth2,
     scripts,
     authCallbacks: new BrowserAuthCallbacks(),

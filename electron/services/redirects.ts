@@ -97,18 +97,5 @@ export function redirectHeaders(
   return out
 }
 
-/**
- * The Cookie header of one hop: the request's own cookies, plus the jar's cookies whose names the request does not set
- * (the request's value wins per name). Null when there are none.
- */
-export function mergeCookieHeader(own: string | null, jar: string | null): string | null {
-  const pairs = (v: string | null) =>
-    (v ?? '')
-      .split(';')
-      .map((p) => p.trim())
-      .filter((p) => p !== '')
-  const ownPairs = pairs(own)
-  const names = new Set(ownPairs.map((p) => p.split('=')[0]!.trim()))
-  const merged = [...ownPairs, ...pairs(jar).filter((p) => !names.has(p.split('=')[0]!.trim()))]
-  return merged.length ? merged.join('; ') : null
-}
+/** The Cookie header of one hop: the request's own cookies win per name over the jar's (shared/cookies.ts). */
+export { mergeCookieHeader } from '../../shared/cookies'
