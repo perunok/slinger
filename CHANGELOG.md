@@ -3,9 +3,20 @@
 What changed in each version of Slinger, newest first. Slinger shows these notes in the app (Help > Release Notes, and
 once after an update), and each GitHub release uses its version's section.
 
-## 0.29.0 — unreleased
+## 0.30.0 — unreleased
 
 - (filled in at release)
+
+## 0.29.0 — 2026-10-30
+
+### New
+- **Cookie jar**: cookies a server sets are kept per workspace and sent on later requests, also across redirects, so logging in once works for the requests after it (runner, workflows and `pm.sendRequest` share it). Values are encrypted on disk and never synced or exported. Manage them in the new **Cookies** dialog (Ctrl+K, or **Manage cookies…** in a response's Cookies view); scripts can use `pm.cookies.jar()` for domains you allow there.
+- **Settings > Network**: proxy (your system proxy by default, a custom proxy with login and bypass list, or none), SSL certificate verification, extra CA certificates, and client certificates per host (PEM or PFX).
+- **Request Settings**: per request SSL verification, follow redirects, maximum redirects, keep the original method or the Authorization header on redirects, remove Referer, and disable the cookie jar. Postman's request settings are imported and exported.
+
+### Improved
+- Redirects are listed in the response, and certificate and proxy errors say what is wrong and which setting to change.
+- Requests now use your system proxy, as a browser does (switch it off in Settings > Network).
 
 ## 0.28.0 — 2026-10-27
 
