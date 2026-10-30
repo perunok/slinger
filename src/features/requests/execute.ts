@@ -64,7 +64,15 @@ import {
   type ScriptOutput,
 } from '../../lib/scripts'
 import { EMPTY_SCOPE, layeredScope, uuid, type TemplateScope, type VariableInfo } from '../../lib/template'
-import { assistantControl, redactValues, refusal, scriptSecretDenial, type AssistantControl, type AssistantSendInfo } from '../../lib/assistantPolicy'
+import {
+  assistantControl,
+  cookieJarAllowed,
+  redactValues,
+  refusal,
+  scriptSecretDenial,
+  type AssistantControl,
+  type AssistantSendInfo,
+} from '../../lib/assistantPolicy'
 import { withDefaultScheme } from '../../../shared/urlScheme'
 import { mcpConnections, type McpConnection } from '../mcpRequests/connections.svelte'
 import { securityPrompts } from '../security/prompts.svelte'
@@ -158,6 +166,8 @@ export interface ExecuteContext {
 interface Sensitive {
   values: Set<string>
   oauth2TokenKey: string | null
+  /** The send's workspace: its cookie jar's values are hidden too (main, redactSecrets). */
+  workspaceId: string
 }
 
 /** Thrown inside a send when the scripts of the request's collection are not allowed on this device. */
@@ -285,7 +295,7 @@ export function authChainFor(collectionId: string | null | undefined, folderId: 
 export async function executeDraft(input: RequestDraft, ctx: ExecuteContext): Promise<ExecuteOutcome> {
   if (ctx.source !== 'mcp') return executeOnce(input, ctx, null)
   const run = ctx.run ?? newScriptRun()
-  const sensitive: Sensitive = { values: new Set(), oauth2TokenKey: null }
+  const sensitive: Sensitive = { values: new Set(), oauth2TokenKey: null, workspaceId: ctx.workspaceId }
   const outcome = await executeOnce(input, { ...ctx, run }, sensitive)
   return redactOutcome(outcome, sensitive, run.sessionId)
 }
@@ -470,6 +480,8 @@ async function executeOnce(original: RequestDraft, ctx: ExecuteContext, sensitiv
         ...(ctx.source ? { historySource: ctx.source } : {}),
         // Settings > Requests: main stops downloading a larger body (the response then has bodyTooLarge).
         maxResponseBytes: settings.maxResponseMb * MB,
+        // An AI assistant's send that may not use the user's secrets does not use their cookie jar either.
+        ...(control && !cookieJarAllowed(control) ? { cookies: 'off' as const } : {}),
         ...(ctx.downloadId ? { downloadId: ctx.downloadId } : {}),
       })
       break
@@ -548,7 +560,13 @@ async function redactOutcome(outcome: ExecuteOutcome, sensitive: Sensitive, scri
   if (response) texts.push(response.statusText, response.bodyText ?? '', ...response.headers.map((h) => h.value), ...warnings, response.mcp?.error?.message ?? '')
   let out: string[]
   try {
-    out = await api().redactSecrets({ scriptSessionId, oauth2TokenKey: sensitive.oauth2TokenKey, texts })
+    const responseSetCookies = response?.headers.filter((h) => h.key.toLowerCase() === 'set-cookie').map((h) => h.value).slice(0, 1000) ?? []
+    out = await api().redactSecrets({
+      scriptSessionId,
+      oauth2TokenKey: sensitive.oauth2TokenKey,
+      texts,
+      cookies: { workspaceId: sensitive.workspaceId, responseSetCookies },
+    })
     if (out.length !== texts.length) throw new Error('unexpected answer')
   } catch (e) {
     return { ok: false, kind: 'failed', error: `Could not hide the secret values of the result: ${errorInfo(e).message}`, scripts: emptyScriptOutput() }

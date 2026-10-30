@@ -204,7 +204,7 @@ async function runOne(qjs: QuickJSWASMModule, host: RunHost, script: ScriptSourc
             continue
           }
           if (!settleFn) break
-          const { logLine: _log, ...payload } = next.outcome
+          const payload = 'logLine' in next.outcome ? (({ logLine: _log, ...rest }) => rest)(next.outcome) : next.outcome
           const idH = ctx.newNumber(next.id)
           const payloadH = ctx.newString(JSON.stringify(payload))
           const res = ctx.callFunction(settleFn, ctx.undefined, idH, payloadH)

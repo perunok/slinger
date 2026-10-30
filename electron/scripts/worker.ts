@@ -12,7 +12,7 @@
  * separate port keeps these replies from ever being mistaken for a secret reply by receiveMessageOnPort.
  */
 import { parentPort, receiveMessageOnPort, type MessagePort } from 'node:worker_threads'
-import type { ScriptJob, SendRequestCall, SendRequestOutcome } from './job'
+import type { CookieJarCall, CookieJarOutcome, ScriptJob, SendRequestCall, SendRequestOutcome } from './job'
 import { runScriptChain } from './sandbox'
 
 export interface WorkerJobMessage {
@@ -24,10 +24,14 @@ export interface WorkerJobMessage {
   httpPort: MessagePort
 }
 
-export type WorkerHttpMessage = { type: 'http'; id: number; call: SendRequestCall } | { type: 'http-abort'; id: number }
+/** pm.cookies.jar() calls use the same port (`jar`), answered by id like a send. */
+export type WorkerHttpMessage =
+  | { type: 'http'; id: number; call: SendRequestCall }
+  | { type: 'http-abort'; id: number }
+  | { type: 'jar'; id: number; call: CookieJarCall }
 export interface MainHttpReply {
   id: number
-  outcome: SendRequestOutcome
+  outcome: SendRequestOutcome | CookieJarOutcome
 }
 
 export type WorkerReply =
@@ -52,17 +56,17 @@ function secretReader(control: Int32Array, port: MessagePort) {
 
 function httpSender(port: MessagePort) {
   let seq = 0
-  const waiting = new Map<number, (outcome: SendRequestOutcome) => void>()
+  const waiting = new Map<number, (outcome: SendRequestOutcome | CookieJarOutcome) => void>()
   port.on('message', (m: MainHttpReply) => {
     const resolve = waiting.get(m?.id)
     if (!resolve) return
     waiting.delete(m.id)
     resolve(m.outcome)
   })
-  return (call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome> =>
+  const sendHttp = (call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome> =>
     new Promise((resolve) => {
       const id = ++seq
-      waiting.set(id, resolve)
+      waiting.set(id, resolve as (o: SendRequestOutcome | CookieJarOutcome) => void)
       port.postMessage({ type: 'http', id, call } satisfies WorkerHttpMessage)
       signal.addEventListener('abort', () => {
         if (waiting.delete(id)) {
@@ -71,6 +75,13 @@ function httpSender(port: MessagePort) {
         }
       }, { once: true })
     })
+  const cookieJar = (call: CookieJarCall): Promise<CookieJarOutcome> =>
+    new Promise((resolve) => {
+      const id = ++seq
+      waiting.set(id, resolve as (o: SendRequestOutcome | CookieJarOutcome) => void)
+      port.postMessage({ type: 'jar', id, call } satisfies WorkerHttpMessage)
+    })
+  return { sendHttp, cookieJar }
 }
 
 if (parentPort) {
@@ -81,7 +92,7 @@ if (parentPort) {
     void runScriptChain(msg.job, {
       readSecret: secretReader(control, msg.port),
       isCancelled: () => Atomics.load(control, 0) === 1,
-      sendHttp: httpSender(msg.httpPort),
+      ...httpSender(msg.httpPort),
     }).then(
       (result) => {
         msg.port.close()

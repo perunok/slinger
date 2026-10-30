@@ -6,6 +6,8 @@ import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
 import { FileWriteError, readLimitedBody, streamBodyToFile } from '../lib/limitedBody'
 import { DEFAULT_MAX_RESPONSE_MB, formatLimit, MB } from '../../shared/responseLimit'
 import type { FileAccess } from './fileGrants'
+import type { CookieJarPort } from './cookieJarPort'
+import { mergeCookieHeader } from '../../shared/cookies'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
 export const MAX_TIMEOUT_MS = 10 * 60_000
@@ -301,6 +303,8 @@ export interface ExecuteOptions {
   oversize?: 'error' | 'report'
   /** Streams the body into this file (chosen by the user in main's save dialog) instead of returning it; no size limit. */
   toFile?: string
+  /** The workspace's cookie jar: its cookies are sent (a user-set Cookie header wins per name), Set-Cookie is stored. */
+  cookieJar?: CookieJarPort
 }
 
 /**
@@ -335,6 +339,12 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
 
   const started = performance.now()
   try {
+    // Cookie jar, single hop (stream C stand-in): stream N's per-hop redirect handling replaces this at integration.
+    const jar = options.cookieJar
+    if (jar) {
+      const merged = mergeCookieHeader(built.headers.get('cookie'), await jar.cookieHeaderFor(new URL(built.url)))
+      if (merged) built.headers.set('Cookie', merged)
+    }
     const response = await fetch(built.url, {
       method: built.method,
       headers: built.headers,
@@ -342,6 +352,7 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
       signal: controller.signal,
       redirect: 'follow',
     })
+    if (jar) await jar.storeFromResponse(new URL(response.url || built.url), response.headers.getSetCookie())
     const headers: RequestHeader[] = []
     response.headers.forEach((value, key) => headers.push({ key, value }))
     const head = { status: response.status, statusText: response.statusText, headers }

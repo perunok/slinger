@@ -204,6 +204,7 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
       auth,
       body,
       timeoutMs: draft.timeoutMs ?? undefined,
+      ...(draft.disableCookies ? { cookies: 'off' as const } : {}),
       requestId: ctx.requestId ?? null,
       requestName: draft.name,
       workspaceId: ctx.workspaceId,

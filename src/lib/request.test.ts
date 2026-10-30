@@ -126,6 +126,34 @@ describe('document edge cases', () => {
   })
 })
 
+describe('disableCookies (Postman protocolProfileBehavior)', () => {
+  const docOf = (d: RequestDraft) => JSON.parse(serializeDraft(d).documentJson)
+
+  it('reads and writes protocolProfileBehavior.disableCookies, keeping its other keys', () => {
+    const d = parseDocument({ ...base, documentJson: JSON.stringify({ protocolProfileBehavior: { disableCookies: true, followRedirects: false } }) })
+    expect(d.disableCookies).toBe(true)
+    expect(docOf(d).protocolProfileBehavior).toEqual({ disableCookies: true, followRedirects: false })
+    expect(docOf({ ...d, disableCookies: false }).protocolProfileBehavior).toEqual({ followRedirects: false })
+    expect(docOf({ ...newDraft(), disableCookies: false })).not.toHaveProperty('protocolProfileBehavior')
+    expect(newDraft().disableCookies).toBe(false)
+  })
+
+  it('an imported item’s setting counts until the request has its own, and turning it off sticks', () => {
+    const d = parseDocument({ ...base, documentJson: JSON.stringify({ source: { protocolProfileBehavior: { disableCookies: true } } }) })
+    expect(d.disableCookies).toBe(true)
+    const off = parseDocument({ ...base, documentJson: serializeDraft({ ...d, disableCookies: false }).documentJson })
+    expect(off.disableCookies).toBe(false)
+  })
+
+  it("prepareRequest sends cookies: 'off' only when disabled", () => {
+    const scope = makeScope('E', [])
+    const on = prepareRequest({ ...newDraft({ url: 'http://x' }) }, { workspaceId: 'w', scope })
+    const off = prepareRequest({ ...newDraft({ url: 'http://x' }), disableCookies: true }, { workspaceId: 'w', scope })
+    expect(on.ok && on.input.cookies).toBe(undefined)
+    expect(off.ok && off.input.cookies).toBe('off')
+  })
+})
+
 describe('MCP requests (mcpRequest.ts) next to HTTP ones', () => {
   it('an HTTP draft serializes exactly as before MCP requests existed', () => {
     const d = newDraft({ ...base, headers: [newRow({ key: 'A', value: '1' }), newRow()] })

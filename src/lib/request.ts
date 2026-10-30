@@ -91,6 +91,11 @@ export interface RequestDraft {
   body: BodyDraft
   auth: AuthDraft
   timeoutMs: number | null
+  /**
+   * ADDED (0.29 cookie jar): Postman's `protocolProfileBehavior.disableCookies`: the send neither sends the workspace's
+   * cookies nor stores the response's (HttpRequestInput.cookies 'off'). Default off.
+   */
+  disableCookies: boolean
   /** Unedited document keys carried through save (scripts, responses, source, ...). */
   extras: Record<string, unknown>
   /**
@@ -172,6 +177,7 @@ export function newDraft(partial: Partial<RequestDraft> = {}): RequestDraft {
     body: emptyBody(),
     auth: emptyAuth(),
     timeoutMs: null,
+    disableCookies: false,
     extras: {},
     ...partial,
     // A URL with `:name` segments (cURL / .http imports, MCP create_request) gets its path variable rows.
@@ -423,6 +429,7 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     body: parseBody(doc.body),
     auth: parseAuth(doc.auth),
     timeoutMs: typeof settings.timeoutMs === 'number' ? settings.timeoutMs : null,
+    disableCookies: disableCookiesOf(doc),
     extras,
   }
   if (!isObj(doc.mcp) && method !== MCP_METHOD) return draft
@@ -562,6 +569,7 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   else delete settings.timeoutMs
   if (Object.keys(settings).length > 0) doc.settings = settings
   else delete doc.settings
+  writeDisableCookies(doc, d)
   if (d.mcp) {
     const url = mcpDisplayUrl(d)
     Object.assign(doc, { method: MCP_METHOD, url, body: null, params: [], mcp: serializeMcp(d.mcp) })
@@ -569,6 +577,29 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
     return { name, method: MCP_METHOD, url, documentJson: JSON.stringify(doc) }
   }
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
+}
+
+/**
+ * `protocolProfileBehavior.disableCookies` of a document; a Postman import keeps the item in `source`, so its value counts
+ * until the document has its own.
+ */
+function disableCookiesOf(doc: Json): boolean {
+  const own = isObj(doc.protocolProfileBehavior) ? doc.protocolProfileBehavior.disableCookies : undefined
+  if (typeof own === 'boolean') return own
+  const src = isObj(doc.source) && isObj(doc.source.protocolProfileBehavior) ? doc.source.protocolProfileBehavior.disableCookies : undefined
+  return src === true
+}
+
+/** Writes `disableCookies` into `protocolProfileBehavior`, keeping its other keys (Postman settings Slinger preserves). */
+function writeDisableCookies(doc: Json, d: RequestDraft): void {
+  const behavior: Json = isObj(d.extras.protocolProfileBehavior) ? { ...d.extras.protocolProfileBehavior } : {}
+  const fromSource = disableCookiesOf({ source: d.extras.source })
+  if (d.disableCookies) behavior.disableCookies = true
+  // Turned off while the imported item says on: say so explicitly, or the import's value would count again.
+  else if (fromSource) behavior.disableCookies = false
+  else delete behavior.disableCookies
+  if (Object.keys(behavior).length > 0) doc.protocolProfileBehavior = behavior
+  else delete doc.protocolProfileBehavior
 }
 
 /** Canonical string used for dirty checks. */

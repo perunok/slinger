@@ -12,6 +12,7 @@ import { BrowserAuthCallbacks } from './authCallback'
 import { ExportFiles } from './exportFiles'
 import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
+import { CookieService } from './cookieJar'
 import { MockServers } from './mockServers'
 import { OAuth2Service } from './oauth2'
 import { ScriptService } from './scriptService'
@@ -65,6 +66,8 @@ export interface Core {
   collectionVariables: CollectionVariableRepository
   globals: GlobalVariableRepository
   http: HttpService
+  /** ADDED (0.29): the cookie jars, one per workspace (local only). */
+  cookies: CookieService
   oauth2: OAuth2Service
   scripts: ScriptService
   authCallbacks: BrowserAuthCallbacks
@@ -92,10 +95,16 @@ export function createCore(deps: CoreDeps): Core {
   const collectionVariables = new CollectionVariableRepository(db)
   const globals = new GlobalVariableRepository(db, secrets)
   const oauth2 = new OAuth2Service(secrets)
-  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants, {
-    collectionVariables,
-    globals,
-  })
+  const cookies = new CookieService(db, secrets)
+  const scripts = new ScriptService(
+    db,
+    environments,
+    deps.scriptExecutor ?? new UnavailableExecutor(),
+    Date.now,
+    fileGrants,
+    { collectionVariables, globals },
+    cookies,
+  )
   const core: Core = {
     db,
     secrets,
@@ -109,7 +118,14 @@ export function createCore(deps: CoreDeps): Core {
     trust: new TrustRepository(db),
     collectionVariables,
     globals,
-    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key, origin) => oauth2.accessTokenFor(key, origin)),
+    http: new HttpService(
+      history,
+      fileGrants,
+      (sessionId, text) => scripts.redact(sessionId, text),
+      (key, origin) => oauth2.accessTokenFor(key, origin),
+      (workspaceId) => cookies.jar(workspaceId),
+    ),
+    cookies,
     oauth2,
     scripts,
     authCallbacks: new BrowserAuthCallbacks(),

@@ -4,7 +4,7 @@
  * (inline.ts: same sandbox, same thread).
  */
 import { MessageChannel, Worker } from 'node:worker_threads'
-import type { ScriptJob, ScriptJobResult, SendRequestCall, SendRequestOutcome } from './job'
+import type { CookieJarCall, CookieJarOutcome, ScriptJob, ScriptJobResult, SendRequestCall, SendRequestOutcome } from './job'
 import { sourceLabel } from './host'
 import type { MainHttpReply, WorkerHttpMessage, WorkerJobMessage, WorkerReply } from './worker'
 
@@ -14,6 +14,8 @@ export interface ExecutorIo {
   signal: AbortSignal
   /** Runs one pm.sendRequest on the main thread (never rejects). Absent: pm.sendRequest is unavailable. */
   sendHttp?(call: SendRequestCall, signal: AbortSignal): Promise<SendRequestOutcome>
+  /** Runs one pm.cookies.jar() call on the main thread (never rejects). Absent: the jar is unavailable to scripts. */
+  cookieJar?(call: CookieJarCall): Promise<CookieJarOutcome>
 }
 
 export interface ScriptExecutor {
@@ -158,6 +160,14 @@ export class WorkerExecutor implements ScriptExecutor {
         if (m?.type === 'http-abort') {
           sends.get(m.id)?.abort()
           sends.delete(m.id)
+          return
+        }
+        if (m?.type === 'jar' && typeof m.id === 'number' && !done) {
+          const answer = (outcome: CookieJarOutcome) => {
+            if (!done) http.port1.postMessage({ id: m.id, outcome } satisfies MainHttpReply)
+          }
+          if (!io.cookieJar) return answer({ ok: false, error: 'pm.cookies.jar() is not available here' })
+          io.cookieJar(m.call).then(answer, (err: unknown) => answer({ ok: false, error: err instanceof Error ? err.message : String(err) }))
           return
         }
         if (m?.type !== 'http' || typeof m.id !== 'number' || done) return

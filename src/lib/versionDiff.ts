@@ -159,6 +159,7 @@ function renderOther(d: RequestDraft): string {
   const scripts = d.extras.scripts
   if (Array.isArray(scripts) && scripts.length > 0) lines.push(`scripts: ${stable(scripts)}`)
   if (d.timeoutMs != null) lines.push(`timeout: ${d.timeoutMs}ms`)
+  if (d.disableCookies) lines.push('cookie jar: off')
   return lines.join('\n')
 }
 

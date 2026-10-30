@@ -6,6 +6,8 @@ import { buildRequest, type BuiltRequest } from './requestBuilder'
 import type { MockState } from './store'
 import { mockAccessToken } from './oauth2'
 import { bytesToBase64, nowSec, uuid } from './util'
+import { mockCookieHeader, mockStoreCookies } from './cookies'
+import { mergeCookieHeader } from '../../../shared/cookies'
 
 type HttpApi = Pick<SlingerIpcApi, 'executeHttpRequest' | 'cancelHttpRequest' | 'cloudFetch' | 'chooseResponseDownloadFile'>
 
@@ -98,16 +100,41 @@ async function runFetch(built: BuiltRequest, method: string, signal: AbortSignal
   }
 }
 
-async function perform(input: HttpRequestInput, run: RunControl, oauth2Token?: (tokenKey: string, origin: string) => string): Promise<HttpResponseData> {
+/** Like main: the workspace's jar adds its cookies (a Cookie header the user set wins per name) unless `cookies: 'off'`. */
+function withJarCookies(s: MockState | null, input: HttpRequestInput, built: BuiltRequest): URL | null {
+  if (!s || input.cookies === 'off' || !input.workspaceId) return null
+  let url: URL
+  try {
+    url = new URL(built.url)
+  } catch {
+    return null
+  }
+  const own = built.headers.find((h) => h.key.toLowerCase() === 'cookie')
+  const merged = mergeCookieHeader(own?.value, mockCookieHeader(s, input.workspaceId, url))
+  if (merged) built.headers = [...built.headers.filter((h) => h.key.toLowerCase() !== 'cookie'), { key: 'Cookie', value: merged }]
+  return url
+}
+
+async function perform(
+  input: HttpRequestInput,
+  run: RunControl,
+  oauth2Token?: (tokenKey: string, origin: string) => string,
+  s: MockState | null = null,
+): Promise<HttpResponseData> {
   const method = input.method.toUpperCase()
   const built = buildRequest(input, oauth2Token)
+  const jarUrl = withJarCookies(s, input, built)
+  const store = (data: HttpResponseData) => {
+    if (s && jarUrl) mockStoreCookies(s, input.workspaceId, jarUrl, data.headers.filter((h) => h.key.toLowerCase() === 'set-cookie').map((h) => h.value))
+    return data
+  }
   const started = performance.now()
   try {
     if (isMockHost(built.url)) {
       const canned = await runCanned(built, method, run.controller.signal)
-      return cannedToData(canned, Math.max(1, Math.round(performance.now() - started)))
+      return store(cannedToData(canned, Math.max(1, Math.round(performance.now() - started))))
     }
-    return await runFetch(built, method, run.controller.signal)
+    return store(await runFetch(built, method, run.controller.signal))
   } catch (e) {
     const aborted = abortError(run, input.timeoutMs)
     if (aborted) throw aborted
@@ -170,7 +197,7 @@ export function createHttpApi(s: MockState): HttpApi {
           : null
       const started = performance.now()
       // perform() is async, so a build error (no OAuth 2.0 token, ...) still rejects and is recorded.
-      return perform(input, run, (key, origin) => mockAccessToken(s, key, origin))
+      return perform(input, run, (key, origin) => mockAccessToken(s, key, origin), s)
         .then((data) => applyLimit(data, input, savedTo))
         .then(
           (data) => {

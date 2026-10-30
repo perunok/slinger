@@ -524,6 +524,50 @@ describe('send policy: the user’s credentials never go where an assistant deci
   })
 })
 
+describe('cookie jar: cookies are the user’s credentials', () => {
+  const echo = async (body: unknown) => (JSON.parse(String(body)) as { headers: Record<string, string> }).headers
+  const userSend = (url: string) =>
+    window.slinger.executeHttpRequest({ method: 'GET', url, headers: [], auth: { kind: 'none' }, body: { mode: 'none' }, workspaceId: app.workspaceId! })
+
+  it('an assistant-controlled send neither sends nor stores the user’s cookies', async () => {
+    await userSend('https://mock.slinger.local/cookies') // the user's login
+    const spy = vi.spyOn(window.slinger, 'executeHttpRequest')
+    const { response } = await call('send_request', { url: 'https://mock.slinger.local/echo' })
+    expect(spy.mock.calls.at(-1)![0].cookies).toBe('off')
+    expect((await echo(response.body)).Cookie).toBeUndefined()
+    await window.slinger.clearCookies(app.workspaceId!, null)
+    await call('send_request', { url: 'https://mock.slinger.local/cookies' })
+    expect(await window.slinger.listCookies(app.workspaceId!)).toEqual([])
+  })
+
+  it('a saved request sent as saved uses the jar; jar values never come back, a response’s own Set-Cookie does', async () => {
+    await userSend('https://mock.slinger.local/cookies')
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const mine = await window.slinger.createRequest({
+      workspaceId: app.workspaceId!,
+      collectionId: demo.id,
+      folderId: null,
+      ...serializeDraft({ ...parseDocument(app.requests.find((r) => r.name === 'JSON sample')!), name: 'Echo cookies', url: 'https://mock.slinger.local/echo' }),
+    })
+    await app.reloadCollection(demo.id)
+    const spy = vi.spyOn(window.slinger, 'executeHttpRequest')
+    const { response } = await call('send_request', { request_id: mine.id })
+    expect(spy.mock.calls.at(-1)![0].cookies).toBeUndefined()
+    expect((await echo(response.body)).Cookie).toBe('session=[hidden]; theme=[hidden]')
+    expect(JSON.stringify(response)).not.toContain('abc123')
+    // A saved request to the login: its Set-Cookie headers are the response's own.
+    const login = await window.slinger.createRequest({
+      workspaceId: app.workspaceId!,
+      collectionId: demo.id,
+      folderId: null,
+      ...serializeDraft({ ...parseDocument(app.requests.find((r) => r.name === 'JSON sample')!), name: 'Login', url: 'https://mock.slinger.local/cookies' }),
+    })
+    await app.reloadCollection(demo.id)
+    const out = await call('send_request', { request_id: login.id })
+    expect(JSON.stringify(out.response)).toContain('session=abc123')
+  })
+})
+
 describe('host and settings', () => {
   it('McpHost answers calls from main (here: the mock playing the client)', async () => {
     render(McpHost)

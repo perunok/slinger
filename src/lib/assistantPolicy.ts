@@ -19,7 +19,12 @@
  *   unless an assistant wrote that container auth (an import or a version restore through MCP) and the user has not
  *   changed or saved it since (`assistant_changes` kind 'container', migration 0020). An inherited OAuth 2.0 token always
  *   counts (the token is the user's even when the settings came from an assistant).
- * - Everything returned to the assistant has the send's secret values, credentials and tokens replaced.
+ * - Cookies are credentials too (0.29 cookie jar). A send that may not use secrets (assistant-controlled, or while
+ *   variables an assistant set are unreviewed: `scriptSecretDenial`) goes out with `cookies: 'off'`: the workspace's jar
+ *   adds no cookies and keeps none of the response's; its scripts get no pm.cookies.jar() and their pm.sendRequest no jar
+ *   (main: `denySecrets`). A send exactly as the user saved it uses the jar, like it uses the user's secrets.
+ * - Everything returned to the assistant has the send's secret values, credentials and tokens replaced, and the values
+ *   of the workspace's cookie jar (except those the response itself set, which it shows in its Set-Cookie headers).
  */
 import type { AssistantChanges } from '../../shared/types'
 import type { RequestDraft } from './request'
@@ -77,6 +82,11 @@ export function scriptSecretDenial(c: AssistantControl): string | null {
     return `not available to scripts while variables an AI assistant set (${[...c.assistantVariables].join(', ')}) are unreviewed. The user can send it from the Slinger window, or review those variables there.`
   }
   return null
+}
+
+/** Whether this assistant send may use the user's cookie jar (send and store cookies): exactly when its scripts may read secrets. */
+export function cookieJarAllowed(c: AssistantControl): boolean {
+  return scriptSecretDenial(c) === null
 }
 
 /**

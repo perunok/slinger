@@ -27,6 +27,8 @@ import {
   type PersistedScopeSnapshot,
   type ScriptJob,
   type ScriptJobResult,
+  type CookieJarCall,
+  type CookieJarOutcome,
   type ScriptRunnerDeps,
   type SendRequestCall,
   type SendRequestOutcome,
@@ -174,8 +176,14 @@ function obj(v: unknown, what: string): Record<string, unknown> {
 
 export interface SettledSend {
   id: number
-  outcome: SendRequestOutcome
+  /** A pm.sendRequest result (with its console line) or a pm.cookies.jar() result. */
+  outcome: SendRequestOutcome | CookieJarOutcome
 }
+
+/** Most pm.cookies.jar() calls per script run. */
+export const MAX_JAR_CALLS = 1000
+const JAR_OPS = new Set(['get', 'getAll', 'set', 'unset', 'clear'])
+const SAME_SITE: Record<string, 'Strict' | 'Lax' | 'None'> = { strict: 'Strict', lax: 'Lax', none: 'None' }
 
 export class RunHost {
   readonly job: ScriptJob
@@ -206,6 +214,7 @@ export class RunHost {
   private readonly sends = new Map<number, AbortController>()
   private readonly settled: SettledSend[] = []
   private wake: (() => void) | null = null
+  private jarCount = 0
 
   constructor(job: ScriptJob, deps: ScriptRunnerDeps) {
     this.job = job
@@ -520,6 +529,66 @@ export class RunHost {
     return id
   }
 
+  // ---- pm.cookies.jar() --------------------------------------------------------------
+
+  /** Validates one jar call from the prelude (`{op, url, name?, cookie?}`). */
+  buildJarCall(v: unknown): CookieJarCall {
+    const o = obj(v, 'pm.cookies.jar() call')
+    const op = typeof o.op === 'string' && JAR_OPS.has(o.op) ? o.op : null
+    if (!op) throw new ScriptApiError('pm.cookies.jar(): unknown operation')
+    let url = str(o.url, `pm.cookies.jar().${op}: url`, 8192).trim()
+    if (!url) throw new ScriptApiError(`pm.cookies.jar().${op}: the URL is empty`)
+    if (!URL_SCHEME_RE.test(url)) url = `http://${url}`
+    const name = () => {
+      const n = str(o.name, `pm.cookies.jar().${op}: cookie name`, 4096).trim()
+      if (!n) throw new ScriptApiError(`pm.cookies.jar().${op}: the cookie name is empty`)
+      return n
+    }
+    if (op === 'get' || op === 'unset') return { op, url, name: name() }
+    if (op === 'getAll' || op === 'clear') return { op, url }
+    const c = obj(o.cookie, 'pm.cookies.jar().set: cookie')
+    const cookie: Extract<CookieJarCall, { op: 'set' }>['cookie'] = {
+      name: str(c.name, 'pm.cookies.jar().set: cookie name', 4096).trim(),
+      value: str(envText(c.value), 'pm.cookies.jar().set: cookie value', 4096),
+    }
+    if (typeof c.domain === 'string' && c.domain.trim()) cookie.domain = str(c.domain, 'cookie domain', 1024).trim()
+    if (typeof c.path === 'string' && c.path.trim()) cookie.path = str(c.path, 'cookie path', 1024).trim()
+    if (c.expires !== undefined && c.expires !== null) {
+      const t = typeof c.expires === 'number' ? c.expires : Date.parse(String(c.expires))
+      if (!Number.isFinite(t)) throw new ScriptApiError('pm.cookies.jar().set: expires must be a date')
+      cookie.expires = Math.floor(t / 1000)
+    }
+    if (c.secure === true) cookie.secure = true
+    if (c.httpOnly === true) cookie.httpOnly = true
+    if (typeof c.sameSite === 'string' && SAME_SITE[c.sameSite.toLowerCase()]) cookie.sameSite = SAME_SITE[c.sameSite.toLowerCase()]
+    return { op: 'set', url, cookie }
+  }
+
+  /** Starts one pm.cookies.jar() call; its result is delivered like a pm.sendRequest response. */
+  private startJar(spec: unknown): number {
+    if (this.job.denySecrets) throw new ScriptApiError(`pm.cookies.jar(): ${this.job.denySecrets}`)
+    const jar = this.deps.cookieJar
+    if (!jar) throw new ScriptApiError('pm.cookies.jar() is not available here')
+    if (this.jarCount >= MAX_JAR_CALLS) throw new ScriptApiError(`pm.cookies.jar(): at most ${MAX_JAR_CALLS} calls per script run`)
+    const call = this.buildJarCall(spec)
+    this.jarCount++
+    const id = ++this.sendSeq
+    this.sends.set(id, new AbortController())
+    const deliver = (outcome: CookieJarOutcome) => {
+      if (!this.sends.delete(id)) return
+      this.settled.push({ id, outcome })
+      this.wake?.()
+    }
+    let started: Promise<CookieJarOutcome>
+    try {
+      started = jar(call)
+    } catch (err) {
+      started = Promise.reject(err)
+    }
+    started.then(deliver, (err: unknown) => deliver({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+    return id
+  }
+
   /** pm.sendRequest calls whose response the script has not received yet. */
   pendingSends(): number {
     return this.sends.size + this.settled.length
@@ -528,7 +597,7 @@ export class RunHost {
   /** The next finished pm.sendRequest (and logs its console line), or undefined. */
   takeSettled(): SettledSend | undefined {
     const next = this.settled.shift()
-    if (next) this.log('info', next.outcome.logLine)
+    if (next && 'logLine' in next.outcome) this.log('info', next.outcome.logLine)
     return next
   }
 
@@ -658,6 +727,8 @@ export class RunHost {
         return randomUUID()
       case 'http.send':
         return this.startSend(a0)
+      case 'cookies.jar':
+        return this.startJar(a0)
       case 'next.set':
         if (a0 !== null && typeof a0 !== 'string') throw new ScriptApiError('setNextRequest: expected a request name or id, or null')
         if (typeof a0 === 'string' && a0.length > MAX_VALUE_CHARS) throw new ScriptApiError('setNextRequest: name is too long')
