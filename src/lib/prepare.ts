@@ -3,6 +3,7 @@
  * call inputs of an MCP request). The single place where templates are applied, so single send, runner and
  * code snippets all behave identically.
  */
+import { protocolInput } from './requestSettings'
 import type { HttpRequestInput, McpCallInput, McpConnectInput, OAuth2Config, ResolvedAuth, ResolvedBody } from '../../shared/types'
 import { isSupportedGrant, resolveOAuth2Config, unsupportedGrantMessage } from './oauth2'
 import { dataRows } from './kv'
@@ -204,6 +205,7 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
       auth,
       body,
       timeoutMs: draft.timeoutMs ?? undefined,
+      ...protocolInput(draft.protocolProfileBehavior ?? {}),
       requestId: ctx.requestId ?? null,
       requestName: draft.name,
       workspaceId: ctx.workspaceId,

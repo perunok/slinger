@@ -7,6 +7,8 @@ import { assertUuid, isUuid } from '../lib/ids'
 import type { HistoryRepository } from '../repositories/history'
 import type { FileAccess } from './fileGrants'
 import { executeHttp, normalizeUrl, scrubRequestValues, type OAuth2TokenLookup } from './httpExecutor'
+import type { NetworkRouter } from './network'
+import { maskUserinfo } from './scriptHttp'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 /** How long a file chosen for "Send and download to file" waits for its request. */
@@ -31,6 +33,8 @@ export class HttpService {
     private readonly redact: (sessionId: string | null | undefined, text: string) => string = (_s, t) => t,
     /** Stored OAuth 2.0 access tokens by key (OAuth2Service.accessTokenFor); applied in main, never recorded. */
     private readonly oauth2Token?: OAuth2TokenLookup,
+    /** Settings > Network (proxy, certificates, SSL verification); absent: direct connections. */
+    private readonly network?: NetworkRouter,
   ) {}
 
   /** Remembers a file the user picked for "Send and download to file"; its id is good for one request. */
@@ -74,7 +78,15 @@ export class HttpService {
         maxResponseBytes: clampMaxResponseBytes(input.maxResponseBytes),
         oversize: 'report',
         toFile,
+        network: this.network,
       })
+      // Redirect targets come from the server and may repeat values of the request (a token in the query): shown like errors.
+      if (response.redirects) {
+        response.redirects = response.redirects.map((r) => ({
+          ...r,
+          location: this.redact(input.scriptSessionId, scrubRequestValues(maskUserinfo(r.location), input)),
+        }))
+      }
       this.record(input, workspaceId, {
         statusCode: response.status,
         ok: response.status >= 200 && response.status < 300,

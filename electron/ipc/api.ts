@@ -165,7 +165,44 @@ const httpRequestInput = z.object({
   scriptSessionId: z.string().max(128).nullish(),
   maxResponseBytes: z.number().int().positive().optional(),
   downloadId: z.string().uuid().optional(),
+  // Request Settings tab (Postman protocolProfileBehavior)
+  strictSSL: z.boolean().optional(),
+  followRedirects: z.boolean().optional(),
+  followOriginalHttpMethod: z.boolean().optional(),
+  maxRedirects: z.number().int().min(0).max(1000).optional(),
+  followAuthorizationHeader: z.boolean().optional(),
+  removeRefererHeaderOnRedirect: z.boolean().optional(),
 })
+
+// ---- Network settings (Settings > Network) -----------------------------------------------------------------------
+
+const networkSettingsUpdate = z
+  .object({
+    verifySsl: z.boolean().optional(),
+    proxy: z
+      .object({
+        mode: z.enum(['system', 'custom', 'none']).optional(),
+        url: z.string().max(2048).optional(),
+        username: z.string().max(1024).optional(),
+        password: z.string().max(4096).nullable().optional(),
+        bypass: z.array(z.string().max(255)).max(500).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+const certFilePath = z.string().min(1).max(4096)
+const networkClientCertificateInput = z
+  .object({
+    id: uuid.optional(),
+    host: z.string().min(1).max(260),
+    port: z.number().int().min(1).max(65_535).nullish(),
+    crtPath: certFilePath.nullish(),
+    keyPath: certFilePath.nullish(),
+    pfxPath: certFilePath.nullish(),
+    passphrase: z.string().max(4096).nullish(),
+  })
+  .strict()
 
 /** A file name for the save dialog's suggestion: no folders, no control or reserved characters. */
 export function safeDownloadName(name: string): string {
@@ -835,6 +872,17 @@ export function createIpcApi(core: Core, platform: PlatformDeps): SlingerInvokeA
       const [key, origin] = parseArgs(z.tuple([oauth2TokenKey, httpOrigin]), a)
       core.oauth2.allowOrigin(key, origin)
     },
+
+    // ---- Network settings ----
+    getNetworkSettings: async (...a) => {
+      parseArgs(z.tuple([]), a)
+      return core.network.get()
+    },
+    setNetworkSettings: async (...a) => core.network.update(parseArgs(z.tuple([networkSettingsUpdate]), a)[0]),
+    addNetworkCaCertificates: async (...a) => core.network.addCaCertificates(parseArgs(z.tuple([z.array(certFilePath).min(1).max(50)]), a)[0]),
+    removeNetworkCaCertificate: async (...a) => core.network.removeCaCertificate(parseArgs(z.tuple([uuid]), a)[0]),
+    saveNetworkClientCertificate: async (...a) => core.network.saveClientCertificate(parseArgs(z.tuple([networkClientCertificateInput]), a)[0]),
+    removeNetworkClientCertificate: async (...a) => core.network.removeClientCertificate(parseArgs(z.tuple([uuid]), a)[0]),
 
     // Cloud account + sync (electron/ipc/syncApi.ts)
     ...createSyncIpc(core),

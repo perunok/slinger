@@ -79,6 +79,8 @@ export interface PostmanItem {
   _slinger_mcp?: Json
   /** Requests imported from an OpenAPI document: the document's `openapi` object (operation key and hashes). */
   _slinger_openapi?: Json
+  /** The request Settings tab (strictSSL, redirects, ...), Postman's own key. */
+  protocolProfileBehavior?: Json
 }
 
 /** Item key of an MCP request's configuration in a Postman export. */
@@ -364,6 +366,9 @@ function requestItem(request: ApiRequest): PostmanItem {
     item._slinger_mcp = doc.mcp
   }
   if (isObj(doc.openapi)) item._slinger_openapi = doc.openapi
+  // Documents imported before 0.29 keep it only in the imported item (`source`); `{}` in the document = all cleared.
+  const ppb = isObj(doc.protocolProfileBehavior) ? doc.protocolProfileBehavior : isObj(doc.source) && isObj(doc.source.protocolProfileBehavior) ? doc.source.protocolProfileBehavior : null
+  if (ppb && Object.keys(ppb).length > 0) item.protocolProfileBehavior = ppb
   if (Array.isArray(doc.scripts) && doc.scripts.length > 0) item.event = doc.scripts
   if (Array.isArray(doc.responses) && doc.responses.length > 0) item.response = doc.responses
   return item

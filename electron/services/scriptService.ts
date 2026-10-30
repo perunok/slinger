@@ -18,6 +18,7 @@ import type { ScriptExecutor } from '../scripts/executor'
 import type { FileAccess } from './fileGrants'
 import { DEFAULT_TIMEOUT_MS } from './httpExecutor'
 import { runScriptSendRequest } from './scriptHttp'
+import type { NetworkRouter } from './network'
 
 const RUN_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 const SESSION_TTL_MS = 60 * 60 * 1000
@@ -72,6 +73,8 @@ export class ScriptService {
     private readonly files?: FileAccess,
     /** Persisted collection variables and globals (absent: both are in-memory scopes, as before 0008). */
     private readonly stores?: ScriptVariableStores,
+    /** Settings > Network for pm.sendRequest (absent: direct connections). */
+    private readonly network?: NetworkRouter,
   ) {}
 
   private isReadOnly(workspaceId: string): boolean {
@@ -194,6 +197,7 @@ export class ScriptService {
         sendHttp: (call, signal) =>
           runScriptSendRequest(call, AbortSignal.any([signal, controller.signal]), {
             files: this.files,
+            network: this.network,
             redact: (text) => this.redact(input.sessionId, text),
           }),
         readSecret: (variableId) => {

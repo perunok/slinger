@@ -14,6 +14,8 @@ import { FileGrants } from './fileGrants'
 import { HttpService } from './httpService'
 import { MockServers } from './mockServers'
 import { OAuth2Service } from './oauth2'
+import { networkFetch } from './network'
+import { NetworkSettingsService, type NetworkSettingsDeps } from './networkSettings'
 import { ScriptService } from './scriptService'
 import { UnavailableExecutor, type ScriptExecutor } from '../scripts/executor'
 import type { SecretStore } from './secrets'
@@ -43,8 +45,10 @@ export interface CoreDeps {
   mcpClient?: Partial<Omit<McpClientDeps, 'db'>>
   /** Receives every MockServerEvent (main forwards them to the renderer). */
   mockServerEvents?: (event: MockServerEvent) => void
-  /** Fetches OpenAPI documents by URL (Electron's net.fetch in the app; global fetch by default). */
+  /** Fetches OpenAPI documents by URL (default: through the network settings, like a send). */
   openapiFetch?: typeof fetch
+  /** Network settings wiring: the system proxy resolver (Electron's session.resolveProxy in the app; env vars by default). */
+  network?: Pick<NetworkSettingsDeps, 'resolveSystemProxy' | 'env'>
 }
 
 /** Everything the IPC layer needs, wired together. Contains no Electron imports. */
@@ -65,6 +69,8 @@ export interface Core {
   collectionVariables: CollectionVariableRepository
   globals: GlobalVariableRepository
   http: HttpService
+  /** ADDED (0.29): Settings > Network, and the router every outgoing request of the user's goes through. */
+  network: NetworkSettingsService
   oauth2: OAuth2Service
   scripts: ScriptService
   authCallbacks: BrowserAuthCallbacks
@@ -91,11 +97,17 @@ export function createCore(deps: CoreDeps): Core {
   const environments = new EnvironmentRepository(db, secrets)
   const collectionVariables = new CollectionVariableRepository(db)
   const globals = new GlobalVariableRepository(db, secrets)
-  const oauth2 = new OAuth2Service(secrets)
-  const scripts = new ScriptService(db, environments, deps.scriptExecutor ?? new UnavailableExecutor(), Date.now, fileGrants, {
-    collectionVariables,
-    globals,
-  })
+  const network = new NetworkSettingsService({ db, secrets, files: fileGrants, ...deps.network })
+  const oauth2 = new OAuth2Service(secrets, { network })
+  const scripts = new ScriptService(
+    db,
+    environments,
+    deps.scriptExecutor ?? new UnavailableExecutor(),
+    Date.now,
+    fileGrants,
+    { collectionVariables, globals },
+    network,
+  )
   const core: Core = {
     db,
     secrets,
@@ -109,7 +121,14 @@ export function createCore(deps: CoreDeps): Core {
     trust: new TrustRepository(db),
     collectionVariables,
     globals,
-    http: new HttpService(history, fileGrants, (sessionId, text) => scripts.redact(sessionId, text), (key, origin) => oauth2.accessTokenFor(key, origin)),
+    http: new HttpService(
+      history,
+      fileGrants,
+      (sessionId, text) => scripts.redact(sessionId, text),
+      (key, origin) => oauth2.accessTokenFor(key, origin),
+      network,
+    ),
+    network,
     oauth2,
     scripts,
     authCallbacks: new BrowserAuthCallbacks(),
@@ -137,7 +156,7 @@ export function createCore(deps: CoreDeps): Core {
       appVersion: deps.mcpClient?.appVersion ?? deps.sync?.appVersion ?? '0.0.0',
     }),
     mockServers: new MockServers({ emit: deps.mockServerEvents }),
-    openapi: new OpenApiService({ db, fetchImpl: deps.openapiFetch }),
+    openapi: new OpenApiService({ db, fetchImpl: deps.openapiFetch ?? networkFetch(network) }),
     versionAuthor: () => {
       const user = core.sync.auth.snapshot().user
       return user ? { id: user.id, name: user.displayName || user.email } : null

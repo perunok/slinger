@@ -34,6 +34,23 @@ describe('ResponseViewer', () => {
     expect(screen.getByTestId('size-chip')).toHaveTextContent('7 B')
   })
 
+  it('shows the redirects followed: a chip, and the chain on the Headers tab', () => {
+    const redirects = [
+      { status: 301, location: 'https://a.test/next' },
+      { status: 302, location: 'https://b.test/final' },
+    ]
+    render(ResponseViewer, { data: res({ ct: 'text/plain', body: 'ok', redirects }), view: 'headers' })
+    expect(screen.getByTestId('redirect-chip')).toHaveTextContent('2 redirects')
+    expect(screen.getByTestId('redirect-chip').getAttribute('title')).toContain('302 → https://b.test/final')
+    const chain = screen.getByTestId('redirect-chain')
+    expect(chain).toHaveTextContent('Redirected 2 times')
+    expect(chain).toHaveTextContent('301→https://a.test/next')
+    cleanup()
+    render(ResponseViewer, { data: res({ ct: 'text/plain', body: 'ok' }), view: 'headers' })
+    expect(screen.queryByTestId('redirect-chip')).toBeNull()
+    expect(screen.queryByTestId('redirect-chain')).toBeNull()
+  })
+
   it('pretty-prints JSON and Raw shows it exactly as received', async () => {
     render(ResponseViewer, { data: res({ ct: 'application/json', body: '{"a":1,"b":[1,2]}' }), view: 'pretty' })
     expect(editorText()).toContain('"a": 1')

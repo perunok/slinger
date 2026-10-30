@@ -17,6 +17,9 @@ import type {
   AssistantChangeRef,
   AssistantChanges,
   RedactSecretsInput,
+  NetworkClientCertificateInput,
+  NetworkSettings,
+  NetworkSettingsUpdate,
   ApiRequest,
   CloudFetchInput,
   OpenApiImportInput,
@@ -480,6 +483,17 @@ export interface SlingerIpcApi {
    * the origins it was first used with or the user allowed; another one fails with details.reason 'oauth2_new_origin'.
    */
   allowOAuth2Origin(tokenKey: string, origin: string): Promise<void>
+
+  // --- ADDED (0.29) Network settings (Settings > Network): app-wide, local only; secrets are never returned. ---
+  getNetworkSettings(): Promise<NetworkSettings>
+  /** SSL verification and the proxy; absent fields keep their value. */
+  setNetworkSettings(update: NetworkSettingsUpdate): Promise<NetworkSettings>
+  /** Adds the PEM certificates of these files (each chosen with pickFile in this session) as trusted CAs. */
+  addNetworkCaCertificates(paths: string[]): Promise<NetworkSettings>
+  removeNetworkCaCertificate(id: string): Promise<NetworkSettings>
+  /** Adds (no id) or replaces a client certificate; new file paths must have been chosen with pickFile in this session. */
+  saveNetworkClientCertificate(input: NetworkClientCertificateInput): Promise<NetworkSettings>
+  removeNetworkClientCertificate(id: string): Promise<NetworkSettings>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -622,6 +636,12 @@ export const IPC_CHANNELS = [
   'deleteOAuth2Token',
   'revealOAuth2Token',
   'allowOAuth2Origin',
+  'getNetworkSettings',
+  'setNetworkSettings',
+  'addNetworkCaCertificates',
+  'removeNetworkCaCertificate',
+  'saveNetworkClientCertificate',
+  'removeNetworkClientCertificate',
   'getMcpStatus',
   'setMcpSettings',
   'revealMcpToken',

@@ -17,7 +17,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      libs/ (build-time Node shims for the bundled script libraries)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
                      (collection variables + globals), workflows, history, common
-  services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
+  services/          core (wiring), httpExecutor, httpService, network (dispatchers, proxy choice, send errors), networkSettings,
+                     redirects, cookieJarPort, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
                      HTTP servers answering with saved examples)
@@ -227,6 +228,7 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
 | `0018_container_auth` | nullable `auth_json` on `collections` and `folders` (Postman `auth` object, never an OAuth 2.0 token; see [Collection and folder auth](#collection-and-folder-auth)), read-only and capture triggers (synced only with the `container_auth` feature, sync design section 21.6) |
 | `0019_local_trust` | `collection_trust (collection_id, trusted_at)`: collections whose scripts may run here (existing collections are trusted by the migration); `assistant_changes (kind, ref, workspace_id, fingerprint, created, changed_at)`: requests, environment variables and collection/folder auth (kind `container`) an AI assistant wrote and the user has not reviewed. Both local only (`repositories/trust.ts`), see [Scripts sandbox](#scripts-sandbox) and [MCP server](#mcp-server) |
+| `0020_network_settings` | `network_ca_certs` (extra trusted CA certificates: PEM, subject, SHA-256 fingerprint unique, expiry) and `network_client_certs` (host, optional port, paths of a PEM certificate + key or a PFX file, `has_passphrase`); local only, see [Network settings](#network-settings) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -242,7 +244,9 @@ The renderer (`tabs.svelte.ts`, `ConflictDialog`) lets the user reload or overwr
 requests among requests); moving a folder into itself or a descendant is refused (`folder_cycle`).
 
 **Request documents.** `requests.document_json` holds a Postman v2.1 item-shaped document (headers, body, auth, plus Slinger
-additions `params` and `settings.timeoutMs`). The main process treats it as an opaque string; the renderer model is
+additions `params` and `settings.timeoutMs`; the request Settings tab is Postman's own `protocolProfileBehavior`, which the
+importers copy from the item and the Postman export writes back, read from the kept `source` item for documents imported before
+0.29, see `src/lib/requestSettings.ts`). The main process treats it as an opaque string; the renderer model is
 `src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save. Request scripts are the Postman `event`
 array under the key `scripts` (the key the importer has always used, so existing and synced documents need no migration).
 
@@ -301,7 +305,7 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
 - No generic keychain access over IPC: the former `secureStoreGet/Set/Delete` passthrough (unused by the renderer) was
   removed in 0.27, because besides the reserved prefixes it reached `mcp.token` (the MCP server's bearer token),
   `mcp-client.trusted` (the allowed MCP stdio commands) and `cloud.*`. Every entry (`slinger:env-var:`, `slinger:global-var:`,
-  `slinger.cloud.tokens:`, `slinger:oauth2:`, `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
+  `slinger.cloud.tokens:`, `slinger:oauth2:`, `slinger:network:` (proxy password, client-certificate passphrases), `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
   written only by the main-process service that owns it.
 - OAuth 2.0 request tokens: `slinger:oauth2:<tokenKey>` holds `{access_token, token_type, expires_at, refresh_token, scope,
   obtained_at, workspace_id}`; `slinger:oauth2:index:<workspaceId>` lists a workspace's token keys so `deleteWorkspace`
@@ -347,9 +351,28 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    token = `invalid_input`); builds the body for `raw`, `urlEncoded`,
    `formData` (files read from absolute paths), `binary`; fills a default `Content-Type` only when not set; rejects a body on
    GET/HEAD.
-4. **Main, fetch.** Node `fetch` with an abort signal; timeout defaults to 60 s and is clamped to 10 min; cancellation via
-   `cancelHttpRequest(runId)` also works while the body streams. Timeouts and cancellations are `network_error` with
-   `details.timedOut` / `details.cancelled`.
+4. **Main, send.** undici's own `fetch` (the `undici` dependency, bundled into app.cjs; not Node's global fetch) with
+   `redirect: 'manual'` and, per hop, the dispatcher `NetworkRouter.route(url, {strictSSL})` returns (see
+   [Network settings](#network-settings); without a router, as for `cloudFetch`: direct, verified). An abort signal covers the
+   whole chain; timeout defaults to 60 s and is clamped to 10 min; cancellation via `cancelHttpRequest(runId)` also works while
+   the body streams. Timeouts and cancellations are `network_error` with `details.timedOut` / `details.cancelled`.
+   **Redirects** (`services/redirects.ts`, from the input's `followRedirects`, `maxRedirects`, `followOriginalHttpMethod`,
+   `followAuthorizationHeader`, `removeRefererHeaderOnRedirect`, the request Settings tab): 301/302/303/307/308 with an http(s)
+   Location are followed up to `maxRedirects` (default 10; one more is `network_error` `details.tooManyRedirects`); 303, and
+   301/302 of anything but GET/HEAD unless `followOriginalHttpMethod`, become GET without body (body headers dropped); 307/308
+   keep method and body. A hop to another origin drops the request's Cookie and Host headers and, unless
+   `followAuthorizationHeader`, Authorization and the header the auth set (`BuiltRequest.authHeaders`, e.g. an API key header);
+   an OAuth 2.0 header kept across origins is re-read through the token lookup for the new origin (so the origin check of
+   OAuth 2.0 below still applies). Slinger never adds a Referer. `followRedirects: false` returns the 3xx. The response gets
+   `redirects: [{status, location}]` (HttpService runs each location through `scrubRequestValues` + redact, like errors).
+   **Cookie jar hook:** `ExecuteOptions.cookieJar` (`services/cookieJarPort.ts`): before every hop the jar's `Cookie` value is
+   merged with the request's own (the request wins per name), after every hop its `Set-Cookie` values are stored; a failing jar
+   only logs. Without a jar nothing changes.
+   **Errors** (`network.describeSendError`): TLS failures name the problem (self-signed, unknown authority, expired, not valid
+   for the host name, client certificate refused or unusable) and point to the request's SSL setting and Settings > Network
+   (`details.tls` = the OpenSSL / Node code); with a proxy, a refused tunnel / 407 (`details.proxyStatus`) or an unreachable
+   proxy names it (`details.proxy`); anything else keeps the platform message. Header values with control characters are
+   refused in `buildRequest` (naming the header, never quoting the value).
 5. **Response.** Non-2xx statuses resolve normally. Body is `bodyText` when the bytes decode (declared charset, else UTF-8),
    otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download. The body is read with a
    hard cap (`lib/limitedBody.ts` `readLimitedBody`): a declared `Content-Length` over it stops before the first byte, otherwise
@@ -370,6 +393,41 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    parts, header values, credentials) with `•••`.
 7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
    response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
+
+## Network settings
+
+Settings > Network (`services/networkSettings.ts`, `NetworkSettingsService` = `core.network`; renderer
+`features/settings/NetworkSettings.svelte`; mock `src/dev/mock/network.ts`). App-wide, local only (not synced, exported or
+versioned). IPC: `getNetworkSettings`, `setNetworkSettings({verifySsl?, proxy?: {mode?, url?, username?, password?, bypass?}})`
+(absent = keep; password `''`/`null` removes it), `addNetworkCaCertificates(paths)`, `removeNetworkCaCertificate(id)`,
+`saveNetworkClientCertificate({id?, host, port?, crtPath?, keyPath?, pfxPath?, passphrase?})`,
+`removeNetworkClientCertificate(id)`; all return `NetworkSettings`, which never holds a secret (`proxy.hasPassword`,
+`hasPassphrase`).
+
+- **Storage.** `app_settings`: `network.verifySsl` ('0' = off; absent = on) and `network.proxy` (JSON `{mode, url, username,
+  bypass}`; mode `system` by default). Table `network_ca_certs` holds the certificates themselves (public; one row per
+  certificate of a PEM bundle, or a DER file; parsed with `X509Certificate`, deduplicated by SHA-256). Table
+  `network_client_certs` holds **paths**: the private key stays where the user keeps it and is read when a dispatcher is built.
+  Keychain: `slinger:network:proxy-password`, `slinger:network:client-cert:<id>`.
+- **Files.** Certificate paths go through `FileGrants` like body files: the renderer calls `pickFile` (main's dialog) and passes
+  the path; anything not granted in this session is `file_not_granted`. Editing a client certificate may pass back its stored
+  paths unchanged without a new grant.
+- **Dispatchers** (`services/network.ts`, `NetworkDispatchers`): undici `Agent` (direct) or `ProxyAgent` (`proxyTunnel: false`:
+  plain-http requests go to an http proxy as absolute-URI requests; https through CONNECT; proxy auth as a `Proxy-Authorization`
+  token), TLS options `rejectUnauthorized` (request `strictSSL` ?? `verifySsl`), `ca` = Node's root certificates + the added CAs
+  (only when there are any), and the client certificate matching the https URL's host (exact before the longest `*.` wildcard)
+  and port. Cached by (proxy, verification, client certificate id), at most 32, so connections are reused; every settings
+  change closes them all (`invalidate`). A client certificate file that cannot be read fails the send with `invalid_input`
+  pointing to the settings.
+- **Proxy choice per hop.** Loopback hosts (`localhost`, `*.localhost`, 127/8, `::1`) are always direct (mock servers, the OAuth
+  2.0 listener, local servers). `none`: direct. `custom`: the proxy unless the bypass list matches (`host`, `.domain` /
+  `*.domain`, optional `:port`, `*`). `system`: Electron's `session.defaultSession.resolveProxy(url)` (works without a window:
+  OS / desktop settings, PAC, `--proxy-server`), first `PROXY`/`HTTPS` entry, `DIRECT` = none, SOCKS skipped (undici 6 has no
+  SOCKS); without a resolver (tests, plain Node) `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`.
+- **Who uses it.** `HttpService.execute` (user sends, runner, workflows, MCP sends), `pm.sendRequest` (`scriptHttp`,
+  via `ScriptService`), OAuth 2.0 token requests (`OAuth2Service` option `network`) and OpenAPI URL import (`networkFetch`, a
+  fetch-shaped wrapper; redirects there are undici's own on the first URL's route). Not: `cloudFetch` / `fetchInternal`
+  (direct, as before), cloud sync and the update check (Electron's `net.fetch`, the system proxy, as before).
 
 ## OAuth 2.0 request authorization
 
