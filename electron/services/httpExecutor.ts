@@ -1,11 +1,15 @@
 import { readFile } from 'node:fs/promises'
 import { withDefaultScheme } from '../../shared/urlScheme'
 import { basename } from 'node:path'
-import type { HttpRequestInput, HttpResponseData, RequestHeader } from '../../shared/types'
+import { fetch as undiciFetch, type Response as UndiciResponse } from 'undici'
+import type { HttpRequestInput, HttpResponseData, RedirectHop, RequestHeader } from '../../shared/types'
 import { invalidInput, ioError, IpcError, networkError } from '../lib/errors'
 import { FileWriteError, readLimitedBody, streamBodyToFile } from '../lib/limitedBody'
 import { DEFAULT_MAX_RESPONSE_MB, formatLimit, MB } from '../../shared/responseLimit'
 import type { FileAccess } from './fileGrants'
+import type { CookieJarPort } from './cookieJarPort'
+import { describeSendError, DIRECT_ROUTER, type NetworkRoute, type NetworkRouter } from './network'
+import { mergeCookieHeader, planRedirect, redirectHeaders, redirectPolicy } from './redirects'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
 export const MAX_TIMEOUT_MS = 10 * 60_000
@@ -78,11 +82,23 @@ async function readLocalFile(path: string | undefined, label: string, files: Fil
   }
 }
 
+const HEADER_CONTROL_RE = /[\x00-\x08\x0a-\x1f\x7f]/
+
+/** The value, or a throw (no message: callers name the header) when it has control characters HTTP does not allow. */
+function checkedHeaderValue(value: string): string {
+  if (HEADER_CONTROL_RE.test(value)) throw new Error('invalid header value')
+  return value
+}
+
 interface BuiltRequest {
   url: string
   method: string
   headers: Headers
   body: string | Buffer | FormData | undefined
+  /** Header names the auth set (Authorization, an API key header): dropped on a redirect to another origin. */
+  authHeaders: string[]
+  /** OAuth 2.0 sent as a header: re-checked (token origins) when a redirect keeps it on another origin. */
+  oauth2Header?: { tokenKey: string; prefix: string }
 }
 
 /** Validates the input and builds fetch arguments. All auth kinds and body modes are applied here. */
@@ -108,7 +124,7 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   const headers = new Headers()
   for (const h of headerList(input)) {
     try {
-      headers.append(h.key.trim(), h.value.trim())
+      headers.append(h.key.trim(), checkedHeaderValue(h.value.trim()))
     } catch {
       // The platform's message quotes the value, which may be a secret: name the header, never its value.
       const name = h.key.trim()
@@ -122,15 +138,21 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
 
   // Auth is server-side so credentials never have to be assembled in the renderer.
   const auth = input.auth
+  const authHeaders: string[] = []
+  let oauth2Header: BuiltRequest['oauth2Header']
   try {
     switch (auth?.kind) {
       case 'basic': {
         const { username = '', password = '' } = auth.basic ?? {}
         headers.set('Authorization', `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`)
+        authHeaders.push('authorization')
         break
       }
       case 'bearer':
-        if (auth.bearer?.token) headers.set('Authorization', `Bearer ${auth.bearer.token}`)
+        if (auth.bearer?.token) {
+          headers.set('Authorization', checkedHeaderValue(`Bearer ${auth.bearer.token}`))
+          authHeaders.push('authorization')
+        }
         break
       case 'oauth2': {
         // The token never crosses IPC: it is read from the keychain here, by key, and applied like a bearer token.
@@ -139,14 +161,21 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
         if (!oauth2Token) throw invalidInput('OAuth 2.0 authorization is not available for this request')
         const token = oauth2Token(o.tokenKey, url.origin)
         if (o.addTo === 'query') url.searchParams.append('access_token', token)
-        else headers.set('Authorization', o.headerPrefix.trim() ? `${o.headerPrefix.trim()} ${token}` : token)
+        else {
+          headers.set('Authorization', checkedHeaderValue(oauth2HeaderValue(o.headerPrefix, token)))
+          authHeaders.push('authorization')
+          oauth2Header = { tokenKey: o.tokenKey, prefix: o.headerPrefix }
+        }
         break
       }
       case 'apiKey': {
         const key = auth.apiKey?.key.trim()
         if (!key) throw invalidInput('API key name is required')
         if (auth.apiKey!.addTo === 'query') url.searchParams.append(key, auth.apiKey!.value)
-        else headers.set(key, auth.apiKey!.value)
+        else {
+          headers.set(key, checkedHeaderValue(auth.apiKey!.value))
+          authHeaders.push(key.toLowerCase())
+        }
         break
       }
       default:
@@ -208,8 +237,10 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
     throw invalidInput(`${method} requests cannot have a body; choose another method or set the body to none`)
   }
 
-  return { url: url.toString(), method, headers, body }
+  return { url: url.toString(), method, headers, body, authHeaders, oauth2Header }
 }
+
+const oauth2HeaderValue = (prefix: string, token: string) => (prefix.trim() ? `${prefix.trim()} ${token}` : token)
 
 /**
  * Removes every value of the outgoing request that the safe form of its URL (`historyUrl`: secrets as `{{name}}`) does
@@ -254,15 +285,6 @@ export function scrubRequestValues(message: string, input: HttpRequestInput): st
   return out
 }
 
-function describeNetworkError(err: unknown): string {
-  if (err instanceof Error) {
-    const cause = (err as Error & { cause?: unknown }).cause
-    if (cause instanceof Error && cause.message) return cause.message
-    return err.message
-  }
-  return String(err)
-}
-
 function charsetOf(headers: Headers): string | null {
   const m = /charset\s*=\s*"?([^";\s]+)/i.exec(headers.get('content-type') ?? '')
   return m ? m[1]!.toLowerCase() : null
@@ -301,6 +323,10 @@ export interface ExecuteOptions {
   oversize?: 'error' | 'report'
   /** Streams the body into this file (chosen by the user in main's save dialog) instead of returning it; no size limit. */
   toFile?: string
+  /** Network settings (proxy, CA and client certificates, SSL verification); absent: direct connections, verified. */
+  network?: NetworkRouter
+  /** Adds the jar's cookies to every hop and stores every hop's Set-Cookie; absent: no cookie handling. */
+  cookieJar?: CookieJarPort
 }
 
 /**
@@ -334,23 +360,55 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
   else options.signal?.addEventListener('abort', onCancel, { once: true })
 
   const started = performance.now()
+  const policy = redirectPolicy(input)
+  const router = options.network ?? DIRECT_ROUTER
+  const redirects: RedirectHop[] = []
+  let route: NetworkRoute | null = null
+  let hop: { url: URL; method: string; headers: Headers; body: BuiltRequest['body'] } | null = null
   try {
-    const response = await fetch(built.url, {
-      method: built.method,
-      headers: built.headers,
-      body: built.body as RequestInit['body'],
-      signal: controller.signal,
-      redirect: 'follow',
-    })
+    hop = { url: new URL(built.url), method: built.method, headers: built.headers, body: built.body }
+    let response: UndiciResponse
+    for (;;) {
+      route = await router.route(hop.url, { strictSSL: input.strictSSL })
+      const headers = new Headers(hop.headers)
+      if (options.cookieJar) {
+        const cookie = mergeCookieHeader(headers.get('cookie'), await jarCookies(options.cookieJar, hop.url))
+        if (cookie) headers.set('cookie', cookie)
+      }
+      response = await undiciFetch(hop.url, {
+        method: hop.method,
+        headers,
+        body: hop.body as never,
+        signal: controller.signal,
+        redirect: 'manual',
+        dispatcher: route.dispatcher,
+      })
+      if (options.cookieJar) await storeJarCookies(options.cookieJar, hop.url, response.headers.getSetCookie())
+      const plan = planRedirect(hop, response.status, response.headers.get('location'), policy, redirects.length)
+      if (plan.kind === 'final') break
+      await response.body?.cancel().catch(() => {})
+      if (plan.kind === 'tooMany') {
+        throw networkError(`Too many redirects: stopped after ${plan.max}. The server may be redirecting in a loop (Maximum redirects is in the Settings tab).`, {
+          tooManyRedirects: true,
+        })
+      }
+      redirects.push({ status: response.status, location: plan.url.toString() })
+      const nextHeaders = redirectHeaders(hop.headers, plan, policy, built.authHeaders)
+      // A token kept on another origin (Follow Authorization header) is checked like a send to that origin.
+      if (plan.crossOrigin && policy.followAuthorizationHeader && built.oauth2Header && options.oauth2Token) {
+        nextHeaders.set('authorization', oauth2HeaderValue(built.oauth2Header.prefix, options.oauth2Token(built.oauth2Header.tokenKey, plan.url.origin)))
+      }
+      hop = { url: plan.url, method: plan.method, headers: nextHeaders, body: plan.keepBody ? hop.body : undefined }
+    }
     const headers: RequestHeader[] = []
     response.headers.forEach((value, key) => headers.push({ key, value }))
-    const head = { status: response.status, statusText: response.statusText, headers }
+    const head = { status: response.status, statusText: response.statusText, headers, ...(redirects.length ? { redirects } : {}) }
     const elapsed = () => Math.max(0, Math.round(performance.now() - started))
 
     if (options.toFile) {
       let written: number
       try {
-        written = await streamBodyToFile(response, options.toFile)
+        written = await streamBodyToFile(response as unknown as Response, options.toFile)
       } catch (err) {
         if (!(err instanceof FileWriteError)) throw err
         throw ioError(`Could not write the response to "${options.toFile}": ${err.message}`)
@@ -363,12 +421,12 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
       if (options.oversize !== 'report') throw tooLargeError(max)
       return { ...head, durationMs: elapsed(), bodyText: null, bodyBase64: null, bodyByteLength: size, bodyTooLarge: { limitBytes: max } }
     }
-    const body = await readLimitedBody(response, max)
+    const body = await readLimitedBody(response as unknown as Response, max)
     if (!body.ok) return tooLarge(body.declared ?? body.received)
     const bytes = body.bytes
     const durationMs = elapsed()
     try {
-      const text = decodeBody(bytes, response.headers)
+      const text = decodeBody(bytes, response.headers as unknown as Headers)
       return { ...head, durationMs, bodyText: text, bodyBase64: text === null ? bytes.toString('base64') : null, bodyByteLength: bytes.byteLength }
     } catch (err) {
       // Too long for one JavaScript string (base64 of a very large binary body): same as passing the limit.
@@ -379,9 +437,28 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
     if (cancelled) throw networkError('Request cancelled', { cancelled: true })
     if (err instanceof IpcError) throw err
     if (timedOut) throw networkError(`Request timed out after ${timeoutMs} ms`, { timedOut: true })
-    throw networkError(describeNetworkError(err))
+    throw describeSendError(err, route, hop?.url)
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', onCancel)
+  }
+}
+
+/** The jar's Cookie header for a hop; a failing jar never fails the send. */
+async function jarCookies(jar: CookieJarPort, url: URL): Promise<string | null> {
+  try {
+    return await jar.cookieHeaderFor(url)
+  } catch (err) {
+    console.warn('[slinger] cookie jar lookup failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+async function storeJarCookies(jar: CookieJarPort, url: URL, setCookie: string[]): Promise<void> {
+  if (setCookie.length === 0) return
+  try {
+    await jar.storeFromResponse(url, setCookie)
+  } catch (err) {
+    console.warn('[slinger] cookie jar store failed:', err instanceof Error ? err.message : err)
   }
 }

@@ -9,6 +9,7 @@ export class InlineExecutor implements ScriptExecutor {
       readSecret: io.readSecret,
       isCancelled: () => io.signal.aborted,
       sendHttp: io.sendHttp ? (call, signal) => io.sendHttp!(call, AbortSignal.any([signal, io.signal])) : undefined,
+      cookieJar: io.cookieJar,
     })
   }
   async dispose(): Promise<void> {}

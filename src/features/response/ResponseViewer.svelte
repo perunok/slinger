@@ -138,6 +138,15 @@
     <span class="rounded px-2 py-0.5 text-xs font-semibold {toneClass}" data-testid="status-chip">{data.status} {data.statusText}</span>
     {#if showTiming}<span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="time-chip" title="Time to complete the request">{formatDuration(data.durationMs)}</span>{/if}
     <span class="rounded bg-raised px-2 py-0.5 text-xs text-muted" data-testid="size-chip" title="Body size">{formatBytes(data.bodyByteLength)}</span>
+    {#if data.redirects?.length}
+      <span
+        class="rounded bg-raised px-2 py-0.5 text-xs text-muted"
+        data-testid="redirect-chip"
+        title={`Followed ${data.redirects.length === 1 ? 'one redirect' : `${data.redirects.length} redirects`} (listed on the Headers tab):\n${data.redirects.map((r) => `${r.status} → ${r.location}`).join('\n')}`}
+      >
+        {data.redirects.length === 1 ? '1 redirect' : `${data.redirects.length} redirects`}
+      </span>
+    {/if}
     {@render chips?.()}
     {#if info.mime}<span class="hidden rounded bg-raised px-2 py-0.5 text-xs text-faint sm:inline">{info.mime}</span>{/if}
     <div class="ml-auto flex items-center gap-0.5">
@@ -155,7 +164,7 @@
     {:else if effectiveView === 'console' && scripts}
       <ConsoleView entries={scripts.console} onclear={onclearconsole} />
     {:else if effectiveView === 'headers'}
-      <HeadersTable headers={data.headers} />
+      <HeadersTable headers={data.headers} redirects={data.redirects ?? []} />
     {:else if effectiveView === 'cookies'}
       <CookiesTable headers={data.headers} />
     {:else if data.bodyTooLarge || data.savedToFile}

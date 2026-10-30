@@ -9,9 +9,11 @@ import { IPC_CHANNELS, type SlingerIpcApi } from '../../shared/ipc-contract'
 import type { MenuCommand } from '../../shared/menu'
 import { IpcError, type IpcErrorPayload } from '../../shared/types'
 import { createHttpApi } from './mock/http'
+import { createCookiesApi } from './mock/cookies'
 import { createSecurityApi } from './mock/security'
 import { createScriptsApi } from './mock/scripts'
 import { createMiscApi } from './mock/misc'
+import { createNetworkApi } from './mock/network'
 import { createOAuth2Api } from './mock/oauth2'
 import { importPostman, replaceFromPostman } from './mock/postmanImport'
 import { seedState } from './mock/seed'
@@ -103,6 +105,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
   const mcp = createMcpApi()
   const mcpClient = createMcpClientApi(state)
   const mockServers = createMockServersApi()
+  const network = createNetworkApi((paths) => misc.grantedFiles(paths))
   /** OpenAPI links by collection id (main's collection_openapi table). */
   const openapiLinks = new Map<string, MockOpenApiLink>()
   const impl: Omit<SlingerIpcApi, 'onMenuCommand' | 'onWindowState'> = {
@@ -110,6 +113,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...createTreeApi(state),
     ...createVersionApi(state),
     ...createHttpApi(state),
+    ...createCookiesApi(state),
     ...createVariablesApi(state),
     ...createWorkflowsApi(state),
     ...mockServers.api,
@@ -121,6 +125,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
     ...sync.api,
     ...mcp.api,
     ...mcpClient.api,
+    ...network.api,
     async recordAssistantEdit(input) {
       const entry = {
         id: crypto.randomUUID(),
@@ -208,6 +213,7 @@ export function createMockBackend(options: MockOptions = {}): SlingerIpcApi & Mo
       sync.reset()
       mcpClient.controls.reset()
       mockServers.controls.reset()
+      network.controls.reset()
       once.clear()
       always = null
       calls.length = 0

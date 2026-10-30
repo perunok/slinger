@@ -1,3 +1,4 @@
+import { boolSetting, setBoolSetting } from './requestSettings'
 import { describe, expect, it } from 'vitest'
 import { dataRows, newRow } from './kv'
 import { makeScope } from './template'
@@ -123,6 +124,40 @@ describe('document edge cases', () => {
     d.params = d.params.filter((p) => p.key !== 'off')
     const again = parseDocument({ ...base, documentJson: serializeDraft(d).documentJson })
     expect(dataRows(again.params)).toHaveLength(0)
+  })
+})
+
+describe('disableCookies (Postman protocolProfileBehavior, lib/requestSettings.ts)', () => {
+  const docOf = (d: RequestDraft) => JSON.parse(serializeDraft(d).documentJson)
+  const disabled = (d: RequestDraft) => boolSetting(d.protocolProfileBehavior, 'disableCookies')
+  const withCookies = (d: RequestDraft, off: boolean) => {
+    const copy = { ...d, protocolProfileBehavior: { ...d.protocolProfileBehavior } }
+    setBoolSetting(copy, 'disableCookies', off)
+    return copy
+  }
+
+  it('reads and writes protocolProfileBehavior.disableCookies, keeping its other keys', () => {
+    const d = parseDocument({ ...base, documentJson: JSON.stringify({ protocolProfileBehavior: { disableCookies: true, followRedirects: false } }) })
+    expect(disabled(d)).toBe(true)
+    expect(docOf(d).protocolProfileBehavior).toEqual({ disableCookies: true, followRedirects: false })
+    expect(docOf(withCookies(d, false)).protocolProfileBehavior).toEqual({ followRedirects: false })
+    expect(docOf(withCookies(newDraft(), false))).not.toHaveProperty('protocolProfileBehavior')
+    expect(disabled(newDraft())).toBe(false)
+  })
+
+  it('an imported item’s setting counts until the request has its own, and turning it off sticks', () => {
+    const d = parseDocument({ ...base, documentJson: JSON.stringify({ source: { protocolProfileBehavior: { disableCookies: true } } }) })
+    expect(disabled(d)).toBe(true)
+    const off = parseDocument({ ...base, documentJson: serializeDraft({ ...withCookies(d, false), extras: d.extras }).documentJson })
+    expect(disabled(off)).toBe(false)
+  })
+
+  it("prepareRequest sends cookies: 'off' only when disabled", () => {
+    const scope = makeScope('E', [])
+    const on = prepareRequest({ ...newDraft({ url: 'http://x' }) }, { workspaceId: 'w', scope })
+    const off = prepareRequest(withCookies(newDraft({ url: 'http://x' }), true), { workspaceId: 'w', scope })
+    expect(on.ok && on.input.cookies).toBe(undefined)
+    expect(off.ok && off.input.cookies).toBe('off')
   })
 })
 

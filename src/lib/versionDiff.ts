@@ -159,6 +159,9 @@ function renderOther(d: RequestDraft): string {
   const scripts = d.extras.scripts
   if (Array.isArray(scripts) && scripts.length > 0) lines.push(`scripts: ${stable(scripts)}`)
   if (d.timeoutMs != null) lines.push(`timeout: ${d.timeoutMs}ms`)
+  const { disableCookies, ...settings } = d.protocolProfileBehavior ?? {}
+  if (disableCookies === true) lines.push('cookie jar: off')
+  if (Object.keys(settings).length > 0) lines.push(`settings: ${stable(settings)}`)
   return lines.join('\n')
 }
 

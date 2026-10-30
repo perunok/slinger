@@ -16,6 +16,7 @@
   import ThemeGallery from './ThemeGallery.svelte'
   import TitleBarLayoutEditor from './TitleBarLayoutEditor.svelte'
   import McpSettings from '../mcp/McpSettings.svelte'
+  import NetworkSettings from './NetworkSettings.svelte'
   import { MAX_MAX_RESPONSE_MB, MIN_MAX_RESPONSE_MB } from '../../../shared/responseLimit'
 
   const SECTIONS = [
@@ -23,6 +24,7 @@
     { id: 'layout', label: 'Layout & window' },
     { id: 'editor', label: 'Editor & tabs' },
     { id: 'requests', label: 'Requests' },
+    { id: 'network', label: 'Network' },
     { id: 'scripts', label: 'Scripts' },
     { id: 'updates', label: 'Updates' },
     { id: 'mcp', label: 'AI assistants (MCP)' },
@@ -223,6 +225,8 @@
             Send the request even when a pre-request script fails
           </label>
         </section>
+      {:else if ui.settingsSection === 'network'}
+        <NetworkSettings />
       {:else if ui.settingsSection === 'mcp'}
         <McpSettings {now} />
       {:else}

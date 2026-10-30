@@ -190,6 +190,33 @@ describe('WorkerExecutor with the bundled worker', () => {
     expect(r.variables.called).toBeUndefined()
   })
 
+  it('pm.cookies.jar() calls cross to the main thread on the same port as pm.sendRequest', async () => {
+    const calls: unknown[] = []
+    const r = await executor.run(
+      job({
+        scripts: [
+          script(`
+            const jar = pm.cookies.jar()
+            pm.variables.set('v', await jar.get('https://example.com/', 'sid'))
+            jar.set('example.com', 'a', '1', (err) => pm.variables.set('err', err ? err.message : null))
+          `),
+        ],
+      }),
+      io({
+        cookieJar: async (call) => {
+          calls.push(call)
+          return call.op === 'get' ? { ok: true, value: 'abc' } : { ok: false, error: 'not allowed' }
+        },
+      }),
+    )
+    expect(r.errors).toEqual([])
+    expect(r.variables).toMatchObject({ v: 'abc', err: 'not allowed' })
+    expect(calls).toEqual([
+      { op: 'get', url: 'https://example.com/', name: 'sid' },
+      { op: 'set', url: 'http://example.com', cookie: { name: 'a', value: '1' } },
+    ])
+  })
+
   it('still works after a worker was terminated', async () => {
     const r = await executor.run(job({ scripts: [script(`console.log('alive')`)] }), io())
     expect(r.console.map((c) => c.message)).toEqual(['alive'])

@@ -20,6 +20,8 @@ files:
   - "!node_modules/@lezer/**"
   - "!node_modules/zod/**"
   - "!node_modules/uuid/**"
+  # undici (the HTTP engine, 0.29) is inlined into app.cjs too.
+  - "!node_modules/undici/**"
   # QuickJS (the script sandbox) is inlined into dist-electron/script-worker.cjs.
   - "!node_modules/quickjs-emscripten-core/**"
   - "!node_modules/@jitl/**"

@@ -47,6 +47,7 @@ function requestDocument(item: Json, request: Json, name: string, method: string
     source: stripOAuth2TokensFromItem(sourceItem),
   }
   if (mcp) Object.assign(doc, { params: [], mcp })
+  if (isObj(item.protocolProfileBehavior)) doc.protocolProfileBehavior = item.protocolProfileBehavior
   // Imported from an OpenAPI document (as electron/services/postmanImport.ts).
   if (isObj(item._slinger_openapi) && typeof item._slinger_openapi.key === 'string') doc.openapi = item._slinger_openapi
   return doc

@@ -684,8 +684,9 @@ if (!app.requestSingleInstanceLock()) {
       secrets: chooseSecretStore({ env: process.env, isPackaged: app.isPackaged, keychain: loadKeychain, warn: (m) => console.warn(m) }),
       migrationsDir: join(app.getAppPath(), 'electron', 'migrations'),
       scriptExecutor: scriptExecutor(),
-      // OpenAPI documents by URL: Electron's network stack (system proxy), never the request history.
-      openapiFetch: netFetch,
+      // Settings > Network > Use the system proxy: Chromium's resolver (OS / desktop proxy settings, PAC, --proxy-server).
+      // Sends, pm.sendRequest, OAuth 2.0 token requests and OpenAPI URL imports go through these settings.
+      network: { resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url) },
       sync: {
         // Push channel to the trusted main window only; payloads are plain JSON.
         emit: (event) => {

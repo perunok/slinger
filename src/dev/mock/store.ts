@@ -82,6 +82,10 @@ export interface MockState {
   untrustedCollections: Record<string, true>
   /** ADDED (MCP send policy, main's assistant_changes): `<kind>:<ref>` -> what the assistant wrote. */
   assistantChanges: Record<string, { workspaceId: string; fingerprint: string; created: boolean }>
+  /** ADDED (0.29 cookie jar, main's `cookies`): every workspace's cookies (src/dev/mock/cookies.ts). */
+  cookies: import('./cookies').MockCookie[]
+  /** ADDED (0.29, main's `cookie_settings`): per workspace, the domains pm.cookies.jar() may use. */
+  cookieScriptDomains: Record<string, string[]>
   /**
    * ADDED (version authors): the signed-in mock cloud user as the creator of versions made now (wired by mockBackend
    * to the mock sync session; not part of `emptyState`, so a reset keeps it). Unset or null: the author is unknown.
@@ -105,6 +109,8 @@ export function emptyState(): MockState {
     workflows: [],
     untrustedCollections: {},
     assistantChanges: {},
+    cookies: [],
+    cookieScriptDomains: {},
   }
 }
 
@@ -240,5 +246,7 @@ export function removeWorkspace(s: MockState, workspaceId: string): void {
   s.history = s.history.filter((h) => h.workspaceId !== workspaceId)
   s.globalVariables = s.globalVariables.filter((v) => v.ownerId !== workspaceId)
   s.workflows = s.workflows.filter((w) => w.workspaceId !== workspaceId)
+  s.cookies = s.cookies.filter((c) => c.workspaceId !== workspaceId)
+  delete s.cookieScriptDomains[workspaceId]
   s.workspaces = s.workspaces.filter((w) => w.id !== workspaceId)
 }

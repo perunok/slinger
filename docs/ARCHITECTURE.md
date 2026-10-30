@@ -17,7 +17,8 @@ electron/            main process (TypeScript, bundled by esbuild to dist-electr
                      libs/ (build-time Node shims for the bundled script libraries)
   repositories/      SQL per aggregate: workspaces, collections, tree (folders + requests), environments, variables
                      (collection variables + globals), workflows, history, common
-  services/          core (wiring), httpExecutor, httpService, scriptService, postmanImport, collectionVersions, semver,
+  services/          core (wiring), httpExecutor, httpService, network (dispatchers, proxy choice, send errors), networkSettings,
+                     redirects, cookieJarPort, scriptService, postmanImport, collectionVersions, semver,
                      versionHistory (info._slinger import), secrets, exportFiles, externalUrl, authCallback, updateCheck,
                      oauth2 (OAuth 2.0 request tokens), oauth2Callback (loopback redirect listener), mockServers (local
                      HTTP servers answering with saved examples)
@@ -107,13 +108,16 @@ untrusted URLs is prevented; `window.open` is denied and http/https URLs are han
 ## IPC contract
 
 `shared/ipc-contract.ts` is the single source of truth: the `SlingerIpcApi` interface and the `IPC_CHANNELS` array
-(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 132 methods, grouped as
+(`satisfies readonly (keyof SlingerIpcApi)[]`). The channel name equals the method name. Currently 170 methods, grouped as
 workspaces, environments (+ `revealEnvironmentVariable`), collections and folders (+ `setCollectionScripts`, `setFolderScripts`,
 `setCollectionDescription`, `setFolderDescription`), collection variables and globals (`list/upsert/delete/reorder/replace` +
 `CollectionVariables` / `GlobalVariables`, `revealGlobalVariable`),
 requests, workflows (`listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `duplicateWorkflow`, `deleteWorkflow`; see
 [Workflows](#workflows)), mock servers (`startMockServer`, `updateMockServer`, `stopMockServer`, `listMockServers`,
-`getMockServerLog`, `clearMockServerLog`; see [Mock servers](#mock-servers)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
+`getMockServerLog`, `clearMockServerLog`; see [Mock servers](#mock-servers)), history, HTTP (`executeHttpRequest`, `cancelHttpRequest`, `cloudFetch`), the cookie jar (`listCookies`, `revealCookie`,
+`upsertCookie`, `deleteCookie`, `clearCookies`, `getCookieScriptDomains`, `setCookieScriptDomains`; see [Cookie jar](#cookie-jar)), network settings (`getNetworkSettings`, `setNetworkSettings`,
+`addNetworkCaCertificates`, `removeNetworkCaCertificate`, `saveNetworkClientCertificate`, `removeNetworkClientCertificate`; see
+[Network settings](#network-settings)), scripts (`runScripts`), Postman import / export files (`importPostmanCollection`, `replaceCollectionFromPostman`, `defaultExportPath`,
 `writeExportFile`, `chooseExportDirectory`), collection versions,
 `openExternalUrl`, browser-auth loopback (`prepareBrowserAuthCallback`, `waitForBrowserAuthCallback`), OAuth 2.0 request
 tokens (`getOAuth2Token`, `cancelOAuth2Flow`, `refreshOAuth2Token`, `getOAuth2TokenStatus`, `deleteOAuth2Token`,
@@ -227,6 +231,8 @@ copies `electron/migrations/**` into the package (`electron-builder.yml`).
 | `0017_sync_deferred` | `sync_deferred (entity_type, entity_id, workspace_id, op, version, payload_json, op_id, reason, message, attempts, noted, ...)`: remote changes that could not be applied yet (parent missing, or applying failed), retried after every snapshot/pull page; local only, see Sync |
 | `0018_container_auth` | nullable `auth_json` on `collections` and `folders` (Postman `auth` object, never an OAuth 2.0 token; see [Collection and folder auth](#collection-and-folder-auth)), read-only and capture triggers (synced only with the `container_auth` feature, sync design section 21.6) |
 | `0019_local_trust` | `collection_trust (collection_id, trusted_at)`: collections whose scripts may run here (existing collections are trusted by the migration); `assistant_changes (kind, ref, workspace_id, fingerprint, created, changed_at)`: requests, environment variables and collection/folder auth (kind `container`) an AI assistant wrote and the user has not reviewed. Both local only (`repositories/trust.ts`), see [Scripts sandbox](#scripts-sandbox) and [MCP server](#mcp-server) |
+| `0020_network_settings` | `network_ca_certs` (extra trusted CA certificates: PEM, subject, SHA-256 fingerprint unique, expiry) and `network_client_certs` (host, optional port, paths of a PEM certificate + key or a PFX file, `has_passphrase`); local only, see [Network settings](#network-settings) |
+| `0021_cookie_jar` | `cookies` (per workspace: name, `value_enc` = AES-256-GCM ciphertext, domain, `host_only`, path, `expires_at`, secure, http_only, same_site; unique `(workspace_id, domain, path, name)`) and `cookie_settings` (the domains pm.cookies.jar() may use); trigger `cookies_workspace_deleted` deletes both when a workspace is soft-deleted. Local only, see [Cookie jar](#cookie-jar) |
 
 **Soft delete.** Workspaces, collections, folders, requests, environments, variables (environment, collection, global) and
 collection versions carry `deleted INTEGER`. Deleting sets `deleted = 1` (and bumps `version` / `updated_at`); every read filters
@@ -242,7 +248,9 @@ The renderer (`tabs.svelte.ts`, `ConflictDialog`) lets the user reload or overwr
 requests among requests); moving a folder into itself or a descendant is refused (`folder_cycle`).
 
 **Request documents.** `requests.document_json` holds a Postman v2.1 item-shaped document (headers, body, auth, plus Slinger
-additions `params` and `settings.timeoutMs`). The main process treats it as an opaque string; the renderer model is
+additions `params` and `settings.timeoutMs`; the request Settings tab is Postman's own `protocolProfileBehavior`, which the
+importers copy from the item and the Postman export writes back, read from the kept `source` item for documents imported before
+0.29, see `src/lib/requestSettings.ts`). The main process treats it as an opaque string; the renderer model is
 `src/lib/request.ts`, and unknown keys (scripts, responses, source) are preserved on save. Request scripts are the Postman `event`
 array under the key `scripts` (the key the importer has always used, so existing and synced documents need no migration).
 
@@ -301,8 +309,9 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
 - No generic keychain access over IPC: the former `secureStoreGet/Set/Delete` passthrough (unused by the renderer) was
   removed in 0.27, because besides the reserved prefixes it reached `mcp.token` (the MCP server's bearer token),
   `mcp-client.trusted` (the allowed MCP stdio commands) and `cloud.*`. Every entry (`slinger:env-var:`, `slinger:global-var:`,
-  `slinger.cloud.tokens:`, `slinger:oauth2:`, `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
+  `slinger.cloud.tokens:`, `slinger:oauth2:`, `slinger:network:` (proxy password, client-certificate passphrases), `slinger:cookie-jar-key`, `mcp.token`, `mcp-client.trusted`, `cloud.config`, `cloud.user:`) is read and
   written only by the main-process service that owns it.
+- Cookie values: encrypted at rest in SQLite with the per-install key `slinger:cookie-jar-key` (see [Cookie jar](#cookie-jar)).
 - OAuth 2.0 request tokens: `slinger:oauth2:<tokenKey>` holds `{access_token, token_type, expires_at, refresh_token, scope,
   obtained_at, workspace_id}`; `slinger:oauth2:index:<workspaceId>` lists a workspace's token keys so `deleteWorkspace`
   deletes them. Tokens never go to SQLite, history, documents, version snapshots, exports or sync (see below).
@@ -347,9 +356,30 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    token = `invalid_input`); builds the body for `raw`, `urlEncoded`,
    `formData` (files read from absolute paths), `binary`; fills a default `Content-Type` only when not set; rejects a body on
    GET/HEAD.
-4. **Main, fetch.** Node `fetch` with an abort signal; timeout defaults to 60 s and is clamped to 10 min; cancellation via
-   `cancelHttpRequest(runId)` also works while the body streams. Timeouts and cancellations are `network_error` with
-   `details.timedOut` / `details.cancelled`.
+4. **Main, send.** undici's own `fetch` (the `undici` dependency, bundled into app.cjs; not Node's global fetch) with
+   `redirect: 'manual'` and, per hop, the dispatcher `NetworkRouter.route(url, {strictSSL})` returns (see
+   [Network settings](#network-settings); without a router, as for `cloudFetch`: direct, verified). An abort signal covers the
+   whole chain; timeout defaults to 60 s and is clamped to 10 min; cancellation via `cancelHttpRequest(runId)` also works while
+   the body streams. Timeouts and cancellations are `network_error` with `details.timedOut` / `details.cancelled`.
+   **Redirects** (`services/redirects.ts`, from the input's `followRedirects`, `maxRedirects`, `followOriginalHttpMethod`,
+   `followAuthorizationHeader`, `removeRefererHeaderOnRedirect`, the request Settings tab): 301/302/303/307/308 with an http(s)
+   Location are followed up to `maxRedirects` (default 10; one more is `network_error` `details.tooManyRedirects`); 303, and
+   301/302 of anything but GET/HEAD unless `followOriginalHttpMethod`, become GET without body (body headers dropped); 307/308
+   keep method and body. A hop to another origin drops the request's Cookie and Host headers and, unless
+   `followAuthorizationHeader`, Authorization and the header the auth set (`BuiltRequest.authHeaders`, e.g. an API key header);
+   an OAuth 2.0 header kept across origins is re-read through the token lookup for the new origin (so the origin check of
+   OAuth 2.0 below still applies). Slinger never adds a Referer. `followRedirects: false` returns the 3xx. The response gets
+   `redirects: [{status, location}]` (HttpService runs each location through `scrubRequestValues` + redact, like errors).
+   **Cookie jar:** unless the input says `cookies: 'off'` (the request's Disable cookie jar setting, or a send an AI assistant
+   controls), `HttpService` passes the workspace's jar (`ExecuteOptions.cookieJar`, a `CookieJarPort`,
+   [Cookie jar](#cookie-jar)); `pm.sendRequest` does too unless the run has `denySecrets`. Before every hop the jar's `Cookie`
+   value is merged with the request's own (`shared/cookies.ts` `mergeCookieHeader`, the request wins per name), after every
+   hop that hop's `Set-Cookie` values are stored against that hop's URL; a failing jar only logs.
+   **Errors** (`network.describeSendError`): TLS failures name the problem (self-signed, unknown authority, expired, not valid
+   for the host name, client certificate refused or unusable) and point to the request's SSL setting and Settings > Network
+   (`details.tls` = the OpenSSL / Node code); with a proxy, a refused tunnel / 407 (`details.proxyStatus`) or an unreachable
+   proxy names it (`details.proxy`); anything else keeps the platform message. Header values with control characters are
+   refused in `buildRequest` (naming the header, never quoting the value).
 5. **Response.** Non-2xx statuses resolve normally. Body is `bodyText` when the bytes decode (declared charset, else UTF-8),
    otherwise `bodyBase64`; `bodyByteLength` is always set; `durationMs` includes the body download. The body is read with a
    hard cap (`lib/limitedBody.ts` `readLimitedBody`): a declared `Content-Length` over it stops before the first byte, otherwise
@@ -370,6 +400,41 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    parts, header values, credentials) with `•••`.
 7. **Test scripts** run after the response (same run id), with `pm.request` resolved except secrets (`{{name}}`), and the
    response body (capped at 8 MB). Results go to the tab / runner row only; nothing about them is persisted.
+
+## Network settings
+
+Settings > Network (`services/networkSettings.ts`, `NetworkSettingsService` = `core.network`; renderer
+`features/settings/NetworkSettings.svelte`; mock `src/dev/mock/network.ts`). App-wide, local only (not synced, exported or
+versioned). IPC: `getNetworkSettings`, `setNetworkSettings({verifySsl?, proxy?: {mode?, url?, username?, password?, bypass?}})`
+(absent = keep; password `''`/`null` removes it), `addNetworkCaCertificates(paths)`, `removeNetworkCaCertificate(id)`,
+`saveNetworkClientCertificate({id?, host, port?, crtPath?, keyPath?, pfxPath?, passphrase?})`,
+`removeNetworkClientCertificate(id)`; all return `NetworkSettings`, which never holds a secret (`proxy.hasPassword`,
+`hasPassphrase`).
+
+- **Storage.** `app_settings`: `network.verifySsl` ('0' = off; absent = on) and `network.proxy` (JSON `{mode, url, username,
+  bypass}`; mode `system` by default). Table `network_ca_certs` holds the certificates themselves (public; one row per
+  certificate of a PEM bundle, or a DER file; parsed with `X509Certificate`, deduplicated by SHA-256). Table
+  `network_client_certs` holds **paths**: the private key stays where the user keeps it and is read when a dispatcher is built.
+  Keychain: `slinger:network:proxy-password`, `slinger:network:client-cert:<id>`.
+- **Files.** Certificate paths go through `FileGrants` like body files: the renderer calls `pickFile` (main's dialog) and passes
+  the path; anything not granted in this session is `file_not_granted`. Editing a client certificate may pass back its stored
+  paths unchanged without a new grant.
+- **Dispatchers** (`services/network.ts`, `NetworkDispatchers`): undici `Agent` (direct) or `ProxyAgent` (`proxyTunnel: false`:
+  plain-http requests go to an http proxy as absolute-URI requests; https through CONNECT; proxy auth as a `Proxy-Authorization`
+  token), TLS options `rejectUnauthorized` (request `strictSSL` ?? `verifySsl`), `ca` = Node's root certificates + the added CAs
+  (only when there are any), and the client certificate matching the https URL's host (exact before the longest `*.` wildcard)
+  and port. Cached by (proxy, verification, client certificate id), at most 32, so connections are reused; every settings
+  change closes them all (`invalidate`). A client certificate file that cannot be read fails the send with `invalid_input`
+  pointing to the settings.
+- **Proxy choice per hop.** Loopback hosts (`localhost`, `*.localhost`, 127/8, `::1`) are always direct (mock servers, the OAuth
+  2.0 listener, local servers). `none`: direct. `custom`: the proxy unless the bypass list matches (`host`, `.domain` /
+  `*.domain`, optional `:port`, `*`). `system`: Electron's `session.defaultSession.resolveProxy(url)` (works without a window:
+  OS / desktop settings, PAC, `--proxy-server`), first `PROXY`/`HTTPS` entry, `DIRECT` = none, SOCKS skipped (undici 6 has no
+  SOCKS); without a resolver (tests, plain Node) `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`.
+- **Who uses it.** `HttpService.execute` (user sends, runner, workflows, MCP sends), `pm.sendRequest` (`scriptHttp`,
+  via `ScriptService`), OAuth 2.0 token requests (`OAuth2Service` option `network`) and OpenAPI URL import (`networkFetch`, a
+  fetch-shaped wrapper; redirects there are undici's own on the first URL's route). Not: `cloudFetch` / `fetchInternal`
+  (direct, as before), cloud sync and the update check (Electron's `net.fetch`, the system proxy, as before).
 
 ## OAuth 2.0 request authorization
 
@@ -531,6 +596,45 @@ no history, device-flow sign-in, single-flight token refresh with persist-before
   `SLINGER_SYNC_IT_SERVER_DIR=../slinger-admin/server npm run test:sync-it`). Real-app specs: `e2e/cloud.e2e.test.ts`,
   `e2e/sync.e2e.test.ts` (two profiles = two devices, gated by `SLINGER_E2E_CLOUD_URL`).
 
+## Cookie jar
+
+Postman-style cookie jar (0.29), one per workspace, **local only**: not synced, not exported, not in collection versions.
+
+- **Rules** (`shared/cookies.ts`, pure, shared by main and the browser mock): RFC 6265 `Set-Cookie` parsing (5.2, cookie-date
+  algorithm 5.1.1), domain-match and host-only cookies, default path and path-match, `Secure` (sent over https, and over http to
+  `localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]` as browsers treat those as secure; a Secure cookie from another plain-http
+  response is refused), `Max-Age` over `Expires`, expiry capped at 400 days, `Max-Age<=0`/past `Expires` deletes,
+  `__Secure-`/`__Host-` prefixes, control characters refused. A `Domain` that is a public suffix (any single-label TLD, or one
+  of the built-in `PUBLIC_SUFFIXES`, a small excerpt of the Public Suffix List; nothing is fetched) is refused unless it equals
+  the host (then host-only). Header order: longer paths first, then older. Limits: name + value 4096 bytes, 180 per domain
+  (oldest evicted), 3000 per jar. Session cookies are kept until deleted (Postman parity). HttpOnly cookies are sent (and
+  readable by pm.cookies.jar()); SameSite is stored and shown, not enforced. No third-party library: `tough-cookie` would need
+  its full PSL (`tldts`) and an async store adapter over the encrypted table, and the mock needs the same rules in the renderer.
+- **Storage** (`services/cookieJar.ts`, `CookieService`, migration 0021): values are encrypted with AES-256-GCM, a random
+  256-bit key per install in the keychain (`slinger:cookie-jar-key`, created on first use), a random 96-bit IV per write, and
+  `<workspaceId>:<cookieId>` as additional data so a ciphertext cannot be moved to another row; stored as `v1:` + base64(IV,
+  tag, ciphertext). Names, domains, paths and flags are plain. If the keychain is unavailable, sends go without jar cookies and
+  store nothing (one warning in the log); a value under a lost key is skipped on send and `revealCookie` reports it. Deleting a
+  workspace deletes its jar (trigger on the soft delete).
+- **HTTP** (`CookieJarPort` in `services/cookieJarPort.ts`): `cookieHeaderFor(url)` and `storeFromResponse(url, setCookies)`.
+  `HttpService.execute` passes `CookieService.jar(workspaceId)` unless `HttpRequestInput.cookies === 'off'`, so single sends,
+  the collection runner and workflows (all through `executeDraft`) share the jar. `pm.sendRequest` (`scriptHttp.ts`) gets the
+  same jar from `ScriptService` unless the run has `denySecrets`. The renderer sends `cookies: 'off'` for a request whose
+  `protocolProfileBehavior.disableCookies` is set (`RequestDraft.disableCookies`, request Settings tab; an imported item's
+  `source.protocolProfileBehavior.disableCookies` counts until the document has its own) and for sends an AI assistant controls.
+- **Scripts**: `pm.cookies.jar()` (`get`, `getAll`, `set`, `unset`, `clear`; callback and promise) is a host op `cookies.jar`
+  answered asynchronously like `pm.sendRequest` (same pending/settle loop in `sandbox.ts`; worker: message `jar` on the
+  `httpPort`; main: `ScriptService` -> `CookieService.scriptOp`). Only hosts on the workspace's allow-list (`cookie_settings`,
+  Cookies dialog > Domains scripts may access; a listed domain covers its subdomains; empty = none) are served, others fail
+  with an error naming the host; at most 1000 calls per script. With `denySecrets` the op throws in the sandbox.
+- **AI assistants** (`lib/assistantPolicy.ts` `cookieJarAllowed`): a send whose scripts may not read secrets
+  (`scriptSecretDenial`: assistant-controlled, or unreviewed assistant variables) goes with `cookies: 'off'`; a send exactly as
+  saved uses the jar. `redactSecrets({ cookies: { workspaceId, responseSetCookies } })` replaces the jar's values (4+
+  characters, and URL-encoded) in everything returned to the assistant with `[hidden]`, except values the response itself set.
+- **UI**: `features/cookies/CookiesDialog.svelte` (lazy; `ui.cookiesOpen`; Ctrl+K "Cookies" and "Manage cookies…" in the
+  response Cookies view). Values are masked until revealed (`revealCookie`). The mock (`src/dev/mock/cookies.ts`) keeps an
+  in-memory jar with the same rules, used by `src/dev/mock/http.ts` for sends.
+
 ## Scripts sandbox
 
 Postman `event` scripts come from imported, i.e. untrusted, collections. They never run in the renderer and never in Node's `vm`
@@ -652,7 +756,8 @@ names, and can put them into the request it is attached to (that is what pre-req
 untrusted collections); it can write the active environment of a writable workspace. **Since `pm.sendRequest`, a script from an
 imported collection can make the app send HTTP(S) requests to any host, including localhost and the local network, carrying any
 value it can read** (as in Postman): the requests leave from the user's machine with the app's network identity (no cookies are
-shared: `fetch` in main keeps no cookie jar). They are bounded (20 per run, capped timeouts, wall-clock cap, 8 MB body per
+shared with other apps; the workspace's own cookie jar is used, as in a normal send, except for scripts of a send an AI assistant
+controls). They are bounded (20 per run, capped timeouts, wall-clock cap, 8 MB body per
 response into a 64 MB heap), visible (one Console line each), cancellable, and cannot read local files the user did not pick. The bundled libraries are third-party code but get no more trust than a
 script: they are evaluated inside the same QuickJS context, after the host functions were hidden. QuickJS itself is the trust anchor for memory safety (WASM confines a QuickJS bug
 to the worker's linear memory; the worker can be terminated).
@@ -1047,7 +1152,8 @@ can work in Slinger. Off by default; Settings > AI assistants (MCP) turns it on.
   error message): first `redactSecrets` in main (secrets the send's scripts read, `ScriptService.redact`; the stored OAuth 2.0
   access / refresh token, `OAuth2Service.redactToken`), then the values the renderer revealed (secret variables, resolved
   credentials incl. the Basic base64, an MCP request's token and auth headers) as `[hidden]` (`redactValues`); if redaction
-  fails the outcome becomes a failure. The runner and workflows get the same for `source: 'mcp'`.
+  fails the outcome becomes a failure. The runner and workflows get the same for `source: 'mcp'`. Cookies: a send whose scripts may
+  not read secrets goes with `cookies: 'off'`, and the cookie jar's values are redacted too (see [Cookie jar](#cookie-jar)).
 - **History**: every MCP edit is recorded with `recordAssistantEdit` (history `kind = 'edit'`, `source = 'mcp'`, `detail` such as
   `Edited request "X": url and headers`; names only, never values), and MCP sends / runs pass `historySource: 'mcp'`
   (`ExecuteContext.source`, `runsStore.start({source})`). Migration `0011_history_source` adds the three columns; the History panel

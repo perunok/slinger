@@ -110,6 +110,8 @@ export function requestFromPostmanItem(item: Json): { name: string; method: stri
     source: stripOAuth2TokensFromItem(sourceItem),
   }
   if (mcp) Object.assign(document, { params: [], mcp })
+  // The request Settings tab (strictSSL, redirects, ...), as Postman stores it.
+  if (isObject(item.protocolProfileBehavior)) document.protocolProfileBehavior = item.protocolProfileBehavior
   if (openapi) document.openapi = openapi
   return { name, method, url, document }
 }

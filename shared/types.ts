@@ -247,6 +247,11 @@ export interface RedactSecretsInput {
   /** The OAuth 2.0 token the send used: its access and refresh tokens become `<access token>` / `<refresh token>`. */
   oauth2TokenKey: string | null
   texts: string[]
+  /**
+   * ADDED (cookie jar): the values of this workspace's cookie jar are replaced with `[hidden]` too, except values the
+   * response itself set (`responseSetCookies`: its raw Set-Cookie header values, which the assistant sees anyway).
+   */
+  cookies?: { workspaceId: string; responseSetCookies: string[] } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +468,65 @@ export interface HttpRequestInput {
    * file the user picked (no size limit); the response then has `savedToFile` and no body.
    */
   downloadId?: string
+  /**
+   * ADDED (0.29, request Settings tab = Postman `protocolProfileBehavior`). Absent = the default noted on each.
+   * strictSSL: verify the server's TLS certificate (absent: Settings > Network > SSL certificate verification).
+   */
+  strictSSL?: boolean
+  /** Follow 3xx redirects (default true); off returns the 3xx response itself. */
+  followRedirects?: boolean
+  /** 301/302 keep the original method and body instead of switching to GET (default false; 303 always becomes GET). */
+  followOriginalHttpMethod?: boolean
+  /** The most redirects one send follows (default 10); one more fails with network_error. */
+  maxRedirects?: number
+  /** Keep Authorization (and the auth header Slinger added) on a redirect to another origin (default false). */
+  followAuthorizationHeader?: boolean
+  /** Remove a Referer header the request set when following a redirect (default false). */
+  removeRefererHeaderOnRedirect?: boolean
+  /**
+   * ADDED (0.29 cookie jar): 'jar' (default) sends the workspace's matching cookies and stores the response's
+   * Set-Cookie; 'off' does neither (the request's "Disable cookie jar" setting, and sends an AI assistant controls).
+   */
+  cookies?: 'jar' | 'off'
+}
+
+/** ADDED (0.29): one redirect a send followed: the 3xx status and the absolute URL its Location pointed to. */
+export interface RedirectHop {
+  status: number
+  location: string
+}
+
+/** ADDED (0.29): one cookie of a workspace's jar as listed (never its value: `revealCookie` reads that). */
+export interface JarCookie {
+  id: string
+  workspaceId: string
+  name: string
+  domain: string
+  /** Sent only to exactly `domain` (the cookie had no Domain attribute), else to its subdomains too. */
+  hostOnly: boolean
+  path: string
+  /** Unix seconds; null = session cookie (kept until deleted). */
+  expiresAt: number | null
+  secure: boolean
+  httpOnly: boolean
+  sameSite: 'Strict' | 'Lax' | 'None' | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** ADDED (0.29): add a cookie (no `id`) or edit one; `value` absent keeps the stored value of an edited cookie. */
+export interface UpsertCookieInput {
+  workspaceId: string
+  id?: string
+  name: string
+  value?: string
+  domain: string
+  hostOnly: boolean
+  path: string
+  expiresAt: number | null
+  secure: boolean
+  httpOnly: boolean
+  sameSite: 'Strict' | 'Lax' | 'None' | null
 }
 
 /** chooseResponseDownloadFile's result: an opaque one-time id for executeHttpRequest, and the chosen file's name. */
@@ -488,6 +552,8 @@ export interface HttpResponseData {
   bodyTooLarge?: { limitBytes: number }
   /** ADDED (0.27): "Send and download to file": the body was written to this file (bodyByteLength bytes), not returned. */
   savedToFile?: string
+  /** ADDED (0.29): the redirects followed before this response, in order (absent when there were none). */
+  redirects?: RedirectHop[]
   /**
    * ADDED (MCP requests): set by the renderer on the synthetic response of an MCP request (executeDraft), never by main.
    * `bodyText` then holds the JSON-RPC result; `operation` is 'tools/call' | 'resources/read' | 'prompts/get' and `name`
@@ -1605,4 +1671,83 @@ export interface OpenApiUpdateResult {
   /** Automatic snapshot before the update (restore it to undo). */
   safetyVersion: CollectionVersion | null
   link: OpenApiLink
+}
+
+// ---------------------------------------------------------------------------
+// ADDED (0.29) Network settings (Settings > Network; electron/services/networkSettings.ts). App-wide, local only, never
+// synced. Secrets (proxy password, client-certificate passphrases) live in the OS keychain and are never returned.
+// ---------------------------------------------------------------------------
+
+export type ProxyMode = 'system' | 'custom' | 'none'
+
+export interface NetworkProxySettings {
+  /** 'system' (default): the operating system's proxy settings; 'custom': `url`; 'none': always connect directly. */
+  mode: ProxyMode
+  /** Custom proxy, `http://host:port` or `https://host:port` (no credentials in it). '' when not set. */
+  url: string
+  /** Custom proxy username ('' = no authentication). */
+  username: string
+  /** A password is stored in the keychain (never returned). */
+  hasPassword: boolean
+  /** Hosts the custom proxy is not used for: `host`, `*.domain` / `.domain`, optional `:port`, `*` = all. */
+  bypass: string[]
+}
+
+export interface NetworkCaCertificate {
+  id: string
+  /** The file name it was added from. */
+  name: string
+  /** The certificate's subject (CN / O), for display. */
+  subject: string
+  /** Unix seconds (notAfter). */
+  expiresAt: number
+  addedAt: number
+}
+
+export interface NetworkClientCertificate {
+  id: string
+  /** Host name it is sent to (case-insensitive; `*.example.com` matches subdomains). */
+  host: string
+  /** Port it is limited to; null = any port. */
+  port: number | null
+  /** PEM certificate + key files, or one PFX/PKCS#12 file (absolute paths, read when a request needs them). */
+  crtPath: string | null
+  keyPath: string | null
+  pfxPath: string | null
+  /** A passphrase is stored in the keychain (never returned). */
+  hasPassphrase: boolean
+}
+
+export interface NetworkSettings {
+  /** Verify servers' TLS certificates (default true); a request's own SSL setting overrides it. */
+  verifySsl: boolean
+  /** Extra trusted CA certificates (PEM), on top of the bundled ones. */
+  caCertificates: NetworkCaCertificate[]
+  clientCertificates: NetworkClientCertificate[]
+  proxy: NetworkProxySettings
+}
+
+/** setNetworkSettings: absent fields keep their value. */
+export interface NetworkSettingsUpdate {
+  verifySsl?: boolean
+  proxy?: {
+    mode?: ProxyMode
+    url?: string
+    username?: string
+    /** Absent: keep the stored password; '' or null: remove it; otherwise replace it. */
+    password?: string | null
+    bypass?: string[]
+  }
+}
+
+/** saveNetworkClientCertificate: `id` absent = add. Paths must have been chosen with pickFile in this session. */
+export interface NetworkClientCertificateInput {
+  id?: string
+  host: string
+  port?: number | null
+  crtPath?: string | null
+  keyPath?: string | null
+  pfxPath?: string | null
+  /** Absent: keep the stored passphrase; '' or null: remove it; otherwise replace it. */
+  passphrase?: string | null
 }

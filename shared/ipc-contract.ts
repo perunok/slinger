@@ -17,6 +17,11 @@ import type {
   AssistantChangeRef,
   AssistantChanges,
   RedactSecretsInput,
+  NetworkClientCertificateInput,
+  NetworkSettings,
+  NetworkSettingsUpdate,
+  JarCookie,
+  UpsertCookieInput,
   ApiRequest,
   CloudFetchInput,
   OpenApiImportInput,
@@ -187,6 +192,20 @@ export interface SlingerIpcApi {
 
   // HTTP execution
   executeHttpRequest(input: HttpRequestInput): Promise<HttpResponseData>
+
+  // ---- Cookie jar (0.29; one per workspace, local only: not synced, exported or versioned) ----
+  /** The workspace's cookies, expired ones removed first; values are never listed (revealCookie). */
+  listCookies(workspaceId: string): Promise<JarCookie[]>
+  /** One cookie's value (decrypted in main). */
+  revealCookie(cookieId: string): Promise<string>
+  /** Adds or edits a cookie; replaces another cookie with the same name, domain and path. */
+  upsertCookie(input: UpsertCookieInput): Promise<JarCookie>
+  deleteCookie(cookieId: string): Promise<void>
+  /** Deletes the cookies stored for `domain` (exactly that domain), or every cookie of the workspace when null; returns how many. */
+  clearCookies(workspaceId: string, domain: string | null): Promise<number>
+  /** The domains whose cookies pm.cookies.jar() may use in this workspace (empty: none). */
+  getCookieScriptDomains(workspaceId: string): Promise<string[]>
+  setCookieScriptDomains(workspaceId: string, domains: string[]): Promise<string[]>
   /** Cancels an HTTP request or a script run (RunScriptsInput.runId) with this id. */
   cancelHttpRequest(requestRunId: string): Promise<void>
   /**
@@ -480,6 +499,17 @@ export interface SlingerIpcApi {
    * the origins it was first used with or the user allowed; another one fails with details.reason 'oauth2_new_origin'.
    */
   allowOAuth2Origin(tokenKey: string, origin: string): Promise<void>
+
+  // --- ADDED (0.29) Network settings (Settings > Network): app-wide, local only; secrets are never returned. ---
+  getNetworkSettings(): Promise<NetworkSettings>
+  /** SSL verification and the proxy; absent fields keep their value. */
+  setNetworkSettings(update: NetworkSettingsUpdate): Promise<NetworkSettings>
+  /** Adds the PEM certificates of these files (each chosen with pickFile in this session) as trusted CAs. */
+  addNetworkCaCertificates(paths: string[]): Promise<NetworkSettings>
+  removeNetworkCaCertificate(id: string): Promise<NetworkSettings>
+  /** Adds (no id) or replaces a client certificate; new file paths must have been chosen with pickFile in this session. */
+  saveNetworkClientCertificate(input: NetworkClientCertificateInput): Promise<NetworkSettings>
+  removeNetworkClientCertificate(id: string): Promise<NetworkSettings>
 }
 
 /** Channel name for every SlingerIpcApi method — kept identical to the method name. */
@@ -524,6 +554,13 @@ export const IPC_CHANNELS = [
   'clearHistory',
   'deleteHistoryEntry',
   'executeHttpRequest',
+  'listCookies',
+  'revealCookie',
+  'upsertCookie',
+  'deleteCookie',
+  'clearCookies',
+  'getCookieScriptDomains',
+  'setCookieScriptDomains',
   'cancelHttpRequest',
   'chooseResponseDownloadFile',
   'runScripts',
@@ -622,6 +659,12 @@ export const IPC_CHANNELS = [
   'deleteOAuth2Token',
   'revealOAuth2Token',
   'allowOAuth2Origin',
+  'getNetworkSettings',
+  'setNetworkSettings',
+  'addNetworkCaCertificates',
+  'removeNetworkCaCertificate',
+  'saveNetworkClientCertificate',
+  'removeNetworkClientCertificate',
   'getMcpStatus',
   'setMcpSettings',
   'revealMcpToken',

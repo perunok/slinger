@@ -3,6 +3,7 @@
  * and the AI assistant's unreviewed changes, plus redactSecrets. Fingerprints are plain JSON here (main hashes them);
  * the comparison is the same: a change counts while the content is still what the assistant wrote.
  */
+import { mockRedactCookies } from './cookies'
 import type { SlingerIpcApi } from '../../../shared/ipc-contract'
 import type { ApiRequest, AssistantChangeRef, AssistantChanges } from '../../../shared/types'
 import { mockRedactToken } from './oauth2'
@@ -104,7 +105,8 @@ export function createSecurityApi(s: MockState): SecurityApi {
     },
     // No script sessions in the mock (scripts do not run); OAuth 2.0 tokens are replaced like main does.
     async redactSecrets(input) {
-      return input.texts.map((t) => mockRedactToken(s, input.oauth2TokenKey, t))
+      const texts = input.texts.map((t) => mockRedactToken(s, input.oauth2TokenKey, t))
+      return input.cookies ? mockRedactCookies(s, input.cookies.workspaceId, texts, input.cookies.responseSetCookies) : texts
     },
   }
 }

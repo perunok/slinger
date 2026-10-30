@@ -15,6 +15,7 @@ import type { HttpResponseData, OAuth2Config, OAuth2TokenStatus, RequestHeader }
 import { DEFAULT_OAUTH2_REDIRECT_URI } from '../../shared/oauth2'
 import { invalidInput, IpcError, ioError, networkError } from '../lib/errors'
 import { executeHttp, OAUTH2_TOKEN_KEY_RE } from './httpExecutor'
+import type { NetworkRouter } from './network'
 import { parseLoopbackRedirect, startAuthorizationCallback } from './oauth2Callback'
 import { OAUTH2_TOKEN_PREFIX, type SecretStore } from './secrets'
 
@@ -122,17 +123,21 @@ const short = (v: unknown) => (typeof v === 'string' ? v.slice(0, 300) : '')
 
 export interface OAuth2ServiceOptions {
   now?: () => number
+  /** Settings > Network for token requests; absent: direct connections. */
+  network?: NetworkRouter
 }
 
 export class OAuth2Service {
   private readonly flows = new Map<string, AbortController>()
   private readonly now: () => number
+  private readonly network?: NetworkRouter
 
   constructor(
     private readonly secrets: SecretStore,
     options: OAuth2ServiceOptions = {},
   ) {
     this.now = options.now ?? Date.now
+    this.network = options.network
   }
 
   private nowS(): number {
@@ -479,7 +484,7 @@ export class OAuth2Service {
           timeoutMs: TOKEN_REQUEST_TIMEOUT_MS,
           workspaceId: '',
         },
-        { signal, maxResponseBytes: MAX_TOKEN_RESPONSE_BYTES },
+        { signal, maxResponseBytes: MAX_TOKEN_RESPONSE_BYTES, network: this.network },
       )
     } catch (err) {
       if (signal.aborted) throw aborted()

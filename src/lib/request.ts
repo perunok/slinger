@@ -91,6 +91,11 @@ export interface RequestDraft {
   body: BodyDraft
   auth: AuthDraft
   timeoutMs: number | null
+  /**
+   * ADDED (0.29): Postman `protocolProfileBehavior` (document key of the same name), the request Settings tab; keys not set
+   * use their defaults (lib/requestSettings.ts). Kept as given, unknown keys included, so imports export unchanged.
+   */
+  protocolProfileBehavior: Record<string, unknown>
   /** Unedited document keys carried through save (scripts, responses, source, ...). */
   extras: Record<string, unknown>
   /**
@@ -172,6 +177,7 @@ export function newDraft(partial: Partial<RequestDraft> = {}): RequestDraft {
     body: emptyBody(),
     auth: emptyAuth(),
     timeoutMs: null,
+    protocolProfileBehavior: {},
     extras: {},
     ...partial,
     // A URL with `:name` segments (cURL / .http imports, MCP create_request) gets its path variable rows.
@@ -359,7 +365,7 @@ export function parseAuth(auth: unknown): AuthDraft {
   }
 }
 
-const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'pathVariables', 'mcp'])
+const OWN_KEYS = new Set(['name', 'method', 'url', 'description', 'headers', 'body', 'auth', 'params', 'pathVariables', 'mcp', 'protocolProfileBehavior'])
 
 function pathVariableList(list: unknown): PathVariable[] {
   if (!Array.isArray(list)) return []
@@ -423,6 +429,7 @@ export function parseDocument(request: Pick<ApiRequest, 'name' | 'method' | 'url
     body: parseBody(doc.body),
     auth: parseAuth(doc.auth),
     timeoutMs: typeof settings.timeoutMs === 'number' ? settings.timeoutMs : null,
+    protocolProfileBehavior: parseProtocolProfileBehavior(doc),
     extras,
   }
   if (!isObj(doc.mcp) && method !== MCP_METHOD) return draft
@@ -536,6 +543,19 @@ export function serializePathVariables(list: readonly PathVariable[]): Json[] {
   return list.map((v) => (v.description ? { key: v.key, value: v.value, description: v.description } : { key: v.key, value: v.value }))
 }
 
+/** The imported Postman item's own `protocolProfileBehavior` (documents imported before 0.29 keep it only there). */
+function sourceProtocolProfileBehavior(source: unknown): Json | null {
+  return isObj(source) && isObj(source.protocolProfileBehavior) && Object.keys(source.protocolProfileBehavior).length > 0
+    ? source.protocolProfileBehavior
+    : null
+}
+
+function parseProtocolProfileBehavior(doc: Json): Record<string, unknown> {
+  if (isObj(doc.protocolProfileBehavior)) return { ...doc.protocolProfileBehavior }
+  const fromSource = sourceProtocolProfileBehavior(doc.source)
+  return fromSource ? { ...fromSource } : {}
+}
+
 export interface SerializedRequest {
   name: string
   method: string
@@ -562,6 +582,11 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   else delete settings.timeoutMs
   if (Object.keys(settings).length > 0) doc.settings = settings
   else delete doc.settings
+  // Written only when set; `{}` overrides the imported item's (source) values once the user cleared them all.
+  const ppb = d.protocolProfileBehavior ?? {} // drafts restored from tabs saved before 0.29 have none
+  if (Object.keys(ppb).length > 0) doc.protocolProfileBehavior = { ...ppb }
+  else if (sourceProtocolProfileBehavior(d.extras.source)) doc.protocolProfileBehavior = {}
+  else delete doc.protocolProfileBehavior
   if (d.mcp) {
     const url = mcpDisplayUrl(d)
     Object.assign(doc, { method: MCP_METHOD, url, body: null, params: [], mcp: serializeMcp(d.mcp) })
@@ -570,6 +595,7 @@ export function serializeDraft(d: RequestDraft): SerializedRequest {
   }
   return { name, method: d.method, url: d.url, documentJson: JSON.stringify(doc) }
 }
+
 
 /** Canonical string used for dirty checks. */
 export function draftFingerprint(d: RequestDraft): string {

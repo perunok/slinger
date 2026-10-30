@@ -67,6 +67,15 @@
       run: () => (ui.aboutOpen = true),
     },
     {
+      key: 'cookies',
+      label: 'Cookies',
+      hint: "manage this workspace's cookie jar",
+      swatch: {},
+      icon: 'list',
+      current: () => false,
+      run: () => (ui.cookiesOpen = true),
+    },
+    {
       key: 'release-notes',
       label: 'Release notes',
       hint: 'what changed in each version',
