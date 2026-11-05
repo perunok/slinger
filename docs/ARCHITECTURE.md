@@ -347,6 +347,19 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
    calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
    `tokenKey` into `auth.oauth2`.
+   **GraphQL bodies** (draft `body.kind === 'graphql'`, document `body: {mode: 'graphql', graphql: {query, variables,
+   operationName?}}` with `variables` as JSON text, as Postman stores it; `src/lib/graphql.ts`) become an ordinary raw body
+   here: `{"query", "variables"?, "operationName"?}` with `contentType: 'application/json'` (main sets it only when the request
+   has no Content-Type). The query and operation name resolve like any text, the variables like a raw JSON body
+   (`resolveJsonTemplates`); variables that are not a JSON object fail before sending (`allowUnresolved`, i.e. snippets,
+   writes them verbatim instead). So main, `HttpRequestInput`, snippets, cURL and History need no GraphQL mode. Main has
+   none; `pm.sendRequest`'s `mode: 'graphql'` (electron/scripts/host.ts) builds the same JSON. **Fetch schema**
+   (`features/requests/graphqlSchemas.svelte.ts`) sends the standard introspection query through `executeDraft` (as a POST,
+   `ExecuteContext.skipScripts`), so environment, auth, secrets, network settings, cookie jar and history apply as for Send;
+   the reduced schema (`schemaFromIntrospection`) lives in memory per workspace + URL template and is never persisted.
+   Completion (`src/lib/graphqlComplete.ts`, a tolerant scanner, no GraphQL engine) and highlighting
+   (`components/editor/cm/graphql.ts`, a StreamParser in the lazily loaded extra-languages chunk) are local. `cm6-graphql`
+   was not used: it needs `graphql` + `graphql-language-service` (far larger than the chunk).
 2. **Main, validation.** `api.ts` zod-validates the input; `HttpService.execute` checks `workspaceId` and `requestRunId`
    (`[A-Za-z0-9._:-]{1,128}`, not already in flight) and registers an `AbortController`.
 3. **Main, build** (`httpExecutor.buildRequest`): rejects any remaining `{{ }}` in URL, header names/values, auth, body and

@@ -15,6 +15,7 @@ import {
   bearerAuth,
   fileBody,
   formdataBody,
+  graphqlBody,
   makeDoc,
   rawBody,
   urlencodedBody,
@@ -168,6 +169,10 @@ function seedDemoApi(s: MockState, workspaceId: string): string {
   req(c, null, 'Slow response (3s)', 'GET', `${M}/slow`, { description: 'Takes 3 seconds; use it to try cancelling.' })
   req(c, null, 'Cookies', 'GET', `${M}/cookies`)
   req(c, null, 'Big JSON (~3MB)', 'GET', `${M}/big`)
+  req(c, null, 'GraphQL books', 'POST', `${M}/graphql`, {
+    description: 'A GraphQL request: use **Fetch schema** in the Body tab, then type in the query for completions.',
+    body: graphqlBody('query Books($genre: Genre) {\n  books(genre: $genre, first: 5) {\n    id\n    title\n    author { name }\n  }\n}', '{\n  "genre": "FANTASY"\n}'),
+  })
   req(c, null, 'httpbin anything (real fetch)', 'POST', 'https://httpbin.org/anything', {
     body: rawBody('{"hello":"world"}'),
     headers: [{ key: 'Content-Type', value: 'application/json' }],

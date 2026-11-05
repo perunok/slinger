@@ -66,7 +66,7 @@ describe('PublishDialog', () => {
     ui.publishOpen = true
     render(PublishDialog)
     const counts = await screen.findByTestId('publish-counts')
-    expect(counts).toHaveTextContent('2 collections with 28 requests')
+    expect(counts).toHaveTextContent('2 collections with 29 requests')
     expect(counts).toHaveTextContent('2 environments')
     expect(screen.getByText(/Secret variable values are never uploaded/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Publish' }))
@@ -162,7 +162,7 @@ describe('LinkDialog', () => {
     expect(warning).toHaveTextContent('kept side by side')
     expect(warning).toHaveTextContent('Environments with the same name are combined')
     expect(warning).toHaveTextContent('Secret values stay on this device')
-    expect(screen.getByText(/2 collections, 28 requests, 2 environments/)).toBeInTheDocument()
+    expect(screen.getByText(/2 collections, 29 requests, 2 environments/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Link and merge' }))
     await waitFor(() => expect(ui.linkOpen).toBeNull())
     expect(app.workspaceId).toBe(local)

@@ -13,6 +13,7 @@ import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesCh
 import { encodeQueryPart, splitUrl } from './urlParams'
 import { applyPathVariables, missingPathVariablesWarning } from './pathVariables'
 import { withDefaultScheme } from '../../shared/urlScheme'
+import { emptyGraphql, graphqlPayload } from './graphql'
 
 export type PrepareResult =
   /**
@@ -185,6 +186,13 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     if (!b.binaryPath) return { ok: false, unresolved: [], error: 'Choose a file for the binary body.' }
     body.mode = 'binary'
     body.binaryFilePath = b.binaryPath
+  } else if (b.kind === 'graphql') {
+    // ADDED (0.30): the JSON a GraphQL client posts, as a raw JSON body (main sets Content-Type: application/json unless
+    // the request has its own). The method stays the user's, as in Postman.
+    const payload = graphqlPayload(b.graphql ?? emptyGraphql(), r, (t) => resolveJsonTemplates(t, r), !!ctx.allowUnresolved)
+    if (!payload.ok) return { ok: false, unresolved: [], error: payload.error }
+    body.mode = 'raw'
+    body.raw = { content: payload.content, contentType: 'application/json' }
   } else if (b.kind === 'unsupported') {
     warnings.push('This request has a body type Slinger cannot edit; it is sent without a body.')
   }

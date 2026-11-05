@@ -1,0 +1,58 @@
+{
+	"info": {
+		"_postman_id": "6b1f4a52-3c1e-4f0e-9a39-2a5d7c1e8b10",
+		"name": "GraphQL",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "1234567"
+	},
+	"item": [
+		{
+			"name": "Country by code",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "graphql",
+					"graphql": {
+						"query": "query Country($code: ID!) {\n  country(code: $code) {\n    name\n    capital\n    currency\n  }\n}",
+						"variables": "{\n  \"code\": \"{{countryCode}}\"\n}"
+					}
+				},
+				"url": {
+					"raw": "{{graphqlUrl}}/graphql",
+					"host": [
+						"{{graphqlUrl}}"
+					],
+					"path": [
+						"graphql"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "All continents",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "graphql",
+					"graphql": {
+						"query": "{\n  continents {\n    code\n    name\n  }\n}",
+						"variables": ""
+					}
+				},
+				"url": {
+					"raw": "{{graphqlUrl}}/graphql",
+					"host": [
+						"{{graphqlUrl}}"
+					],
+					"path": [
+						"graphql"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

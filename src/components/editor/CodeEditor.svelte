@@ -3,7 +3,7 @@
    * Multi-line CodeMirror 6 editor used for request bodies, responses, snippets and docs.
    * Caret-safe: external value changes are applied as minimal diffs.
    */
-  import { closeBrackets } from '@codemirror/autocomplete'
+  import { autocompletion, closeBrackets, type CompletionSource } from '@codemirror/autocomplete'
   import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
   import { bracketMatching, foldGutter, foldKeymap, indentOnInput } from '@codemirror/language'
   import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search'
@@ -42,6 +42,8 @@
     autoFocus?: boolean
     /** Extra CodeMirror extensions, fixed at mount (e.g. script autocompletion). */
     extensions?: Extension[]
+    /** Completion sources, fixed at mount, offered with the `{{variable}}` completion when `templates` is on (e.g. GraphQL fields). */
+    completionSources?: CompletionSource[]
   }
   let {
     value,
@@ -58,6 +60,7 @@
     class: cls = '',
     autoFocus = false,
     extensions = [],
+    completionSources = [],
   }: Props = $props()
 
   let host: HTMLDivElement
@@ -82,7 +85,11 @@
       numC.of(lineNumbers ? [lineNumbersExt(), highlightActiveLineGutter()] : []),
       foldC.of(fold ? foldGutter() : []),
       readOnly ? [] : closeBrackets(),
-      templates ? templateExtension({ getScope: currentScope, ...variableActions(currentScope) }) : [],
+      templates
+        ? templateExtension({ getScope: currentScope, ...variableActions(currentScope) }, completionSources)
+        : completionSources.length > 0
+          ? autocompletion({ override: completionSources, activateOnTyping: true })
+          : [],
       placeholder ? placeholderExt(placeholder) : [],
       extensions,
       EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false', autocapitalize: 'off', autocorrect: 'off' }),

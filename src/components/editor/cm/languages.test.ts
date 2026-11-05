@@ -20,6 +20,7 @@ const SAMPLES: Record<Exclude<EditorLanguage, 'text'>, string> = {
   php: '<?php\n$ch = curl_init("https://x");',
   powershell: '$r = Invoke-RestMethod -Uri "https://x" -Method Get',
   http: '### Get one\nGET https://x/items/1\nAccept: application/json',
+  graphql: 'query Book($id: ID!) {\n  book(id: $id, title: "x") { title }\n}',
 }
 
 /** The style classes the highlighter gives the sample, in order. */
@@ -119,5 +120,38 @@ describe('.http files', () => {
     )
     // The second request's line is a request again, not a header.
     expect(found).not.toContain('GET https:property')
+  })
+})
+
+describe('GraphQL', () => {
+  it('marks keywords, variables, directives, strings, numbers, enum values and comments', () => {
+    const doc = [
+      '# books by genre',
+      'query Books($genre: Genre, $first: Int = 10) {',
+      '  books(genre: $genre, first: 5, after: "x") @include(if: true) {',
+      '    title',
+      '    ... on Novel { pages }',
+      '  }',
+      '  other: books(genre: FANTASY) { id }',
+      '}',
+      '"""',
+      'a block string',
+      '"""',
+    ].join('\n')
+    const found = tokens('graphql', doc)
+    expect(found).toEqual(
+      expect.arrayContaining([
+        '# books by genre:comment',
+        'query:keyword',
+        'title:property',
+        '5:number',
+        '"x":string',
+        '@include:meta',
+        'true:atom',
+        'on:keyword',
+        'FANTASY:atom',
+        'a block string:string',
+      ]),
+    )
   })
 })

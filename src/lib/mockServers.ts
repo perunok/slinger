@@ -70,21 +70,17 @@ export function mockRequestBody(body: BodyDraft): string | null {
       return form(body.urlEncoded)
     case 'formData':
       return form(body.formData)
-    case 'unsupported': {
-      const b = body.preserved
-      if (!b || typeof b !== 'object' || (b as { mode?: unknown }).mode !== 'graphql') return null
-      const g = (b as { graphql?: unknown }).graphql
-      if (!g || typeof g !== 'object') return null
-      const { query, variables } = g as { query?: unknown; variables?: unknown }
-      if (typeof query !== 'string' || !query.trim()) return null
+    case 'graphql': {
+      const { query, variables } = body.graphql
+      if (!query.trim()) return null
       const out: Record<string, unknown> = { query }
-      if (typeof variables === 'string' && variables.trim()) {
+      if (variables.trim()) {
         try {
           out.variables = JSON.parse(variables)
         } catch {
           // Unparsable variables: the query alone.
         }
-      } else if (variables && typeof variables === 'object') out.variables = variables
+      }
       return JSON.stringify(out)
     }
     default:

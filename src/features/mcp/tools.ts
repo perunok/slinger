@@ -216,6 +216,8 @@ function bodyOut(d: RequestDraft): Data {
       return { mode: 'form-data', fields: dataRows(b.formData).map((r) => (r.kind === 'file' ? { key: r.key, file: r.value, enabled: r.enabled } : { key: r.key, value: r.value, enabled: r.enabled })) }
     case 'binary':
       return { mode: 'binary', file: b.binaryPath }
+    case 'graphql':
+      return { mode: 'graphql', query: b.graphql.query, variables: b.graphql.variables, operation_name: b.graphql.operationName }
     default:
       return { mode: 'unsupported (kept as it is)' }
   }
@@ -376,6 +378,9 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
     } else if (m === 'form-data') {
       b.kind = 'formData'
       b.formData = rowsIn(f.body.fields ?? [])
+    } else if (m === 'graphql') {
+      b.kind = 'graphql'
+      b.graphql = { query: f.body.query ?? '', variables: f.body.variables ?? '', operationName: f.body.operation_name ?? '' }
     }
     d.body = b
   }

@@ -12,8 +12,10 @@ import { writeDescription } from './description'
 import { mergeParamsFromUrl } from './urlParams'
 import { mergePathVariables, pathVariableNames, type PathVariable } from './pathVariables'
 import { MCP_METHOD, mcpDisplayUrl, mcpTemplateTexts, parseMcp, serializeMcp, type McpDraft } from './mcpRequest'
+import { emptyGraphql, parseGraphqlBody, serializeGraphqlBody, type GraphqlBody } from './graphql'
 
-export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'unsupported'
+/** ADDED (0.30): `graphql` (Postman `body.mode = 'graphql'`, see lib/graphql.ts). */
+export type BodyKind = 'none' | 'formData' | 'urlEncoded' | 'raw' | 'binary' | 'graphql' | 'unsupported'
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
 /**
  * `inherit` (Postman: `auth` absent or null): use the nearest folder's or the collection's auth at send time
@@ -28,6 +30,11 @@ export interface BodyDraft {
   formData: KvRow[]
   urlEncoded: KvRow[]
   binaryPath: string
+  /**
+   * ADDED (0.30): the GraphQL query, variables (JSON text) and operation name. Kept while another mode is selected, like
+   * the other modes' fields. Drafts restored from tabs saved before 0.30 have none (`upgradeDraft` adds it).
+   */
+  graphql: GraphqlBody
   /** Original body object when kind === 'unsupported' (kept and re-saved untouched). */
   preserved?: unknown
 }
@@ -128,6 +135,7 @@ export function emptyBody(): BodyDraft {
     formData: ensureTrailingEmpty([]),
     urlEncoded: ensureTrailingEmpty([]),
     binaryPath: '',
+    graphql: emptyGraphql(),
   }
 }
 
@@ -187,8 +195,10 @@ export function newDraft(partial: Partial<RequestDraft> = {}): RequestDraft {
 
 /** A draft kept by an older Slinger (persisted tabs) gets the fields added since, derived as a fresh parse would. */
 export function upgradeDraft(d: RequestDraft): RequestDraft {
-  if (Array.isArray(d.pathVariables)) return d
-  return { ...d, pathVariables: d.mcp ? [] : mergePathVariables(d.url ?? '', []) }
+  let out = d
+  if (!Array.isArray(out.pathVariables)) out = { ...out, pathVariables: out.mcp ? [] : mergePathVariables(out.url ?? '', []) }
+  if (out.body && !out.body.graphql) out = { ...out, body: { ...out.body, graphql: emptyGraphql() } }
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +277,8 @@ export function parseBody(body: unknown): BodyDraft {
       const f = isObj(body.file) ? str(body.file.src) : ''
       return { ...out, kind: 'binary', binaryPath: f }
     }
+    case 'graphql':
+      return { ...out, kind: 'graphql', graphql: parseGraphqlBody(body.graphql) }
     default:
       return { ...out, kind: 'unsupported', preserved: body }
   }
@@ -480,6 +492,8 @@ export function serializeBody(b: BodyDraft): unknown {
       return { mode: 'urlencoded', urlencoded: rowsToList(b.urlEncoded) }
     case 'binary':
       return { mode: 'file', file: { src: b.binaryPath } }
+    case 'graphql':
+      return { mode: 'graphql', graphql: serializeGraphqlBody(b.graphql ?? emptyGraphql()) }
     case 'unsupported':
       return b.preserved ?? null
   }
@@ -612,6 +626,7 @@ export function templateTexts(d: RequestDraft): string[] {
   for (const h of dataRows(d.headers)) if (h.enabled) out.push(h.key, h.value)
   const b = d.body
   if (b.kind === 'raw') out.push(b.raw)
+  if (b.kind === 'graphql' && b.graphql) out.push(b.graphql.query, b.graphql.variables, b.graphql.operationName)
   if (b.kind === 'urlEncoded') for (const r of dataRows(b.urlEncoded)) if (r.enabled) out.push(r.key, r.value)
   if (b.kind === 'formData') for (const r of dataRows(b.formData)) if (r.enabled) out.push(r.key, r.kind === 'file' ? '' : r.value)
   out.push(...authTemplateTexts(d.auth))
