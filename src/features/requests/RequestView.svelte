@@ -21,6 +21,7 @@
   import ScriptsPanel from './ScriptsPanel.svelte'
   import { editorCode } from '../../lib/scripts'
   import SettingsPanel from './SettingsPanel.svelte'
+  import { hasRequestSettings } from '../../lib/requestSettings'
   import UrlBar from './UrlBar.svelte'
   import { tabsStore, type RequestSection, type RequestTab } from './tabs.svelte'
 
@@ -36,7 +37,7 @@
       { id: 'body', label: 'Body', badge: d.body.kind !== 'none' ? '•' : undefined },
       { id: 'scripts', label: 'Scripts', badge: editorCode(d.extras.scripts, 'prerequest').trim() || editorCode(d.extras.scripts, 'test').trim() ? '•' : undefined },
       { id: 'docs', label: 'Docs' },
-      { id: 'settings', label: 'Settings' },
+      { id: 'settings', label: 'Settings', badge: hasRequestSettings(d) ? '•' : undefined },
       { id: 'code', label: 'Code' },
     ]
   })

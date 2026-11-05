@@ -393,7 +393,8 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    never names a path to write; test scripts do not run for a download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
-   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`). Error messages never quote resolved
+   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`); cookie values (4+ characters) that
+   a `pm.cookies.jar()` `get` / `getAll` returned or a `set` wrote in that session become `[cookie name]` (0.30). Error messages never quote resolved
    values: `buildRequest` names an invalid header or credential instead of quoting the platform message, an invalid URL is shown
    as `historyUrl`, and `HttpService` runs every failure message (also the one thrown back to the renderer) through
    `scrubRequestValues`, which replaces each value of the outgoing request that `historyUrl` does not show (resolved URL and its
@@ -996,8 +997,11 @@ URL, headers, a `BodyDraft`, basic/bearer auth, timeout, and `warnings` for what
 quotes become `{{VAR}}`) or, when the text has `^` line ends or `^"`, like Windows cmd (`^X` -> X first). A new line starting
 with `curl`, `;`, `&&` and `|` separate commands; words not starting with `curl` are other commands and skipped. Options are
 read as curl does (combined short flags, attached values, `--long=value`; an explicit table of options that take a value, so
-unknown flags never swallow the URL). `curlToDraft` builds a `RequestDraft` (query params from the URL), serialized like any
-request. The Import dialog uses it for text that is not JSON and contains a curl command (`containsCurl`), and the URL bar
+unknown flags never swallow the URL). `ParsedCurl.settings` holds the `protocolProfileBehavior` keys an option sets (`-k`,
+`--max-redirs`, `--post30x`, `--location-trusted`; `-L` and its absence change nothing, see the module comment), and app-wide
+options (proxy, certificates, `--cookie-jar`) become `warnings` pointing to Settings > Network. `curlToDraft` builds a
+`RequestDraft` (query params from the URL, the settings as `protocolProfileBehavior`), serialized like any request. Code
+snippets go the other way (`lib/snippets.ts` `SnippetSettings`, read from the settings fields of `HttpRequestInput`). The Import dialog uses it for text that is not JSON and contains a curl command (`containsCurl`), and the URL bar
 (`detectImportText` -> `'curl'` for text starting with `curl`) opens the dialog with it, like a pasted export.
 `importexport/curlImport.ts` places the requests: `defaultCurlTarget` (the open tab's collection and folder), `folderChoices`
 (folder paths in tree order), `addCurlRequests` (optionally `createCollection`, then `createRequest` per command, in order).

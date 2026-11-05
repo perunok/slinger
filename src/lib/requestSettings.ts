@@ -77,3 +77,16 @@ export function protocolInput(ppb: Behavior): Partial<HttpRequestInput> {
   if (max !== null) out.maxRedirects = Math.min(max, MAX_MAX_REDIRECTS)
   return out
 }
+
+/**
+ * True when the request's Settings tab differs from the defaults (a timeout, an SSL choice, a redirect or cookie setting),
+ * e.g. after importing a Postman item or a `curl -k`: the tab then gets a dot, like Body and Authorization.
+ */
+export function hasRequestSettings(draft: Pick<RequestDraft, 'timeoutMs' | 'protocolProfileBehavior'>): boolean {
+  if (draft.timeoutMs != null) return true
+  const ppb = draft.protocolProfileBehavior ?? {}
+  if (typeof ppb.strictSSL === 'boolean') return true
+  const max = maxRedirectsSetting(ppb)
+  if (max !== null && max !== DEFAULT_MAX_REDIRECTS) return true
+  return (Object.keys(REQUEST_SETTING_DEFAULTS) as BoolRequestSetting[]).some((k) => boolSetting(ppb, k) !== REQUEST_SETTING_DEFAULTS[k])
+}

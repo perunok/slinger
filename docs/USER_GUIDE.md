@@ -142,7 +142,8 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
   see [Documentation](#documentation-markdown).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000), and Postman's request settings
-  (stored and exported as the request's `protocolProfileBehavior`, so imported Postman requests keep theirs):
+  (stored and exported as the request's `protocolProfileBehavior`, so imported Postman and cURL requests keep theirs). The
+  section's name gets a dot when anything here differs from the defaults:
   - **SSL certificate verification**: *As in Settings > Network* (default), *On* or *Off for this request*. Off accepts a
     self-signed, expired or otherwise invalid certificate for this request only.
   - **Automatically follow redirects** (on): follows 301, 302, 303, 307 and 308. Off shows the redirect response itself.
@@ -159,7 +160,14 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
     keeps the cookies its responses set (also on redirects).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
   (net/http), PHP (cURL), PowerShell or as an **HTTP file (.http)**, with a Copy button. Unresolved variables are left as-is in
-  snippets. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
+  snippets. The request's **Settings** are reproduced where the language can: redirects are followed like Slinger does
+  (cURL `-L`, PHP `CURLOPT_FOLLOWLOCATION`; with **Automatically follow redirects** off: no `-L`, `redirect: 'manual'`, axios
+  `maxRedirects: 0`, Python `allow_redirects=False`, Go `CheckRedirect`, PowerShell `-MaximumRedirection 0`, `.http`
+  `# @no-redirect`), a maximum number of redirects you set, **Off for this request** SSL verification (`-k`, `verify=False`,
+  an axios https agent, Go `InsecureSkipVerify`, PHP `CURLOPT_SSL_VERIFYPEER`, PowerShell `-SkipCertificateCheck` in 7 and a
+  certificate callback in Windows PowerShell 5.1; fetch has no option, so a comment says how), and **Disable cookie jar** as
+  `# @no-cookie-jar` in `.http`. Cookies from the workspace's cookie jar are never put into a snippet; a `Cookie` header you
+  set yourself is. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
   REST Client and similar tools: a `### <request name>` line, `METHOD URL`, the headers, a blank line and the body
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
@@ -819,7 +827,8 @@ are left out of `toObject()`, and the value is fetched from the keychain only wh
 secret (the new value goes to the keychain). Test scripts see `pm.request` with secret variables still written as
 `{{name}}`. Anything a script prints with `console.log` appears in the Console tab (in memory only; never in history, logs or files),
 so avoid printing secrets. History never stores a secret a script read or wrote: it is replaced by `{{name}}` in the recorded URL,
-even if the script put it into the URL. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
+even if the script put it into the URL. The same goes for cookie values a script read or set through `pm.cookies.jar()`
+(4 characters or longer): they are recorded as `[cookie name]`. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
 stores it as plain text, like typing it there would.
 
 **Request changes.** In pre-request scripts `pm.request` is editable: `pm.request.url` (assign a string, or `update()`,
@@ -1081,8 +1090,17 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
   - `-X`, `-H`, `-A` (User-Agent), `-e` (Referer), `-b` (cookies), `-d` / `--data-raw` / `--data-binary` / `--data-urlencode`
     (several joined with `&`), `--json`, `-F` / `--form-string` (form data; `@file` fields become file fields), `-T` (file
     body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth), `--oauth2-bearer` (Bearer auth) and `-m` (timeout).
-    A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `-L`, `--compressed`, `-k`,
-    `-v`, ...) are skipped silently.
+    A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `--compressed`, `-v`, ...)
+    are skipped silently.
+  - Into the request's **Settings**: `-k` / `--insecure` (SSL verification *Off for this request*), `--max-redirs`,
+    `--post301` / `--post302` / `--post303` (*Follow the original HTTP method*) and `--location-trusted` (*Keep the
+    Authorization header on redirects*). The preview lists them. Redirects are followed whether or not the command has `-L`:
+    curl itself follows none without it, but browsers' *Copy as cURL* never adds `-L`, and the pasted request should behave
+    like the browser's. Turn **Automatically follow redirects** off in the Settings section if you need curl's behaviour.
+  - The proxy (`-x`, `-U`) and certificates (`-E` / `--cert`, `--key`, `--cacert`, `--capath`) are settings for all
+    requests in Slinger: the preview notes that the command uses them and that they are set in **Settings > Network** (a
+    proxy's user name and password are not shown). `-c` / `--cookie-jar` is noted too: responses' cookies go to the
+    workspace's cookie jar anyway.
   - Data without a `Content-Type` is url-encoded form data, as curl sends it; JSON data without one becomes a JSON body (the
     preview notes it). A copied `multipart/form-data` header is dropped, since Slinger sets its own boundary.
   - Shell variables become Slinger variables: `$TOKEN` and `${BASE_URL}` (outside single quotes) are imported as `{{TOKEN}}`
