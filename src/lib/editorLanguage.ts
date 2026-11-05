@@ -13,4 +13,5 @@ export type EditorLanguage =
   | 'php'
   | 'powershell'
   | 'http'
+  | 'graphql'
   | 'text'

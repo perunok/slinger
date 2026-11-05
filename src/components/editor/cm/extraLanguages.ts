@@ -8,6 +8,7 @@ import { yaml } from '@codemirror/legacy-modes/mode/yaml'
 import type { Extension } from '@codemirror/state'
 import type { EditorLanguage } from '../../../lib/editorLanguage'
 import { httpFile } from './httpFile'
+import { graphqlLanguage } from './graphql'
 
 /**
  * The languages that are only needed for code snippets and some response bodies: loaded on first use (languages.ts
@@ -29,6 +30,8 @@ export function extraLanguage(lang: EditorLanguage): Extension | null {
       return StreamLanguage.define(httpFile)
     case 'yaml':
       return StreamLanguage.define(yaml)
+    case 'graphql':
+      return StreamLanguage.define(graphqlLanguage)
     default:
       return null
   }

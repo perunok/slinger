@@ -206,6 +206,9 @@ export function requestDataFromDraft(d: RequestDraft): ScriptRequestData {
     case 'binary':
       body = { mode: 'file' }
       break
+    // A GraphQL body is not exposed to pre-request scripts (pm.request.body.mode is undefined), like other modes Slinger
+    // keeps as they are; test scripts see the JSON that was sent.
+    case 'graphql':
     case 'unsupported':
       body = { mode: 'other' }
       break

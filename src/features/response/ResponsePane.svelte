@@ -21,8 +21,12 @@
   import ConsoleView from '../scripts/ConsoleView.svelte'
   import { checkResponseAgainstSpec } from '../openapi/openapiStore.svelte'
   import SpecChip from '../openapi/SpecChip.svelte'
+  import { graphqlErrorCount } from '../../lib/graphql'
 
   let { tab }: { tab: RequestTab } = $props()
+
+  /** A GraphQL request's answer with an `errors` array (servers report query errors with 200 OK). */
+  const gqlErrors = $derived(tab.draft.body.kind === 'graphql' && tab.response ? graphqlErrorCount(tab.response.data.bodyText) : 0)
 
   /** How the shown response compares with the collection's OpenAPI document (null: not checked / nothing to check). */
   let spec = $state.raw<{ for: unknown; result: OpenApiValidation } | null>(null)
@@ -111,6 +115,15 @@
       >
         {#snippet chips()}
           {#if specResult}<SpecChip result={specResult} />{/if}
+          {#if gqlErrors > 0}
+            <span
+              class="rounded bg-warning-soft px-2 py-0.5 text-xs text-warning"
+              data-testid="graphql-errors-chip"
+              title="The GraphQL answer has an errors array (see the body): the query, or part of it, failed even if the status is 200."
+            >
+              GraphQL {gqlErrors === 1 ? 'error' : `errors (${gqlErrors})`}
+            </span>
+          {/if}
         {/snippet}
         {#snippet actions()}
           <Button size="sm" icon="save" class="mr-1" disabled={sync.blocked || !tab.requestId} title={saveTitle} onclick={() => (naming = true)}>Save as example</Button>

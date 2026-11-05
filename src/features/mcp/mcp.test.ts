@@ -127,6 +127,28 @@ describe('editing requests', () => {
     expect(scripts.updated.test_script).toBe('')
   })
 
+  it('creates, reads, updates and sends a GraphQL request (body mode graphql)', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', {
+      collection_id: demo.id,
+      name: 'GQL',
+      method: 'POST',
+      url: 'https://mock.slinger.local/graphql',
+      body: { mode: 'graphql', query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operation_name: 'B' },
+    })
+    expect(created.body).toEqual({ mode: 'graphql', query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operation_name: 'B' })
+    // Stored in Postman's shape (variables as text).
+    expect(JSON.parse(app.requestById(created.id)!.documentJson).body).toEqual({
+      mode: 'graphql',
+      graphql: { query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operationName: 'B' },
+    })
+    const { updated } = await call('update_request', { request_id: created.id, body: { mode: 'graphql', query: '{ authors { name } }' } })
+    expect(updated.body).toEqual({ mode: 'graphql', query: '{ authors { name } }', variables: '', operation_name: '' })
+    const { response } = await call('send_request', { request_id: created.id })
+    expect(response.status).toBe(200)
+    expect(response.body).toContain('The Hobbit')
+  })
+
   it('an open, clean tab follows edits; moving, renaming and deleting work and show in the window', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!
     const req = app.requests.find((r) => r.name === 'JSON sample')!

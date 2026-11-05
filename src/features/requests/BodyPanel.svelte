@@ -8,6 +8,7 @@
   import { api, errorInfo } from '../../lib/ipc'
   import { beautifyJson, checkJson } from '../../lib/jsonTemplate'
   import { RAW_LANGUAGES, type BodyKind, type RawLanguage } from '../../lib/request'
+  import GraphqlBodyEditor from './GraphqlBodyEditor.svelte'
   import type { RequestTab } from './tabs.svelte'
 
   let { tab }: { tab: RequestTab } = $props()
@@ -19,6 +20,7 @@
     { id: 'urlEncoded', label: 'x-www-form-urlencoded' },
     { id: 'raw', label: 'raw' },
     { id: 'binary', label: 'binary' },
+    { id: 'graphql', label: 'GraphQL' },
   ]
   const editorLang = $derived(b.rawLanguage === 'text' ? 'text' : b.rawLanguage)
   const jsonCheck = $derived(b.kind === 'raw' && b.rawLanguage === 'json' ? checkJson(b.raw) : null)
@@ -99,6 +101,8 @@
     <div class="overflow-auto">
       <KeyValueTable rows={b.urlEncoded} onchange={(rows) => (tab.draft.body.urlEncoded = rows)} noun="Field" duplicates="exact" />
     </div>
+  {:else if b.kind === 'graphql'}
+    <GraphqlBodyEditor {tab} />
   {:else if b.kind === 'binary'}
     <div class="flex items-center gap-3 py-2">
       <Button icon="upload" onclick={pickBinary}>{binaryStale ? 'Choose again' : b.binaryPath ? 'Change file' : 'Choose file'}</Button>

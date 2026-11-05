@@ -504,11 +504,9 @@ function requestBodyOf(body: BodyDraft, headers: KvRow[], fromSpec: boolean): { 
       return { mt: 'multipart/form-data', media: formMedia(body.formData, true, fromSpec) }
     case 'binary':
       return { mt: declaredMt || 'application/octet-stream', media: { schema: { type: 'string', format: 'binary' }, examples: [] } }
-    case 'unsupported': {
-      const b = body.preserved
-      if (!isObj(b) || b.mode !== 'graphql' || !isObj(b.graphql)) return null
-      const query = typeof b.graphql.query === 'string' ? b.graphql.query : ''
-      const vars = typeof b.graphql.variables === 'string' ? parseJson(b.graphql.variables) : { ok: false as const }
+    case 'graphql': {
+      const query = body.graphql.query
+      const vars = body.graphql.variables.trim() ? parseJson(body.graphql.variables) : { ok: false as const }
       const value: Json = { query }
       if (vars.ok) value.variables = vars.value
       return {

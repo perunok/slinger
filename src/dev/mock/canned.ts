@@ -1,5 +1,6 @@
 import type { RequestHeader } from '../../../shared/types'
 import { base64ToBytes, fail } from './util'
+import { demoGraphqlAnswer } from './graphql'
 
 export const MOCK_HOST = 'mock.slinger.local'
 
@@ -125,6 +126,9 @@ export function cannedResponse(req: CannedRequest): CannedResponse {
       return { ...json({ ok: true, waitedMs: 3000 }), delayMs: 3000 }
     case '/echo':
       return echo(req)
+    case '/graphql':
+      // A GraphQL API (src/dev/mock/graphql.ts): the schema for an introspection query, demo data otherwise.
+      return json(demoGraphqlAnswer(req.bodyText))
     case '/cookies':
       return {
         ...json({ cookies: ['session', 'theme'] }),

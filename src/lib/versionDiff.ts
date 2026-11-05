@@ -87,6 +87,10 @@ function renderBody(d: RequestDraft): string {
       return `x-www-form-urlencoded\n${renderRows(b.urlEncoded)}`
     case 'binary':
       return `binary: ${b.binaryPath}`
+    case 'graphql': {
+      const g = b.graphql
+      return `graphql${g.operationName ? ` (operation ${g.operationName})` : ''}\n${g.query}${g.variables.trim() ? `\nvariables:\n${g.variables}` : ''}`
+    }
     case 'unsupported':
       return `unsupported\n${JSON.stringify(b.preserved) ?? ''}`
   }

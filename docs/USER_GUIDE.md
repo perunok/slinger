@@ -132,8 +132,8 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
   the body mode and `User-Agent: Slinger`); a header you set yourself wins.
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
-  (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
-  a body.
+  (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON), `binary` (send one file) and `GraphQL` (see
+  [GraphQL](#graphql)). GET and HEAD requests cannot have a body.
 - **Authorization:** **Inherit auth from parent** (the default for new requests), No Auth, Basic Auth, Bearer Token, API Key
   (added to a header or as a query parameter) or [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman
   requests with other auth types (for example Digest or AWS Signature) are sent without authorization and a warning says so.
@@ -172,6 +172,34 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
   export folder (Downloads unless you chose another one in an export dialog).
+
+### GraphQL
+
+Pick **GraphQL** in the Body tab (Postman GraphQL requests import as one). The **Query** editor (GraphQL highlighting) and the
+**Variables** editor (JSON, checked as you type like a raw JSON body: the variables must be a JSON object) sit side by side;
+**Operation** names the operation to run when the query defines several (the box suggests the names in the query).
+
+- **Sending:** the body is the JSON a GraphQL client posts, `{"query": …, "variables": …, "operationName": …}` (variables
+  and operation name only when set), with `Content-Type: application/json` unless you set your own. The method is the one
+  you chose (normally POST; GET cannot have a body). `{{variables}}` work in the query, the variables and the operation
+  name; in the variables they follow the raw JSON rules (inside a string the value is escaped, outside it is inserted as-is,
+  so `{"id": {{id}}}` sends a number). Variables that are not valid JSON stop the send with an error. Code snippets, cURL
+  and History show the same JSON request.
+- **Fetch schema:** sends the standard introspection query to the request's URL as a POST, with the request's headers,
+  authorization (inherited included), environment, network settings and cookies, but without running its scripts; it is
+  listed in History like any send. The schema is kept in memory (per workspace and URL, until Slinger quits) and is never
+  saved with the request. Then:
+  - the query editor completes fields (with their arguments and types), arguments, input object fields, enum values,
+    `true`/`false`, type names (after `on` and in variable definitions) and directives as you type, or with **Ctrl+Space**;
+  - **Show schema** opens a small schema browser: the types (query, mutation and subscription first) with a filter over
+    type and field names, and one type's fields with their arguments, types and descriptions (deprecated fields are struck
+    through). Click a field's type to open it.
+- **Response:** a GraphQL answer is ordinary JSON. When it has an `errors` array a **GraphQL error** chip appears next to the
+  status, since GraphQL servers usually answer failed queries with *200 OK*.
+- Scripts: `pm.request.body` of a GraphQL request has no mode in pre-request scripts (as for body types Slinger keeps
+  as they are); test scripts see the JSON that was sent. `pm.sendRequest` also takes `mode: 'graphql'`.
+- Import and export keep Postman's format (`body.mode = "graphql"`, `body.graphql = {query, variables}` with the variables as
+  JSON text); the operation name is stored as `operationName` next to them, which Postman ignores.
 
 ### Path variables
 
@@ -1494,6 +1522,9 @@ create or edit them, and a command (stdio) runs only after you allowed it in the
 
 Assistants read and set a request's [path variables](#path-variables) too (`path_variables` in `get_request`,
 `create_request`, `update_request` and, for one send, `send_request`).
+
+They read and write [GraphQL](#graphql) bodies as `body: {mode: 'graphql', query, variables, operation_name}` (variables as
+JSON text).
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
 send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a

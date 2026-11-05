@@ -160,6 +160,11 @@ export interface ExecuteContext {
   downloadId?: string
   /** Sends by an AI assistant: how send_request built the draft (ad-hoc, overrides); see lib/assistantPolicy.ts. */
   assistant?: AssistantSendInfo
+  /**
+   * ADDED (0.30): run no pre-request or test scripts (a GraphQL body's "Fetch schema": its introspection query is not the
+   * request the scripts were written for, and must not change variables).
+   */
+  skipScripts?: boolean
 }
 
 /** What an assistant's send must not see: values to replace in its outcome. */
@@ -351,7 +356,7 @@ async function executeOnce(original: RequestDraft, ctx: ExecuteContext, sensitiv
   }
 
   const runScripts = async (event: ScriptEventName, draft: RequestDraft, extra: Partial<RunScriptsInput> = {}) => {
-    const chain = scriptsOf(draft, send, ctx.folderId ?? null, event)
+    const chain = ctx.skipScripts ? [] : scriptsOf(draft, send, ctx.folderId ?? null, event)
     if (chain.length === 0) return null
     const call = (): Promise<RunScriptsResult> => api().runScripts({
       runId,

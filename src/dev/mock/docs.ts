@@ -46,6 +46,9 @@ export const formdataBody = (fields: FormField[]): Json => ({
 
 export const fileBody = (src: string): Json => ({ mode: 'file', file: { src } })
 
+/** Postman's GraphQL body: the variables are JSON text. */
+export const graphqlBody = (query: string, variables = ''): Json => ({ mode: 'graphql', graphql: { query, variables } })
+
 const attrs = (pairs: Array<[string, string]>) => pairs.map(([key, value]) => ({ key, value, type: 'string' }))
 
 export const bearerAuth = (token: string): Json => ({ type: 'bearer', bearer: attrs([['token', token]]) })

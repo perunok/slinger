@@ -15,7 +15,7 @@ let extraLoading: Promise<Extra> | null = null
 
 /**
  * Syntax highlighting for a language (`text`: none). JSON, XML, HTML, CSS, JavaScript and Markdown are part of the main
- * bundle; the others (cURL/shell, Python, Go, PHP, PowerShell, .http, YAML) come from a chunk loaded on first use: until
+ * bundle; the others (cURL/shell, Python, Go, PHP, PowerShell, .http, YAML, GraphQL) come from a chunk loaded on first use: until
  * `loadLanguage` has resolved once, this returns no highlighting for them.
  */
 export function languageExtension(lang: EditorLanguage): Extension {
