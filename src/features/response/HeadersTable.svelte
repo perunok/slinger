@@ -3,8 +3,11 @@
   import { copyText } from '../../app/clipboard'
   import ContextMenu, { type MenuItem } from '../../components/ui/ContextMenu.svelte'
   import { menuPoint, selectedText } from '../../components/ui/contextMenu'
-  /** `redirects`: the redirects followed before this response (shown above the headers). */
-  let { headers, redirects = [] }: { headers: RequestHeader[]; redirects?: RedirectHop[] } = $props()
+  /**
+   * `redirects`: the redirects followed before this response (shown above the headers). `authNote`: how a Digest or AWS
+   * Signature auth was applied (HttpResponseData.authNote), shown above them as well.
+   */
+  let { headers, redirects = [], authNote = null }: { headers: RequestHeader[]; redirects?: RedirectHop[]; authNote?: string | null } = $props()
 
   let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null)
   /** Right-click on a header: copy its name, value or the whole line (and the selected text, which the menu replaces). */
@@ -24,6 +27,9 @@
 </script>
 
 {#snippet redirectList()}
+  {#if authNote}
+    <p class="mb-2 rounded border border-border px-2 py-1 text-xs text-muted" data-testid="auth-note">{authNote}</p>
+  {/if}
   {#if redirects.length > 0}
     <section class="mb-2 rounded border border-border p-2" data-testid="redirect-chain" aria-label="Redirects">
       <h4 class="mb-1 text-xs text-faint">Redirected {redirects.length === 1 ? 'once' : `${redirects.length} times`} before this response</h4>

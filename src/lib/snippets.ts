@@ -69,12 +69,21 @@ interface SnippetSettings {
   noCookieJar: boolean
 }
 
+/**
+ * ADDED (0.30) Auth a snippet cannot express as a fixed header: Digest answers the server's challenge, AWS Signature
+ * signs the final request. Each generator uses its client's own support, or says in a comment that it must be computed.
+ */
+type ComputedAuth =
+  | { kind: 'digest'; username: string; password: string }
+  | { kind: 'awsv4'; accessKey: string; secretKey: string; region: string; service: string; sessionToken: string }
+
 interface Prepared {
   method: string
   url: string
   headers: Pair[]
   body: Body
   settings: SnippetSettings
+  computedAuth?: ComputedAuth
 }
 
 function snippetSettings(input: HttpRequestInput): SnippetSettings {
@@ -150,6 +159,19 @@ function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
     if (auth.apiKey.addTo === 'query') url = appendQuery(url, auth.apiKey.key, auth.apiKey.value)
     else if (!hasHeader(headers, auth.apiKey.key)) headers.push([auth.apiKey.key, auth.apiKey.value])
   }
+  let computedAuth: ComputedAuth | undefined
+  if (auth?.kind === 'digest' && auth.digest) computedAuth = { kind: 'digest', username: auth.digest.username, password: auth.digest.password }
+  else if (auth?.kind === 'awsv4' && auth.awsv4) {
+    const w = auth.awsv4
+    computedAuth = {
+      kind: 'awsv4',
+      accessKey: w.accessKey,
+      secretKey: w.secretKey,
+      region: w.region.trim() || 'us-east-1',
+      service: w.service.trim() || 'execute-api',
+      sessionToken: w.sessionToken ?? '',
+    }
+  }
 
   const b = input.body
   let body: Body = { kind: 'none' }
@@ -178,8 +200,25 @@ function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
     body = { kind: 'binary', path: b.binaryFilePath }
   }
 
-  return { method, url, headers, body, settings: snippetSettings(input) }
+  return { method, url, headers, body, settings: snippetSettings(input), ...(computedAuth ? { computedAuth } : {}) }
 }
+
+/** The comment for a client without Digest / AWS Signature support (the request below it is sent without the auth). */
+function computedAuthNote(a: ComputedAuth | undefined, lib: string): string[] {
+  if (!a) return []
+  if (a.kind === 'digest') {
+    return [
+      `Digest auth: ${lib} does not answer the server's challenge by itself. Send the request, then repeat it with an`,
+      `Authorization: Digest header computed from the 401's WWW-Authenticate challenge (RFC 7616), user "${a.username}".`,
+    ]
+  }
+  return [
+    `AWS Signature Version 4 (region ${a.region}, service ${a.service}): sign this request before sending it; the signer`,
+    `adds the Authorization and X-Amz-Date headers. Access key "${a.accessKey}". Signer: ${lib}.`,
+  ]
+}
+
+const lineComments = (lines: string[], prefix: string) => lines.map((l) => `${prefix} ${l}`)
 
 /** Collapse duplicate header names (case-insensitive) into one comma-joined value. */
 function collapseHeaders(headers: Pair[]): Pair[] {
@@ -276,6 +315,13 @@ function curl(p: Prepared): string {
   else parts.push(`${cmd} ${shq(p.url)}`)
   if (s.follow && s.maxRedirects !== null) parts.push(`--max-redirs ${s.maxRedirects}`)
   // "Keep the original method" has no flag here: with -X (every method but GET) curl keeps the method on redirects anyway.
+  const a = p.computedAuth
+  if (a?.kind === 'digest') parts.push(`--digest -u ${shq(`${a.username}:${a.password}`)}`)
+  else if (a?.kind === 'awsv4') {
+    // curl 7.75+ signs the request itself.
+    parts.push(`--aws-sigv4 ${shq(`aws:amz:${a.region}:${a.service}`)} -u ${shq(`${a.accessKey}:${a.secretKey}`)}`)
+    if (a.sessionToken) parts.push(`-H ${shq(`x-amz-security-token: ${a.sessionToken}`)}`)
+  }
   for (const [k, v] of p.headers) parts.push(`-H ${shq(`${k}: ${v}`)}`)
   const b = p.body
   if (b.kind === 'raw') parts.push(`--data-raw ${shq(b.content)}`)
@@ -334,7 +380,12 @@ function fetchSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
   const lower = new Set(p.headers.map(([k]) => k.toLowerCase()))
   const asPairs = lower.size !== p.headers.length
-  let out = imports.length ? imports.join('\n') + '\n\n' : ''
+  const note = lineComments(
+    computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. @smithy/signature-v4 from the AWS SDK for JavaScript v3, or the aws4 package' : 'fetch'),
+    '//',
+  )
+  let out = note.length ? note.join('\n') + '\n' : ''
+  out += imports.length ? imports.join('\n') + '\n\n' : note.length ? '\n' : ''
   if (prelude.length) out += prelude.join('\n') + '\n\n'
   if (p.settings.insecure) out += JS_INSECURE_NOTE
   out += `const response = await fetch(${jsStr(p.url)}, {\n  method: ${jsStr(p.method)},\n`
@@ -349,7 +400,11 @@ function fetchSnippet(p: Prepared): string {
 function axiosSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
   const s = p.settings
-  let out = [...imports, ...(s.insecure ? ["import https from 'node:https';"] : []), "import axios from 'axios';"].join('\n') + '\n\n'
+  const note = lineComments(
+    computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. @smithy/signature-v4 from the AWS SDK for JavaScript v3, or the aws4 package' : 'axios'),
+    '//',
+  )
+  let out = [...note, ...imports, ...(s.insecure ? ["import https from 'node:https';"] : []), "import axios from 'axios';"].join('\n') + '\n\n'
   if (prelude.length) out += prelude.join('\n') + '\n\n'
   out += `const response = await axios.request({\n  method: ${jsStr(p.method.toLowerCase())},\n  url: ${jsStr(p.url)},\n`
   out += jsHeaders(collapseHeaders(p.headers), false, '  ')
@@ -362,7 +417,11 @@ function axiosSnippet(p: Prepared): string {
 }
 
 function python(p: Prepared): string {
-  const lines: string[] = ['import requests', '', `url = ${pyStr(p.url)}`]
+  const a = p.computedAuth
+  const lines: string[] = ['import requests']
+  if (a?.kind === 'digest') lines.push('from requests.auth import HTTPDigestAuth')
+  if (a?.kind === 'awsv4') lines.push('from requests_aws4auth import AWS4Auth  # pip install requests-aws4auth')
+  lines.push('', `url = ${pyStr(p.url)}`)
   const headers = collapseHeaders(p.headers)
   if (headers.length) {
     lines.push('headers = {', ...headers.map(([k, v]) => `    ${pyStr(k)}: ${pyStr(v)},`), '}')
@@ -390,6 +449,14 @@ function python(p: Prepared): string {
   } else if (b.kind === 'binary') {
     lines.push(`with open(${pyStr(b.path)}, 'rb') as f:`, '    payload = f.read()')
     args.push('data=payload')
+  }
+  if (a?.kind === 'digest') {
+    lines.push(`auth = HTTPDigestAuth(${pyStr(a.username)}, ${pyStr(a.password)})`)
+    args.push('auth=auth')
+  } else if (a?.kind === 'awsv4') {
+    const token = a.sessionToken ? `, session_token=${pyStr(a.sessionToken)}` : ''
+    lines.push(`auth = AWS4Auth(${pyStr(a.accessKey)}, ${pyStr(a.secretKey)}, ${pyStr(a.region)}, ${pyStr(a.service)}${token})`)
+    args.push('auth=auth')
   }
   const s = p.settings
   if (!s.follow) args.push('allow_redirects=False')
@@ -470,7 +537,8 @@ function go(p: Prepared): string {
     )
   }
   const sorted = [...imports].sort()
-  let out = `package main\n\nimport (\n${sorted.map((i) => `\t"${i}"`).join('\n')}\n)\n\nfunc main() {\n`
+  const note = lineComments(computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. github.com/aws/aws-sdk-go-v2/aws/signer/v4' : 'net/http'), '//')
+  let out = `${note.length ? `${note.join('\n')}\n\n` : ''}package main\n\nimport (\n${sorted.map((i) => `\t"${i}"`).join('\n')}\n)\n\nfunc main() {\n`
   for (const l of pre) out += `\t${l}\n`
   out += `\treq, err := http.NewRequest(${goStr(p.method)}, ${goStr(p.url)}, ${bodyExpr})\n\tif err != nil {\n\t\tpanic(err)\n\t}\n`
   for (const [k, v] of p.headers) out += `\treq.Header.Add(${goStr(k)}, ${goStr(v)})\n`
@@ -498,6 +566,8 @@ function php(p: Prepared): string {
   if (p.headers.length) {
     opts.push('    CURLOPT_HTTPHEADER => [', ...p.headers.map(([k, v]) => `        ${phpStr(`${k}: ${v}`)},`), '    ],')
   }
+  const a = p.computedAuth
+  if (a?.kind === 'digest') opts.push('    CURLOPT_HTTPAUTH => CURLAUTH_DIGEST,', `    CURLOPT_USERPWD => ${phpStr(`${a.username}:${a.password}`)},`)
   if (b.kind === 'raw') opts.push(`    CURLOPT_POSTFIELDS => ${phpStr(b.content)},`)
   else if (b.kind === 'urlEncoded') {
     opts.push(
@@ -512,9 +582,11 @@ function php(p: Prepared): string {
       '    ],',
     )
   } else if (b.kind === 'binary') opts.push(`    CURLOPT_POSTFIELDS => file_get_contents(${phpStr(b.path)}),`)
+  const note = a?.kind === 'awsv4' ? lineComments(computedAuthNote(a, 'e.g. Aws\\Signature\\SignatureV4 from the AWS SDK for PHP'), '//') : []
   return [
     '<?php',
     '',
+    ...(note.length ? [...note, ''] : []),
     '$curl = curl_init();',
     '',
     'curl_setopt_array($curl, [',
@@ -549,12 +621,14 @@ function php(p: Prepared): string {
  */
 function powershell(p: Prepared): string {
   const lines: string[] = ['# Works in Windows PowerShell 5.1 and PowerShell 7+.']
+  if (p.computedAuth?.kind === 'awsv4') lines.push(...lineComments(computedAuthNote(p.computedAuth, 'e.g. the AWS SDK for .NET'), '#'))
   if (/^https:/i.test(p.url)) {
     lines.push('[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12')
   }
   lines.push('')
   const b = p.body
   if (b.kind === 'formData') return powershellMultipart(p, b.fields, lines)
+  const digest = p.computedAuth?.kind === 'digest' ? p.computedAuth : null
 
   let contentType: string | null = null
   let userAgent: string | null = null
@@ -577,6 +651,22 @@ function powershell(p: Prepared): string {
   if (headers.length) args.push('-Headers $headers')
   if (contentType !== null) args.push(`-ContentType ${psStr(contentType)}`)
   if (userAgent !== null) args.push(`-UserAgent ${psStr(userAgent)}`)
+  if (digest) {
+    // .NET answers the Digest challenge for -Credential in both 5.1 (HttpWebRequest) and 7 (HttpClientHandler).
+    lines.push(
+      `$credential = New-Object System.Management.Automation.PSCredential -ArgumentList ${psStr(digest.username)}, (ConvertTo-SecureString ${psStr(digest.password)} -AsPlainText -Force)`,
+    )
+    args.push('-Credential $credential')
+    if (!/^https:/i.test(p.url)) {
+      lines.push(
+        '# PowerShell 7 sends credentials over plain http only with -AllowUnencryptedAuthentication, which 5.1 does not have.',
+        '$auth = @{}',
+        'if ($PSVersionTable.PSVersion.Major -ge 6) { $auth.AllowUnencryptedAuthentication = $true }',
+      )
+      args.push('@auth')
+    }
+    lines.push('')
+  }
   if (b.kind === 'raw') {
     lines.push(`$body = [System.Text.Encoding]::UTF8.GetBytes(${psStr(b.content)})`, '')
     args.push('-Body $body')
@@ -607,11 +697,12 @@ function powershell(p: Prepared): string {
 
 /** Multipart through .NET's HttpClient, which both Windows PowerShell 5.1 and PowerShell 7 have. */
 function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formData' }>['fields'], lines: string[]): string {
+  const digest = p.computedAuth?.kind === 'digest' ? p.computedAuth : null
   lines.push('Add-Type -AssemblyName System.Net.Http')
   const s = p.settings
   // HttpClient follows up to 50 redirects by default; a limit of 0 is "do not follow" (the handler refuses 0).
   const noFollow = !s.follow || s.maxRedirects === 0
-  if (noFollow || s.maxRedirects !== null || s.insecure) {
+  if (noFollow || s.maxRedirects !== null || s.insecure || digest) {
     lines.push('$handler = New-Object System.Net.Http.HttpClientHandler')
     if (noFollow) lines.push('$handler.AllowAutoRedirect = $false')
     else if (s.maxRedirects !== null) lines.push(`$handler.MaxAutomaticRedirections = ${s.maxRedirects}`)
@@ -620,6 +711,10 @@ function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formDat
         '# SSL certificate verification is off for this request.',
         psInsecure('$handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator', PS51_INSECURE_ASYNC),
       )
+    }
+    if (digest) {
+      // The handler answers the Digest challenge (the form is buffered below so it can be sent twice).
+      lines.push(`$handler.Credentials = New-Object System.Net.NetworkCredential -ArgumentList ${psStr(digest.username)}, ${psStr(digest.password)}`)
     }
     lines.push('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler')
   } else lines.push('$client = New-Object System.Net.Http.HttpClient')
@@ -645,6 +740,7 @@ function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formDat
       lines.push(`$form.Add((New-Object System.Net.Http.StringContent -ArgumentList ${psStr(f.value)}), ${psStr(f.key)})`)
     }
   }
+  if (digest) lines.push('[void]$form.LoadIntoBufferAsync().GetAwaiter().GetResult()')
   lines.push(
     '$request.Content = $form',
     '',
@@ -697,6 +793,10 @@ function httpFile(p: Prepared, name: string): string {
     if (m) boundary = m[1] ?? m[2]
     else headers.push(['Content-Type', `multipart/form-data; boundary=${boundary}`])
   }
+  const a = p.computedAuth
+  // JetBrains HTTP Client and VS Code REST Client both answer a Digest challenge for this form of the header.
+  if (a?.kind === 'digest' && !hasHeader(headers, 'Authorization')) headers.push(['Authorization', `Digest ${a.username} ${a.password}`])
+  if (a?.kind === 'awsv4') lines.splice(title ? 1 : 0, 0, ...lineComments(computedAuthNote(a, 'VS Code REST Client: Authorization: AWS <access key> <secret key> region:<region> service:<service>'), '#'))
   for (const [k, v] of headers) lines.push(`${oneLine(k)}: ${oneLine(v)}`)
   if (b.kind === 'raw') lines.push('', b.content)
   else if (b.kind === 'urlEncoded') lines.push('', b.fields.map(([k, v]) => `${encodeKeepingVars(k)}=${encodeKeepingVars(v)}`).join('&'))

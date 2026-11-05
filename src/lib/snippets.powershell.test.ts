@@ -4,6 +4,7 @@
  * into Windows) and PowerShell 7 (`pwsh`). Skipped where neither exists; the release workflow's Windows job runs it.
  */
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type RequestListener, type Server } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
@@ -29,6 +30,26 @@ let tlsBase = ''
 let seen: Seen[] = []
 let dir = ''
 
+/**
+ * Digest (RFC 2617, MD5, qop auth) for paths under /digest: user "alice", password "s3cret pw". Answers 401 with a challenge
+ * until a request carries a correct answer for its own method and URI. Checks the snippet's `-Credential` / handler
+ * Credentials claim in both shells.
+ */
+const DIGEST_REALM = 'ps@test'
+const DIGEST_NONCE = randomBytes(12).toString('hex')
+function digestOk(req: IncomingMessage): boolean {
+  const h = req.headers.authorization ?? ''
+  if (!h.startsWith('Digest ')) return false
+  const p: Record<string, string> = {}
+  for (const m of h.slice(7).matchAll(/(\w+)=(?:"([^"]*)"|([^\s,]+))/g)) p[m[1]!.toLowerCase()] = m[2] ?? m[3] ?? ''
+  const md5 = (t: string) => createHash('md5').update(t).digest('hex')
+  if (p.username !== 'alice' || p.realm !== DIGEST_REALM || p.nonce !== DIGEST_NONCE || p.uri !== req.url) return false
+  const ha1 = md5(`alice:${DIGEST_REALM}:s3cret pw`)
+  const ha2 = md5(`${req.method}:${p.uri}`)
+  const expected = p.qop ? md5(`${ha1}:${p.nonce}:${p.nc}:${p.cnonce}:${p.qop}:${ha2}`) : md5(`${ha1}:${p.nonce}:${ha2}`)
+  return expected === p.response
+}
+
 beforeAll(async () => {
   if (!SHELLS.length) return
   dir = mkdtempSync(join(tmpdir(), 'slinger-ps-'))
@@ -37,6 +58,11 @@ beforeAll(async () => {
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
       seen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) })
+      if (req.url?.startsWith('/digest') && !digestOk(req)) {
+        res.writeHead(401, { 'WWW-Authenticate': `Digest realm="${DIGEST_REALM}", nonce="${DIGEST_NONCE}", qop="auth", algorithm=MD5`, 'content-type': 'text/plain' })
+        res.end('digest required')
+        return
+      }
       if (req.url === '/redirect') {
         res.writeHead(302, { location: '/x' })
         res.end('moved')
@@ -82,7 +108,8 @@ function runShell(shell: string, file: string): Promise<{ status: number | null;
   })
 }
 
-async function run(shell: string, input: Partial<HttpRequestInput>, requests = 1): Promise<{ out: string; last: Seen }> {
+/** `requests`: how many requests the server must see (null: at least one; .NET decides how it retries an auth challenge). */
+async function run(shell: string, input: Partial<HttpRequestInput>, requests: number | null = 1): Promise<{ out: string; last: Seen }> {
   seen = []
   const script = generateSnippet('powershell', {
     method: 'GET', url: `${base}/x`, headers: [], auth: { kind: 'none' }, body: { mode: 'none' }, workspaceId: 'w', ...input,
@@ -92,7 +119,8 @@ async function run(shell: string, input: Partial<HttpRequestInput>, requests = 1
   writeFileSync(file, '\uFEFF' + script, 'utf8')
   const r = await runShell(shell, file)
   expect(r.status, `${shell} failed:\n${r.stderr}\n--- script ---\n${script}`).toBe(0)
-  expect(seen.length, `${shell} sent ${seen.length} requests:\n${r.stderr}`).toBe(requests)
+  if (requests === null) expect(seen.length, `${shell} sent no request:\n${r.stderr}`).toBeGreaterThan(0)
+  else expect(seen.length, `${shell} sent ${seen.length} requests:\n${r.stderr}`).toBe(requests)
   return { out: r.stdout, last: seen[seen.length - 1]! }
 }
 
@@ -182,6 +210,27 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', { ti
       body: { mode: 'formData', formData: [{ key: 'note', value: 'hi', type: 'text', enabled: true }] },
     } as Partial<HttpRequestInput>)
     expect(out).toContain('302')
+  })
+
+  it('Digest auth over plain http: -Credential answers the challenge (Invoke-WebRequest and HttpClient)', async () => {
+    const auth = { kind: 'digest' as const, digest: { username: 'alice', password: 's3cret pw' } }
+    const get = await run(shell, { url: `${base}/digest/get?q=1`, auth }, null)
+    expect(get.out).toContain('ok-from-server')
+    expect(get.last.headers.authorization).toMatch(/^Digest /)
+    expect(digestOk({ ...get.last, headers: get.last.headers } as unknown as IncomingMessage)).toBe(true)
+    const post = await run(shell, { url: `${base}/digest/post`, method: 'POST', auth, body: { mode: 'raw', raw: { content: '{"a":1}', contentType: 'application/json' } } }, null)
+    expect(post.out).toContain('ok-from-server')
+    expect(post.last.body.toString('utf8')).toBe('{"a":1}')
+    const multipart = await run(
+      shell,
+      { url: `${base}/digest/form`, method: 'POST', auth, body: { mode: 'formData', formData: [{ key: 'note', value: 'hi', type: 'text', enabled: true }] } } as Partial<HttpRequestInput>,
+      null,
+    )
+    expect(multipart.out).toContain('ok-from-server')
+    expect(multipart.last.body.toString('utf8')).toContain('hi')
+    // A wrong password ends with the server's 401 (printed by the catch block / the status line).
+    const wrong = await run(shell, { url: `${base}/digest/get`, auth: { kind: 'digest', digest: { username: 'alice', password: 'nope' } } }, null)
+    expect(wrong.out).toContain('401')
   })
 
   it('binary body from a file', async () => {

@@ -54,6 +54,20 @@ function applyAuth(input: HttpRequestInput, headers: RequestHeader[], oauth2Toke
     headers.push({ key: 'Authorization', value: `Basic ${utf8Base64(`${auth.basic.username}:${auth.basic.password}`)}` })
   } else if (auth.kind === 'bearer' && auth.bearer && !hasHeader(headers, 'authorization')) {
     headers.push({ key: 'Authorization', value: `Bearer ${auth.bearer.token}` })
+  } else if (auth.kind === 'digest' && auth.digest) {
+    // Clearly fake (the browser mock has no challenge round trip or MD5): main answers the server's 401 challenge.
+    const realm = auth.digest.realm || 'mock'
+    headers.push({ key: 'Authorization', value: `Digest username="${auth.digest.username}", realm="${realm}", response="mock-not-computed"` })
+  } else if (auth.kind === 'awsv4' && auth.awsv4) {
+    // Clearly fake as well: main signs with AWS SigV4 (electron/services/awsSigV4.ts).
+    const region = auth.awsv4.region || 'us-east-1'
+    const service = auth.awsv4.service || 'execute-api'
+    headers.push({
+      key: 'Authorization',
+      value: `AWS4-HMAC-SHA256 Credential=${auth.awsv4.accessKey}/00000000/${region}/${service}/aws4_request, SignedHeaders=host;x-amz-date, Signature=mock-not-computed`,
+    })
+    headers.push({ key: 'X-Amz-Date', value: '00000000T000000Z' })
+    if (auth.awsv4.sessionToken) headers.push({ key: 'X-Amz-Security-Token', value: auth.awsv4.sessionToken })
   } else if (auth.kind === 'apiKey' && auth.apiKey?.key) {
     if (auth.apiKey.addTo === 'header') headers.push({ key: auth.apiKey.key, value: auth.apiKey.value })
     else url = withApiKeyQuery(url, auth.apiKey.key, auth.apiKey.value)

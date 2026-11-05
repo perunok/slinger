@@ -10,6 +10,8 @@ import type { FileAccess } from './fileGrants'
 import type { CookieJarPort } from './cookieJarPort'
 import { describeSendError, DIRECT_ROUTER, type NetworkRoute, type NetworkRouter } from './network'
 import { mergeCookieHeader, planRedirect, redirectHeaders, redirectPolicy } from './redirects'
+import { DigestSession, isSupportedDigestAlgorithm } from './digestAuth'
+import { signHop } from './awsSigV4'
 
 export const DEFAULT_TIMEOUT_MS = 60_000
 export const MAX_TIMEOUT_MS = 10 * 60_000
@@ -38,6 +40,15 @@ function wireStrings(input: HttpRequestInput): Array<[string, string | undefined
   if (a?.kind === 'bearer') out.push(['bearer token', a.bearer?.token])
   if (a?.kind === 'apiKey') out.push(['API key name', a.apiKey?.key], ['API key value', a.apiKey?.value])
   if (a?.kind === 'oauth2') out.push(['OAuth 2.0 header prefix', a.oauth2?.headerPrefix])
+  if (a?.kind === 'digest') {
+    const d = a.digest
+    out.push(['Digest username', d?.username], ['Digest password', d?.password], ['Digest realm', d?.realm], ['Digest nonce', d?.nonce])
+    out.push(['Digest algorithm', d?.algorithm], ['Digest qop', d?.qop], ['Digest nonce count', d?.nonceCount], ['Digest client nonce', d?.clientNonce], ['Digest opaque', d?.opaque])
+  }
+  if (a?.kind === 'awsv4') {
+    const w = a.awsv4
+    out.push(['AWS access key', w?.accessKey], ['AWS secret key', w?.secretKey], ['AWS region', w?.region], ['AWS service', w?.service], ['AWS session token', w?.sessionToken])
+  }
   const b = input.body
   if (b?.mode === 'raw') out.push(['request body', b.raw?.content], ['body content type', b.raw?.contentType])
   if (b?.mode === 'formData') {
@@ -99,6 +110,11 @@ interface BuiltRequest {
   authHeaders: string[]
   /** OAuth 2.0 sent as a header: re-checked (token origins) when a redirect keeps it on another origin. */
   oauth2Header?: { tokenKey: string; prefix: string }
+  /**
+   * ADDED (0.30) Auth applied per hop on the final headers and body (Digest answers a 401 challenge, AWS SigV4 signs);
+   * the body is then bytes (a form serialised once), so what is hashed is what is sent.
+   */
+  hopAuth?: { kind: 'digest'; digest: NonNullable<HttpRequestInput['auth']['digest']> } | { kind: 'awsv4'; awsv4: NonNullable<HttpRequestInput['auth']['awsv4']> }
 }
 
 /** Validates the input and builds fetch arguments. All auth kinds and body modes are applied here. */
@@ -140,6 +156,7 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   const auth = input.auth
   const authHeaders: string[] = []
   let oauth2Header: BuiltRequest['oauth2Header']
+  let hopAuth: BuiltRequest['hopAuth']
   try {
     switch (auth?.kind) {
       case 'basic': {
@@ -166,6 +183,27 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
           authHeaders.push('authorization')
           oauth2Header = { tokenKey: o.tokenKey, prefix: o.headerPrefix }
         }
+        break
+      }
+      case 'digest': {
+        const d = auth.digest
+        if (!d) throw invalidInput('Digest auth settings are missing')
+        if (d.algorithm && !isSupportedDigestAlgorithm(d.algorithm)) {
+          throw invalidInput(`Digest algorithm "${d.algorithm}" is not supported (use MD5, MD5-sess, SHA-256, SHA-256-sess, SHA-512-256 or SHA-512-256-sess)`)
+        }
+        hopAuth = { kind: 'digest', digest: d }
+        authHeaders.push('authorization')
+        break
+      }
+      case 'awsv4': {
+        const w = auth.awsv4
+        if (!w?.accessKey.trim() || !w.secretKey) throw invalidInput('AWS Signature needs an access key and a secret key')
+        if (/[\s/]/.test(w.region.trim()) || /[\s/]/.test(w.service.trim())) throw invalidInput('AWS region and service cannot contain spaces or slashes')
+        // Checked like a header value now: the signed headers must not fail later with a message that quotes them.
+        checkedHeaderValue(w.accessKey)
+        if (w.sessionToken) checkedHeaderValue(w.sessionToken)
+        hopAuth = { kind: 'awsv4', awsv4: { ...w, accessKey: w.accessKey.trim() } }
+        authHeaders.push('authorization', 'x-amz-date', 'x-amz-security-token', 'x-amz-content-sha256')
         break
       }
       case 'apiKey': {
@@ -236,9 +274,25 @@ export async function buildRequest(input: HttpRequestInput, files?: FileAccess, 
   if (body !== undefined && (method === 'GET' || method === 'HEAD')) {
     throw invalidInput(`${method} requests cannot have a body; choose another method or set the body to none`)
   }
+  // Digest auth-int and AWS signatures hash the body: serialise it once so every send of it has the same bytes.
+  if (hopAuth && body !== undefined) {
+    const bytes = await bodyBytes(body)
+    if (bytes.contentType) headers.set('Content-Type', bytes.contentType)
+    body = bytes.bytes
+  }
 
-  return { url: url.toString(), method, headers, body, authHeaders, oauth2Header }
+  return { url: url.toString(), method, headers, body, authHeaders, oauth2Header, ...(hopAuth ? { hopAuth } : {}) }
 }
+
+/** A body as the bytes fetch would send; a form also gets its multipart Content-Type (with the boundary). */
+async function bodyBytes(body: string | Buffer | FormData): Promise<{ bytes: Buffer; contentType?: string }> {
+  if (typeof body === 'string') return { bytes: Buffer.from(body, 'utf8') }
+  if (Buffer.isBuffer(body)) return { bytes: body }
+  const r = new Response(body)
+  return { bytes: Buffer.from(await r.arrayBuffer()), contentType: r.headers.get('content-type') ?? undefined }
+}
+
+const hopBody = (body: BuiltRequest['body']): Buffer | undefined => (Buffer.isBuffer(body) ? body : typeof body === 'string' ? Buffer.from(body, 'utf8') : undefined)
 
 const oauth2HeaderValue = (prefix: string, token: string) => (prefix.trim() ? `${prefix.trim()} ${token}` : token)
 
@@ -278,6 +332,11 @@ export function scrubRequestValues(message: string, input: HttpRequestInput): st
   }
   if (a?.kind === 'bearer') add(a.bearer?.token)
   if (a?.kind === 'apiKey') add(a.apiKey?.value)
+  if (a?.kind === 'digest') add(a.digest?.password)
+  if (a?.kind === 'awsv4') {
+    add(a.awsv4?.secretKey)
+    add(a.awsv4?.sessionToken)
+  }
   let out = message
   for (const v of [...values].sort((x, y) => y.length - x.length)) {
     if (out.includes(v)) out = out.split(v).join('•••')
@@ -365,6 +424,12 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
   const redirects: RedirectHop[] = []
   let route: NetworkRoute | null = null
   let hop: { url: URL; method: string; headers: Headers; body: BuiltRequest['body'] } | null = null
+  // Per-hop auth (0.30): Digest state for the send, AWS signing. `hopAuthActive` turns off when a redirect to another
+  // origin drops the auth (redirects.ts rules), exactly as the Authorization header is dropped.
+  const digest = built.hopAuth?.kind === 'digest' ? new DigestSession(built.hopAuth.digest) : null
+  const awsv4 = built.hopAuth?.kind === 'awsv4' ? built.hopAuth.awsv4 : null
+  let hopAuthActive = true
+  let authNote: string | null = null
   try {
     hop = { url: new URL(built.url), method: built.method, headers: built.headers, body: built.body }
     let response: UndiciResponse
@@ -375,6 +440,20 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
         const cookie = mergeCookieHeader(headers.get('cookie'), await jarCookies(options.cookieJar, hop.url))
         if (cookie) headers.set('cookie', cookie)
       }
+      if (hopAuthActive && digest) {
+        const value = digest.header(hop.method, hop.url, hopBody(hop.body))
+        if (value) headers.set('Authorization', checkedAuthValue(value))
+        authNote = digest.note
+      } else if (hopAuthActive && awsv4) {
+        try {
+          signHop(awsv4, hop.method, hop.url, headers, hopBody(hop.body))
+        } catch {
+          throw invalidInput('Invalid auth: the AWS credentials contain characters that are not allowed in HTTP headers')
+        }
+        const region = awsv4.region.trim() || 'us-east-1'
+        const service = awsv4.service.trim() || 'execute-api'
+        authNote = `AWS Signature Version 4 (${region}, ${service})${redirects.length ? `: signed again for ${redirects.length === 1 ? 'the redirect' : 'each redirect'}` : ''}`
+      }
       response = await undiciFetch(hop.url, {
         method: hop.method,
         headers,
@@ -384,6 +463,11 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
         dispatcher: route.dispatcher,
       })
       if (options.cookieJar) await storeJarCookies(options.cookieJar, hop.url, response.headers.getSetCookie())
+      // Digest: a 401 with a challenge is answered by sending the same hop again (once; once more for a stale nonce).
+      if (response.status === 401 && hopAuthActive && digest && digest.onUnauthorized(wwwAuthenticate(response.headers))) {
+        await response.body?.cancel().catch(() => {})
+        continue
+      }
       const plan = planRedirect(hop, response.status, response.headers.get('location'), policy, redirects.length)
       if (plan.kind === 'final') break
       await response.body?.cancel().catch(() => {})
@@ -399,10 +483,18 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
         nextHeaders.set('authorization', oauth2HeaderValue(built.oauth2Header.prefix, options.oauth2Token(built.oauth2Header.tokenKey, plan.url.origin)))
       }
       hop = { url: plan.url, method: plan.method, headers: nextHeaders, body: plan.keepBody ? hop.body : undefined }
+      if (plan.crossOrigin && !policy.followAuthorizationHeader) hopAuthActive = false
+      digest?.nextHop()
     }
     const headers: RequestHeader[] = []
     response.headers.forEach((value, key) => headers.push({ key, value }))
-    const head = { status: response.status, statusText: response.statusText, headers, ...(redirects.length ? { redirects } : {}) }
+    const head = {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      ...(redirects.length ? { redirects } : {}),
+      ...(authNote ? { authNote } : {}),
+    }
     const elapsed = () => Math.max(0, Math.round(performance.now() - started))
 
     if (options.toFile) {
@@ -441,6 +533,24 @@ export async function executeHttp(input: HttpRequestInput, options: ExecuteOptio
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', onCancel)
+  }
+}
+
+/** Every WWW-Authenticate value of a response (Headers.get would join them with commas, which challenges also use). */
+function wwwAuthenticate(headers: UndiciResponse['headers']): string[] {
+  const out: string[] = []
+  headers.forEach((value, key) => {
+    if (key === 'www-authenticate') out.push(value)
+  })
+  return out
+}
+
+/** A computed auth header value; the user name or realm may hold characters HTTP does not allow. */
+function checkedAuthValue(value: string): string {
+  try {
+    return checkedHeaderValue(value)
+  } catch {
+    throw invalidInput('Invalid auth: the Digest credentials contain characters that are not allowed in HTTP headers')
   }
 }
 

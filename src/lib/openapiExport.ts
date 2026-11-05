@@ -305,6 +305,8 @@ function securityUse(auth: AuthDraft, vars: Map<string, string>): SecurityUse | 
     }
     case 'oauth2':
       return oauth2Use(auth, vars)
+    case 'digest':
+      return { base: 'digestAuth', scheme: { type: 'http', scheme: 'digest' }, scopes: [] }
     case 'unsupported':
       return auth.unsupportedType === 'digest' ? { base: 'digestAuth', scheme: { type: 'http', scheme: 'digest' }, scopes: [] } : null
     default:

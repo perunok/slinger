@@ -523,6 +523,8 @@ function authValues(a: HttpRequestInput['auth']): string[] {
   }
   if (a.kind === 'bearer') return a.bearer?.token ? [a.bearer.token] : []
   if (a.kind === 'apiKey') return a.apiKey?.value ? [a.apiKey.value] : []
+  if (a.kind === 'digest') return a.digest?.password ? [a.digest.password] : []
+  if (a.kind === 'awsv4') return [a.awsv4?.secretKey ?? '', a.awsv4?.sessionToken ?? ''].filter(Boolean)
   return []
 }
 

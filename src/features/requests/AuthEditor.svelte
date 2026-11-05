@@ -10,7 +10,7 @@
   import InfoTip from '../../components/ui/InfoTip.svelte'
   import OAuth2Panel from '../oauth2/OAuth2Panel.svelte'
   import { AUTH_KIND_LABELS, authKindLabel, type AuthSource, type EffectiveAuth } from '../../lib/authInheritance'
-  import type { AuthDraft, AuthKind } from '../../lib/request'
+  import { awsV4Of, digestOf, emptyAwsV4, emptyDigest, type AuthDraft, type AuthKind, type AwsV4Draft, type DigestDraft } from '../../lib/request'
 
   interface Props {
     auth: AuthDraft
@@ -27,17 +27,31 @@
   let reveal = $state(false)
 
   const KINDS = $derived(
-    (['inherit', 'none', 'basic', 'bearer', 'apiKey', 'oauth2'] as AuthKind[])
+    (['inherit', 'none', 'basic', 'bearer', 'apiKey', 'digest', 'awsv4', 'oauth2'] as AuthKind[])
       .filter((k) => k !== 'inherit' || level !== 'collection')
       .map((id) => ({ id, label: AUTH_KIND_LABELS[id] })),
   )
   const subject = $derived(level === 'request' ? 'This request' : `This ${level}`)
+
+  // Digest / AWS Signature (0.30): drafts from an older Slinger may lack these objects, so they are read through
+  // digestOf / awsV4Of and written as a whole (stored entries kept).
+  const dg = $derived(digestOf(a))
+  const aws = $derived(awsV4Of(a))
+  const setDigest = <K extends keyof DigestDraft>(k: K, v: DigestDraft[K]) => (auth.digest = { ...digestOf(auth), [k]: v })
+  const setAws = <K extends keyof AwsV4Draft>(k: K, v: AwsV4Draft[K]) => (auth.awsv4 = { ...awsV4Of(auth), [k]: v })
+  const DIGEST_ALGORITHMS = ['MD5', 'MD5-sess', 'SHA-256', 'SHA-256-sess', 'SHA-512-256', 'SHA-512-256-sess']
+
+  function setKind(kind: AuthKind) {
+    auth.kind = kind
+    if (kind === 'digest' && !auth.digest) auth.digest = emptyDigest()
+    if (kind === 'awsv4' && !auth.awsv4) auth.awsv4 = emptyAwsV4()
+  }
 </script>
 
 <div class="max-w-xl space-y-3 p-3" data-testid="auth-editor-{level}">
   <div class="grid gap-1">
     <label for="auth-kind-{level}" class="text-xs text-muted">Authorization type</label>
-    <select id="auth-kind-{level}" class="w-56" value={a.kind} disabled={readOnly} onchange={(e) => (auth.kind = e.currentTarget.value as AuthKind)}>
+    <select id="auth-kind-{level}" class="w-56" value={a.kind} disabled={readOnly} onchange={(e) => setKind(e.currentTarget.value as AuthKind)}>
       {#each KINDS as k (k.id)}<option value={k.id}>{k.label}</option>{/each}
       {#if a.kind === 'unsupported'}<option value="unsupported">{a.unsupportedType ?? 'Custom'} (unsupported)</option>{/if}
     </select>
@@ -95,6 +109,70 @@
         <option value="query">Query parameter</option>
       </select>
     </div>
+  {:else if a.kind === 'digest'}
+    <div class="flex items-center gap-1.5 text-sm text-muted" data-testid="digest-editor">
+      <span>The server's challenge is answered when the request is sent.</span>
+      <InfoTip label="About Digest auth">
+        Slinger sends the request; when the server answers <code>401</code> with a <code>WWW-Authenticate: Digest</code> challenge, it
+        computes the answer from the user name and password (MD5, SHA-256 or SHA-512-256, with or without <code>-sess</code>; qop
+        <code>auth</code> or <code>auth-int</code>) and sends the request once more, also after a redirect. The response's Headers tab
+        says that Digest was used. The password is never sent itself.
+      </InfoTip>
+    </div>
+    {@render field('Username', dg.username, (v) => setDigest('username', v))}
+    {@render field('Password', dg.password, (v) => setDigest('password', v), { secret: true })}
+    <details class="rounded border border-border px-2.5 py-1.5" data-testid="digest-advanced">
+      <summary class="cursor-pointer text-xs text-muted">Advanced</summary>
+      <div class="mt-2 space-y-3 pb-1">
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" data-testid="digest-disable-retry" checked={dg.disableRetryRequest} onchange={(e) => setDigest('disableRetryRequest', e.currentTarget.checked)} />
+            Do not answer the challenge automatically
+          </label>
+          <InfoTip label="About answering the challenge">
+            Off (the default): a <code>401</code> challenge is answered by sending the request again. On: the request is sent once, with
+            the header computed from the realm and nonce below (when both are set), as Postman's "Disable retrying the request" does.
+          </InfoTip>
+        </div>
+        <p class="text-[11px] text-faint">
+          Optional. With a realm and a nonce the first request already carries the Authorization header; the server's challenge
+          replaces these values.
+        </p>
+        {@render field('Realm', dg.realm, (v) => setDigest('realm', v), { placeholder: 'testrealm@example.com' })}
+        {@render field('Nonce', dg.nonce, (v) => setDigest('nonce', v))}
+        <div class="grid gap-1">
+          <label for="digest-algorithm-{level}" class="text-xs text-muted">Algorithm</label>
+          <select id="digest-algorithm-{level}" class="w-56" value={dg.algorithm || 'MD5'} onchange={(e) => setDigest('algorithm', e.currentTarget.value)}>
+            {#each DIGEST_ALGORITHMS as alg (alg)}<option value={alg}>{alg}</option>{/each}
+            {#if dg.algorithm && !DIGEST_ALGORITHMS.includes(dg.algorithm)}<option value={dg.algorithm}>{dg.algorithm}</option>{/if}
+          </select>
+        </div>
+        {@render field('qop', dg.qop, (v) => setDigest('qop', v), { placeholder: 'auth or auth-int' })}
+        {@render field('Nonce count', dg.nonceCount, (v) => setDigest('nonceCount', v), { placeholder: '00000001' })}
+        {@render field('Client nonce', dg.clientNonce, (v) => setDigest('clientNonce', v), { placeholder: 'Random when empty' })}
+        {@render field('Opaque', dg.opaque, (v) => setDigest('opaque', v))}
+      </div>
+    </details>
+  {:else if a.kind === 'awsv4'}
+    <div class="flex items-center gap-1.5 text-sm text-muted" data-testid="awsv4-editor">
+      <span>The request is signed when it is sent.</span>
+      <InfoTip label="About AWS Signature">
+        Slinger signs the request with AWS Signature Version 4 right before sending it, after all headers and the body are final, and
+        signs it again for each redirect that keeps the authorization (a redirect to another site drops it). It adds
+        <code>Authorization</code>, <code>X-Amz-Date</code>, <code>X-Amz-Security-Token</code> (with a session token) and, for S3,
+        <code>X-Amz-Content-Sha256</code>. An empty region or service means <code>us-east-1</code> / <code>execute-api</code>, as in Postman.
+      </InfoTip>
+    </div>
+    {@render field('Access key', aws.accessKey, (v) => setAws('accessKey', v), { placeholder: 'AKIA… or {{variable}}' })}
+    {@render field('Secret key', aws.secretKey, (v) => setAws('secretKey', v), { secret: true })}
+    {@render field('AWS region', aws.region, (v) => setAws('region', v), { placeholder: 'us-east-1' })}
+    {@render field('Service name', aws.service, (v) => setAws('service', v), { placeholder: 'execute-api (e.g. s3, sts, es)' })}
+    {@render field('Session token', aws.sessionToken, (v) => setAws('sessionToken', v), { secret: true, placeholder: 'Only for temporary credentials' })}
+    {#if aws.addAuthDataToQuery}
+      <p class="rounded border border-warning bg-warning-soft px-3 py-2 text-sm">
+        This auth asks for the signature in the query string (a Postman option). Slinger sends it in the Authorization header instead.
+      </p>
+    {/if}
   {:else if a.kind === 'oauth2'}
     <OAuth2Panel bind:oauth2={auth.oauth2} {collectionId} />
   {:else if a.kind === 'unsupported'}

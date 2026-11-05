@@ -21,7 +21,7 @@ export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript'
  * `inherit` (Postman: `auth` absent or null): use the nearest folder's or the collection's auth at send time
  * (src/lib/authInheritance.ts); the default for new requests. `none` (Postman `{type: 'noauth'}`): no auth at all.
  */
-export type AuthKind = 'inherit' | 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'unsupported'
+export type AuthKind = 'inherit' | 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'digest' | 'awsv4' | 'unsupported'
 
 export interface BodyDraft {
   kind: BodyKind
@@ -67,12 +67,56 @@ export interface OAuth2Draft {
   extra: Array<Record<string, unknown>>
 }
 
+/** One Postman auth parameter (`{key, value, type}`), kept as stored. */
+export type AuthParamEntry = Record<string, unknown>
+
+/**
+ * ADDED (0.30) Digest auth, field names after Postman's `digest` array keys (postman-runtime's digest authorizer).
+ * Only username and password are needed: the rest comes from the server's challenge. Realm and nonce given up front
+ * make the first request carry the Authorization header already (as in Postman); `disableRetryRequest` then stops the
+ * automatic answer to a 401 challenge.
+ */
+export interface DigestDraft {
+  username: string
+  password: string
+  realm: string
+  nonce: string
+  /** MD5 (also when empty), MD5-sess, SHA-256, SHA-256-sess, SHA-512-256, SHA-512-256-sess. */
+  algorithm: string
+  qop: string
+  nonceCount: string
+  clientNonce: string
+  opaque: string
+  disableRetryRequest: boolean
+  /** The stored entries in order (known keys are rewritten with the edited values, unknown ones kept verbatim). */
+  entries: AuthParamEntry[]
+}
+
+/**
+ * ADDED (0.30) AWS Signature Version 4, field names after Postman's `awsv4` array keys. Empty region / service mean
+ * Postman's defaults (us-east-1 / execute-api). `addAuthDataToQuery` (presigned query) is kept but not applied: the
+ * signature always goes into the Authorization header.
+ */
+export interface AwsV4Draft {
+  accessKey: string
+  secretKey: string
+  region: string
+  service: string
+  sessionToken: string
+  addAuthDataToQuery: boolean
+  entries: AuthParamEntry[]
+}
+
 export interface AuthDraft {
   kind: AuthKind
   basic: { username: string; password: string }
   bearer: { token: string }
   apiKey: { key: string; value: string; addTo: 'header' | 'query' }
   oauth2: OAuth2Draft
+  /** ADDED (0.30). Optional so drafts kept by an older Slinger (persisted tabs) stay valid: read them with `digestOf`. */
+  digest?: DigestDraft
+  /** ADDED (0.30). Optional like `digest`: read with `awsV4Of`. */
+  awsv4?: AwsV4Draft
   unsupportedType?: string
   preserved?: unknown
 }
@@ -164,6 +208,31 @@ export function emptyOAuth2(): OAuth2Draft {
   }
 }
 
+export function emptyDigest(): DigestDraft {
+  return {
+    username: '',
+    password: '',
+    realm: '',
+    nonce: '',
+    algorithm: 'MD5',
+    qop: '',
+    nonceCount: '',
+    clientNonce: '',
+    opaque: '',
+    disableRetryRequest: false,
+    entries: [],
+  }
+}
+
+export function emptyAwsV4(): AwsV4Draft {
+  return { accessKey: '', secretKey: '', region: '', service: '', sessionToken: '', addAuthDataToQuery: false, entries: [] }
+}
+
+/** The draft's Digest settings (defaults for a draft from an older Slinger that has none). */
+export const digestOf = (a: AuthDraft): DigestDraft => a.digest ?? emptyDigest()
+/** The draft's AWS Signature settings (defaults when absent). */
+export const awsV4Of = (a: AuthDraft): AwsV4Draft => a.awsv4 ?? emptyAwsV4()
+
 export function emptyAuth(): AuthDraft {
   return {
     kind: 'inherit',
@@ -171,6 +240,8 @@ export function emptyAuth(): AuthDraft {
     bearer: { token: '' },
     apiKey: { key: '', value: '', addTo: 'header' },
     oauth2: emptyOAuth2(),
+    digest: emptyDigest(),
+    awsv4: emptyAwsV4(),
   }
 }
 
@@ -338,6 +409,50 @@ export function parseOAuth2(params: unknown): OAuth2Draft {
   return out
 }
 
+/** Postman's auth parameter list (v2.1 array, or a v2.0 `{key: value}` object) as entries. */
+function authEntries(params: unknown): AuthParamEntry[] {
+  if (Array.isArray(params)) return params.filter(isObj)
+  if (isObj(params)) return Object.entries(params).map(([key, value]) => ({ key, value }))
+  return []
+}
+
+const entryValue = (entries: AuthParamEntry[], key: string): unknown => entries.find((e) => e.key === key)?.value
+const entryText = (entries: AuthParamEntry[], key: string): string => str(entryValue(entries, key))
+const entryFlag = (entries: AuthParamEntry[], key: string): boolean => {
+  const v = entryValue(entries, key)
+  return v === true || v === 'true'
+}
+
+export function parseDigest(params: unknown): DigestDraft {
+  const entries = authEntries(params)
+  return {
+    username: entryText(entries, 'username'),
+    password: entryText(entries, 'password'),
+    realm: entryText(entries, 'realm'),
+    nonce: entryText(entries, 'nonce'),
+    algorithm: entryText(entries, 'algorithm'),
+    qop: entryText(entries, 'qop'),
+    nonceCount: entryText(entries, 'nonceCount'),
+    clientNonce: entryText(entries, 'clientNonce'),
+    opaque: entryText(entries, 'opaque'),
+    disableRetryRequest: entryFlag(entries, 'disableRetryRequest'),
+    entries,
+  }
+}
+
+export function parseAwsV4(params: unknown): AwsV4Draft {
+  const entries = authEntries(params)
+  return {
+    accessKey: entryText(entries, 'accessKey'),
+    secretKey: entryText(entries, 'secretKey'),
+    region: entryText(entries, 'region'),
+    service: entryText(entries, 'service'),
+    sessionToken: entryText(entries, 'sessionToken'),
+    addAuthDataToQuery: entryFlag(entries, 'addAuthDataToQuery'),
+    entries,
+  }
+}
+
 export function parseAuth(auth: unknown): AuthDraft {
   const out = emptyAuth()
   if (!isObj(auth)) return out
@@ -368,6 +483,14 @@ export function parseAuth(auth: unknown): AuthDraft {
     case 'oauth2':
       out.kind = 'oauth2'
       out.oauth2 = parseOAuth2(auth.oauth2)
+      return out
+    case 'digest':
+      out.kind = 'digest'
+      out.digest = parseDigest(auth.digest)
+      return out
+    case 'awsv4':
+      out.kind = 'awsv4'
+      out.awsv4 = parseAwsV4(auth.awsv4)
       return out
     default:
       out.kind = 'unsupported'
@@ -529,6 +652,54 @@ export function serializeOAuth2(o: OAuth2Draft): Array<Record<string, unknown>> 
   return [...attrList(kept), ...o.extra.filter((e) => !own.has(str(e.key)))]
 }
 
+type ParamField = [key: string, value: string | boolean, always?: boolean]
+
+/**
+ * A Postman parameter list from the stored entries (order, `type` and unknown keys kept; known keys get the edited
+ * value) plus the known keys they lacked, when set (`always`: written even when empty, like basic auth's).
+ */
+function writeParams(entries: readonly AuthParamEntry[], fields: ParamField[]): AuthParamEntry[] {
+  const byKey = new Map(fields.map((f) => [f[0], f]))
+  const out = entries.map((e) => {
+    const f = byKey.get(str(e.key))
+    return f ? { ...e, value: f[1] } : e
+  })
+  const present = new Set(entries.map((e) => str(e.key)))
+  for (const [key, value, always] of fields) {
+    if (present.has(key) || (!always && (value === '' || value === false))) continue
+    out.push({ key, value, type: typeof value === 'boolean' ? 'boolean' : 'string' })
+  }
+  return out
+}
+
+/** Postman's `digest` array. */
+export function serializeDigest(d: DigestDraft): AuthParamEntry[] {
+  return writeParams(d.entries, [
+    ['algorithm', d.algorithm],
+    ['username', d.username, true],
+    ['password', d.password, true],
+    ['realm', d.realm],
+    ['nonce', d.nonce],
+    ['qop', d.qop],
+    ['nonceCount', d.nonceCount],
+    ['clientNonce', d.clientNonce],
+    ['opaque', d.opaque],
+    ['disableRetryRequest', d.disableRetryRequest],
+  ])
+}
+
+/** Postman's `awsv4` array. */
+export function serializeAwsV4(a: AwsV4Draft): AuthParamEntry[] {
+  return writeParams(a.entries, [
+    ['accessKey', a.accessKey, true],
+    ['secretKey', a.secretKey, true],
+    ['region', a.region],
+    ['service', a.service],
+    ['sessionToken', a.sessionToken],
+    ['addAuthDataToQuery', a.addAuthDataToQuery],
+  ])
+}
+
 /** Postman `auth`: null (= inherit, written as `auth: null`) or the auth object; "No auth" is `{type: 'noauth'}`. */
 export function serializeAuth(a: AuthDraft): unknown {
   switch (a.kind) {
@@ -547,6 +718,10 @@ export function serializeAuth(a: AuthDraft): unknown {
       }
     case 'oauth2':
       return { type: 'oauth2', oauth2: serializeOAuth2(a.oauth2) }
+    case 'digest':
+      return { type: 'digest', digest: serializeDigest(digestOf(a)) }
+    case 'awsv4':
+      return { type: 'awsv4', awsv4: serializeAwsV4(awsV4Of(a)) }
     case 'unsupported':
       return a.preserved ?? null
   }
@@ -638,6 +813,14 @@ function authTemplateTexts(a: AuthDraft): string[] {
   if (a.kind === 'bearer') return [a.bearer.token]
   if (a.kind === 'apiKey') return [a.apiKey.key, a.apiKey.value]
   if (a.kind === 'oauth2') return oauth2TemplateTexts(a.oauth2)
+  if (a.kind === 'digest') {
+    const d = digestOf(a)
+    return [d.username, d.password, d.realm, d.nonce, d.algorithm, d.qop, d.nonceCount, d.clientNonce, d.opaque]
+  }
+  if (a.kind === 'awsv4') {
+    const w = awsV4Of(a)
+    return [w.accessKey, w.secretKey, w.region, w.service, w.sessionToken]
+  }
   return []
 }
 
