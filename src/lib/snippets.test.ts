@@ -359,26 +359,40 @@ describe('php', () => {
 })
 
 describe('powershell', () => {
-  it('doubles single quotes including typographic ones', () => {
+  it('doubles single quotes including typographic ones, sends the raw body as UTF-8 bytes', () => {
     const out = generateSnippet('powershell', req({ method: 'POST', body: raw("it's \u2018x\u2019 $v `t \n", 'text/plain') }))
-    expect(out).toContain("$body = 'it''s \u2018\u2018x\u2019\u2019 $v `t \n'")
+    expect(out).toContain("$body = [System.Text.Encoding]::UTF8.GetBytes('it''s \u2018\u2018x\u2019\u2019 $v `t \n')")
     expect(out).toContain("-ContentType 'text/plain'")
     expect(out).toContain('-Body $body')
     expect(out).toContain("-Method 'POST'")
   })
-  it('moves Content-Type out of the headers table', () => {
-    const out = generateSnippet('powershell', req({ method: 'POST', headers: [{ key: 'X-A', value: '1' }], body: raw('{}') }))
+  it('moves Content-Type and User-Agent out of the headers table', () => {
+    const out = generateSnippet(
+      'powershell',
+      req({ method: 'POST', headers: [{ key: 'X-A', value: '1' }, { key: 'User-Agent', value: 'tool/1' }], body: raw('{}') }),
+    )
     expect(out).toContain("'X-A' = '1'")
     expect(out).not.toContain("'Content-Type' =")
+    expect(out).not.toContain("'User-Agent' =")
     expect(out).toContain("-ContentType 'application/json'")
+    expect(out).toContain("-UserAgent 'tool/1'")
   })
-  it('urlEncoded, formData, binary', () => {
+  it('works in Windows PowerShell 5.1: basic parsing, TLS 1.2 for https, errors show the answer, no -Form', () => {
+    const out = generateSnippet('powershell', req({}))
+    expect(out).toContain('Windows PowerShell 5.1 and PowerShell 7+')
+    expect(out).toContain('Invoke-WebRequest -UseBasicParsing')
+    expect(out).toContain('[Net.SecurityProtocolType]::Tls12')
+    expect(out).toContain('$_.ErrorDetails.Message')
+    expect(generateSnippet('powershell', req({ url: 'http://localhost:3000/x' }))).not.toContain('Tls12')
+  })
+  it('urlEncoded, formData (HttpClient, not -Form), binary', () => {
     const u = generateSnippet('powershell', req({ method: 'POST', body: { mode: 'urlEncoded', urlEncoded: [{ key: 'a', value: 'b c', enabled: true }] } }))
     expect(u).toContain("[uri]::EscapeDataString('a') + '=' + [uri]::EscapeDataString('b c')")
     const f = generateSnippet(
       'powershell',
       req({
         method: 'POST',
+        headers: [{ key: 'X-A', value: '1' }],
         body: {
           mode: 'formData',
           formData: [
@@ -388,9 +402,13 @@ describe('powershell', () => {
         },
       }),
     )
-    expect(f).toContain("'t' = 'v'")
-    expect(f).toContain("'f' = Get-Item -LiteralPath 'C:\\a b\\x.png'")
-    expect(f).toContain('-Form $form')
+    expect(f).not.toContain('-Form')
+    expect(f).toContain('System.Net.Http.MultipartFormDataContent')
+    expect(f).toContain("$form.Add((New-Object System.Net.Http.StringContent -ArgumentList 'v'), 't')")
+    expect(f).toContain("$file1 = [System.IO.File]::OpenRead('C:\\a b\\x.png')")
+    expect(f).toContain("$form.Add((New-Object System.Net.Http.StreamContent -ArgumentList $file1), 'f', 'x.png')")
+    expect(f).toContain("[void]$request.Headers.TryAddWithoutValidation('X-A', '1')")
+    expect(f).toContain('$file1.Dispose()')
     const b = generateSnippet('powershell', req({ method: 'POST', body: { mode: 'binary', binaryFilePath: '/x' } }))
     expect(b).toContain("-InFile '/x'")
   })

@@ -437,21 +437,40 @@ function php(p: Prepared): string {
   ].join('\n')
 }
 
+/**
+ * PowerShell that runs in Windows PowerShell 5.1 (the one built into Windows) as well as PowerShell 7+:
+ * - `-UseBasicParsing`: 5.1 otherwise parses the page with Internet Explorer's engine, which fails where IE was never set up;
+ * - TLS 1.2 enabled for https (5.1 on older .NET offers only TLS 1.0/1.1 by default);
+ * - a raw body as UTF-8 bytes (5.1 sends a string body as ISO-8859-1);
+ * - User-Agent through `-UserAgent` (5.1 refuses it in `-Headers`);
+ * - multipart through .NET's HttpClient (`-Form` only exists in PowerShell 7);
+ * - 4xx/5xx throw in both versions: the catch block prints the server's status and answer.
+ */
 function powershell(p: Prepared): string {
-  const lines: string[] = []
+  const lines: string[] = ['# Works in Windows PowerShell 5.1 and PowerShell 7+.']
+  if (/^https:/i.test(p.url)) {
+    lines.push('[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12')
+  }
+  lines.push('')
+  const b = p.body
+  if (b.kind === 'formData') return powershellMultipart(p, b.fields, lines)
+
   let contentType: string | null = null
+  let userAgent: string | null = null
   const headers: Pair[] = []
   for (const h of collapseHeaders(p.headers)) {
-    if (h[0].toLowerCase() === 'content-type') contentType = h[1]
+    const name = h[0].toLowerCase()
+    if (name === 'content-type') contentType = h[1]
+    else if (name === 'user-agent') userAgent = h[1]
     else headers.push(h)
   }
   if (headers.length) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
-  const b = p.body
-  const args = [`-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
+  const args = ['-UseBasicParsing', `-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
   if (headers.length) args.push('-Headers $headers')
   if (contentType !== null) args.push(`-ContentType ${psStr(contentType)}`)
+  if (userAgent !== null) args.push(`-UserAgent ${psStr(userAgent)}`)
   if (b.kind === 'raw') {
-    lines.push(`$body = ${psStr(b.content)}`, '')
+    lines.push(`$body = [System.Text.Encoding]::UTF8.GetBytes(${psStr(b.content)})`, '')
     args.push('-Body $body')
   } else if (b.kind === 'urlEncoded') {
     lines.push(
@@ -459,19 +478,64 @@ function powershell(p: Prepared): string {
       '',
     )
     args.push('-Body $body')
-  } else if (b.kind === 'formData') {
-    lines.push(
-      '# -Form requires PowerShell 7+',
-      '$form = @{',
-      ...b.fields.map((f) => `    ${psStr(f.key)} = ${f.file ? `Get-Item -LiteralPath ${psStr(f.value)}` : psStr(f.value)}`),
-      '}',
-      '',
-    )
-    args.push('-Form $form')
   } else if (b.kind === 'binary') {
     args.push(`-InFile ${psStr(b.path)}`)
   }
-  lines.push(`$response = Invoke-WebRequest ${args.join(' ')}`, '$response.StatusCode', '$response.Content', '')
+  lines.push(
+    'try {',
+    `    $response = Invoke-WebRequest ${args.join(' ')}`,
+    '    $response.StatusCode',
+    '    $response.Content',
+    '} catch {',
+    '    # A 4xx/5xx answer throws: show its status and body.',
+    '    if (-not $_.Exception.Response) { throw }',
+    '    [int]$_.Exception.Response.StatusCode',
+    '    $_.ErrorDetails.Message',
+    '}',
+    '',
+  )
+  return lines.join('\n')
+}
+
+/** Multipart through .NET's HttpClient, which both Windows PowerShell 5.1 and PowerShell 7 have. */
+function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formData' }>['fields'], lines: string[]): string {
+  lines.push(
+    'Add-Type -AssemblyName System.Net.Http',
+    '$client = New-Object System.Net.Http.HttpClient',
+    `$request = New-Object System.Net.Http.HttpRequestMessage -ArgumentList (New-Object System.Net.Http.HttpMethod -ArgumentList ${psStr(p.method)}), ${psStr(p.url)}`,
+  )
+  // The form sets its own Content-Type (with the boundary); every other header goes on the request.
+  for (const [k, v] of collapseHeaders(p.headers)) {
+    if (k.toLowerCase() !== 'content-type') lines.push(`[void]$request.Headers.TryAddWithoutValidation(${psStr(k)}, ${psStr(v)})`)
+  }
+  lines.push('$form = New-Object System.Net.Http.MultipartFormDataContent')
+  const files: string[] = []
+  for (const f of fields) {
+    if (f.file) {
+      const name = `$file${files.length + 1}`
+      files.push(name)
+      const fileName = f.value.split(/[\\/]/).pop() || 'file'
+      lines.push(
+        `${name} = [System.IO.File]::OpenRead(${psStr(f.value)})`,
+        `$form.Add((New-Object System.Net.Http.StreamContent -ArgumentList ${name}), ${psStr(f.key)}, ${psStr(fileName)})`,
+      )
+    } else {
+      lines.push(`$form.Add((New-Object System.Net.Http.StringContent -ArgumentList ${psStr(f.value)}), ${psStr(f.key)})`)
+    }
+  }
+  lines.push(
+    '$request.Content = $form',
+    '',
+    'try {',
+    '    $response = $client.SendAsync($request).GetAwaiter().GetResult()',
+    '    [int]$response.StatusCode',
+    '    $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()',
+    '} finally {',
+    ...files.map((f) => `    ${f}.Dispose()`),
+    '    $client.Dispose()',
+    '}',
+    '',
+  )
   return lines.join('\n')
 }
 
