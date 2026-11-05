@@ -23,6 +23,10 @@ export function autoHeaders(d: RequestDraft): AutoHeader[] {
     else if (d.auth.kind === 'bearer') out.push({ key: 'Authorization', value: 'Bearer <token>', source: 'Authorization tab' })
     else if (d.auth.kind === 'oauth2' && d.auth.oauth2.addTokenTo === 'header')
       out.push({ key: 'Authorization', value: `${d.auth.oauth2.headerPrefix.trim() ? `${d.auth.oauth2.headerPrefix.trim()} ` : ''}<access token>`, source: 'Authorization tab (OAuth 2.0)' })
+    else if (d.auth.kind === 'digest')
+      out.push({ key: 'Authorization', value: 'Digest <answer to the server\'s challenge>', source: 'Authorization tab (Digest)' })
+    else if (d.auth.kind === 'awsv4')
+      out.push({ key: 'Authorization', value: 'AWS4-HMAC-SHA256 <signature>', source: 'Authorization tab (AWS Signature)' })
     else if (d.auth.kind === 'apiKey' && d.auth.apiKey.addTo === 'header' && d.auth.apiKey.key)
       out.push({ key: d.auth.apiKey.key, value: '<value>', source: 'Authorization tab' })
   }

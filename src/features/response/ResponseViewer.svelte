@@ -164,7 +164,7 @@
     {:else if effectiveView === 'console' && scripts}
       <ConsoleView entries={scripts.console} onclear={onclearconsole} />
     {:else if effectiveView === 'headers'}
-      <HeadersTable headers={data.headers} redirects={data.redirects ?? []} />
+      <HeadersTable headers={data.headers} redirects={data.redirects ?? []} authNote={data.authNote ?? null} />
     {:else if effectiveView === 'cookies'}
       <CookiesTable headers={data.headers} />
     {:else if data.bodyTooLarge || data.savedToFile}

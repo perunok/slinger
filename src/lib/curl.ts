@@ -7,12 +7,13 @@
  *
  * Mapped: method (-X, -I, -G, -T), URL (first argument or --url; no scheme means http://, like curl), headers (-H, -A, -e,
  * -b with cookies), body (-d / --data-* / --json joined with &, -F / --form-string as form data, -T / --data-binary @file as
- * a binary file), basic auth (-u), bearer auth (--oauth2-bearer) and the timeout (-m). Options that do not change the
+ * a binary file), basic auth (-u), Digest auth (--digest -u), AWS Signature (--aws-sigv4 -u, x-amz-security-token header as
+ * the session token), bearer auth (--oauth2-bearer) and the timeout (-m). Options that do not change the
  * request (-s, -L, --compressed, -v, ...) are skipped silently; anything else ignored is listed in `warnings`.
  * Shell variables outside single quotes (`$API_KEY`, `${TOKEN}`) become Slinger variables (`{{API_KEY}}`), so a command
  * from API docs works with an environment. Other commands in the text (`export X=1;`, `| jq`) are skipped.
  */
-import { emptyAuth, emptyBody, newDraft, type BodyDraft, type RawLanguage, type RequestDraft } from './request'
+import { emptyAuth, emptyAwsV4, emptyBody, emptyDigest, newDraft, type BodyDraft, type RawLanguage, type RequestDraft } from './request'
 import { ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { mergeParamsFromUrl } from './urlParams'
 
@@ -21,7 +22,11 @@ export interface ParsedCurl {
   url: string
   headers: Array<{ key: string; value: string }>
   body: BodyDraft
-  auth: { kind: 'basic'; username: string; password: string } | { kind: 'bearer'; token: string } | null
+  auth:
+    | { kind: 'basic' | 'digest'; username: string; password: string }
+    | { kind: 'bearer'; token: string }
+    | { kind: 'awsv4'; accessKey: string; secretKey: string; region: string; service: string; sessionToken: string }
+    | null
   timeoutMs: number | null
   /** Options that were not imported, in words. */
   warnings: string[]
@@ -299,6 +304,8 @@ function parseOne(words: string[]): ParsedCurl | string {
   const form: KvRow[] = []
   let auth: ParsedCurl['auth'] = null
   let timeoutMs: number | null = null
+  let digest = false
+  let awsSigV4: string | null = null
 
   for (const [raw, value] of parsed.opts) {
     const name = LONG[raw] ?? raw
@@ -373,6 +380,15 @@ function parseOne(words: string[]): ParsedCurl | string {
       case 'oauth2-bearer':
         auth = { kind: 'bearer', token: v }
         break
+      case 'digest':
+        digest = true
+        break
+      case 'basic':
+        digest = false
+        break
+      case 'aws-sigv4':
+        awsSigV4 = v
+        break
       case 'head':
         head = true
         break
@@ -394,6 +410,16 @@ function parseOne(words: string[]): ParsedCurl | string {
         if (!QUIET.has(raw) && !QUIET.has(name)) warnings.push(`${raw.length === 1 ? '-' : '--'}${raw} was ignored.`)
     }
   }
+
+  // --digest / --aws-sigv4 change what -u means.
+  if (auth?.kind === 'basic' && awsSigV4 !== null) {
+    // aws:amz:<region>:<service> (curl derives missing parts from the host name; Slinger's defaults apply then).
+    const [, , region = '', service = ''] = awsSigV4.split(':')
+    const tokenHeader = headers.findIndex((h) => h.key.toLowerCase() === 'x-amz-security-token')
+    const sessionToken = tokenHeader >= 0 ? headers.splice(tokenHeader, 1)[0]!.value : ''
+    auth = { kind: 'awsv4', accessKey: auth.username, secretKey: auth.password, region, service, sessionToken }
+  } else if (auth?.kind === 'basic' && digest) auth = { ...auth, kind: 'digest' }
+  else if (awsSigV4 !== null) warnings.push('--aws-sigv4 without -u (credentials) was not imported.')
 
   url ??= parsed.args[0] ?? null
   if (!url) return 'No URL found.'
@@ -520,6 +546,11 @@ export function curlToDraft(p: ParsedCurl, name = curlRequestName(p)): RequestDr
     timeoutMs: p.timeoutMs,
   })
   if (p.auth?.kind === 'basic') draft.auth = { ...emptyAuth(), kind: 'basic', basic: { username: p.auth.username, password: p.auth.password } }
+  else if (p.auth?.kind === 'digest') draft.auth = { ...emptyAuth(), kind: 'digest', digest: { ...emptyDigest(), username: p.auth.username, password: p.auth.password } }
+  else if (p.auth?.kind === 'awsv4') {
+    const { accessKey, secretKey, region, service, sessionToken } = p.auth
+    draft.auth = { ...emptyAuth(), kind: 'awsv4', awsv4: { ...emptyAwsV4(), accessKey, secretKey, region, service, sessionToken } }
+  }
   else if (p.auth?.kind === 'bearer') draft.auth = { ...emptyAuth(), kind: 'bearer', bearer: { token: p.auth.token } }
   return draft
 }

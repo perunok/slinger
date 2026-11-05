@@ -32,7 +32,7 @@ import {
 } from '../../lib/examples'
 import { dataRows, newRow, type KvRow } from '../../lib/kv'
 import { MCP_METHOD } from '../../lib/mcpRequest'
-import { emptyBody, newDraft, parseDocument, serializeDraft, type RawLanguage, type RequestDraft } from '../../lib/request'
+import { awsV4Of, digestOf, emptyBody, newDraft, parseDocument, serializeDraft, type RawLanguage, type RequestDraft } from '../../lib/request'
 import { editorCode, withScript } from '../../lib/scripts'
 import { compareSemver, parseSemver, sortVersionsDesc, suggestBumps, validateVersion } from '../../lib/semver'
 import { diffSnapshots, folderPath as snapshotFolderPath, snapshotFromCollection } from '../../lib/versionDiff'
@@ -244,6 +244,28 @@ function authOut(d: RequestDraft, chain?: AuthChain | null): Data {
       return { type: 'bearer', token: masked(a.bearer.token) }
     case 'apiKey':
       return { type: 'apikey', key: a.apiKey.key, value: masked(a.apiKey.value), in: a.apiKey.addTo }
+    case 'digest': {
+      const g = digestOf(a)
+      return {
+        type: 'digest',
+        username: g.username,
+        password: masked(g.password),
+        ...(g.realm ? { realm: g.realm } : {}),
+        ...(g.algorithm ? { algorithm: g.algorithm } : {}),
+        ...(g.qop ? { qop: g.qop } : {}),
+      }
+    }
+    case 'awsv4': {
+      const w = awsV4Of(a)
+      return {
+        type: 'awsv4',
+        access_key: w.accessKey,
+        secret_key: masked(w.secretKey),
+        region: w.region,
+        service: w.service,
+        ...(w.sessionToken ? { session_token: masked(w.sessionToken) } : {}),
+      }
+    }
     case 'oauth2':
       return {
         type: 'oauth2 (edit it in the Slinger window)',
@@ -390,6 +412,21 @@ function applyFields(d: RequestDraft, f: RequestFields): RequestDraft {
     } else if (t === 'bearer') {
       a.kind = 'bearer'
       a.bearer = { token: f.auth.token ?? a.bearer.token }
+    } else if (t === 'digest') {
+      const g = digestOf(a)
+      a.kind = 'digest'
+      a.digest = { ...g, username: f.auth.username ?? g.username, password: f.auth.password ?? g.password }
+    } else if (t === 'awsv4') {
+      const w = awsV4Of(a)
+      a.kind = 'awsv4'
+      a.awsv4 = {
+        ...w,
+        accessKey: f.auth.access_key ?? w.accessKey,
+        secretKey: f.auth.secret_key ?? w.secretKey,
+        region: f.auth.region ?? w.region,
+        service: f.auth.service ?? w.service,
+        sessionToken: f.auth.session_token ?? w.sessionToken,
+      }
     } else {
       a.kind = 'apiKey'
       a.apiKey = { key: f.auth.key ?? a.apiKey.key, value: f.auth.value ?? a.apiKey.value, addTo: f.auth.in ?? a.apiKey.addTo }

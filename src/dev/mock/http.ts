@@ -126,6 +126,9 @@ async function perform(
   const jarUrl = withJarCookies(s, input, built)
   const store = (data: HttpResponseData) => {
     if (s && jarUrl) mockStoreCookies(s, input.workspaceId, jarUrl, data.headers.filter((h) => h.key.toLowerCase() === 'set-cookie').map((h) => h.value))
+    // Like main's note for auth applied per hop (requestBuilder.ts only fakes these headers).
+    if (input.auth.kind === 'digest') return { ...data, authNote: 'Digest (browser mock: the answer is not computed)' }
+    if (input.auth.kind === 'awsv4') return { ...data, authNote: 'AWS Signature Version 4 (browser mock: the signature is not computed)' }
     return data
   }
   const started = performance.now()

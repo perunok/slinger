@@ -196,6 +196,15 @@ describe('pm.sendRequest: forms and the response API', () => {
     expect(gql.headers['content-type']).toBe('application/json')
   })
 
+  it('awsv4 auth (0.30) is signed in main like a request send', async () => {
+    const r = await runIt(`
+      pm.sendRequest({ url: '{{baseUrl}}/signed', auth: { type: 'awsv4', awsv4: [{ key: 'accessKey', value: 'AKID' }, { key: 'secretKey', value: 'SK' }, { key: 'region', value: 'eu-west-1' }, { key: 'service', value: 's3' }] } }, () => {})
+    `)
+    expect(r.errors).toEqual([])
+    const signed = server.seen.find((s) => s.url === '/signed')!
+    expect(signed.headers.authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKID\/\d{8}\/eu-west-1\/s3\/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/)
+  })
+
   it('4xx/5xx are responses, not errors; a network failure calls back with an Error and rejects the promise', async () => {
     const port = await closedPort()
     const r = await runIt(`

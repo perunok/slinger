@@ -91,6 +91,49 @@ describe('inherited auth', () => {
   })
 })
 
+describe('Digest and AWS Signature auth (0.30)', () => {
+  it('creates, reads and edits them; password, secret key and session token never come back', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', {
+      collection_id: demo.id,
+      name: 'Digest',
+      method: 'GET',
+      url: 'https://x/digest',
+      auth: { type: 'digest', username: 'alice', password: 'pw_literal_1' },
+    })
+    expect(created.auth).toEqual({ type: 'digest', username: 'alice', password: '•••• (set, hidden)', algorithm: 'MD5' })
+    const { updated } = await call('update_request', {
+      request_id: created.id,
+      auth: { type: 'awsv4', access_key: 'AKIAEXAMPLE', secret_key: 'aws_secret_literal', region: 'eu-west-1', service: 's3', session_token: 'tok_literal' },
+    })
+    expect(updated.auth).toEqual({
+      type: 'awsv4',
+      access_key: 'AKIAEXAMPLE',
+      secret_key: '•••• (set, hidden)',
+      region: 'eu-west-1',
+      service: 's3',
+      session_token: '•••• (set, hidden)',
+    })
+    const got = JSON.stringify(await call('get_request', { request_id: created.id }))
+    for (const secret of ['pw_literal_1', 'aws_secret_literal', 'tok_literal']) expect(got).not.toContain(secret)
+    // {{variables}} stay visible; the stored document is Postman's awsv4 array
+    const again = await call('update_request', { request_id: created.id, auth: { type: 'awsv4', secret_key: '{{awsSecret}}' } })
+    expect(again.updated.auth.secret_key).toBe('{{awsSecret}}')
+    expect(JSON.parse(app.requestById(created.id)!.documentJson).auth.type).toBe('awsv4')
+  })
+
+  it('an inherited Digest auth is shown masked', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    await window.slinger.setCollectionAuth(demo.id, JSON.stringify({ type: 'digest', digest: [{ key: 'username', value: 'u' }, { key: 'password', value: 'container_pw' }] }))
+    await app.reloadCollections()
+    const { created } = await call('create_request', { collection_id: demo.id, name: 'Inherits digest', method: 'GET', url: 'https://x', auth: { type: 'inherit' } })
+    const got = await call('get_request', { request_id: created.id })
+    expect(got.auth.effective).toEqual({ type: 'digest', username: 'u', password: '•••• (set, hidden)' })
+    expect(JSON.stringify(got)).not.toContain('container_pw')
+    expect((await call('get_tree', { collection_id: demo.id })).collections[0].auth).toBe('digest')
+  })
+})
+
 describe('editing requests', () => {
   it('creates a request with headers, query, JSON body, auth and scripts; the window shows it; literal secrets are masked', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!

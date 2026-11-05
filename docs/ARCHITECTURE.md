@@ -355,7 +355,9 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    `auth.oauth2.tokenKey`, as `Authorization: <prefix> <token>` or the `access_token` query parameter; missing or expired
    token = `invalid_input`); builds the body for `raw`, `urlEncoded`,
    `formData` (files read from absolute paths), `binary`; fills a default `Content-Type` only when not set; rejects a body on
-   GET/HEAD.
+   GET/HEAD. Digest and AWS Signature (0.30) set nothing here: they are applied per hop in step 4 (`BuiltRequest.hopAuth`),
+   and their body is serialised once to bytes (a form through `new Response(form)`, which also gives its multipart
+   `Content-Type`), so what is hashed is exactly what is sent, also when a hop is sent again.
 4. **Main, send.** undici's own `fetch` (the `undici` dependency, bundled into app.cjs; not Node's global fetch) with
    `redirect: 'manual'` and, per hop, the dispatcher `NetworkRouter.route(url, {strictSSL})` returns (see
    [Network settings](#network-settings); without a router, as for `cloudFetch`: direct, verified). An abort signal covers the
@@ -375,6 +377,25 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    [Cookie jar](#cookie-jar)); `pm.sendRequest` does too unless the run has `denySecrets`. Before every hop the jar's `Cookie`
    value is merged with the request's own (`shared/cookies.ts` `mergeCookieHeader`, the request wins per name), after every
    hop that hop's `Set-Cookie` values are stored against that hop's URL; a failing jar only logs.
+   **Per-hop auth (0.30)**, applied to the hop's final headers (after the jar's Cookie) while the hop keeps auth (a hop to
+   another origin turns it off unless `followAuthorizationHeader`, like the Authorization header):
+   *Digest* (`services/digestAuth.ts`, `DigestSession`, RFC 7616 / 2617): a `401` whose `WWW-Authenticate` has a Digest
+   challenge with a supported algorithm (MD5, SHA-256, SHA-512-256, each also `-sess`) is answered by sending the same hop
+   again (the 401's body is discarded, its Set-Cookie stored first): qop `auth` (preferred) or `auth-int` (hash of the hop's
+   body bytes) or none (RFC 2069), `nc`/`cnonce`, `opaque`, `userhash`, `username*` for non-ASCII names; once per hop, once
+   more when the new challenge says `stale=true`. `uri` is the hop's path and query; later hops (same origin) reuse the
+   nonce with the next `nc`, and a 401 there is answered against that hop's URI. With realm and nonce in the input (Postman
+   stores the last challenge's), the first request carries the header already; `disableRetryRequest` turns answering off.
+   *AWS Signature Version 4* (`services/awsSigV4.ts`, node:crypto, no SDK): every hop is signed right before it is sent:
+   any Authorization / X-Amz-Date / X-Amz-Security-Token / X-Amz-Content-Sha256 the request set is replaced; `X-Amz-Date`,
+   `X-Amz-Security-Token` (session token) and, for S3 only, `X-Amz-Content-Sha256` (SHA-256 of the body) are added; every
+   header is signed except the `aws4` library's unsigned list (authorization, connection, user-agent, expect, range,
+   x-amzn-trace-id, presigned-expires), plus `host`. Canonical URI: S3 encodes the decoded key once and keeps the path;
+   other services remove dot segments and URI-encode the wire path again (double encoding). Empty region / service are
+   `us-east-1` / `execute-api` (Postman's defaults); Postman's `addAuthDataToQuery` (presigned query) is not implemented and
+   `prepare.ts` warns. Tests: the official SigV4 test suite vectors (`electron/__tests__/awsSigV4.test.ts`) and a server that
+   implements RFC 7616 (`digestAuth.test.ts`). The response gets `authNote` (what was done, never a credential), shown in its
+   Headers tab. MCP requests refuse both (`prepareMcp`): the MCP transport has no per-exchange hook.
    **Errors** (`network.describeSendError`): TLS failures name the problem (self-signed, unknown authority, expired, not valid
    for the host name, client certificate refused or unusable) and point to the request's SSL setting and Settings > Network
    (`details.tls` = the OpenSSL / Node code); with a proxy, a refused tunnel / 407 (`details.proxyStatus`) or an unreachable
@@ -1639,8 +1660,9 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
-Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
+Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (NTLM, Hawk, OAuth 1.0,
+JWT bearer, Akamai EdgeGrid, ...), AWS Signature in the query string (Postman's `addAuthDataToQuery`), Digest and AWS
+Signature for MCP requests, `require` of Node modules or `postman-collection` in scripts,
 loading remote images in docs, syncing or exporting workflows, realtime collaboration, MCP resources/prompts (the MCP server has
 tools only) and editing OAuth 2.0 settings over MCP, plugin system, protocols other than HTTP and MCP (no WebSocket, GraphQL or
 gRPC), code signing and automatic installation of updates (Slinger only notifies about a new release, see

@@ -239,3 +239,59 @@ describe('OAuth 2.0 requests', () => {
     expect(JSON.stringify(env.core.db.prepare('SELECT document_json FROM requests WHERE deleted = 0').all())).not.toContain('POSTMAN-EMBEDDED')
   })
 })
+
+describe('Digest and AWS Signature auth (0.30)', () => {
+  /** As the Postman app exports them: collection Digest, folder AWS Signature, a request with its own Digest settings. */
+  const DIGEST = {
+    type: 'digest',
+    digest: [
+      { key: 'realm', value: 'testrealm@host.com', type: 'string' },
+      { key: 'disableRetryRequest', value: false, type: 'boolean' },
+      { key: 'algorithm', value: 'SHA-256', type: 'string' },
+      { key: 'password', value: '{{digestPassword}}', type: 'string' },
+      { key: 'username', value: 'Mufasa', type: 'string' },
+    ],
+  }
+  const AWS = {
+    type: 'awsv4',
+    awsv4: [
+      { key: 'sessionToken', value: '{{awsSession}}', type: 'string' },
+      { key: 'service', value: 's3', type: 'string' },
+      { key: 'region', value: 'eu-central-1', type: 'string' },
+      { key: 'secretKey', value: '{{awsSecret}}', type: 'string' },
+      { key: 'accessKey', value: 'AKIAIOSFODNN7EXAMPLE', type: 'string' },
+    ],
+  }
+  const OWN = { type: 'digest', digest: [{ key: 'username', value: 'own', type: 'string' }, { key: 'password', value: 'pw', type: 'string' }] }
+  const COLLECTION = {
+    info: { name: 'Signed API', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+    auth: DIGEST,
+    item: [
+      { name: 'S3', auth: AWS, item: [{ name: 'Get object', request: { method: 'GET', header: [], url: 'https://b.s3.amazonaws.com/k' } }] },
+      { name: 'Own digest', request: { method: 'GET', header: [], url: 'https://api.example.com/x', auth: OWN } },
+    ],
+  }
+
+  it('import keeps every parameter; the export is identical, validates and loads in the SDK with the same auth', async () => {
+    const imported = await env.api.importPostmanCollection(wsId, JSON.stringify(COLLECTION))
+    expect(JSON.parse(imported.collection.authJson!)).toEqual(DIGEST)
+    expect(JSON.parse(imported.folders[0]!.authJson!)).toEqual(AWS)
+    const file = JSON.parse(JSON.stringify(await exportCollection(env, imported.collection.id))) as PostmanCollectionV21
+    expectValidV21(file)
+    expect(file.auth).toEqual(DIGEST)
+    const folder = file.item.find((i) => i.name === 'S3')!
+    expect(folder.auth).toEqual(AWS)
+    expect(file.item.find((i) => i.name === 'Own digest')!.request!.auth).toEqual(OWN)
+    expect(folder.item![0]!.request!.auth).toBeUndefined() // inherits, as in the original
+
+    const c = new sdk.Collection(file)
+    type SdkAuth = { type: string; parameters(): { get(k: string): unknown } }
+    const items: Array<SdkItem & { getAuth(): SdkAuth | undefined }> = []
+    c.forEachItem((i) => items.push(i as never))
+    const byName = new Map(items.map((i) => [i.name, i.getAuth()!]))
+    expect(byName.get('Get object')!.type).toBe('awsv4')
+    expect(byName.get('Get object')!.parameters().get('service')).toBe('s3')
+    expect(byName.get('Own digest')!.type).toBe('digest')
+    expect(byName.get('Own digest')!.parameters().get('username')).toBe('own')
+  })
+})

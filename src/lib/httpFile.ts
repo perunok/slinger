@@ -10,7 +10,7 @@ import type { ApiFolder, ApiRequest, FormDataField, HttpRequestInput, ResolvedAu
 import { dataRows } from './kv'
 import { normalizeUrl } from './prepare'
 import { applyPathVariables } from './pathVariables'
-import { parseDocument, rawContentType, type RequestDraft } from './request'
+import { awsV4Of, digestOf, parseDocument, rawContentType, type RequestDraft } from './request'
 import { generateSnippet, HTTP_OAUTH2_TOKEN_VARIABLE } from './snippets'
 import type { TemplateScope } from './template'
 import { buildTree, type TreeNode } from './tree'
@@ -43,6 +43,14 @@ export function unresolvedInput(draft: RequestDraft, name = draft.name): HttpReq
   } else if (a.kind === 'apiKey' && a.apiKey.key.trim()) {
     auth.kind = 'apiKey'
     auth.apiKey = { key: a.apiKey.key.trim(), value: a.apiKey.value, addTo: a.apiKey.addTo }
+  } else if (a.kind === 'digest') {
+    const d = digestOf(a)
+    auth.kind = 'digest'
+    auth.digest = { username: d.username, password: d.password }
+  } else if (a.kind === 'awsv4') {
+    const w = awsV4Of(a)
+    auth.kind = 'awsv4'
+    auth.awsv4 = { accessKey: w.accessKey, secretKey: w.secretKey, region: w.region, service: w.service, sessionToken: w.sessionToken }
   } else if (a.kind === 'oauth2') {
     auth.kind = 'oauth2'
     auth.oauth2 = { tokenKey: '', addTo: a.oauth2.addTokenTo === 'queryParams' ? 'query' : 'header', headerPrefix: a.oauth2.headerPrefix.trim() }

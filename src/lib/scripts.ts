@@ -222,6 +222,8 @@ const CREDENTIAL_PARAMS: Record<string, ReadonlySet<string>> = {
   bearer: new Set(['token']),
   apikey: new Set(['value']),
   oauth2: new Set(['clientSecret', 'password', 'code_verifier']),
+  digest: new Set(['password']),
+  awsv4: new Set(['secretKey', 'sessionToken']),
 }
 const PURE_TEMPLATE = /^\s*\{\{[^{}]+\}\}\s*$/
 

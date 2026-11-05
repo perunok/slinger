@@ -135,8 +135,9 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
   a body.
 - **Authorization:** **Inherit auth from parent** (the default for new requests), No Auth, Basic Auth, Bearer Token, API Key
-  (added to a header or as a query parameter) or [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman
-  requests with other auth types (for example Digest or AWS Signature) are sent without authorization and a warning says so.
+  (added to a header or as a query parameter), [Digest Auth](#digest-auth), [AWS Signature](#aws-signature) or
+  [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`; keep passwords and keys in secret variables. Imported Postman
+  requests with other auth types (for example Hawk or NTLM) are sent without authorization and a warning says so.
   See [Collection and folder authorization](#collection-and-folder-authorization) for inheriting.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
@@ -164,6 +165,32 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
   export folder (Downloads unless you chose another one in an export dialog).
+
+### Digest auth
+
+**Digest Auth** needs only a **Username** and **Password**. Slinger sends the request; when the server answers `401` with a
+`WWW-Authenticate: Digest` challenge, it computes the answer and sends the request once more (MD5, SHA-256 or SHA-512-256,
+each also as `-sess`; qop `auth` or `auth-int`, which hashes the body exactly as sent). A challenge marked *stale* (the
+server's nonce expired) is answered once more; a wrong password ends with the server's `401`. Redirects work: each hop is
+authenticated for its own address, and a redirect to another site drops the authorization unless *Keep the Authorization
+header on redirects to another site* is on. The response's **Headers** tab notes that Digest was used.
+
+**Advanced** holds what Postman stores: realm, nonce, algorithm, qop, nonce count, client nonce and opaque. With a realm and
+a nonce the first request already carries the Authorization header. **Do not answer the challenge automatically**
+(Postman's *Disable retrying the request*) sends the request only once.
+
+### AWS Signature
+
+**AWS Signature** signs the request with AWS Signature Version 4: **Access key**, **Secret key**, **AWS region** (empty =
+`us-east-1`), **Service name** (for example `s3`, `execute-api`, `sts`; empty = `execute-api`) and **Session token** (only for
+temporary credentials). The request is signed right before it is sent, after all headers and the body are final, and signed
+again for every redirect that keeps the authorization. Slinger adds `Authorization`, `X-Amz-Date`, `X-Amz-Security-Token`
+(with a session token) and, for S3, `X-Amz-Content-Sha256`. Postman's option to put the signature into the query string is
+kept in the request but not applied: the signature goes into the Authorization header.
+
+Digest and AWS Signature cannot be used for MCP requests. In code snippets, cURL uses `--digest` / `--aws-sigv4`, Python
+`HTTPDigestAuth` / `requests-aws4auth`, PHP `CURLAUTH_DIGEST`, PowerShell `-Credential` (Digest) and the `.http` file
+`Authorization: Digest user password`; the other languages say in a comment that the auth has to be computed.
 
 ### Path variables
 
@@ -772,7 +799,7 @@ pm.sendRequest({
   object `{ name: value }` or `"Name: value"` lines; `disabled` entries are skipped), `body` with `mode` `raw` (`raw`, and
   `options.raw.language` `json`/`xml`/`html`/`javascript`/`text` sets the Content-Type unless you set one), `urlencoded`
   (`[{ key, value }]`), `formdata` (`[{ key, value }]`, or `{ key, type: 'file', src: '/path' }`), `file` (`{ src }`) or
-  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic` or `apikey`, in Postman's format; `oauth2` is refused because
+  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic`, `apikey`, `digest` or `awsv4`, in Postman's format; `oauth2` is refused because
   scripts never get OAuth 2.0 tokens), and `timeout` in ms.
 - **Response.** `res.code`, `res.status` (reason text), `res.headers.get/has/toObject/each`, `res.text()`, `res.json()`,
   `res.responseTime`, `res.responseSize`, `res.cookies.get/has/toObject`, and the same `pm.expect(res).to.have.status(200)`
@@ -1080,7 +1107,9 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
     `$'…'` quotes, `-sSL`, `-XPOST`, `--header=…`). Other commands in the text, such as `export TOKEN=…;` or `| jq`, are skipped.
   - `-X`, `-H`, `-A` (User-Agent), `-e` (Referer), `-b` (cookies), `-d` / `--data-raw` / `--data-binary` / `--data-urlencode`
     (several joined with `&`), `--json`, `-F` / `--form-string` (form data; `@file` fields become file fields), `-T` (file
-    body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth), `--oauth2-bearer` (Bearer auth) and `-m` (timeout).
+    body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth; Digest with `--digest`; AWS Signature with
+    `--aws-sigv4 aws:amz:<region>:<service>`, an `x-amz-security-token` header becoming the session token), `--oauth2-bearer`
+    (Bearer auth) and `-m` (timeout).
     A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `-L`, `--compressed`, `-k`,
     `-v`, ...) are skipped silently.
   - Data without a `Content-Type` is url-encoded form data, as curl sends it; JSON data without one becomes a JSON body (the

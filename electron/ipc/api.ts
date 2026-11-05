@@ -124,7 +124,7 @@ const httpRequestInput = z.object({
   url: z.string().max(100_000),
   headers: z.array(requestHeader).max(500),
   auth: z.object({
-    kind: z.enum(['none', 'basic', 'bearer', 'apiKey', 'oauth2']),
+    kind: z.enum(['none', 'basic', 'bearer', 'apiKey', 'oauth2', 'digest', 'awsv4']),
     basic: z.object({ username: z.string().max(65_536), password: z.string().max(65_536) }).optional(),
     bearer: z.object({ token: z.string().max(65_536) }).optional(),
     apiKey: z
@@ -132,6 +132,29 @@ const httpRequestInput = z.object({
       .optional(),
     oauth2: z
       .object({ tokenKey: z.string().regex(/^[0-9a-f]{64}$/), addTo: z.enum(['header', 'query']), headerPrefix: z.string().max(256) })
+      .optional(),
+    digest: z
+      .object({
+        username: z.string().max(65_536),
+        password: z.string().max(65_536),
+        realm: z.string().max(8192).optional(),
+        nonce: z.string().max(8192).optional(),
+        algorithm: z.string().max(64).optional(),
+        qop: z.string().max(64).optional(),
+        nonceCount: z.string().max(16).optional(),
+        clientNonce: z.string().max(1024).optional(),
+        opaque: z.string().max(8192).optional(),
+        disableRetryRequest: z.boolean().optional(),
+      })
+      .optional(),
+    awsv4: z
+      .object({
+        accessKey: z.string().max(1024),
+        secretKey: z.string().max(4096),
+        region: z.string().max(128),
+        service: z.string().max(128),
+        sessionToken: z.string().max(65_536).optional(),
+      })
       .optional(),
   }),
   body: z.object({

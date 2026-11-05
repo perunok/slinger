@@ -162,6 +162,10 @@ function authFor(requirement: Record<string, string[]> | undefined, doc: Json, v
   if (scheme.type === 'http' && String(scheme.scheme).toLowerCase() === 'basic') {
     return { type: 'basic', basic: kv([['username', need('username', `User name (${name})`)], ['password', need('password', `Password (${name})`)]]) }
   }
+  if (scheme.type === 'http' && String(scheme.scheme).toLowerCase() === 'digest') {
+    // ADDED (0.30): Slinger sends Digest auth (it answers the server's challenge).
+    return { type: 'digest', digest: kv([['username', need('username', `User name (${name})`)], ['password', need('password', `Password (${name})`)]]) }
+  }
   if (scheme.type === 'apiKey' && typeof scheme.name === 'string') {
     if (scheme.in === 'cookie') return null // sent as a Cookie header param instead (see headers)
     return { type: 'apikey', apikey: kv([['key', scheme.name], ['value', need('apiKey', `API key (${name}, ${scheme.in} ${scheme.name})`)], ['in', scheme.in === 'query' ? 'query' : 'header']]) }
