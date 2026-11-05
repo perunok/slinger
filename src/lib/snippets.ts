@@ -2,6 +2,13 @@
  * Code snippet generation from an already-resolved HttpRequestInput.
  * Pure string builders, one per target language. `{{vars}}` are left verbatim.
  *
+ * The request Settings tab (0.30) is honoured where the language can express it (`SnippetSettings`): SSL verification off
+ * for the request (`strictSSL: false`; the app-wide Settings > Network switch is not the snippet's business), redirects
+ * (follow or not, the maximum, keeping the method or Authorization), and the cookie jar switch for `.http`. Following
+ * redirects is Slinger's default, so clients that do not follow by default (curl, PHP cURL) get the option that makes them.
+ * Cookies from the workspace's jar are never put into a snippet (they are credentials, kept out of anything pasted); a
+ * Cookie header the request sets itself is an ordinary header and stays.
+ *
  * MCP requests get one snippet instead: an MCP Inspector CLI command line (`mcpInspectorSnippet`, input built from the
  * draft by `prepareMcpSnippet`).
  */
@@ -50,11 +57,36 @@ type Body =
   | { kind: 'formData'; fields: { key: string; value: string; file: boolean }[] }
   | { kind: 'binary'; path: string }
 
+/** The request settings a snippet reproduces (from HttpRequestInput; absent = Slinger's default). */
+interface SnippetSettings {
+  /** strictSSL === false: certificate verification off for this request. */
+  insecure: boolean
+  follow: boolean
+  /** Set explicitly on the request (else each client keeps its own default). */
+  maxRedirects: number | null
+  keepMethod: boolean
+  keepAuth: boolean
+  noCookieJar: boolean
+}
+
 interface Prepared {
   method: string
   url: string
   headers: Pair[]
   body: Body
+  settings: SnippetSettings
+}
+
+function snippetSettings(input: HttpRequestInput): SnippetSettings {
+  const max = input.maxRedirects
+  return {
+    insecure: input.strictSSL === false,
+    follow: input.followRedirects !== false,
+    maxRedirects: typeof max === 'number' && Number.isFinite(max) && max >= 0 ? Math.trunc(max) : null,
+    keepMethod: input.followOriginalHttpMethod === true,
+    keepAuth: input.followAuthorizationHeader === true,
+    noCookieJar: input.cookies === 'off',
+  }
 }
 
 function hasHeader(headers: Pair[], name: string): boolean {
@@ -146,7 +178,7 @@ function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
     body = { kind: 'binary', path: b.binaryFilePath }
   }
 
-  return { method, url, headers, body }
+  return { method, url, headers, body, settings: snippetSettings(input) }
 }
 
 /** Collapse duplicate header names (case-insensitive) into one comma-joined value. */
@@ -215,6 +247,19 @@ const phpStr = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}
 /** PowerShell single-quoted literal; typographic single quotes also terminate strings. */
 const psStr = (s: string) => `'${s.replace(/['‘’‚‛]/g, (m) => m + m)}'`
 
+/** Windows PowerShell 5.1: certificate checks off for this session (a script block callback is fine for Invoke-WebRequest). */
+const PS51_INSECURE = '[Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }'
+
+/**
+ * The same for HttpClient in 5.1: it validates on a thread pool thread, where a PowerShell script block cannot run ("no
+ * Runspace available"), so the callback is a compiled C# delegate.
+ */
+const PS51_INSECURE_ASYNC =
+  "if (-not ('SlingerInsecureTls' -as [type])) { Add-Type -TypeDefinition 'public static class SlingerInsecureTls { public static void Enable() { System.Net.ServicePointManager.ServerCertificateValidationCallback = delegate { return true; }; } }' }; [SlingerInsecureTls]::Enable()"
+
+/** Turns certificate checks off in either PowerShell: `six` in 6+, `five` in Windows PowerShell 5.1. */
+const psInsecure = (six: string, five = PS51_INSECURE) => `if ($PSVersionTable.PSVersion.Major -ge 6) { ${six} } else { ${five} }`
+
 // ---------------------------------------------------------------------------
 // Generators
 // ---------------------------------------------------------------------------
@@ -222,9 +267,15 @@ const psStr = (s: string) => `'${s.replace(/['‘’‚‛]/g, (m) => m + m)}'`
 function curl(p: Prepared): string {
   const parts: string[] = []
   const hasBody = p.body.kind !== 'none'
-  if (p.method === 'HEAD') parts.push('curl --head ' + shq(p.url))
-  else if (p.method !== 'GET' || hasBody) parts.push(`curl -X ${(/^[A-Z]+$/.test(p.method) ? p.method : shq(p.method))} ${shq(p.url)}`)
-  else parts.push(`curl ${shq(p.url)}`)
+  // curl follows no redirect without -L (--location-trusted also keeps Authorization on another host).
+  const s = p.settings
+  const flags = [s.follow ? (s.keepAuth ? '--location-trusted' : '-L') : null, s.insecure ? '-k' : null].filter(Boolean).join(' ')
+  const cmd = flags ? `curl ${flags}` : 'curl'
+  if (p.method === 'HEAD') parts.push(`${cmd} --head ${shq(p.url)}`)
+  else if (p.method !== 'GET' || hasBody) parts.push(`${cmd} -X ${(/^[A-Z]+$/.test(p.method) ? p.method : shq(p.method))} ${shq(p.url)}`)
+  else parts.push(`${cmd} ${shq(p.url)}`)
+  if (s.follow && s.maxRedirects !== null) parts.push(`--max-redirs ${s.maxRedirects}`)
+  // "Keep the original method" has no flag here: with -X (every method but GET) curl keeps the method on redirects anyway.
   for (const [k, v] of p.headers) parts.push(`-H ${shq(`${k}: ${v}`)}`)
   const b = p.body
   if (b.kind === 'raw') parts.push(`--data-raw ${shq(b.content)}`)
@@ -274,26 +325,38 @@ function jsBodyPrelude(b: Body): { imports: string[]; prelude: string[]; expr: s
   return { imports: [], prelude: [], expr: null }
 }
 
+/** fetch has no per-request switch for certificate checks. */
+const JS_INSECURE_NOTE =
+  '// SSL certificate verification is off for this request in Slinger. fetch has no option for it: in Node, run with\n' +
+  '// NODE_TLS_REJECT_UNAUTHORIZED=0 (for testing only).\n\n'
+
 function fetchSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
   const lower = new Set(p.headers.map(([k]) => k.toLowerCase()))
   const asPairs = lower.size !== p.headers.length
   let out = imports.length ? imports.join('\n') + '\n\n' : ''
   if (prelude.length) out += prelude.join('\n') + '\n\n'
+  if (p.settings.insecure) out += JS_INSECURE_NOTE
   out += `const response = await fetch(${jsStr(p.url)}, {\n  method: ${jsStr(p.method)},\n`
   out += jsHeaders(p.headers, asPairs, '  ')
   if (expr) out += `  body: ${expr},\n`
+  // 'manual' returns the 3xx response itself (in Node; a browser hides it behind an opaque response).
+  if (!p.settings.follow) out += "  redirect: 'manual',\n"
   out += '});\n\nconsole.log(response.status);\nconsole.log(await response.text());\n'
   return out
 }
 
 function axiosSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
-  let out = [...imports, "import axios from 'axios';"].join('\n') + '\n\n'
+  const s = p.settings
+  let out = [...imports, ...(s.insecure ? ["import https from 'node:https';"] : []), "import axios from 'axios';"].join('\n') + '\n\n'
   if (prelude.length) out += prelude.join('\n') + '\n\n'
   out += `const response = await axios.request({\n  method: ${jsStr(p.method.toLowerCase())},\n  url: ${jsStr(p.url)},\n`
   out += jsHeaders(collapseHeaders(p.headers), false, '  ')
   if (expr) out += `  data: ${expr},\n`
+  if (!s.follow) out += '  maxRedirects: 0,\n'
+  else if (s.maxRedirects !== null) out += `  maxRedirects: ${s.maxRedirects},\n`
+  if (s.insecure) out += '  httpsAgent: new https.Agent({ rejectUnauthorized: false }), // SSL certificate verification off\n'
   out += '  validateStatus: () => true,\n});\n\nconsole.log(response.status);\nconsole.log(response.data);\n'
   return out
 }
@@ -328,7 +391,14 @@ function python(p: Prepared): string {
     lines.push(`with open(${pyStr(b.path)}, 'rb') as f:`, '    payload = f.read()')
     args.push('data=payload')
   }
-  lines.push('', `response = requests.request(${args.join(', ')})`, '', 'print(response.status_code)', 'print(response.text)', '')
+  const s = p.settings
+  if (!s.follow) args.push('allow_redirects=False')
+  if (s.insecure) args.push('verify=False')
+  if (s.follow && s.maxRedirects !== null) {
+    // requests keeps the limit on a Session (default 30).
+    lines.push('', 'session = requests.Session()', `session.max_redirects = ${s.maxRedirects}`, `response = session.request(${args.join(', ')})`)
+  } else lines.push('', `response = requests.request(${args.join(', ')})`)
+  lines.push('', 'print(response.status_code)', 'print(response.text)', '')
   return lines.join('\n')
 }
 
@@ -381,14 +451,33 @@ function go(p: Prepared): string {
     pre.push(`file, err := os.Open(${goStr(b.path)})`, 'if err != nil {', '\tpanic(err)', '}', 'defer file.Close()')
     bodyExpr = 'file'
   }
+  const s = p.settings
+  const client: string[] = []
+  if (s.insecure) {
+    imports.add('crypto/tls')
+    client.push('\tTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // SSL certificate verification off')
+  }
+  if (!s.follow) {
+    client.push('\tCheckRedirect: func(req *http.Request, via []*http.Request) error {', '\t\treturn http.ErrUseLastResponse // do not follow redirects', '\t},')
+  } else if (s.maxRedirects !== null) {
+    client.push(
+      '\tCheckRedirect: func(req *http.Request, via []*http.Request) error {',
+      `\t\tif len(via) > ${s.maxRedirects} {`,
+      `\t\t\treturn fmt.Errorf("stopped after ${s.maxRedirects} redirects")`,
+      '\t\t}',
+      '\t\treturn nil',
+      '\t},',
+    )
+  }
   const sorted = [...imports].sort()
   let out = `package main\n\nimport (\n${sorted.map((i) => `\t"${i}"`).join('\n')}\n)\n\nfunc main() {\n`
   for (const l of pre) out += `\t${l}\n`
   out += `\treq, err := http.NewRequest(${goStr(p.method)}, ${goStr(p.url)}, ${bodyExpr})\n\tif err != nil {\n\t\tpanic(err)\n\t}\n`
   for (const [k, v] of p.headers) out += `\treq.Header.Add(${goStr(k)}, ${goStr(v)})\n`
   if (b.kind === 'formData') out += '\treq.Header.Set("Content-Type", writer.FormDataContentType())\n'
+  if (client.length) out += `\n\tclient := &http.Client{\n${client.map((l) => `\t${l}`).join('\n')}\n\t}\n`
   out +=
-    '\n\tres, err := http.DefaultClient.Do(req)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tdefer res.Body.Close()\n\n' +
+    `\n\tres, err := ${client.length ? 'client' : 'http.DefaultClient'}.Do(req)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tdefer res.Body.Close()\n\n` +
     '\tbody, err := io.ReadAll(res.Body)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\n\tfmt.Println(res.Status)\n\tfmt.Println(string(body))\n}\n'
   return out
 }
@@ -398,6 +487,14 @@ function php(p: Prepared): string {
   const opts: string[] = [`    CURLOPT_URL => ${phpStr(p.url)},`, '    CURLOPT_RETURNTRANSFER => true,']
   opts.push(`    CURLOPT_CUSTOMREQUEST => ${phpStr(p.method)},`)
   if (p.method === 'HEAD') opts.push('    CURLOPT_NOBODY => true,')
+  // PHP's cURL follows no redirect by default; Slinger does.
+  const s = p.settings
+  if (s.follow) {
+    opts.push('    CURLOPT_FOLLOWLOCATION => true,')
+    if (s.maxRedirects !== null) opts.push(`    CURLOPT_MAXREDIRS => ${s.maxRedirects},`)
+    if (s.keepAuth) opts.push('    CURLOPT_UNRESTRICTED_AUTH => true,')
+  }
+  if (s.insecure) opts.push('    CURLOPT_SSL_VERIFYPEER => false, // SSL certificate verification off', '    CURLOPT_SSL_VERIFYHOST => 0,')
   if (p.headers.length) {
     opts.push('    CURLOPT_HTTPHEADER => [', ...p.headers.map(([k, v]) => `        ${phpStr(`${k}: ${v}`)},`), '    ],')
   }
@@ -444,7 +541,11 @@ function php(p: Prepared): string {
  * - a raw body as UTF-8 bytes (5.1 sends a string body as ISO-8859-1);
  * - User-Agent through `-UserAgent` (5.1 refuses it in `-Headers`);
  * - multipart through .NET's HttpClient (`-Form` only exists in PowerShell 7);
- * - 4xx/5xx throw in both versions: the catch block prints the server's status and answer.
+ * - 4xx/5xx throw in both versions: the catch block prints the server's status and answer;
+ * - SSL verification off (request setting): `-SkipCertificateCheck` only exists in PowerShell 6+, so it is splatted in there
+ *   and 5.1 gets a ServicePointManager callback instead (for HttpClient: the handler's callback in 6+);
+ * - not following redirects: `-MaximumRedirection 0` (the 3xx is then reported as a non-terminating error in some versions,
+ *   hidden with `-ErrorAction SilentlyContinue`; others throw it, and the catch prints its status like a 4xx).
  */
 function powershell(p: Prepared): string {
   const lines: string[] = ['# Works in Windows PowerShell 5.1 and PowerShell 7+.']
@@ -466,6 +567,13 @@ function powershell(p: Prepared): string {
   }
   if (headers.length) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
   const args = ['-UseBasicParsing', `-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
+  const s = p.settings
+  if (s.insecure) {
+    lines.push('# SSL certificate verification is off for this request.', '$insecure = @{}', psInsecure('$insecure.SkipCertificateCheck = $true'), '')
+  }
+  if (!s.follow) args.push('-MaximumRedirection 0 -ErrorAction SilentlyContinue')
+  else if (s.maxRedirects !== null) args.push(`-MaximumRedirection ${s.maxRedirects}`)
+  if (s.insecure) args.push('@insecure')
   if (headers.length) args.push('-Headers $headers')
   if (contentType !== null) args.push(`-ContentType ${psStr(contentType)}`)
   if (userAgent !== null) args.push(`-UserAgent ${psStr(userAgent)}`)
@@ -499,9 +607,23 @@ function powershell(p: Prepared): string {
 
 /** Multipart through .NET's HttpClient, which both Windows PowerShell 5.1 and PowerShell 7 have. */
 function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formData' }>['fields'], lines: string[]): string {
+  lines.push('Add-Type -AssemblyName System.Net.Http')
+  const s = p.settings
+  // HttpClient follows up to 50 redirects by default; a limit of 0 is "do not follow" (the handler refuses 0).
+  const noFollow = !s.follow || s.maxRedirects === 0
+  if (noFollow || s.maxRedirects !== null || s.insecure) {
+    lines.push('$handler = New-Object System.Net.Http.HttpClientHandler')
+    if (noFollow) lines.push('$handler.AllowAutoRedirect = $false')
+    else if (s.maxRedirects !== null) lines.push(`$handler.MaxAutomaticRedirections = ${s.maxRedirects}`)
+    if (s.insecure) {
+      lines.push(
+        '# SSL certificate verification is off for this request.',
+        psInsecure('$handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator', PS51_INSECURE_ASYNC),
+      )
+    }
+    lines.push('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler')
+  } else lines.push('$client = New-Object System.Net.Http.HttpClient')
   lines.push(
-    'Add-Type -AssemblyName System.Net.Http',
-    '$client = New-Object System.Net.Http.HttpClient',
     `$request = New-Object System.Net.Http.HttpRequestMessage -ArgumentList (New-Object System.Net.Http.HttpMethod -ArgumentList ${psStr(p.method)}), ${psStr(p.url)}`,
   )
   // The form sets its own Content-Type (with the boundary); every other header goes on the request.
@@ -560,6 +682,10 @@ function httpFile(p: Prepared, name: string): string {
   const lines: string[] = []
   const title = oneLine(name).trim()
   if (title) lines.push(`### ${title}`)
+  // JetBrains HTTP Client directives (other .http clients read them as comments). SSL verification is set per
+  // environment there (http-client.private.env.json), not per request, so it has no directive.
+  if (!p.settings.follow) lines.push('# @no-redirect')
+  if (p.settings.noCookieJar) lines.push('# @no-cookie-jar')
   lines.push(`${p.method} ${httpUrl(p.url)}`)
   const headers = [...p.headers]
   const b = p.body

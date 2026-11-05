@@ -4,8 +4,9 @@
  * into Windows) and PowerShell 7 (`pwsh`). Skipped where neither exists; the release workflow's Windows job runs it.
  */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type IncomingMessage, type RequestListener, type Server } from 'node:http'
+import { createServer as createHttpsServer } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,18 +22,26 @@ const SHELLS = ['powershell.exe', 'pwsh'].filter(available)
 
 type Seen = { method: string; url: string; headers: IncomingMessage['headers']; body: Buffer }
 let server: Server
+let tlsServer: Server
 let base = ''
+/** https with a certificate from the test CA (not trusted by the OS): only a snippet with SSL verification off gets through. */
+let tlsBase = ''
 let seen: Seen[] = []
 let dir = ''
 
 beforeAll(async () => {
   if (!SHELLS.length) return
   dir = mkdtempSync(join(tmpdir(), 'slinger-ps-'))
-  server = createServer((req, res) => {
+  const handler: RequestListener = (req, res) => {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
       seen.push({ method: req.method ?? '', url: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) })
+      if (req.url === '/redirect') {
+        res.writeHead(302, { location: '/x' })
+        res.end('moved')
+        return
+      }
       if (req.url === '/missing') {
         res.writeHead(404, { 'content-type': 'application/json' })
         res.end('{"error":"not here"}')
@@ -41,17 +50,23 @@ beforeAll(async () => {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
       res.end('ok-from-server')
     })
-  })
+  }
+  server = createServer(handler)
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const tls = join(__dirname, '../../electron/__tests__/fixtures/tls')
+  tlsServer = createHttpsServer({ cert: readFileSync(join(tls, 'server.crt')), key: readFileSync(join(tls, 'server.key')) }, handler)
+  await new Promise<void>((r) => tlsServer.listen(0, '127.0.0.1', r))
+  tlsBase = `https://localhost:${(tlsServer.address() as AddressInfo).port}`
 })
 afterAll(async () => {
   if (!SHELLS.length) return
   await new Promise<void>((r) => server.close(() => r()))
+  await new Promise<void>((r) => tlsServer.close(() => r()))
   rmSync(dir, { recursive: true, force: true })
 })
 
-function run(shell: string, input: Partial<HttpRequestInput>): { out: string; last: Seen } {
+function run(shell: string, input: Partial<HttpRequestInput>, requests = 1): { out: string; last: Seen } {
   seen = []
   const script = generateSnippet('powershell', {
     method: 'GET', url: `${base}/x`, headers: [], auth: { kind: 'none' }, body: { mode: 'none' }, workspaceId: 'w', ...input,
@@ -61,8 +76,8 @@ function run(shell: string, input: Partial<HttpRequestInput>): { out: string; la
   writeFileSync(file, '﻿' + script, 'utf8')
   const r = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', timeout: 120_000 })
   expect(r.status, `${shell} failed:\n${r.stderr}\n--- script ---\n${script}`).toBe(0)
-  expect(seen.length, `${shell} sent nothing:\n${r.stderr}`).toBe(1)
-  return { out: r.stdout, last: seen[0]! }
+  expect(seen.length, `${shell} sent ${seen.length} requests:\n${r.stderr}`).toBe(requests)
+  return { out: r.stdout, last: seen[seen.length - 1]! }
 }
 
 describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (shell) => {
@@ -120,6 +135,37 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (she
     expect(body).toMatch(/filename="?upload\.txt"?/)
     expect(body).toContain('file-content-123')
     expect(out).toContain('200')
+  })
+
+  it('follows redirects by default; not when the request says so (status 302 printed, one request)', () => {
+    const followed = run(shell, { url: `${base}/redirect` }, 2)
+    expect(followed.last.url).toBe('/x')
+    expect(followed.out).toContain('ok-from-server')
+    const stopped = run(shell, { url: `${base}/redirect`, followRedirects: false })
+    expect(stopped.last.url).toBe('/redirect')
+    expect(stopped.out).toContain('302')
+  })
+
+  it('SSL verification off reaches a server whose certificate is not trusted (Invoke-WebRequest and HttpClient)', () => {
+    const { out } = run(shell, { url: `${tlsBase}/x`, strictSSL: false })
+    expect(out).toContain('ok-from-server')
+    const { out: multipart } = run(shell, {
+      url: `${tlsBase}/x`,
+      method: 'POST',
+      strictSSL: false,
+      body: { mode: 'formData', formData: [{ key: 'note', value: 'hi', type: 'text', enabled: true }] },
+    } as Partial<HttpRequestInput>)
+    expect(multipart).toContain('ok-from-server')
+  })
+
+  it('multipart without following redirects', () => {
+    const { out } = run(shell, {
+      url: `${base}/redirect`,
+      method: 'POST',
+      followRedirects: false,
+      body: { mode: 'formData', formData: [{ key: 'note', value: 'hi', type: 'text', enabled: true }] },
+    } as Partial<HttpRequestInput>)
+    expect(out).toContain('302')
   })
 
   it('binary body from a file', () => {
