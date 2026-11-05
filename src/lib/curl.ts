@@ -8,13 +8,23 @@
  * Mapped: method (-X, -I, -G, -T), URL (first argument or --url; no scheme means http://, like curl), headers (-H, -A, -e,
  * -b with cookies), body (-d / --data-* / --json joined with &, -F / --form-string as form data, -T / --data-binary @file as
  * a binary file), basic auth (-u), bearer auth (--oauth2-bearer) and the timeout (-m). Options that do not change the
- * request (-s, -L, --compressed, -v, ...) are skipped silently; anything else ignored is listed in `warnings`.
+ * request (-s, --compressed, -v, ...) are skipped silently; anything else ignored is listed in `warnings`.
+ *
+ * Per-request settings (0.30) become the request's Settings tab (`protocolProfileBehavior`, lib/requestSettings.ts):
+ * -k / --insecure turns SSL verification off for the request, --max-redirs sets the maximum, --post301/302/303 keep the
+ * method on redirects (Postman's single switch for all three), --location-trusted also sends Authorization to the redirect
+ * target. Redirects: curl follows none without -L, but browsers' "Copy as cURL" never adds -L and people expect the
+ * pasted request to behave like the browser's, so neither -L nor its absence changes anything (Slinger, like Postman,
+ * follows redirects by default). --compressed needs nothing (Node fetch always asks for compressed responses and decodes them).
+ * The proxy and certificates (-x, -U, -E / --cert, --key, --cacert, --capath) are app-wide in Slinger: they are not
+ * imported, and a note points to Settings > Network; -c / --cookie-jar likewise points to the workspace's cookie jar.
  * Shell variables outside single quotes (`$API_KEY`, `${TOKEN}`) become Slinger variables (`{{API_KEY}}`), so a command
  * from API docs works with an environment. Other commands in the text (`export X=1;`, `| jq`) are skipped.
  */
 import { emptyAuth, emptyBody, newDraft, type BodyDraft, type RawLanguage, type RequestDraft } from './request'
 import { ensureTrailingEmpty, newRow, type KvRow } from './kv'
 import { mergeParamsFromUrl } from './urlParams'
+import { DEFAULT_MAX_REDIRECTS, MAX_MAX_REDIRECTS } from './requestSettings'
 
 export interface ParsedCurl {
   method: string
@@ -23,6 +33,8 @@ export interface ParsedCurl {
   body: BodyDraft
   auth: { kind: 'basic'; username: string; password: string } | { kind: 'bearer'; token: string } | null
   timeoutMs: number | null
+  /** The request Settings tab's Postman `protocolProfileBehavior` keys the options set (only those that differ from the default). */
+  settings: Record<string, unknown>
   /** Options that were not imported, in words. */
   warnings: string[]
 }
@@ -44,11 +56,11 @@ const WITH_VALUE = new Set([
 /** Options that only affect how curl runs or prints, not the request Slinger sends: skipped without a warning. */
 const QUIET = new Set([
   's', 'silent', 'S', 'show-error', 'L', 'location', 'compressed', 'v', 'verbose', 'i', 'include', 'f', 'fail',
-  'fail-with-body', 'k', 'insecure', 'g', 'globoff', 'N', 'no-buffer', '#', 'progress-bar', 'http1.0', 'http1.1', 'http2',
+  'fail-with-body', 'g', 'globoff', 'N', 'no-buffer', '#', 'progress-bar', 'http1.0', 'http1.1', 'http2',
   'http2-prior-knowledge', 'http3', 'tlsv1', 'tlsv1.0', 'tlsv1.1', 'tlsv1.2', 'tlsv1.3', 'ipv4', '4', 'ipv6', '6',
   'no-keepalive', 'tcp-nodelay', 'path-as-is', 'raw', 'q', 'disable', 'no-progress-meter', 'no-sessionid', 'remote-name',
-  'O', 'remote-header-name', 'J', 'trace-time', 'location-trusted', 'max-time', 'm', 'connect-timeout', 'retry',
-  'retry-delay', 'retry-max-time', 'output', 'o', 'write-out', 'w', 'max-redirs', 'stderr', 'dump-header', 'D',
+  'O', 'remote-header-name', 'J', 'trace-time', 'max-time', 'm', 'connect-timeout', 'retry',
+  'retry-delay', 'retry-max-time', 'output', 'o', 'write-out', 'w', 'stderr', 'dump-header', 'D',
 ])
 
 /** Text that starts with a curl command (what the URL bar treats as an import). */
@@ -281,7 +293,14 @@ function options(words: string[]): { opts: Array<[string, string | null]>; args:
 
 const LONG: Record<string, string> = {
   X: 'request', H: 'header', d: 'data', F: 'form', u: 'user', A: 'user-agent', e: 'referer', b: 'cookie', T: 'upload-file',
-  m: 'max-time', I: 'head', G: 'get', x: 'proxy',
+  m: 'max-time', I: 'head', G: 'get', x: 'proxy', U: 'proxy-user', k: 'insecure', L: 'location', E: 'cert', c: 'cookie-jar',
+}
+
+const NETWORK_NOTE = 'Slinger sets it for all requests in Settings > Network.'
+
+/** A proxy URL without its credentials (they would otherwise be shown in the import notes). */
+function proxyLabel(v: string): string {
+  return v.replace(/^([a-z][a-z0-9+.-]*:\/\/)?[^@/]*@/i, '$1')
 }
 
 function parseOne(words: string[]): ParsedCurl | string {
@@ -299,6 +318,12 @@ function parseOne(words: string[]): ParsedCurl | string {
   const form: KvRow[] = []
   let auth: ParsedCurl['auth'] = null
   let timeoutMs: number | null = null
+  const settings: Record<string, unknown> = {}
+  let certNoted = false
+  const noteCert = () => {
+    if (!certNoted) warnings.push(`This command uses a client or CA certificate, which was not imported: ${NETWORK_NOTE}`)
+    certNoted = true
+  }
 
   for (const [raw, value] of parsed.opts) {
     const name = LONG[raw] ?? raw
@@ -388,7 +413,44 @@ function parseOne(words: string[]): ParsedCurl | string {
         break
       }
       case 'proxy':
-        warnings.push(`The proxy ${v} was not imported (Slinger uses the system proxy).`)
+        warnings.push(`This command uses the proxy ${proxyLabel(v)}, which was not imported: ${NETWORK_NOTE}`)
+        break
+      case 'proxy-user':
+        warnings.push(`This command uses proxy credentials, which were not imported: ${NETWORK_NOTE}`)
+        break
+      case 'cert':
+      case 'key':
+      case 'cacert':
+      case 'capath':
+      case 'cert-type':
+      case 'key-type':
+      case 'pass':
+        noteCert()
+        break
+      case 'cookie-jar':
+        warnings.push(`The cookie file ${v} was not used: Slinger keeps the cookies responses set in the workspace's cookie jar (Ctrl+K, Cookies).`)
+        break
+      case 'insecure':
+        settings.strictSSL = false
+        break
+      case 'location':
+        // Following is Slinger's default (see the module comment), so -L stores nothing.
+        break
+      case 'location-trusted':
+        settings.followAuthorizationHeader = true
+        break
+      case 'max-redirs': {
+        const n = Number(v)
+        // curl: -1 = no limit; Slinger's largest maximum stands in for it. 10 is the default and is not stored.
+        const max = n === -1 ? MAX_MAX_REDIRECTS : Number.isInteger(n) && n >= 0 ? Math.min(n, MAX_MAX_REDIRECTS) : null
+        if (max === null) warnings.push(`--max-redirs ${v} is not a number and was ignored.`)
+        else if (max !== DEFAULT_MAX_REDIRECTS) settings.maxRedirects = max
+        break
+      }
+      case 'post301':
+      case 'post302':
+      case 'post303':
+        settings.followOriginalHttpMethod = true
         break
       default:
         if (!QUIET.has(raw) && !QUIET.has(name)) warnings.push(`${raw.length === 1 ? '-' : '--'}${raw} was ignored.`)
@@ -425,7 +487,7 @@ function parseOne(words: string[]): ParsedCurl | string {
   }
 
   const finalMethod = method ?? (head ? 'HEAD' : upload !== null ? 'PUT' : !get && (data.length > 0 || form.length > 0) ? 'POST' : 'GET')
-  return { method: finalMethod, url, headers, body, auth, timeoutMs, warnings }
+  return { method: finalMethod, url, headers, body, auth, timeoutMs, settings, warnings }
 }
 
 function headerValue(headers: Array<{ key: string; value: string }>, name: string): string | null {
@@ -509,6 +571,17 @@ export function curlRequestName(p: Pick<ParsedCurl, 'method' | 'url'>): string {
   return name.length > 120 ? `${name.slice(0, 119)}…` : name
 }
 
+/** The request settings an import sets, in words, for the import preview ("SSL verification off", ...). */
+export function curlSettingsLabels(p: Pick<ParsedCurl, 'settings'>): string[] {
+  const s = p.settings
+  const out: string[] = []
+  if (s.strictSSL === false) out.push('SSL verification off')
+  if (typeof s.maxRedirects === 'number') out.push(`at most ${s.maxRedirects} redirect${s.maxRedirects === 1 ? '' : 's'}`)
+  if (s.followOriginalHttpMethod === true) out.push('keeps the method on redirects')
+  if (s.followAuthorizationHeader === true) out.push('keeps Authorization on redirects')
+  return out
+}
+
 export function curlToDraft(p: ParsedCurl, name = curlRequestName(p)): RequestDraft {
   const draft = newDraft({
     name,
@@ -518,6 +591,7 @@ export function curlToDraft(p: ParsedCurl, name = curlRequestName(p)): RequestDr
     headers: ensureTrailingEmpty(p.headers.map((h) => newRow({ key: h.key, value: h.value }))),
     body: p.body,
     timeoutMs: p.timeoutMs,
+    protocolProfileBehavior: { ...p.settings },
   })
   if (p.auth?.kind === 'basic') draft.auth = { ...emptyAuth(), kind: 'basic', basic: { username: p.auth.username, password: p.auth.password } }
   else if (p.auth?.kind === 'bearer') draft.auth = { ...emptyAuth(), kind: 'bearer', bearer: { token: p.auth.token } }
