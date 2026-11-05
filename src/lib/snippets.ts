@@ -606,6 +606,54 @@ function php(p: Prepared): string {
 }
 
 /**
+ * Digest auth computed by the snippet itself (both PowerShell versions): .NET Framework's own Digest client (`-Credential`
+ * in Windows PowerShell 5.1, HttpClient there too) leaves the query string out of `uri=`, so servers that check it refuse
+ * the answer. `Get-DigestChallenge` reads the 401's challenge from either response type (5.1: HttpWebResponse; 7 and
+ * HttpClient: HttpResponseMessage); `New-DigestAuthorization` answers it (RFC 7616: MD5 / SHA-256 and their -sess, qop auth,
+ * or auth-int with the body bytes when that is all the server offers, opaque). Kept free of backticks and `${`.
+ */
+const PS_DIGEST_FUNCTIONS = String.raw`# Digest auth: the snippet answers the server's challenge itself (the same in Windows PowerShell 5.1 and PowerShell 7).
+function Get-DigestChallenge($Response) {
+    if (-not $Response) { return $null }
+    if ($Response -is [System.Net.WebResponse]) { $values = @($Response.Headers['WWW-Authenticate']) }
+    else { $values = @($Response.Headers.WwwAuthenticate | ForEach-Object { $_.ToString() }) }
+    $all = $values -join ', '
+    if ($all -match '(?i)(^|[\s,])Digest\s') { return $all }
+    return $null
+}
+
+function New-DigestAuthorization([string]$Challenge, [string]$Method, [string]$Uri, [byte[]]$Body, [string]$User, [string]$Password) {
+    $at = $Challenge.IndexOf('Digest ', [System.StringComparison]::OrdinalIgnoreCase)
+    $p = @{}
+    foreach ($m in [regex]::Matches($Challenge.Substring($at + 7), '(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))')) {
+        $key = $m.Groups[1].Value.ToLower()
+        if (-not $p.ContainsKey($key)) { $p[$key] = if ($m.Groups[2].Success) { $m.Groups[2].Value } else { $m.Groups[3].Value } }
+    }
+    $algorithm = if ($p['algorithm']) { $p['algorithm'] } else { 'MD5' }
+    if ($algorithm.ToUpper().StartsWith('SHA-256')) { $hasher = [System.Security.Cryptography.SHA256]::Create() }
+    else { $hasher = [System.Security.Cryptography.MD5]::Create() }
+    function H([byte[]]$Bytes) { -join ($hasher.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) }
+    function HS([string]$Text) { H ([System.Text.Encoding]::UTF8.GetBytes($Text)) }
+    if ($null -eq $Body) { $Body = [byte[]]::new(0) }
+    $offered = @()
+    if ($p['qop']) { $offered = @($p['qop'].Split(',') | ForEach-Object { $_.Trim() }) }
+    $qop = if ($offered -contains 'auth') { 'auth' } elseif ($offered -contains 'auth-int') { 'auth-int' } else { '' }
+    $nc = '00000001'
+    $cnonce = [guid]::NewGuid().ToString('N')
+    $ha1 = HS ($User + ':' + $p['realm'] + ':' + $Password)
+    if ($algorithm.ToUpper().EndsWith('-SESS')) { $ha1 = HS ($ha1 + ':' + $p['nonce'] + ':' + $cnonce) }
+    if ($qop -eq 'auth-int') { $ha2 = HS ($Method + ':' + $Uri + ':' + (H $Body)) } else { $ha2 = HS ($Method + ':' + $Uri) }
+    if ($qop) { $answer = HS ($ha1 + ':' + $p['nonce'] + ':' + $nc + ':' + $cnonce + ':' + $qop + ':' + $ha2) }
+    else { $answer = HS ($ha1 + ':' + $p['nonce'] + ':' + $ha2) }
+    $header = 'Digest username="' + $User + '", realm="' + $p['realm'] + '", nonce="' + $p['nonce'] + '", uri="' + $Uri + '", algorithm=' + $algorithm
+    if ($qop) { $header += ', qop=' + $qop + ', nc=' + $nc + ', cnonce="' + $cnonce + '"' }
+    $header += ', response="' + $answer + '"'
+    if ($p.ContainsKey('opaque')) { $header += ', opaque="' + $p['opaque'] + '"' }
+    return $header
+}
+`
+
+/**
  * PowerShell that runs in Windows PowerShell 5.1 (the one built into Windows) as well as PowerShell 7+:
  * - `-UseBasicParsing`: 5.1 otherwise parses the page with Internet Explorer's engine, which fails where IE was never set up;
  * - TLS 1.2 enabled for https (5.1 on older .NET offers only TLS 1.0/1.1 by default);
@@ -638,7 +686,8 @@ function powershell(p: Prepared): string {
     else if (name === 'user-agent') userAgent = h[1]
     else headers.push(h)
   }
-  if (headers.length) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
+  if (digest) lines.push(PS_DIGEST_FUNCTIONS)
+  if (headers.length || digest) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
   const args = ['-UseBasicParsing', `-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
   const s = p.settings
   if (s.insecure) {
@@ -647,25 +696,9 @@ function powershell(p: Prepared): string {
   if (!s.follow) args.push('-MaximumRedirection 0 -ErrorAction SilentlyContinue')
   else if (s.maxRedirects !== null) args.push(`-MaximumRedirection ${s.maxRedirects}`)
   if (s.insecure) args.push('@insecure')
-  if (headers.length) args.push('-Headers $headers')
+  if (headers.length || digest) args.push('-Headers $headers')
   if (contentType !== null) args.push(`-ContentType ${psStr(contentType)}`)
   if (userAgent !== null) args.push(`-UserAgent ${psStr(userAgent)}`)
-  if (digest) {
-    // .NET answers the Digest challenge for -Credential in both 5.1 (HttpWebRequest) and 7 (HttpClientHandler).
-    lines.push(
-      `$credential = New-Object System.Management.Automation.PSCredential -ArgumentList ${psStr(digest.username)}, (ConvertTo-SecureString ${psStr(digest.password)} -AsPlainText -Force)`,
-    )
-    args.push('-Credential $credential')
-    if (!/^https:/i.test(p.url)) {
-      lines.push(
-        '# PowerShell 7 sends credentials over plain http only with -AllowUnencryptedAuthentication, which 5.1 does not have.',
-        '$auth = @{}',
-        'if ($PSVersionTable.PSVersion.Major -ge 6) { $auth.AllowUnencryptedAuthentication = $true }',
-      )
-      args.push('@auth')
-    }
-    lines.push('')
-  }
   if (b.kind === 'raw') {
     lines.push(`$body = [System.Text.Encoding]::UTF8.GetBytes(${psStr(b.content)})`, '')
     args.push('-Body $body')
@@ -678,15 +711,8 @@ function powershell(p: Prepared): string {
   } else if (b.kind === 'binary') {
     args.push(`-InFile ${psStr(b.path)}`)
   }
-  lines.push(
-    'try {',
-    `    $response = Invoke-WebRequest ${args.join(' ')}`,
-    '    $response.StatusCode',
-    '    $response.Content',
-    '} catch {',
+  const printError = [
     '    # A 4xx/5xx answer throws: show its status and body.',
-    '    $r = $_.Exception.Response',
-    '    if (-not $r) { throw }',
     '    [int]$r.StatusCode',
     '    if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message }',
     '    elseif ($r -is [System.Net.WebResponse]) {',
@@ -695,6 +721,45 @@ function powershell(p: Prepared): string {
     '        if ($stream.CanSeek) { $stream.Position = 0 }',
     '        (New-Object System.IO.StreamReader -ArgumentList $stream).ReadToEnd()',
     '    }',
+  ]
+  if (!digest) {
+    lines.push(
+      'try {',
+      `    $response = Invoke-WebRequest ${args.join(' ')}`,
+      '    $response.StatusCode',
+      '    $response.Content',
+      '} catch {',
+      '    $r = $_.Exception.Response',
+      '    if (-not $r) { throw }',
+      ...printError,
+      '}',
+      '',
+    )
+    return lines.join('\n')
+  }
+  // Digest: the body bytes for auth-int, then send; a 401 with a Digest challenge is answered once.
+  const digestBody = b.kind === 'raw' ? '$body' : b.kind === 'urlEncoded' ? '[System.Text.Encoding]::UTF8.GetBytes($body)' : b.kind === 'binary' ? `[System.IO.File]::ReadAllBytes(${psStr(b.path)})` : '$null'
+  lines.push(
+    `$digestUser = ${psStr(digest.username)}`,
+    `$digestPassword = ${psStr(digest.password)}`,
+    '$answered = $false',
+    'while ($true) {',
+    '    try {',
+    `        $response = Invoke-WebRequest ${args.join(' ')}`,
+    '        $response.StatusCode',
+    '        $response.Content',
+    '    } catch {',
+    '        $r = $_.Exception.Response',
+    '        if (-not $r) { throw }',
+    '        $challenge = Get-DigestChallenge $r',
+    '        if (-not $answered -and [int]$r.StatusCode -eq 401 -and $challenge) {',
+    '            $answered = $true',
+    `            $headers['Authorization'] = New-DigestAuthorization $challenge ${psStr(p.method)} ([uri]${psStr(p.url)}).PathAndQuery ${digestBody} $digestUser $digestPassword`,
+    '            continue',
+    '        }',
+    ...printError.map((l) => `    ${l}`),
+    '    }',
+    '    break',
     '}',
     '',
   )
@@ -708,7 +773,8 @@ function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formDat
   const s = p.settings
   // HttpClient follows up to 50 redirects by default; a limit of 0 is "do not follow" (the handler refuses 0).
   const noFollow = !s.follow || s.maxRedirects === 0
-  if (noFollow || s.maxRedirects !== null || s.insecure || digest) {
+  if (digest) lines.push(PS_DIGEST_FUNCTIONS)
+  if (noFollow || s.maxRedirects !== null || s.insecure) {
     lines.push('$handler = New-Object System.Net.Http.HttpClientHandler')
     if (noFollow) lines.push('$handler.AllowAutoRedirect = $false')
     else if (s.maxRedirects !== null) lines.push(`$handler.MaxAutomaticRedirections = ${s.maxRedirects}`)
@@ -718,19 +784,14 @@ function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formDat
         psInsecure('$handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator', PS51_INSECURE_ASYNC),
       )
     }
-    if (digest) {
-      // The handler answers the Digest challenge (the form is buffered below so it can be sent twice).
-      lines.push(`$handler.Credentials = New-Object System.Net.NetworkCredential -ArgumentList ${psStr(digest.username)}, ${psStr(digest.password)}`)
-    }
     lines.push('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler')
   } else lines.push('$client = New-Object System.Net.Http.HttpClient')
-  lines.push(
-    `$request = New-Object System.Net.Http.HttpRequestMessage -ArgumentList (New-Object System.Net.Http.HttpMethod -ArgumentList ${psStr(p.method)}), ${psStr(p.url)}`,
-  )
+  const newRequest = `New-Object System.Net.Http.HttpRequestMessage -ArgumentList (New-Object System.Net.Http.HttpMethod -ArgumentList ${psStr(p.method)}), ${psStr(p.url)}`
   // The form sets its own Content-Type (with the boundary); every other header goes on the request.
-  for (const [k, v] of collapseHeaders(p.headers)) {
-    if (k.toLowerCase() !== 'content-type') lines.push(`[void]$request.Headers.TryAddWithoutValidation(${psStr(k)}, ${psStr(v)})`)
-  }
+  const headerLines = collapseHeaders(p.headers)
+    .filter(([k]) => k.toLowerCase() !== 'content-type')
+    .map(([k, v]) => `[void]$request.Headers.TryAddWithoutValidation(${psStr(k)}, ${psStr(v)})`)
+  if (!digest) lines.push(`$request = ${newRequest}`, ...headerLines)
   lines.push('$form = New-Object System.Net.Http.MultipartFormDataContent')
   const files: string[] = []
   for (const f of fields) {
@@ -746,12 +807,31 @@ function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formDat
       lines.push(`$form.Add((New-Object System.Net.Http.StringContent -ArgumentList ${psStr(f.value)}), ${psStr(f.key)})`)
     }
   }
-  if (digest) lines.push('[void]$form.LoadIntoBufferAsync().GetAwaiter().GetResult()')
+  if (digest) {
+    // .NET Framework's HttpClient disposes a request's content once sent, so each send gets a copy of the form's bytes.
+    lines.push(
+      '$formBytes = $form.ReadAsByteArrayAsync().GetAwaiter().GetResult()',
+      '$formType = $form.Headers.ContentType.ToString()',
+      'function New-Request {',
+      `    $request = ${newRequest}`,
+      ...headerLines.map((l) => `    ${l}`),
+      '    $request.Content = New-Object System.Net.Http.ByteArrayContent -ArgumentList (,$formBytes)',
+      '    $request.Content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse($formType)',
+      '    $request',
+      '}',
+      '',
+      'try {',
+      '    $response = $client.SendAsync((New-Request)).GetAwaiter().GetResult()',
+      '    $challenge = Get-DigestChallenge $response',
+      '    if ([int]$response.StatusCode -eq 401 -and $challenge) {',
+      '        $request = New-Request',
+      `        $authorization = New-DigestAuthorization $challenge ${psStr(p.method)} $request.RequestUri.PathAndQuery $formBytes ${psStr(digest.username)} ${psStr(digest.password)}`,
+      "        [void]$request.Headers.TryAddWithoutValidation('Authorization', $authorization)",
+      '        $response = $client.SendAsync($request).GetAwaiter().GetResult()',
+      '    }',
+    )
+  } else lines.push('$request.Content = $form', '', 'try {', '    $response = $client.SendAsync($request).GetAwaiter().GetResult()')
   lines.push(
-    '$request.Content = $form',
-    '',
-    'try {',
-    '    $response = $client.SendAsync($request).GetAwaiter().GetResult()',
     '    [int]$response.StatusCode',
     '    $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()',
     '} finally {',

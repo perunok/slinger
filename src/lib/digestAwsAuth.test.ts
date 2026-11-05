@@ -266,23 +266,35 @@ describe('code snippets', () => {
     expect(aws).not.toContain('SECRET')
   })
 
-  it('PowerShell: -Credential (with the 5.1-safe plain-http switch); HttpClient handler for multipart', () => {
-    const ps = generateSnippet('powershell', input(DIGEST))
-    expect(ps).toContain("$credential = New-Object System.Management.Automation.PSCredential -ArgumentList 'alice', (ConvertTo-SecureString 'p''w' -AsPlainText -Force)")
-    expect(ps).toContain('if ($PSVersionTable.PSVersion.Major -ge 6) { $auth.AllowUnencryptedAuthentication = $true }')
-    expect(ps).toMatch(/Invoke-WebRequest .*-Credential \$credential @auth/)
-    // https: no -AllowUnencryptedAuthentication needed (and PowerShell 5.1 has no such parameter)
-    expect(generateSnippet('powershell', input(DIGEST, { url: 'https://api.test/' }))).not.toContain('AllowUnencryptedAuthentication')
+  it('PowerShell: the snippet answers the Digest challenge itself (5.1 and 7; .NET Framework drops the query from uri=)', () => {
+    const ps = generateSnippet('powershell', input(DIGEST, { url: 'http://api.test/items?page=2' }))
+    expect(ps).toContain('function Get-DigestChallenge($Response) {')
+    expect(ps).toContain('function New-DigestAuthorization(')
+    expect(ps).not.toContain('-Credential')
+    expect(ps).not.toContain('AllowUnencryptedAuthentication')
+    expect(ps).not.toContain('${')
+    expect(ps).toContain("$digestUser = 'alice'")
+    expect(ps).toContain("$digestPassword = 'p''w'")
+    expect(ps).toMatch(/Invoke-WebRequest .*-Headers \$headers/)
+    expect(ps).toContain("$headers['Authorization'] = New-DigestAuthorization $challenge 'GET' ([uri]'http://api.test/items?page=2').PathAndQuery $null $digestUser $digestPassword")
+    // raw bodies are hashed as sent (auth-int)
+    expect(generateSnippet('powershell', input(DIGEST, { method: 'POST', body: { mode: 'raw', raw: { content: '{}', contentType: 'application/json' } } }))).toMatch(
+      /New-DigestAuthorization \$challenge 'POST' \(\[uri\]'http:\/\/api\.test\/items'\)\.PathAndQuery \$body /,
+    )
     const form = generateSnippet(
       'powershell',
-      input(DIGEST, { method: 'POST', body: { mode: 'formData', formData: [{ key: 'a', value: '1', type: 'text', enabled: true }] } }),
+      input(DIGEST, { method: 'POST', strictSSL: false, body: { mode: 'formData', formData: [{ key: 'a', value: '1', type: 'text', enabled: true }] } } as Partial<HttpRequestInput>),
     )
-    expect(form).toContain("$handler.Credentials = New-Object System.Net.NetworkCredential -ArgumentList 'alice', 'p''w'")
-    expect(form).toContain('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler')
-    expect(form).toContain('[void]$form.LoadIntoBufferAsync().GetAwaiter().GetResult()')
+    expect(form).toContain('$formBytes = $form.ReadAsByteArrayAsync().GetAwaiter().GetResult()')
+    expect(form).toContain('function New-Request {')
+    expect(form).toContain('$request.Content = New-Object System.Net.Http.ByteArrayContent -ArgumentList (,$formBytes)')
+    expect(form).toContain("$authorization = New-DigestAuthorization $challenge 'POST' $request.RequestUri.PathAndQuery $formBytes 'alice' 'p''w'")
+    // L's certificate setup stays on the same handler
+    expect(form).toContain('$handler.ServerCertificateCustomValidationCallback')
+    expect(form).not.toContain('Credentials')
     const aws = generateSnippet('powershell', input(AWS))
     expect(aws).toContain('# AWS Signature Version 4')
-    expect(aws).not.toContain('-Credential')
+    expect(aws).not.toContain('Digest')
   })
 
   it('fetch, axios and Go say the auth must be computed and emit no fake header', () => {

@@ -32,8 +32,8 @@ let dir = ''
 
 /**
  * Digest (RFC 2617, MD5, qop auth) for paths under /digest: user "alice", password "s3cret pw". Answers 401 with a challenge
- * until a request carries a correct answer for its own method and URI. Checks the snippet's `-Credential` / handler
- * Credentials claim in both shells.
+ * until a request carries a correct answer for its own method and URI (query string included, which .NET Framework's own
+ * Digest client leaves out). Checks the snippet's own Digest answer in both shells.
  */
 const DIGEST_REALM = 'ps@test'
 const DIGEST_NONCE = randomBytes(12).toString('hex')
@@ -212,7 +212,7 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', { ti
     expect(out).toContain('302')
   })
 
-  it('Digest auth over plain http: -Credential answers the challenge (Invoke-WebRequest and HttpClient)', async () => {
+  it('Digest auth over plain http: the snippet answers the challenge (Invoke-WebRequest and HttpClient)', async () => {
     const auth = { kind: 'digest' as const, digest: { username: 'alice', password: 's3cret pw' } }
     const get = await run(shell, { url: `${base}/digest/get?q=1`, auth }, null)
     expect(get.out).toContain('ok-from-server')

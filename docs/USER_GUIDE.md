@@ -225,7 +225,7 @@ again for every redirect that keeps the authorization. Slinger adds `Authorizati
 kept in the request but not applied: the signature goes into the Authorization header.
 
 Digest and AWS Signature cannot be used for MCP requests. In code snippets, cURL uses `--digest` / `--aws-sigv4`, Python
-`HTTPDigestAuth` / `requests-aws4auth`, PHP `CURLAUTH_DIGEST`, PowerShell `-Credential` (Digest) and the `.http` file
+`HTTPDigestAuth` / `requests-aws4auth`, PHP `CURLAUTH_DIGEST`, PowerShell (a small Digest helper in the snippet, since Windows PowerShell 5.1's own Digest client drops the query string) and the `.http` file
 `Authorization: Digest user password`; the other languages say in a comment that the auth has to be computed.
 
 ### Path variables
