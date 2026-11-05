@@ -6,6 +6,7 @@ import { prepareRequest } from './prepare'
 import { newDraft, parseDocument, serializeDraft } from './request'
 import {
   boolSetting,
+  hasRequestSettings,
   maxRedirectsSetting,
   protocolInput,
   setBoolSetting,
@@ -95,5 +96,15 @@ describe('request settings', () => {
     const res = prepareRequest(d, { workspaceId: 'w', scope: makeScope('Dev', []), secrets: new Map() })
     expect(res.ok && res.input).toMatchObject({ strictSSL: false, removeRefererHeaderOnRedirect: true })
     expect(res.ok && res.input).not.toHaveProperty('followRedirects')
+  })
+
+  it('hasRequestSettings: anything that differs from the defaults (the Settings tab gets a dot)', () => {
+    expect(hasRequestSettings(newDraft())).toBe(false)
+    expect(hasRequestSettings(newDraft({ protocolProfileBehavior: { followRedirects: true, maxRedirects: 10, disableBodyPruning: true } }))).toBe(false)
+    expect(hasRequestSettings(newDraft({ timeoutMs: 500 }))).toBe(true)
+    expect(hasRequestSettings(newDraft({ protocolProfileBehavior: { strictSSL: true } }))).toBe(true)
+    expect(hasRequestSettings(newDraft({ protocolProfileBehavior: { maxRedirects: 0 } }))).toBe(true)
+    expect(hasRequestSettings(newDraft({ protocolProfileBehavior: { disableCookies: true } }))).toBe(true)
+    expect(hasRequestSettings({ timeoutMs: null } as never)).toBe(false) // a draft restored from before 0.29
   })
 })
