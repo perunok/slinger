@@ -286,15 +286,14 @@ const phpStr = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}
 /** PowerShell single-quoted literal; typographic single quotes also terminate strings. */
 const psStr = (s: string) => `'${s.replace(/['‘’‚‛]/g, (m) => m + m)}'`
 
-/** Windows PowerShell 5.1: certificate checks off for this session (a script block callback is fine for Invoke-WebRequest). */
-const PS51_INSECURE = '[Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }'
-
 /**
- * The same for HttpClient in 5.1: it validates on a thread pool thread, where a PowerShell script block cannot run ("no
- * Runspace available"), so the callback is a compiled C# delegate.
+ * Windows PowerShell 5.1: certificate checks off for this session. The callback is a compiled C# delegate, not a script
+ * block: .NET may validate on a thread without a PowerShell runspace (always for HttpClient), and a script block callback
+ * then fails the handshake ("The underlying connection was closed"; seen with Invoke-WebRequest on the Windows runner too).
  */
-const PS51_INSECURE_ASYNC =
+const PS51_INSECURE =
   "if (-not ('SlingerInsecureTls' -as [type])) { Add-Type -TypeDefinition 'public static class SlingerInsecureTls { public static void Enable() { System.Net.ServicePointManager.ServerCertificateValidationCallback = delegate { return true; }; } }' }; [SlingerInsecureTls]::Enable()"
+const PS51_INSECURE_ASYNC = PS51_INSECURE
 
 /** Turns certificate checks off in either PowerShell: `six` in 6+, `five` in Windows PowerShell 5.1. */
 const psInsecure = (six: string, five = PS51_INSECURE) => `if ($PSVersionTable.PSVersion.Major -ge 6) { ${six} } else { ${five} }`
@@ -686,9 +685,16 @@ function powershell(p: Prepared): string {
     '    $response.Content',
     '} catch {',
     '    # A 4xx/5xx answer throws: show its status and body.',
-    '    if (-not $_.Exception.Response) { throw }',
-    '    [int]$_.Exception.Response.StatusCode',
-    '    $_.ErrorDetails.Message',
+    '    $r = $_.Exception.Response',
+    '    if (-not $r) { throw }',
+    '    [int]$r.StatusCode',
+    '    if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message }',
+    '    elseif ($r -is [System.Net.WebResponse]) {',
+    '        # Windows PowerShell 5.1 leaves the answer in the response stream.',
+    '        $stream = $r.GetResponseStream()',
+    '        if ($stream.CanSeek) { $stream.Position = 0 }',
+    '        (New-Object System.IO.StreamReader -ArgumentList $stream).ReadToEnd()',
+    '    }',
     '}',
     '',
   )

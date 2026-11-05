@@ -479,7 +479,7 @@ describe('request settings (Settings tab) in snippets', () => {
     expect(plain).not.toMatch(/MaximumRedirection|SkipCertificateCheck/)
     const out = generateSnippet('powershell', req({ ...noFollow, ...off }))
     expect(out).toContain(
-      '$insecure = @{}\nif ($PSVersionTable.PSVersion.Major -ge 6) { $insecure.SkipCertificateCheck = $true } else { [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } }\n',
+      "$insecure = @{}\nif ($PSVersionTable.PSVersion.Major -ge 6) { $insecure.SkipCertificateCheck = $true } else { if (-not ('SlingerInsecureTls' -as [type])) { Add-Type -TypeDefinition 'public static class SlingerInsecureTls { public static void Enable() { System.Net.ServicePointManager.ServerCertificateValidationCallback = delegate { return true; }; } }' }; [SlingerInsecureTls]::Enable() }\n",
     )
     expect(out).toContain("Invoke-WebRequest -UseBasicParsing -Uri 'https://api.example.com/items' -Method 'GET' -MaximumRedirection 0 -ErrorAction SilentlyContinue @insecure")
     expect(generateSnippet('powershell', req({ maxRedirects: 7 }))).toContain('-MaximumRedirection 7')
