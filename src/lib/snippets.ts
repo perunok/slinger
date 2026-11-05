@@ -611,6 +611,8 @@ function php(p: Prepared): string {
  * the answer. `Get-DigestChallenge` reads the 401's challenge from either response type (5.1: HttpWebResponse; 7 and
  * HttpClient: HttpResponseMessage); `New-DigestAuthorization` answers it (RFC 7616: MD5 / SHA-256 and their -sess, qop auth,
  * or auth-int with the body bytes when that is all the server offers, opaque). Kept free of backticks and `${`.
+ * Every helper has a Verb-Noun name: a short one like `H` is shadowed by PowerShell's built-in aliases (`h` = Get-History,
+ * and aliases win over functions), which made both shells send a wrong answer on the Windows runner.
  */
 const PS_DIGEST_FUNCTIONS = String.raw`# Digest auth: the snippet answers the server's challenge itself (the same in Windows PowerShell 5.1 and PowerShell 7).
 function Get-DigestChallenge($Response) {
@@ -632,19 +634,19 @@ function New-DigestAuthorization([string]$Challenge, [string]$Method, [string]$U
     $algorithm = if ($p['algorithm']) { $p['algorithm'] } else { 'MD5' }
     if ($algorithm.ToUpper().StartsWith('SHA-256')) { $hasher = [System.Security.Cryptography.SHA256]::Create() }
     else { $hasher = [System.Security.Cryptography.MD5]::Create() }
-    function H([byte[]]$Bytes) { -join ($hasher.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) }
-    function HS([string]$Text) { H ([System.Text.Encoding]::UTF8.GetBytes($Text)) }
+    function Get-DigestHash([byte[]]$Bytes) { -join ($hasher.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) }
+    function Get-DigestHashOfText([string]$Text) { Get-DigestHash ([System.Text.Encoding]::UTF8.GetBytes($Text)) }
     if ($null -eq $Body) { $Body = [byte[]]::new(0) }
     $offered = @()
     if ($p['qop']) { $offered = @($p['qop'].Split(',') | ForEach-Object { $_.Trim() }) }
     $qop = if ($offered -contains 'auth') { 'auth' } elseif ($offered -contains 'auth-int') { 'auth-int' } else { '' }
     $nc = '00000001'
     $cnonce = [guid]::NewGuid().ToString('N')
-    $ha1 = HS ($User + ':' + $p['realm'] + ':' + $Password)
-    if ($algorithm.ToUpper().EndsWith('-SESS')) { $ha1 = HS ($ha1 + ':' + $p['nonce'] + ':' + $cnonce) }
-    if ($qop -eq 'auth-int') { $ha2 = HS ($Method + ':' + $Uri + ':' + (H $Body)) } else { $ha2 = HS ($Method + ':' + $Uri) }
-    if ($qop) { $answer = HS ($ha1 + ':' + $p['nonce'] + ':' + $nc + ':' + $cnonce + ':' + $qop + ':' + $ha2) }
-    else { $answer = HS ($ha1 + ':' + $p['nonce'] + ':' + $ha2) }
+    $ha1 = Get-DigestHashOfText ($User + ':' + $p['realm'] + ':' + $Password)
+    if ($algorithm.ToUpper().EndsWith('-SESS')) { $ha1 = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $cnonce) }
+    if ($qop -eq 'auth-int') { $ha2 = Get-DigestHashOfText ($Method + ':' + $Uri + ':' + (Get-DigestHash $Body)) } else { $ha2 = Get-DigestHashOfText ($Method + ':' + $Uri) }
+    if ($qop) { $answer = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $nc + ':' + $cnonce + ':' + $qop + ':' + $ha2) }
+    else { $answer = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $ha2) }
     $header = 'Digest username="' + $User + '", realm="' + $p['realm'] + '", nonce="' + $p['nonce'] + '", uri="' + $Uri + '", algorithm=' + $algorithm
     if ($qop) { $header += ', qop=' + $qop + ', nc=' + $nc + ', cnonce="' + $cnonce + '"' }
     $header += ', response="' + $answer + '"'

@@ -48,6 +48,19 @@ const base = { name: 'R', method: 'GET', url: 'https://api.test/x' }
 const docWith = (auth: unknown) => JSON.stringify({ method: 'GET', url: base.url, auth })
 const roundTrip = (auth: unknown) => JSON.parse(serializeDraft(parseDocument({ ...base, documentJson: docWith(auth) })).documentJson).auth
 
+describe('PowerShell Digest helpers', () => {
+  it('use names no built-in alias can shadow (h = Get-History)', async () => {
+    const { generateSnippet } = await import('./snippets')
+    const out = generateSnippet('powershell', {
+      method: 'GET', url: 'http://x.test/a?b=1', headers: [], body: { mode: 'none' }, workspaceId: 'w',
+      auth: { kind: 'digest', digest: { username: 'u', password: 'p' } },
+    } as never)
+    const defined = [...out.matchAll(/function ([\w-]+)/g)].map((m) => m[1]!)
+    expect(defined.length).toBeGreaterThan(0)
+    for (const name of defined) expect(name, name).toMatch(/^[A-Z][a-z]+-[A-Za-z]+$/) // Verb-Noun, like cmdlets
+  })
+})
+
 describe('model: Postman v2.1 round trip', () => {
   it('Digest: every field read; written back exactly (order, types, booleans)', () => {
     const a = parseAuth(DIGEST_POSTMAN)
