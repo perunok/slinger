@@ -3,7 +3,7 @@
  * Runs the PowerShell snippets for real, in every PowerShell installed here: Windows PowerShell 5.1 (`powershell.exe`, built
  * into Windows) and PowerShell 7 (`pwsh`). Skipped where neither exists; the release workflow's Windows job runs it.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -51,23 +51,39 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function run(shell: string, input: Partial<HttpRequestInput>): { out: string; last: Seen } {
+/** Runs the snippet without blocking: the test's HTTP server lives in this process and must keep answering meanwhile. */
+function runShell(shell: string, file: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
+    const timer = setTimeout(() => child.kill(), 120_000)
+    child.on('close', (status) => {
+      clearTimeout(timer)
+      resolve({ status, stdout, stderr })
+    })
+  })
+}
+
+async function run(shell: string, input: Partial<HttpRequestInput>): Promise<{ out: string; last: Seen }> {
   seen = []
   const script = generateSnippet('powershell', {
     method: 'GET', url: `${base}/x`, headers: [], auth: { kind: 'none' }, body: { mode: 'none' }, workspaceId: 'w', ...input,
   } as HttpRequestInput)
   const file = join(dir, 'snippet.ps1')
   // UTF-8 with BOM: Windows PowerShell 5.1 reads a .ps1 without a BOM as the ANSI code page.
-  writeFileSync(file, '﻿' + script, 'utf8')
-  const r = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', timeout: 120_000 })
+  writeFileSync(file, '\uFEFF' + script, 'utf8')
+  const r = await runShell(shell, file)
   expect(r.status, `${shell} failed:\n${r.stderr}\n--- script ---\n${script}`).toBe(0)
   expect(seen.length, `${shell} sent nothing:\n${r.stderr}`).toBe(1)
   return { out: r.stdout, last: seen[0]! }
 }
 
-describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (shell) => {
-  it('GET with headers and a User-Agent', () => {
-    const { out, last } = run(shell, { headers: [{ key: 'X-Trace', value: 'abc' }, { key: 'User-Agent', value: 'slinger-test/1' }] })
+describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', { timeout: 150_000 }, (shell) => {
+  it('GET with headers and a User-Agent', async () => {
+    const { out, last } = await run(shell, { headers: [{ key: 'X-Trace', value: 'abc' }, { key: 'User-Agent', value: 'slinger-test/1' }] })
     expect(last.method).toBe('GET')
     expect(last.headers['x-trace']).toBe('abc')
     expect(last.headers['user-agent']).toBe('slinger-test/1')
@@ -75,22 +91,22 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (she
     expect(out).toContain('ok-from-server')
   })
 
-  it('POST JSON with non-ASCII text arrives as UTF-8', () => {
+  it('POST JSON with non-ASCII text arrives as UTF-8', async () => {
     const json = '{"name":"Ābebe ሰላም ✓"}'
-    const { last } = run(shell, { method: 'POST', headers: [{ key: 'Content-Type', value: 'application/json' }], body: { mode: 'raw', raw: { content: json, contentType: 'application/json' } } })
+    const { last } = await run(shell, { method: 'POST', headers: [{ key: 'Content-Type', value: 'application/json' }], body: { mode: 'raw', raw: { content: json, contentType: 'application/json' } } })
     expect(last.method).toBe('POST')
     expect(last.headers['content-type']).toContain('application/json')
     expect(last.body.toString('utf8')).toBe(json)
   })
 
-  it('a 404 prints the status and the server answer instead of only an error', () => {
-    const { out } = run(shell, { url: `${base}/missing` })
+  it('a 404 prints the status and the server answer instead of only an error', async () => {
+    const { out } = await run(shell, { url: `${base}/missing` })
     expect(out).toContain('404')
     expect(out).toContain('not here')
   })
 
-  it('urlencoded form', () => {
-    const { last } = run(shell, {
+  it('urlencoded form', async () => {
+    const { last } = await run(shell, {
       method: 'POST',
       headers: [{ key: 'Content-Type', value: 'application/x-www-form-urlencoded' }],
       body: { mode: 'urlEncoded', urlEncoded: [{ key: 'a', value: 'b c&d', enabled: true }] },
@@ -98,10 +114,10 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (she
     expect(last.body.toString('utf8')).toBe('a=b%20c%26d')
   })
 
-  it('multipart with a text field and a file', () => {
+  it('multipart with a text field and a file', async () => {
     const file = join(dir, 'upload.txt')
     writeFileSync(file, 'file-content-123')
-    const { out, last } = run(shell, {
+    const { out, last } = await run(shell, {
       method: 'POST',
       headers: [{ key: 'X-Trace', value: 'mp' }],
       body: {
@@ -122,10 +138,10 @@ describe.runIf(SHELLS.length > 0).each(SHELLS)('PowerShell snippets in %s', (she
     expect(out).toContain('200')
   })
 
-  it('binary body from a file', () => {
+  it('binary body from a file', async () => {
     const file = join(dir, 'blob.bin')
     writeFileSync(file, Buffer.from([0, 1, 2, 250, 255]))
-    const { last } = run(shell, { method: 'PUT', body: { mode: 'binary', binaryFilePath: file } } as Partial<HttpRequestInput>)
+    const { last } = await run(shell, { method: 'PUT', body: { mode: 'binary', binaryFilePath: file } } as Partial<HttpRequestInput>)
     expect([...last.body]).toEqual([0, 1, 2, 250, 255])
   })
 })
