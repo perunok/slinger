@@ -470,7 +470,9 @@ describe('proxy (real local proxy)', () => {
     expect(proxy.seen).toHaveLength(1)
     await service.dispatchers.close()
     db.close()
-  })
+    // The two direct requests resolve `.invalid` names on purpose (that is what shows NO_PROXY / mode none bypass the proxy).
+    // Some resolvers (a VPN's DNS, for one) take ~20 s to answer NXDOMAIN, so this test gets more than the default 20 s.
+  }, 90_000)
 })
 
 describe('network settings service and IPC', () => {

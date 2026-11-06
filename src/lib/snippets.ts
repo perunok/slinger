@@ -2,6 +2,13 @@
  * Code snippet generation from an already-resolved HttpRequestInput.
  * Pure string builders, one per target language. `{{vars}}` are left verbatim.
  *
+ * The request Settings tab (0.30) is honoured where the language can express it (`SnippetSettings`): SSL verification off
+ * for the request (`strictSSL: false`; the app-wide Settings > Network switch is not the snippet's business), redirects
+ * (follow or not, the maximum, keeping the method or Authorization), and the cookie jar switch for `.http`. Following
+ * redirects is Slinger's default, so clients that do not follow by default (curl, PHP cURL) get the option that makes them.
+ * Cookies from the workspace's jar are never put into a snippet (they are credentials, kept out of anything pasted); a
+ * Cookie header the request sets itself is an ordinary header and stays.
+ *
  * MCP requests get one snippet instead: an MCP Inspector CLI command line (`mcpInspectorSnippet`, input built from the
  * draft by `prepareMcpSnippet`).
  */
@@ -50,11 +57,45 @@ type Body =
   | { kind: 'formData'; fields: { key: string; value: string; file: boolean }[] }
   | { kind: 'binary'; path: string }
 
+/** The request settings a snippet reproduces (from HttpRequestInput; absent = Slinger's default). */
+interface SnippetSettings {
+  /** strictSSL === false: certificate verification off for this request. */
+  insecure: boolean
+  follow: boolean
+  /** Set explicitly on the request (else each client keeps its own default). */
+  maxRedirects: number | null
+  keepMethod: boolean
+  keepAuth: boolean
+  noCookieJar: boolean
+}
+
+/**
+ * ADDED (0.30) Auth a snippet cannot express as a fixed header: Digest answers the server's challenge, AWS Signature
+ * signs the final request. Each generator uses its client's own support, or says in a comment that it must be computed.
+ */
+type ComputedAuth =
+  | { kind: 'digest'; username: string; password: string }
+  | { kind: 'awsv4'; accessKey: string; secretKey: string; region: string; service: string; sessionToken: string }
+
 interface Prepared {
   method: string
   url: string
   headers: Pair[]
   body: Body
+  settings: SnippetSettings
+  computedAuth?: ComputedAuth
+}
+
+function snippetSettings(input: HttpRequestInput): SnippetSettings {
+  const max = input.maxRedirects
+  return {
+    insecure: input.strictSSL === false,
+    follow: input.followRedirects !== false,
+    maxRedirects: typeof max === 'number' && Number.isFinite(max) && max >= 0 ? Math.trunc(max) : null,
+    keepMethod: input.followOriginalHttpMethod === true,
+    keepAuth: input.followAuthorizationHeader === true,
+    noCookieJar: input.cookies === 'off',
+  }
 }
 
 function hasHeader(headers: Pair[], name: string): boolean {
@@ -118,6 +159,19 @@ function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
     if (auth.apiKey.addTo === 'query') url = appendQuery(url, auth.apiKey.key, auth.apiKey.value)
     else if (!hasHeader(headers, auth.apiKey.key)) headers.push([auth.apiKey.key, auth.apiKey.value])
   }
+  let computedAuth: ComputedAuth | undefined
+  if (auth?.kind === 'digest' && auth.digest) computedAuth = { kind: 'digest', username: auth.digest.username, password: auth.digest.password }
+  else if (auth?.kind === 'awsv4' && auth.awsv4) {
+    const w = auth.awsv4
+    computedAuth = {
+      kind: 'awsv4',
+      accessKey: w.accessKey,
+      secretKey: w.secretKey,
+      region: w.region.trim() || 'us-east-1',
+      service: w.service.trim() || 'execute-api',
+      sessionToken: w.sessionToken ?? '',
+    }
+  }
 
   const b = input.body
   let body: Body = { kind: 'none' }
@@ -146,8 +200,25 @@ function prepare(input: HttpRequestInput, opts: PrepareOptions = {}): Prepared {
     body = { kind: 'binary', path: b.binaryFilePath }
   }
 
-  return { method, url, headers, body }
+  return { method, url, headers, body, settings: snippetSettings(input), ...(computedAuth ? { computedAuth } : {}) }
 }
+
+/** The comment for a client without Digest / AWS Signature support (the request below it is sent without the auth). */
+function computedAuthNote(a: ComputedAuth | undefined, lib: string): string[] {
+  if (!a) return []
+  if (a.kind === 'digest') {
+    return [
+      `Digest auth: ${lib} does not answer the server's challenge by itself. Send the request, then repeat it with an`,
+      `Authorization: Digest header computed from the 401's WWW-Authenticate challenge (RFC 7616), user "${a.username}".`,
+    ]
+  }
+  return [
+    `AWS Signature Version 4 (region ${a.region}, service ${a.service}): sign this request before sending it; the signer`,
+    `adds the Authorization and X-Amz-Date headers. Access key "${a.accessKey}". Signer: ${lib}.`,
+  ]
+}
+
+const lineComments = (lines: string[], prefix: string) => lines.map((l) => `${prefix} ${l}`)
 
 /** Collapse duplicate header names (case-insensitive) into one comma-joined value. */
 function collapseHeaders(headers: Pair[]): Pair[] {
@@ -215,6 +286,18 @@ const phpStr = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}
 /** PowerShell single-quoted literal; typographic single quotes also terminate strings. */
 const psStr = (s: string) => `'${s.replace(/['‘’‚‛]/g, (m) => m + m)}'`
 
+/**
+ * Windows PowerShell 5.1: certificate checks off for this session. The callback is a compiled C# delegate, not a script
+ * block: .NET may validate on a thread without a PowerShell runspace (always for HttpClient), and a script block callback
+ * then fails the handshake ("The underlying connection was closed"; seen with Invoke-WebRequest on the Windows runner too).
+ */
+const PS51_INSECURE =
+  "if (-not ('SlingerInsecureTls' -as [type])) { Add-Type -TypeDefinition 'public static class SlingerInsecureTls { public static void Enable() { System.Net.ServicePointManager.ServerCertificateValidationCallback = delegate { return true; }; } }' }; [SlingerInsecureTls]::Enable()"
+const PS51_INSECURE_ASYNC = PS51_INSECURE
+
+/** Turns certificate checks off in either PowerShell: `six` in 6+, `five` in Windows PowerShell 5.1. */
+const psInsecure = (six: string, five = PS51_INSECURE) => `if ($PSVersionTable.PSVersion.Major -ge 6) { ${six} } else { ${five} }`
+
 // ---------------------------------------------------------------------------
 // Generators
 // ---------------------------------------------------------------------------
@@ -222,9 +305,22 @@ const psStr = (s: string) => `'${s.replace(/['‘’‚‛]/g, (m) => m + m)}'`
 function curl(p: Prepared): string {
   const parts: string[] = []
   const hasBody = p.body.kind !== 'none'
-  if (p.method === 'HEAD') parts.push('curl --head ' + shq(p.url))
-  else if (p.method !== 'GET' || hasBody) parts.push(`curl -X ${(/^[A-Z]+$/.test(p.method) ? p.method : shq(p.method))} ${shq(p.url)}`)
-  else parts.push(`curl ${shq(p.url)}`)
+  // curl follows no redirect without -L (--location-trusted also keeps Authorization on another host).
+  const s = p.settings
+  const flags = [s.follow ? (s.keepAuth ? '--location-trusted' : '-L') : null, s.insecure ? '-k' : null].filter(Boolean).join(' ')
+  const cmd = flags ? `curl ${flags}` : 'curl'
+  if (p.method === 'HEAD') parts.push(`${cmd} --head ${shq(p.url)}`)
+  else if (p.method !== 'GET' || hasBody) parts.push(`${cmd} -X ${(/^[A-Z]+$/.test(p.method) ? p.method : shq(p.method))} ${shq(p.url)}`)
+  else parts.push(`${cmd} ${shq(p.url)}`)
+  if (s.follow && s.maxRedirects !== null) parts.push(`--max-redirs ${s.maxRedirects}`)
+  // "Keep the original method" has no flag here: with -X (every method but GET) curl keeps the method on redirects anyway.
+  const a = p.computedAuth
+  if (a?.kind === 'digest') parts.push(`--digest -u ${shq(`${a.username}:${a.password}`)}`)
+  else if (a?.kind === 'awsv4') {
+    // curl 7.75+ signs the request itself.
+    parts.push(`--aws-sigv4 ${shq(`aws:amz:${a.region}:${a.service}`)} -u ${shq(`${a.accessKey}:${a.secretKey}`)}`)
+    if (a.sessionToken) parts.push(`-H ${shq(`x-amz-security-token: ${a.sessionToken}`)}`)
+  }
   for (const [k, v] of p.headers) parts.push(`-H ${shq(`${k}: ${v}`)}`)
   const b = p.body
   if (b.kind === 'raw') parts.push(`--data-raw ${shq(b.content)}`)
@@ -274,32 +370,57 @@ function jsBodyPrelude(b: Body): { imports: string[]; prelude: string[]; expr: s
   return { imports: [], prelude: [], expr: null }
 }
 
+/** fetch has no per-request switch for certificate checks. */
+const JS_INSECURE_NOTE =
+  '// SSL certificate verification is off for this request in Slinger. fetch has no option for it: in Node, run with\n' +
+  '// NODE_TLS_REJECT_UNAUTHORIZED=0 (for testing only).\n\n'
+
 function fetchSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
   const lower = new Set(p.headers.map(([k]) => k.toLowerCase()))
   const asPairs = lower.size !== p.headers.length
-  let out = imports.length ? imports.join('\n') + '\n\n' : ''
+  const note = lineComments(
+    computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. @smithy/signature-v4 from the AWS SDK for JavaScript v3, or the aws4 package' : 'fetch'),
+    '//',
+  )
+  let out = note.length ? note.join('\n') + '\n' : ''
+  out += imports.length ? imports.join('\n') + '\n\n' : note.length ? '\n' : ''
   if (prelude.length) out += prelude.join('\n') + '\n\n'
+  if (p.settings.insecure) out += JS_INSECURE_NOTE
   out += `const response = await fetch(${jsStr(p.url)}, {\n  method: ${jsStr(p.method)},\n`
   out += jsHeaders(p.headers, asPairs, '  ')
   if (expr) out += `  body: ${expr},\n`
+  // 'manual' returns the 3xx response itself (in Node; a browser hides it behind an opaque response).
+  if (!p.settings.follow) out += "  redirect: 'manual',\n"
   out += '});\n\nconsole.log(response.status);\nconsole.log(await response.text());\n'
   return out
 }
 
 function axiosSnippet(p: Prepared): string {
   const { imports, prelude, expr } = jsBodyPrelude(p.body)
-  let out = [...imports, "import axios from 'axios';"].join('\n') + '\n\n'
+  const s = p.settings
+  const note = lineComments(
+    computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. @smithy/signature-v4 from the AWS SDK for JavaScript v3, or the aws4 package' : 'axios'),
+    '//',
+  )
+  let out = [...note, ...imports, ...(s.insecure ? ["import https from 'node:https';"] : []), "import axios from 'axios';"].join('\n') + '\n\n'
   if (prelude.length) out += prelude.join('\n') + '\n\n'
   out += `const response = await axios.request({\n  method: ${jsStr(p.method.toLowerCase())},\n  url: ${jsStr(p.url)},\n`
   out += jsHeaders(collapseHeaders(p.headers), false, '  ')
   if (expr) out += `  data: ${expr},\n`
+  if (!s.follow) out += '  maxRedirects: 0,\n'
+  else if (s.maxRedirects !== null) out += `  maxRedirects: ${s.maxRedirects},\n`
+  if (s.insecure) out += '  httpsAgent: new https.Agent({ rejectUnauthorized: false }), // SSL certificate verification off\n'
   out += '  validateStatus: () => true,\n});\n\nconsole.log(response.status);\nconsole.log(response.data);\n'
   return out
 }
 
 function python(p: Prepared): string {
-  const lines: string[] = ['import requests', '', `url = ${pyStr(p.url)}`]
+  const a = p.computedAuth
+  const lines: string[] = ['import requests']
+  if (a?.kind === 'digest') lines.push('from requests.auth import HTTPDigestAuth')
+  if (a?.kind === 'awsv4') lines.push('from requests_aws4auth import AWS4Auth  # pip install requests-aws4auth')
+  lines.push('', `url = ${pyStr(p.url)}`)
   const headers = collapseHeaders(p.headers)
   if (headers.length) {
     lines.push('headers = {', ...headers.map(([k, v]) => `    ${pyStr(k)}: ${pyStr(v)},`), '}')
@@ -328,7 +449,22 @@ function python(p: Prepared): string {
     lines.push(`with open(${pyStr(b.path)}, 'rb') as f:`, '    payload = f.read()')
     args.push('data=payload')
   }
-  lines.push('', `response = requests.request(${args.join(', ')})`, '', 'print(response.status_code)', 'print(response.text)', '')
+  if (a?.kind === 'digest') {
+    lines.push(`auth = HTTPDigestAuth(${pyStr(a.username)}, ${pyStr(a.password)})`)
+    args.push('auth=auth')
+  } else if (a?.kind === 'awsv4') {
+    const token = a.sessionToken ? `, session_token=${pyStr(a.sessionToken)}` : ''
+    lines.push(`auth = AWS4Auth(${pyStr(a.accessKey)}, ${pyStr(a.secretKey)}, ${pyStr(a.region)}, ${pyStr(a.service)}${token})`)
+    args.push('auth=auth')
+  }
+  const s = p.settings
+  if (!s.follow) args.push('allow_redirects=False')
+  if (s.insecure) args.push('verify=False')
+  if (s.follow && s.maxRedirects !== null) {
+    // requests keeps the limit on a Session (default 30).
+    lines.push('', 'session = requests.Session()', `session.max_redirects = ${s.maxRedirects}`, `response = session.request(${args.join(', ')})`)
+  } else lines.push('', `response = requests.request(${args.join(', ')})`)
+  lines.push('', 'print(response.status_code)', 'print(response.text)', '')
   return lines.join('\n')
 }
 
@@ -381,14 +517,34 @@ function go(p: Prepared): string {
     pre.push(`file, err := os.Open(${goStr(b.path)})`, 'if err != nil {', '\tpanic(err)', '}', 'defer file.Close()')
     bodyExpr = 'file'
   }
+  const s = p.settings
+  const client: string[] = []
+  if (s.insecure) {
+    imports.add('crypto/tls')
+    client.push('\tTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // SSL certificate verification off')
+  }
+  if (!s.follow) {
+    client.push('\tCheckRedirect: func(req *http.Request, via []*http.Request) error {', '\t\treturn http.ErrUseLastResponse // do not follow redirects', '\t},')
+  } else if (s.maxRedirects !== null) {
+    client.push(
+      '\tCheckRedirect: func(req *http.Request, via []*http.Request) error {',
+      `\t\tif len(via) > ${s.maxRedirects} {`,
+      `\t\t\treturn fmt.Errorf("stopped after ${s.maxRedirects} redirects")`,
+      '\t\t}',
+      '\t\treturn nil',
+      '\t},',
+    )
+  }
   const sorted = [...imports].sort()
-  let out = `package main\n\nimport (\n${sorted.map((i) => `\t"${i}"`).join('\n')}\n)\n\nfunc main() {\n`
+  const note = lineComments(computedAuthNote(p.computedAuth, p.computedAuth?.kind === 'awsv4' ? 'e.g. github.com/aws/aws-sdk-go-v2/aws/signer/v4' : 'net/http'), '//')
+  let out = `${note.length ? `${note.join('\n')}\n\n` : ''}package main\n\nimport (\n${sorted.map((i) => `\t"${i}"`).join('\n')}\n)\n\nfunc main() {\n`
   for (const l of pre) out += `\t${l}\n`
   out += `\treq, err := http.NewRequest(${goStr(p.method)}, ${goStr(p.url)}, ${bodyExpr})\n\tif err != nil {\n\t\tpanic(err)\n\t}\n`
   for (const [k, v] of p.headers) out += `\treq.Header.Add(${goStr(k)}, ${goStr(v)})\n`
   if (b.kind === 'formData') out += '\treq.Header.Set("Content-Type", writer.FormDataContentType())\n'
+  if (client.length) out += `\n\tclient := &http.Client{\n${client.map((l) => `\t${l}`).join('\n')}\n\t}\n`
   out +=
-    '\n\tres, err := http.DefaultClient.Do(req)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tdefer res.Body.Close()\n\n' +
+    `\n\tres, err := ${client.length ? 'client' : 'http.DefaultClient'}.Do(req)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tdefer res.Body.Close()\n\n` +
     '\tbody, err := io.ReadAll(res.Body)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\n\tfmt.Println(res.Status)\n\tfmt.Println(string(body))\n}\n'
   return out
 }
@@ -398,9 +554,19 @@ function php(p: Prepared): string {
   const opts: string[] = [`    CURLOPT_URL => ${phpStr(p.url)},`, '    CURLOPT_RETURNTRANSFER => true,']
   opts.push(`    CURLOPT_CUSTOMREQUEST => ${phpStr(p.method)},`)
   if (p.method === 'HEAD') opts.push('    CURLOPT_NOBODY => true,')
+  // PHP's cURL follows no redirect by default; Slinger does.
+  const s = p.settings
+  if (s.follow) {
+    opts.push('    CURLOPT_FOLLOWLOCATION => true,')
+    if (s.maxRedirects !== null) opts.push(`    CURLOPT_MAXREDIRS => ${s.maxRedirects},`)
+    if (s.keepAuth) opts.push('    CURLOPT_UNRESTRICTED_AUTH => true,')
+  }
+  if (s.insecure) opts.push('    CURLOPT_SSL_VERIFYPEER => false, // SSL certificate verification off', '    CURLOPT_SSL_VERIFYHOST => 0,')
   if (p.headers.length) {
     opts.push('    CURLOPT_HTTPHEADER => [', ...p.headers.map(([k, v]) => `        ${phpStr(`${k}: ${v}`)},`), '    ],')
   }
+  const a = p.computedAuth
+  if (a?.kind === 'digest') opts.push('    CURLOPT_HTTPAUTH => CURLAUTH_DIGEST,', `    CURLOPT_USERPWD => ${phpStr(`${a.username}:${a.password}`)},`)
   if (b.kind === 'raw') opts.push(`    CURLOPT_POSTFIELDS => ${phpStr(b.content)},`)
   else if (b.kind === 'urlEncoded') {
     opts.push(
@@ -415,9 +581,11 @@ function php(p: Prepared): string {
       '    ],',
     )
   } else if (b.kind === 'binary') opts.push(`    CURLOPT_POSTFIELDS => file_get_contents(${phpStr(b.path)}),`)
+  const note = a?.kind === 'awsv4' ? lineComments(computedAuthNote(a, 'e.g. Aws\\Signature\\SignatureV4 from the AWS SDK for PHP'), '//') : []
   return [
     '<?php',
     '',
+    ...(note.length ? [...note, ''] : []),
     '$curl = curl_init();',
     '',
     'curl_setopt_array($curl, [',
@@ -437,21 +605,104 @@ function php(p: Prepared): string {
   ].join('\n')
 }
 
+/**
+ * Digest auth computed by the snippet itself (both PowerShell versions): .NET Framework's own Digest client (`-Credential`
+ * in Windows PowerShell 5.1, HttpClient there too) leaves the query string out of `uri=`, so servers that check it refuse
+ * the answer. `Get-DigestChallenge` reads the 401's challenge from either response type (5.1: HttpWebResponse; 7 and
+ * HttpClient: HttpResponseMessage); `New-DigestAuthorization` answers it (RFC 7616: MD5 / SHA-256 and their -sess, qop auth,
+ * or auth-int with the body bytes when that is all the server offers, opaque). Kept free of backticks and `${`.
+ * Every helper has a Verb-Noun name: a short one like `H` is shadowed by PowerShell's built-in aliases (`h` = Get-History,
+ * and aliases win over functions), which made both shells send a wrong answer on the Windows runner.
+ */
+const PS_DIGEST_FUNCTIONS = String.raw`# Digest auth: the snippet answers the server's challenge itself (the same in Windows PowerShell 5.1 and PowerShell 7).
+function Get-DigestChallenge($Response) {
+    if (-not $Response) { return $null }
+    if ($Response -is [System.Net.WebResponse]) { $values = @($Response.Headers['WWW-Authenticate']) }
+    else { $values = @($Response.Headers.WwwAuthenticate | ForEach-Object { $_.ToString() }) }
+    $all = $values -join ', '
+    if ($all -match '(?i)(^|[\s,])Digest\s') { return $all }
+    return $null
+}
+
+function New-DigestAuthorization([string]$Challenge, [string]$Method, [string]$Uri, [byte[]]$Body, [string]$User, [string]$Password) {
+    $at = $Challenge.IndexOf('Digest ', [System.StringComparison]::OrdinalIgnoreCase)
+    $p = @{}
+    foreach ($m in [regex]::Matches($Challenge.Substring($at + 7), '(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))')) {
+        $key = $m.Groups[1].Value.ToLower()
+        if (-not $p.ContainsKey($key)) { $p[$key] = if ($m.Groups[2].Success) { $m.Groups[2].Value } else { $m.Groups[3].Value } }
+    }
+    $algorithm = if ($p['algorithm']) { $p['algorithm'] } else { 'MD5' }
+    if ($algorithm.ToUpper().StartsWith('SHA-256')) { $hasher = [System.Security.Cryptography.SHA256]::Create() }
+    else { $hasher = [System.Security.Cryptography.MD5]::Create() }
+    function Get-DigestHash([byte[]]$Bytes) { -join ($hasher.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) }
+    function Get-DigestHashOfText([string]$Text) { Get-DigestHash ([System.Text.Encoding]::UTF8.GetBytes($Text)) }
+    if ($null -eq $Body) { $Body = [byte[]]::new(0) }
+    $offered = @()
+    if ($p['qop']) { $offered = @($p['qop'].Split(',') | ForEach-Object { $_.Trim() }) }
+    $qop = if ($offered -contains 'auth') { 'auth' } elseif ($offered -contains 'auth-int') { 'auth-int' } else { '' }
+    $nc = '00000001'
+    $cnonce = [guid]::NewGuid().ToString('N')
+    $ha1 = Get-DigestHashOfText ($User + ':' + $p['realm'] + ':' + $Password)
+    if ($algorithm.ToUpper().EndsWith('-SESS')) { $ha1 = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $cnonce) }
+    if ($qop -eq 'auth-int') { $ha2 = Get-DigestHashOfText ($Method + ':' + $Uri + ':' + (Get-DigestHash $Body)) } else { $ha2 = Get-DigestHashOfText ($Method + ':' + $Uri) }
+    if ($qop) { $answer = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $nc + ':' + $cnonce + ':' + $qop + ':' + $ha2) }
+    else { $answer = Get-DigestHashOfText ($ha1 + ':' + $p['nonce'] + ':' + $ha2) }
+    $header = 'Digest username="' + $User + '", realm="' + $p['realm'] + '", nonce="' + $p['nonce'] + '", uri="' + $Uri + '", algorithm=' + $algorithm
+    if ($qop) { $header += ', qop=' + $qop + ', nc=' + $nc + ', cnonce="' + $cnonce + '"' }
+    $header += ', response="' + $answer + '"'
+    if ($p.ContainsKey('opaque')) { $header += ', opaque="' + $p['opaque'] + '"' }
+    return $header
+}
+`
+
+/**
+ * PowerShell that runs in Windows PowerShell 5.1 (the one built into Windows) as well as PowerShell 7+:
+ * - `-UseBasicParsing`: 5.1 otherwise parses the page with Internet Explorer's engine, which fails where IE was never set up;
+ * - TLS 1.2 enabled for https (5.1 on older .NET offers only TLS 1.0/1.1 by default);
+ * - a raw body as UTF-8 bytes (5.1 sends a string body as ISO-8859-1);
+ * - User-Agent through `-UserAgent` (5.1 refuses it in `-Headers`);
+ * - multipart through .NET's HttpClient (`-Form` only exists in PowerShell 7);
+ * - 4xx/5xx throw in both versions: the catch block prints the server's status and answer;
+ * - SSL verification off (request setting): `-SkipCertificateCheck` only exists in PowerShell 6+, so it is splatted in there
+ *   and 5.1 gets a ServicePointManager callback instead (for HttpClient: the handler's callback in 6+);
+ * - not following redirects: `-MaximumRedirection 0` (the 3xx is then reported as a non-terminating error in some versions,
+ *   hidden with `-ErrorAction SilentlyContinue`; others throw it, and the catch prints its status like a 4xx).
+ */
 function powershell(p: Prepared): string {
-  const lines: string[] = []
+  const lines: string[] = ['# Works in Windows PowerShell 5.1 and PowerShell 7+.']
+  if (p.computedAuth?.kind === 'awsv4') lines.push(...lineComments(computedAuthNote(p.computedAuth, 'e.g. the AWS SDK for .NET'), '#'))
+  if (/^https:/i.test(p.url)) {
+    lines.push('[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12')
+  }
+  lines.push('')
+  const b = p.body
+  if (b.kind === 'formData') return powershellMultipart(p, b.fields, lines)
+  const digest = p.computedAuth?.kind === 'digest' ? p.computedAuth : null
+
   let contentType: string | null = null
+  let userAgent: string | null = null
   const headers: Pair[] = []
   for (const h of collapseHeaders(p.headers)) {
-    if (h[0].toLowerCase() === 'content-type') contentType = h[1]
+    const name = h[0].toLowerCase()
+    if (name === 'content-type') contentType = h[1]
+    else if (name === 'user-agent') userAgent = h[1]
     else headers.push(h)
   }
-  if (headers.length) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
-  const b = p.body
-  const args = [`-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
-  if (headers.length) args.push('-Headers $headers')
+  if (digest) lines.push(PS_DIGEST_FUNCTIONS)
+  if (headers.length || digest) lines.push('$headers = @{', ...headers.map(([k, v]) => `    ${psStr(k)} = ${psStr(v)}`), '}', '')
+  const args = ['-UseBasicParsing', `-Uri ${psStr(p.url)}`, `-Method ${psStr(p.method)}`]
+  const s = p.settings
+  if (s.insecure) {
+    lines.push('# SSL certificate verification is off for this request.', '$insecure = @{}', psInsecure('$insecure.SkipCertificateCheck = $true'), '')
+  }
+  if (!s.follow) args.push('-MaximumRedirection 0 -ErrorAction SilentlyContinue')
+  else if (s.maxRedirects !== null) args.push(`-MaximumRedirection ${s.maxRedirects}`)
+  if (s.insecure) args.push('@insecure')
+  if (headers.length || digest) args.push('-Headers $headers')
   if (contentType !== null) args.push(`-ContentType ${psStr(contentType)}`)
+  if (userAgent !== null) args.push(`-UserAgent ${psStr(userAgent)}`)
   if (b.kind === 'raw') {
-    lines.push(`$body = ${psStr(b.content)}`, '')
+    lines.push(`$body = [System.Text.Encoding]::UTF8.GetBytes(${psStr(b.content)})`, '')
     args.push('-Body $body')
   } else if (b.kind === 'urlEncoded') {
     lines.push(
@@ -459,19 +710,138 @@ function powershell(p: Prepared): string {
       '',
     )
     args.push('-Body $body')
-  } else if (b.kind === 'formData') {
-    lines.push(
-      '# -Form requires PowerShell 7+',
-      '$form = @{',
-      ...b.fields.map((f) => `    ${psStr(f.key)} = ${f.file ? `Get-Item -LiteralPath ${psStr(f.value)}` : psStr(f.value)}`),
-      '}',
-      '',
-    )
-    args.push('-Form $form')
   } else if (b.kind === 'binary') {
     args.push(`-InFile ${psStr(b.path)}`)
   }
-  lines.push(`$response = Invoke-WebRequest ${args.join(' ')}`, '$response.StatusCode', '$response.Content', '')
+  const printError = [
+    '    # A 4xx/5xx answer throws: show its status and body.',
+    '    [int]$r.StatusCode',
+    '    if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message }',
+    '    elseif ($r -is [System.Net.WebResponse]) {',
+    '        # Windows PowerShell 5.1 leaves the answer in the response stream.',
+    '        $stream = $r.GetResponseStream()',
+    '        if ($stream.CanSeek) { $stream.Position = 0 }',
+    '        (New-Object System.IO.StreamReader -ArgumentList $stream).ReadToEnd()',
+    '    }',
+  ]
+  if (!digest) {
+    lines.push(
+      'try {',
+      `    $response = Invoke-WebRequest ${args.join(' ')}`,
+      '    $response.StatusCode',
+      '    $response.Content',
+      '} catch {',
+      '    $r = $_.Exception.Response',
+      '    if (-not $r) { throw }',
+      ...printError,
+      '}',
+      '',
+    )
+    return lines.join('\n')
+  }
+  // Digest: the body bytes for auth-int, then send; a 401 with a Digest challenge is answered once.
+  const digestBody = b.kind === 'raw' ? '$body' : b.kind === 'urlEncoded' ? '[System.Text.Encoding]::UTF8.GetBytes($body)' : b.kind === 'binary' ? `[System.IO.File]::ReadAllBytes(${psStr(b.path)})` : '$null'
+  lines.push(
+    `$digestUser = ${psStr(digest.username)}`,
+    `$digestPassword = ${psStr(digest.password)}`,
+    '$answered = $false',
+    'while ($true) {',
+    '    try {',
+    `        $response = Invoke-WebRequest ${args.join(' ')}`,
+    '        $response.StatusCode',
+    '        $response.Content',
+    '    } catch {',
+    '        $r = $_.Exception.Response',
+    '        if (-not $r) { throw }',
+    '        $challenge = Get-DigestChallenge $r',
+    '        if (-not $answered -and [int]$r.StatusCode -eq 401 -and $challenge) {',
+    '            $answered = $true',
+    `            $headers['Authorization'] = New-DigestAuthorization $challenge ${psStr(p.method)} ([uri]${psStr(p.url)}).PathAndQuery ${digestBody} $digestUser $digestPassword`,
+    '            continue',
+    '        }',
+    ...printError.map((l) => `    ${l}`),
+    '    }',
+    '    break',
+    '}',
+    '',
+  )
+  return lines.join('\n')
+}
+
+/** Multipart through .NET's HttpClient, which both Windows PowerShell 5.1 and PowerShell 7 have. */
+function powershellMultipart(p: Prepared, fields: Extract<Body, { kind: 'formData' }>['fields'], lines: string[]): string {
+  const digest = p.computedAuth?.kind === 'digest' ? p.computedAuth : null
+  lines.push('Add-Type -AssemblyName System.Net.Http')
+  const s = p.settings
+  // HttpClient follows up to 50 redirects by default; a limit of 0 is "do not follow" (the handler refuses 0).
+  const noFollow = !s.follow || s.maxRedirects === 0
+  if (digest) lines.push(PS_DIGEST_FUNCTIONS)
+  if (noFollow || s.maxRedirects !== null || s.insecure) {
+    lines.push('$handler = New-Object System.Net.Http.HttpClientHandler')
+    if (noFollow) lines.push('$handler.AllowAutoRedirect = $false')
+    else if (s.maxRedirects !== null) lines.push(`$handler.MaxAutomaticRedirections = ${s.maxRedirects}`)
+    if (s.insecure) {
+      lines.push(
+        '# SSL certificate verification is off for this request.',
+        psInsecure('$handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator', PS51_INSECURE_ASYNC),
+      )
+    }
+    lines.push('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler')
+  } else lines.push('$client = New-Object System.Net.Http.HttpClient')
+  const newRequest = `New-Object System.Net.Http.HttpRequestMessage -ArgumentList (New-Object System.Net.Http.HttpMethod -ArgumentList ${psStr(p.method)}), ${psStr(p.url)}`
+  // The form sets its own Content-Type (with the boundary); every other header goes on the request.
+  const headerLines = collapseHeaders(p.headers)
+    .filter(([k]) => k.toLowerCase() !== 'content-type')
+    .map(([k, v]) => `[void]$request.Headers.TryAddWithoutValidation(${psStr(k)}, ${psStr(v)})`)
+  if (!digest) lines.push(`$request = ${newRequest}`, ...headerLines)
+  lines.push('$form = New-Object System.Net.Http.MultipartFormDataContent')
+  const files: string[] = []
+  for (const f of fields) {
+    if (f.file) {
+      const name = `$file${files.length + 1}`
+      files.push(name)
+      const fileName = f.value.split(/[\\/]/).pop() || 'file'
+      lines.push(
+        `${name} = [System.IO.File]::OpenRead(${psStr(f.value)})`,
+        `$form.Add((New-Object System.Net.Http.StreamContent -ArgumentList ${name}), ${psStr(f.key)}, ${psStr(fileName)})`,
+      )
+    } else {
+      lines.push(`$form.Add((New-Object System.Net.Http.StringContent -ArgumentList ${psStr(f.value)}), ${psStr(f.key)})`)
+    }
+  }
+  if (digest) {
+    // .NET Framework's HttpClient disposes a request's content once sent, so each send gets a copy of the form's bytes.
+    lines.push(
+      '$formBytes = $form.ReadAsByteArrayAsync().GetAwaiter().GetResult()',
+      '$formType = $form.Headers.ContentType.ToString()',
+      'function New-Request {',
+      `    $request = ${newRequest}`,
+      ...headerLines.map((l) => `    ${l}`),
+      '    $request.Content = New-Object System.Net.Http.ByteArrayContent -ArgumentList (,$formBytes)',
+      '    $request.Content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse($formType)',
+      '    $request',
+      '}',
+      '',
+      'try {',
+      '    $response = $client.SendAsync((New-Request)).GetAwaiter().GetResult()',
+      '    $challenge = Get-DigestChallenge $response',
+      '    if ([int]$response.StatusCode -eq 401 -and $challenge) {',
+      '        $request = New-Request',
+      `        $authorization = New-DigestAuthorization $challenge ${psStr(p.method)} $request.RequestUri.PathAndQuery $formBytes ${psStr(digest.username)} ${psStr(digest.password)}`,
+      "        [void]$request.Headers.TryAddWithoutValidation('Authorization', $authorization)",
+      '        $response = $client.SendAsync($request).GetAwaiter().GetResult()',
+      '    }',
+    )
+  } else lines.push('$request.Content = $form', '', 'try {', '    $response = $client.SendAsync($request).GetAwaiter().GetResult()')
+  lines.push(
+    '    [int]$response.StatusCode',
+    '    $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()',
+    '} finally {',
+    ...files.map((f) => `    ${f}.Dispose()`),
+    '    $client.Dispose()',
+    '}',
+    '',
+  )
   return lines.join('\n')
 }
 
@@ -496,6 +866,10 @@ function httpFile(p: Prepared, name: string): string {
   const lines: string[] = []
   const title = oneLine(name).trim()
   if (title) lines.push(`### ${title}`)
+  // JetBrains HTTP Client directives (other .http clients read them as comments). SSL verification is set per
+  // environment there (http-client.private.env.json), not per request, so it has no directive.
+  if (!p.settings.follow) lines.push('# @no-redirect')
+  if (p.settings.noCookieJar) lines.push('# @no-cookie-jar')
   lines.push(`${p.method} ${httpUrl(p.url)}`)
   const headers = [...p.headers]
   const b = p.body
@@ -507,6 +881,10 @@ function httpFile(p: Prepared, name: string): string {
     if (m) boundary = m[1] ?? m[2]
     else headers.push(['Content-Type', `multipart/form-data; boundary=${boundary}`])
   }
+  const a = p.computedAuth
+  // JetBrains HTTP Client and VS Code REST Client both answer a Digest challenge for this form of the header.
+  if (a?.kind === 'digest' && !hasHeader(headers, 'Authorization')) headers.push(['Authorization', `Digest ${a.username} ${a.password}`])
+  if (a?.kind === 'awsv4') lines.splice(title ? 1 : 0, 0, ...lineComments(computedAuthNote(a, 'VS Code REST Client: Authorization: AWS <access key> <secret key> region:<region> service:<service>'), '#'))
   for (const [k, v] of headers) lines.push(`${oneLine(k)}: ${oneLine(v)}`)
   if (b.kind === 'raw') lines.push('', b.content)
   else if (b.kind === 'urlEncoded') lines.push('', b.fields.map(([k, v]) => `${encodeKeepingVars(k)}=${encodeKeepingVars(v)}`).join('&'))

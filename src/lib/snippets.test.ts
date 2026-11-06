@@ -97,8 +97,8 @@ describe('auth', () => {
 })
 
 describe('curl', () => {
-  it('simple GET', () => {
-    expect(generateSnippet('curl', req())).toBe("curl 'https://api.example.com/items'")
+  it('simple GET follows redirects like Slinger does (-L)', () => {
+    expect(generateSnippet('curl', req())).toBe("curl -L 'https://api.example.com/items'")
   })
   it('escapes single quotes', () => {
     const out = generateSnippet('curl', req({ method: 'POST', body: raw(`it's "q"`, 'text/plain') }))
@@ -359,26 +359,40 @@ describe('php', () => {
 })
 
 describe('powershell', () => {
-  it('doubles single quotes including typographic ones', () => {
+  it('doubles single quotes including typographic ones, sends the raw body as UTF-8 bytes', () => {
     const out = generateSnippet('powershell', req({ method: 'POST', body: raw("it's \u2018x\u2019 $v `t \n", 'text/plain') }))
-    expect(out).toContain("$body = 'it''s \u2018\u2018x\u2019\u2019 $v `t \n'")
+    expect(out).toContain("$body = [System.Text.Encoding]::UTF8.GetBytes('it''s \u2018\u2018x\u2019\u2019 $v `t \n')")
     expect(out).toContain("-ContentType 'text/plain'")
     expect(out).toContain('-Body $body')
     expect(out).toContain("-Method 'POST'")
   })
-  it('moves Content-Type out of the headers table', () => {
-    const out = generateSnippet('powershell', req({ method: 'POST', headers: [{ key: 'X-A', value: '1' }], body: raw('{}') }))
+  it('moves Content-Type and User-Agent out of the headers table', () => {
+    const out = generateSnippet(
+      'powershell',
+      req({ method: 'POST', headers: [{ key: 'X-A', value: '1' }, { key: 'User-Agent', value: 'tool/1' }], body: raw('{}') }),
+    )
     expect(out).toContain("'X-A' = '1'")
     expect(out).not.toContain("'Content-Type' =")
+    expect(out).not.toContain("'User-Agent' =")
     expect(out).toContain("-ContentType 'application/json'")
+    expect(out).toContain("-UserAgent 'tool/1'")
   })
-  it('urlEncoded, formData, binary', () => {
+  it('works in Windows PowerShell 5.1: basic parsing, TLS 1.2 for https, errors show the answer, no -Form', () => {
+    const out = generateSnippet('powershell', req({}))
+    expect(out).toContain('Windows PowerShell 5.1 and PowerShell 7+')
+    expect(out).toContain('Invoke-WebRequest -UseBasicParsing')
+    expect(out).toContain('[Net.SecurityProtocolType]::Tls12')
+    expect(out).toContain('$_.ErrorDetails.Message')
+    expect(generateSnippet('powershell', req({ url: 'http://localhost:3000/x' }))).not.toContain('Tls12')
+  })
+  it('urlEncoded, formData (HttpClient, not -Form), binary', () => {
     const u = generateSnippet('powershell', req({ method: 'POST', body: { mode: 'urlEncoded', urlEncoded: [{ key: 'a', value: 'b c', enabled: true }] } }))
     expect(u).toContain("[uri]::EscapeDataString('a') + '=' + [uri]::EscapeDataString('b c')")
     const f = generateSnippet(
       'powershell',
       req({
         method: 'POST',
+        headers: [{ key: 'X-A', value: '1' }],
         body: {
           mode: 'formData',
           formData: [
@@ -388,11 +402,108 @@ describe('powershell', () => {
         },
       }),
     )
-    expect(f).toContain("'t' = 'v'")
-    expect(f).toContain("'f' = Get-Item -LiteralPath 'C:\\a b\\x.png'")
-    expect(f).toContain('-Form $form')
+    expect(f).not.toContain('-Form')
+    expect(f).toContain('System.Net.Http.MultipartFormDataContent')
+    expect(f).toContain("$form.Add((New-Object System.Net.Http.StringContent -ArgumentList 'v'), 't')")
+    expect(f).toContain("$file1 = [System.IO.File]::OpenRead('C:\\a b\\x.png')")
+    expect(f).toContain("$form.Add((New-Object System.Net.Http.StreamContent -ArgumentList $file1), 'f', 'x.png')")
+    expect(f).toContain("[void]$request.Headers.TryAddWithoutValidation('X-A', '1')")
+    expect(f).toContain('$file1.Dispose()')
     const b = generateSnippet('powershell', req({ method: 'POST', body: { mode: 'binary', binaryFilePath: '/x' } }))
     expect(b).toContain("-InFile '/x'")
+  })
+})
+
+describe('request settings (Settings tab) in snippets', () => {
+  const off = { strictSSL: false } as const
+  const noFollow = { followRedirects: false } as const
+
+  it('curl: -L unless redirects are off, --max-redirs, --location-trusted, -k', () => {
+    expect(generateSnippet('curl', req(noFollow))).toBe("curl 'https://api.example.com/items'")
+    expect(generateSnippet('curl', req({ method: 'POST', body: raw('{}'), maxRedirects: 3 })).split(' \\\n  ').slice(0, 2)).toEqual([
+      "curl -L -X POST 'https://api.example.com/items'",
+      '--max-redirs 3',
+    ])
+    expect(generateSnippet('curl', req({ followAuthorizationHeader: true, ...off }))).toBe("curl --location-trusted -k 'https://api.example.com/items'")
+    expect(generateSnippet('curl', req({ method: 'HEAD', ...noFollow, ...off }))).toBe("curl -k --head 'https://api.example.com/items'")
+    // A maximum without following means nothing to curl.
+    expect(generateSnippet('curl', req({ ...noFollow, maxRedirects: 2 }))).not.toContain('--max-redirs')
+  })
+
+  it("fetch: redirect: 'manual'; SSL off only as a note (fetch has no option)", () => {
+    expect(generateSnippet('fetch', req())).not.toContain('redirect')
+    expect(generateSnippet('fetch', req(noFollow))).toContain("  redirect: 'manual',\n")
+    const out = generateSnippet('fetch', req(off))
+    expect(out.startsWith('// SSL certificate verification is off for this request in Slinger.')).toBe(true)
+    expect(out).toContain('NODE_TLS_REJECT_UNAUTHORIZED=0')
+  })
+
+  it('axios: maxRedirects and an https agent without certificate checks', () => {
+    expect(generateSnippet('axios', req())).not.toMatch(/maxRedirects|httpsAgent/)
+    expect(generateSnippet('axios', req(noFollow))).toContain('  maxRedirects: 0,\n')
+    expect(generateSnippet('axios', req({ maxRedirects: 4 }))).toContain('  maxRedirects: 4,\n')
+    const out = generateSnippet('axios', req(off))
+    expect(out.startsWith("import https from 'node:https';\nimport axios from 'axios';")).toBe(true)
+    expect(out).toContain('httpsAgent: new https.Agent({ rejectUnauthorized: false })')
+  })
+
+  it('python: allow_redirects=False, verify=False, a Session for the maximum', () => {
+    expect(generateSnippet('python', req({ ...noFollow, ...off }))).toContain("response = requests.request('GET', url, allow_redirects=False, verify=False)")
+    const max = generateSnippet('python', req({ maxRedirects: 2 }))
+    expect(max).toContain("session = requests.Session()\nsession.max_redirects = 2\nresponse = session.request('GET', url)")
+    expect(generateSnippet('python', req())).toContain("response = requests.request('GET', url)\n")
+  })
+
+  it('go: a client with CheckRedirect and InsecureSkipVerify only when needed', () => {
+    expect(generateSnippet('go', req())).toContain('http.DefaultClient.Do(req)')
+    const nf = generateSnippet('go', req({ ...noFollow, ...off }))
+    expect(nf).toContain('"crypto/tls"')
+    expect(nf).toContain('client := &http.Client{\n\t\tTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},')
+    expect(nf).toContain('return http.ErrUseLastResponse')
+    expect(nf).toContain('res, err := client.Do(req)')
+    const max = generateSnippet('go', req({ maxRedirects: 3 }))
+    expect(max).toContain('if len(via) > 3 {')
+    expect(max).not.toContain('crypto/tls')
+  })
+
+  it('php: FOLLOWLOCATION (PHP cURL does not follow by default), MAXREDIRS, UNRESTRICTED_AUTH, SSL_VERIFYPEER', () => {
+    expect(generateSnippet('php', req())).toContain('    CURLOPT_FOLLOWLOCATION => true,\n')
+    expect(generateSnippet('php', req(noFollow))).not.toContain('FOLLOWLOCATION')
+    const out = generateSnippet('php', req({ maxRedirects: 5, followAuthorizationHeader: true, ...off }))
+    expect(out).toContain('    CURLOPT_MAXREDIRS => 5,\n    CURLOPT_UNRESTRICTED_AUTH => true,\n')
+    expect(out).toContain('    CURLOPT_SSL_VERIFYPEER => false, // SSL certificate verification off\n    CURLOPT_SSL_VERIFYHOST => 0,\n')
+  })
+
+  it('powershell: -SkipCertificateCheck on 6+ and the ServicePointManager callback on 5.1; -MaximumRedirection', () => {
+    const plain = generateSnippet('powershell', req())
+    expect(plain).not.toMatch(/MaximumRedirection|SkipCertificateCheck/)
+    const out = generateSnippet('powershell', req({ ...noFollow, ...off }))
+    expect(out).toContain(
+      "$insecure = @{}\nif ($PSVersionTable.PSVersion.Major -ge 6) { $insecure.SkipCertificateCheck = $true } else { if (-not ('SlingerInsecureTls' -as [type])) { Add-Type -TypeDefinition 'public static class SlingerInsecureTls { public static void Enable() { System.Net.ServicePointManager.ServerCertificateValidationCallback = delegate { return true; }; } }' }; [SlingerInsecureTls]::Enable() }\n",
+    )
+    expect(out).toContain("Invoke-WebRequest -UseBasicParsing -Uri 'https://api.example.com/items' -Method 'GET' -MaximumRedirection 0 -ErrorAction SilentlyContinue @insecure")
+    expect(generateSnippet('powershell', req({ maxRedirects: 7 }))).toContain('-MaximumRedirection 7')
+  })
+
+  it('powershell multipart: an HttpClientHandler for redirects and certificates', () => {
+    const form = { mode: 'formData', formData: [{ key: 'a', value: 'b', type: 'text', enabled: true }] } as HttpRequestInput['body']
+    expect(generateSnippet('powershell', req({ method: 'POST', body: form }))).toContain('$client = New-Object System.Net.Http.HttpClient\n')
+    const out = generateSnippet('powershell', req({ method: 'POST', body: form, ...noFollow, ...off }))
+    expect(out).toContain('$handler = New-Object System.Net.Http.HttpClientHandler\n$handler.AllowAutoRedirect = $false\n')
+    expect(out).toContain('[System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator } else { if (-not (\'SlingerInsecureTls\' -as [type]))')
+    expect(out).toContain('ServerCertificateValidationCallback = delegate { return true; };')
+    expect(out).toContain('$client = New-Object System.Net.Http.HttpClient -ArgumentList $handler\n')
+    expect(generateSnippet('powershell', req({ method: 'POST', body: form, maxRedirects: 3 }))).toContain('$handler.MaxAutomaticRedirections = 3\n')
+    expect(generateSnippet('powershell', req({ method: 'POST', body: form, maxRedirects: 0 }))).toContain('$handler.AllowAutoRedirect = $false\n')
+  })
+
+  it('.http: # @no-redirect and # @no-cookie-jar directives before the request line', () => {
+    expect(generateSnippet('http', req({ requestName: 'R', ...noFollow, cookies: 'off' }))).toBe('### R\n# @no-redirect\n# @no-cookie-jar\nGET https://api.example.com/items\n')
+    expect(generateSnippet('http', req({ requestName: 'R' }))).toBe('### R\nGET https://api.example.com/items\n')
+  })
+
+  it('keeps an explicit Cookie header in every language', () => {
+    for (const lang of ALL) expect(generateSnippet(lang, req({ headers: [{ key: 'Cookie', value: 'sid=abc' }], cookies: 'jar' }))).toContain('sid=abc')
   })
 })
 

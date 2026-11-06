@@ -202,6 +202,20 @@ describe('http and history', () => {
     expect(echoed.headers['Content-Type']).toBe('application/json')
   })
 
+  it('Digest and AWS Signature: clearly fake headers plus the auth note, like main (which computes them)', async () => {
+    const digest = await api.executeHttpRequest(run({ url: 'https://mock.slinger.local/echo', auth: { kind: 'digest', digest: { username: 'alice', password: 'pw' } } }))
+    expect((JSON.parse(digest.bodyText ?? '') as { headers: Record<string, string> }).headers.Authorization).toMatch(/^Digest username="alice".*mock-not-computed/)
+    expect(digest.authNote).toMatch(/^Digest \(browser mock/)
+    const aws = await api.executeHttpRequest(
+      run({ url: 'https://mock.slinger.local/echo', auth: { kind: 'awsv4', awsv4: { accessKey: 'AK', secretKey: 'SK', region: '', service: 's3', sessionToken: 'T' } } }),
+    )
+    const headers = (JSON.parse(aws.bodyText ?? '') as { headers: Record<string, string> }).headers
+    expect(headers.Authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AK\/00000000\/us-east-1\/s3\/aws4_request/)
+    expect(headers['X-Amz-Security-Token']).toBe('T')
+    expect(JSON.stringify(headers)).not.toContain('SK')
+    expect(aws.authNote).toMatch(/^AWS Signature Version 4 \(browser mock/)
+  })
+
   it('returns binary routes as base64 and cookies as separate headers', async () => {
     const png = await api.executeHttpRequest(run({ url: 'https://mock.slinger.local/png' }))
     expect(png.bodyText).toBeNull()

@@ -55,13 +55,13 @@ describe('document round trip', () => {
   })
 
   it('preserves unsupported auth and body instead of dropping them', () => {
-    const documentJson = JSON.stringify({ auth: { type: 'hawk', hawk: [{ key: 'authId', value: 'abc' }] }, body: { mode: 'graphql', graphql: { query: '{a}' } } })
+    const documentJson = JSON.stringify({ auth: { type: 'hawk', hawk: [{ key: 'authId', value: 'abc' }] }, body: { mode: 'protobuf', protobuf: { message: '{a}' } } })
     const d = parseDocument({ ...base, documentJson })
     expect(d.auth.kind).toBe('unsupported')
     expect(d.body.kind).toBe('unsupported')
     const out = JSON.parse(serializeDraft(d).documentJson)
     expect(out.auth).toEqual({ type: 'hawk', hawk: [{ key: 'authId', value: 'abc' }] })
-    expect(out.body.mode).toBe('graphql')
+    expect(out.body).toEqual({ mode: 'protobuf', protobuf: { message: '{a}' } })
   })
 
   it('survives corrupt JSON and seeds disabled params from Postman source', () => {

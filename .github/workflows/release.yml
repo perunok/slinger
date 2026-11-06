@@ -195,6 +195,10 @@ jobs:
         if: env.SIGN == 'true'
         run: cp "signed/installer/Slinger-${{ steps.version.outputs.version }}-win-x64.exe" release/
 
+      # The PowerShell code snippets, run for real in Windows PowerShell 5.1 and PowerShell 7 (src/lib/snippets.powershell.test.ts).
+      - name: PowerShell snippets in 5.1 and 7
+        run: npx vitest run --config vite.config.ts src/lib/snippets.powershell.test.ts
+
       # Install silently, run the installed app's self-check (keychain included), one-instance guard, uninstall.
       - name: Installer smoke test
         run: node scripts/windows-installer-smoke.mjs "release/Slinger-${{ steps.version.outputs.version }}-win-x64.exe" ${{ env.SIGN == 'true' && '--expect-signed' || '' }}

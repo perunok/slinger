@@ -19,6 +19,7 @@ const CURL = `curl -X POST 'https://api.example.com/orders?dry=1' \\
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer $TOKEN' \\
   --proxy http://p:1 \\
+  -k \\
   -d '{"item":"book"}'`
 
 function pasteEvent(text: string): ClipboardEvent {
@@ -63,8 +64,8 @@ describe('Import dialog: cURL commands', () => {
     const item = screen.getByTestId('curl-request')
     expect(item).toHaveTextContent('POST')
     expect(item).toHaveTextContent('https://api.example.com/orders?dry=1')
-    expect(screen.getByTestId('curl-summary')).toHaveTextContent('2 headers · JSON body')
-    expect(screen.getByTestId('curl-warnings')).toHaveTextContent('The proxy http://p:1 was not imported')
+    expect(screen.getByTestId('curl-summary')).toHaveTextContent('2 headers · JSON body · SSL verification off')
+    expect(screen.getByTestId('curl-warnings')).toHaveTextContent('This command uses the proxy http://p:1, which was not imported: Slinger sets it for all requests in Settings > Network.')
     expect((screen.getByLabelText('Request name') as HTMLInputElement).value).toBe('POST /orders')
 
     await fireEvent.change(screen.getByLabelText('Collection'), { target: { value: shop.id } })
@@ -82,6 +83,7 @@ describe('Import dialog: cURL commands', () => {
     ])
     expect(doc.body).toMatchObject({ mode: 'raw', raw: '{"item":"book"}', options: { raw: { language: 'json' } } })
     expect(doc.params).toEqual([expect.objectContaining({ key: 'dry', value: '1' })])
+    expect(doc.protocolProfileBehavior).toEqual({ strictSSL: false })
     expect(tabsStore.active?.requestId).toBe(r!.id)
     expect(toast.items.at(-1)).toMatchObject({ title: 'Request added' })
   })

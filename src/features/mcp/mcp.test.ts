@@ -91,6 +91,49 @@ describe('inherited auth', () => {
   })
 })
 
+describe('Digest and AWS Signature auth (0.30)', () => {
+  it('creates, reads and edits them; password, secret key and session token never come back', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', {
+      collection_id: demo.id,
+      name: 'Digest',
+      method: 'GET',
+      url: 'https://x/digest',
+      auth: { type: 'digest', username: 'alice', password: 'pw_literal_1' },
+    })
+    expect(created.auth).toEqual({ type: 'digest', username: 'alice', password: '•••• (set, hidden)', algorithm: 'MD5' })
+    const { updated } = await call('update_request', {
+      request_id: created.id,
+      auth: { type: 'awsv4', access_key: 'AKIAEXAMPLE', secret_key: 'aws_secret_literal', region: 'eu-west-1', service: 's3', session_token: 'tok_literal' },
+    })
+    expect(updated.auth).toEqual({
+      type: 'awsv4',
+      access_key: 'AKIAEXAMPLE',
+      secret_key: '•••• (set, hidden)',
+      region: 'eu-west-1',
+      service: 's3',
+      session_token: '•••• (set, hidden)',
+    })
+    const got = JSON.stringify(await call('get_request', { request_id: created.id }))
+    for (const secret of ['pw_literal_1', 'aws_secret_literal', 'tok_literal']) expect(got).not.toContain(secret)
+    // {{variables}} stay visible; the stored document is Postman's awsv4 array
+    const again = await call('update_request', { request_id: created.id, auth: { type: 'awsv4', secret_key: '{{awsSecret}}' } })
+    expect(again.updated.auth.secret_key).toBe('{{awsSecret}}')
+    expect(JSON.parse(app.requestById(created.id)!.documentJson).auth.type).toBe('awsv4')
+  })
+
+  it('an inherited Digest auth is shown masked', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    await window.slinger.setCollectionAuth(demo.id, JSON.stringify({ type: 'digest', digest: [{ key: 'username', value: 'u' }, { key: 'password', value: 'container_pw' }] }))
+    await app.reloadCollections()
+    const { created } = await call('create_request', { collection_id: demo.id, name: 'Inherits digest', method: 'GET', url: 'https://x', auth: { type: 'inherit' } })
+    const got = await call('get_request', { request_id: created.id })
+    expect(got.auth.effective).toEqual({ type: 'digest', username: 'u', password: '•••• (set, hidden)' })
+    expect(JSON.stringify(got)).not.toContain('container_pw')
+    expect((await call('get_tree', { collection_id: demo.id })).collections[0].auth).toBe('digest')
+  })
+})
+
 describe('editing requests', () => {
   it('creates a request with headers, query, JSON body, auth and scripts; the window shows it; literal secrets are masked', async () => {
     const demo = app.collections.find((c) => c.name === 'Demo API')!
@@ -125,6 +168,28 @@ describe('editing requests', () => {
     expect(app.requestById(created.id)?.url).toBe('{{baseUrl}}/v2/orders')
     const scripts = await call('update_request', { request_id: created.id, test_script: '' })
     expect(scripts.updated.test_script).toBe('')
+  })
+
+  it('creates, reads, updates and sends a GraphQL request (body mode graphql)', async () => {
+    const demo = app.collections.find((c) => c.name === 'Demo API')!
+    const { created } = await call('create_request', {
+      collection_id: demo.id,
+      name: 'GQL',
+      method: 'POST',
+      url: 'https://mock.slinger.local/graphql',
+      body: { mode: 'graphql', query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operation_name: 'B' },
+    })
+    expect(created.body).toEqual({ mode: 'graphql', query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operation_name: 'B' })
+    // Stored in Postman's shape (variables as text).
+    expect(JSON.parse(app.requestById(created.id)!.documentJson).body).toEqual({
+      mode: 'graphql',
+      graphql: { query: 'query B($g: Genre) { books(genre: $g) { title } }', variables: '{"g": "FANTASY"}', operationName: 'B' },
+    })
+    const { updated } = await call('update_request', { request_id: created.id, body: { mode: 'graphql', query: '{ authors { name } }' } })
+    expect(updated.body).toEqual({ mode: 'graphql', query: '{ authors { name } }', variables: '', operation_name: '' })
+    const { response } = await call('send_request', { request_id: created.id })
+    expect(response.status).toBe(200)
+    expect(response.body).toContain('The Hobbit')
   })
 
   it('an open, clean tab follows edits; moving, renaming and deleting work and show in the window', async () => {

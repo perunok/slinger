@@ -387,7 +387,37 @@ export interface RequestHeader {
   value: string
 }
 
-export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2'
+export type AuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth2' | 'digest' | 'awsv4'
+
+/**
+ * ADDED (0.30) Digest auth (RFC 7616 / 2617), resolved. Main answers the server's 401 challenge and sends the request once
+ * more (electron/services/digestAuth.ts). With `realm` and `nonce` given, the first request already carries the header,
+ * computed from these values; `disableRetryRequest` then turns the automatic answer off (Postman's option).
+ */
+export interface DigestAuthInput {
+  username: string
+  password: string
+  realm?: string
+  nonce?: string
+  algorithm?: string
+  qop?: string
+  nonceCount?: string
+  clientNonce?: string
+  opaque?: string
+  disableRetryRequest?: boolean
+}
+
+/**
+ * ADDED (0.30) AWS Signature Version 4, resolved. Main signs the final request of every hop (electron/services/awsSigV4.ts);
+ * empty region / service are us-east-1 / execute-api as in Postman.
+ */
+export interface AwsV4AuthInput {
+  accessKey: string
+  secretKey: string
+  region: string
+  service: string
+  sessionToken?: string
+}
 
 export interface ResolvedAuth {
   kind: AuthKind
@@ -400,6 +430,8 @@ export interface ResolvedAuth {
    * when the prefix is empty) or the `access_token` query parameter.
    */
   oauth2?: { tokenKey: string; addTo: 'header' | 'query'; headerPrefix: string }
+  digest?: DigestAuthInput
+  awsv4?: AwsV4AuthInput
 }
 
 export type BodyMode = 'none' | 'raw' | 'formData' | 'urlEncoded' | 'binary'
@@ -554,6 +586,11 @@ export interface HttpResponseData {
   savedToFile?: string
   /** ADDED (0.29): the redirects followed before this response, in order (absent when there were none). */
   redirects?: RedirectHop[]
+  /**
+   * ADDED (0.30): how main applied an auth that needs more than a header (Digest answered a challenge, AWS signature),
+   * e.g. "Digest (SHA-256, qop=auth): answered the server's challenge". Never holds a credential.
+   */
+  authNote?: string
   /**
    * ADDED (MCP requests): set by the renderer on the synthetic response of an MCP request (executeDraft), never by main.
    * `bodyText` then holds the JSON-RPC result; `operation` is 'tools/call' | 'resources/read' | 'prompts/get' and `name`

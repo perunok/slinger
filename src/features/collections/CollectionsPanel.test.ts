@@ -108,7 +108,7 @@ describe('request menu: copy', () => {
 
     await user.pointer({ keys: '[MouseRight]', target: row })
     await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Copy as cURL' }))
-    await waitFor(async () => expect(await navigator.clipboard.readText()).toMatch(/^curl -X POST 'https:\/\/x\.test\/\{\{id\}\}'/))
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toMatch(/^curl -L -X POST 'https:\/\/x\.test\/\{\{id\}\}'/))
   })
 })
 

@@ -25,17 +25,30 @@ const kv = z
   .max(500)
 const body = z
   .object({
-    mode: z.enum(['none', 'json', 'raw', 'urlencoded', 'form-data']).describe('json = raw JSON with a JSON content type.'),
+    mode: z
+      .enum(['none', 'json', 'raw', 'urlencoded', 'form-data', 'graphql'])
+      .describe('json = raw JSON with a JSON content type. graphql = sent as JSON {query, variables, operationName}.'),
     raw: z.string().max(5_000_000).optional().describe('Text for json/raw.'),
     language: z.enum(['json', 'xml', 'text', 'html', 'javascript']).optional().describe('raw only; default text.'),
     fields: kv.optional().describe('urlencoded / form-data text fields.'),
+    // ADDED (0.30): GraphQL bodies.
+    query: z.string().max(5_000_000).optional().describe('graphql only: the query document.'),
+    variables: z.string().max(5_000_000).optional().describe('graphql only: the variables as JSON object text, e.g. {"id": 1}.'),
+    operation_name: z.string().max(4096).optional().describe('graphql only: the operation to run when the query defines several.'),
   })
   .describe('Request body. Omit to keep the current one.')
 const auth = z
   .object({
-    type: z.enum(['inherit', 'none', 'basic', 'bearer', 'apikey']).describe('inherit = use the folder\'s or collection\'s auth (the default for new requests).'),
-    username: z.string().max(4096).optional(),
-    password: z.string().max(4096).optional(),
+    type: z
+      .enum(['inherit', 'none', 'basic', 'bearer', 'apikey', 'digest', 'awsv4'])
+      .describe('inherit = use the folder\'s or collection\'s auth (the default for new requests). digest = HTTP Digest; awsv4 = AWS Signature Version 4.'),
+    username: z.string().max(4096).optional().describe('basic / digest.'),
+    password: z.string().max(4096).optional().describe('basic / digest.'),
+    access_key: z.string().max(1024).optional().describe('awsv4.'),
+    secret_key: z.string().max(4096).optional().describe('awsv4.'),
+    region: z.string().max(128).optional().describe('awsv4; default us-east-1.'),
+    service: z.string().max(128).optional().describe('awsv4, e.g. s3; default execute-api.'),
+    session_token: z.string().max(65536).optional().describe('awsv4, temporary credentials only.'),
     token: z.string().max(65536).optional(),
     key: z.string().max(4096).optional().describe('apikey: header or query parameter name.'),
     value: z.string().max(65536).optional().describe('apikey: its value.'),

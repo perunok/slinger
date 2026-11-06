@@ -89,6 +89,8 @@ export const AUTH_KIND_LABELS: Record<AuthDraft['kind'], string> = {
   bearer: 'Bearer Token',
   apiKey: 'API Key',
   oauth2: 'OAuth 2.0',
+  digest: 'Digest Auth',
+  awsv4: 'AWS Signature',
   unsupported: 'Unsupported',
 }
 

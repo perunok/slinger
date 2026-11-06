@@ -8,11 +8,12 @@ import type { HttpRequestInput, McpCallInput, McpConnectInput, OAuth2Config, Res
 import { isSupportedGrant, resolveOAuth2Config, unsupportedGrantMessage } from './oauth2'
 import { dataRows } from './kv'
 import { mcpDisplayUrl } from './mcpRequest'
-import { rawContentType, templateTexts, type AuthDraft, type RequestDraft } from './request'
+import { awsV4Of, digestOf, rawContentType, templateTexts, type AuthDraft, type RequestDraft } from './request'
 import { findSecretsUsed, findUnresolved, parseTokens, resolveTemplate, scopesChecked, type TemplateScope, type VariableInfo } from './template'
 import { encodeQueryPart, splitUrl } from './urlParams'
 import { applyPathVariables, missingPathVariablesWarning } from './pathVariables'
 import { withDefaultScheme } from '../../shared/urlScheme'
+import { emptyGraphql, graphqlPayload } from './graphql'
 
 export type PrepareResult =
   /**
@@ -118,6 +119,28 @@ function resolveAuth(a: AuthDraft, workspaceId: string, r: (t: string) => string
     oauth2 = resolveOAuth2Config(a.oauth2, workspaceId, r, 'send')
     auth.kind = 'oauth2'
     auth.oauth2 = { tokenKey: '', addTo: a.oauth2.addTokenTo === 'queryParams' ? 'query' : 'header', headerPrefix: r(a.oauth2.headerPrefix).trim() }
+  } else if (a.kind === 'digest') {
+    // Main answers the server's challenge (it needs the response), so the credentials go over resolved, like basic auth's.
+    const d = digestOf(a)
+    auth.kind = 'digest'
+    auth.digest = {
+      username: r(d.username),
+      password: r(d.password),
+      realm: r(d.realm),
+      nonce: r(d.nonce),
+      algorithm: r(d.algorithm).trim(),
+      qop: r(d.qop).trim(),
+      nonceCount: r(d.nonceCount).trim(),
+      clientNonce: r(d.clientNonce).trim(),
+      opaque: r(d.opaque),
+      disableRetryRequest: d.disableRetryRequest,
+    }
+  } else if (a.kind === 'awsv4') {
+    // Main signs the final request of every hop (after headers, cookies and body are known).
+    const w = awsV4Of(a)
+    auth.kind = 'awsv4'
+    auth.awsv4 = { accessKey: r(w.accessKey).trim(), secretKey: r(w.secretKey).trim(), region: r(w.region).trim(), service: r(w.service).trim(), sessionToken: r(w.sessionToken).trim() }
+    if (w.addAuthDataToQuery) warnings.push('AWS Signature: adding the auth data to the query is not supported; the signature is sent in the Authorization header.')
   } else if (a.kind === 'unsupported') {
     warnings.push(`Auth type "${a.unsupportedType ?? 'custom'}" is not supported; sent without authorization.`)
   }
@@ -185,6 +208,13 @@ export function prepareRequest(draft: RequestDraft, ctx: PrepareContext): Prepar
     if (!b.binaryPath) return { ok: false, unresolved: [], error: 'Choose a file for the binary body.' }
     body.mode = 'binary'
     body.binaryFilePath = b.binaryPath
+  } else if (b.kind === 'graphql') {
+    // ADDED (0.30): the JSON a GraphQL client posts, as a raw JSON body (main sets Content-Type: application/json unless
+    // the request has its own). The method stays the user's, as in Postman.
+    const payload = graphqlPayload(b.graphql ?? emptyGraphql(), r, (t) => resolveJsonTemplates(t, r), !!ctx.allowUnresolved)
+    if (!payload.ok) return { ok: false, unresolved: [], error: payload.error }
+    body.mode = 'raw'
+    body.raw = { content: payload.content, contentType: 'application/json' }
   } else if (b.kind === 'unsupported') {
     warnings.push('This request has a body type Slinger cannot edit; it is sent without a body.')
   }
@@ -340,6 +370,9 @@ export function prepareMcp(draft: RequestDraft, ctx: Omit<PrepareContext, 'allow
       else headers = setHeader(headers, auth.apiKey.key, auth.apiKey.value)
     } else if (auth.kind === 'oauth2' && auth.oauth2 && resolvedAuth.oauth2) {
       oauth2 = { config: resolvedAuth.oauth2, addTo: auth.oauth2.addTo, headerPrefix: auth.oauth2.headerPrefix }
+    } else if (auth.kind === 'digest' || auth.kind === 'awsv4') {
+      // Both are computed per HTTP exchange, which the MCP client transport does not expose.
+      return invalid(`${auth.kind === 'digest' ? 'Digest' : 'AWS Signature'} auth is not supported for MCP requests; use Basic, Bearer, API Key or OAuth 2.0.`)
     }
     connect = { transport: m.transport, url, headers }
   }

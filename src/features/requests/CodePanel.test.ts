@@ -23,7 +23,7 @@ describe('CodePanel', () => {
     render(CodePanel, { tab: tabsStore.newTab({ draft: newDraft({ name: 'H', url: 'https://api.example.com/x' }) }) })
     expect(screen.getByLabelText('Language')).toBeInTheDocument()
     expect(screen.queryByText('MCP Inspector CLI')).toBeNull()
-    expect(document.body).toHaveTextContent("curl 'https://api.example.com/x'")
+    expect(document.body).toHaveTextContent("curl -L 'https://api.example.com/x'")
   })
 
   it('shows only the MCP Inspector CLI command for an MCP request', () => {

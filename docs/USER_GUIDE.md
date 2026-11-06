@@ -132,17 +132,19 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
 - **Headers:** a key/value table. "Auto-generated headers" lists headers Slinger adds by itself (for example `Content-Type` from
   the body mode and `User-Agent: Slinger`); a header you set yourself wins.
 - **Body:** `none`, `form-data` (text and file fields; pick files with the native dialog; a saved file must be chosen again after restarting the app: the field then shows "file not granted"), `x-www-form-urlencoded`, `raw`
-  (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON) and `binary` (send one file). GET and HEAD requests cannot have
-  a body.
+  (JSON, XML, Text, HTML, JavaScript; **Beautify** formats JSON), `binary` (send one file) and `GraphQL` (see
+  [GraphQL](#graphql)). GET and HEAD requests cannot have a body.
 - **Authorization:** **Inherit auth from parent** (the default for new requests), No Auth, Basic Auth, Bearer Token, API Key
-  (added to a header or as a query parameter) or [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`. Imported Postman
-  requests with other auth types (for example Digest or AWS Signature) are sent without authorization and a warning says so.
+  (added to a header or as a query parameter), [Digest Auth](#digest-auth), [AWS Signature](#aws-signature) or
+  [OAuth 2.0](#oauth-20). Fields accept `{{variables}}`; keep passwords and keys in secret variables. Imported Postman
+  requests with other auth types (for example Hawk or NTLM) are sent without authorization and a warning says so.
   See [Collection and folder authorization](#collection-and-folder-authorization) for inheriting.
 - **Scripts:** the request's **Pre-request** and **Tests** scripts (JavaScript, Postman's `pm` API); see [Scripts](#scripts).
 - **Docs:** the request's documentation in Markdown, stored with the request and exported to Postman as its `description`;
   see [Documentation](#documentation-markdown).
 - **Settings:** per-request timeout in milliseconds (default 60 000, maximum 600 000), and Postman's request settings
-  (stored and exported as the request's `protocolProfileBehavior`, so imported Postman requests keep theirs):
+  (stored and exported as the request's `protocolProfileBehavior`, so imported Postman and cURL requests keep theirs). The
+  section's name gets a dot when anything here differs from the defaults:
   - **SSL certificate verification**: *As in Settings > Network* (default), *On* or *Off for this request*. Off accepts a
     self-signed, expired or otherwise invalid certificate for this request only.
   - **Automatically follow redirects** (on): follows 301, 302, 303, 307 and 308. Off shows the redirect response itself.
@@ -159,11 +161,72 @@ The editor sections are **Params**, **Authorization**, **Headers**, **Body**, **
     keeps the cookies its responses set (also on redirects).
 - **Code:** generates a snippet for the current request in cURL, JavaScript (fetch), JavaScript (axios), Python (requests), Go
   (net/http), PHP (cURL), PowerShell or as an **HTTP file (.http)**, with a Copy button. Unresolved variables are left as-is in
-  snippets. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
+  snippets. The request's **Settings** are reproduced where the language can: redirects are followed like Slinger does
+  (cURL `-L`, PHP `CURLOPT_FOLLOWLOCATION`; with **Automatically follow redirects** off: no `-L`, `redirect: 'manual'`, axios
+  `maxRedirects: 0`, Python `allow_redirects=False`, Go `CheckRedirect`, PowerShell `-MaximumRedirection 0`, `.http`
+  `# @no-redirect`), a maximum number of redirects you set, **Off for this request** SSL verification (`-k`, `verify=False`,
+  an axios https agent, Go `InsecureSkipVerify`, PHP `CURLOPT_SSL_VERIFYPEER`, PowerShell `-SkipCertificateCheck` in 7 and a
+  certificate callback in Windows PowerShell 5.1; fetch has no option, so a comment says how), and **Disable cookie jar** as
+  `# @no-cookie-jar` in `.http`. Cookies from the workspace's cookie jar are never put into a snippet; a `Cookie` header you
+  set yourself is. The `.http` language is the request format of the HTTP Client in IntelliJ IDEA and other JetBrains IDEs, VS Code
   REST Client and similar tools: a `### <request name>` line, `METHOD URL`, the headers, a blank line and the body
   (form-data as `multipart/form-data` parts, files and binary bodies as `< path` includes; Basic auth with a `{{variable}}`
   as `Basic <username> <password>`, which these tools encode themselves). **Save** writes it as `<request name>.http` to the
   export folder (Downloads unless you chose another one in an export dialog).
+
+### GraphQL
+
+Pick **GraphQL** in the Body tab (Postman GraphQL requests import as one). The **Query** editor (GraphQL highlighting) and the
+**Variables** editor (JSON, checked as you type like a raw JSON body: the variables must be a JSON object) sit side by side;
+**Operation** names the operation to run when the query defines several (the box suggests the names in the query).
+
+- **Sending:** the body is the JSON a GraphQL client posts, `{"query": …, "variables": …, "operationName": …}` (variables
+  and operation name only when set), with `Content-Type: application/json` unless you set your own. The method is the one
+  you chose (normally POST; GET cannot have a body). `{{variables}}` work in the query, the variables and the operation
+  name; in the variables they follow the raw JSON rules (inside a string the value is escaped, outside it is inserted as-is,
+  so `{"id": {{id}}}` sends a number). Variables that are not valid JSON stop the send with an error. Code snippets, cURL
+  and History show the same JSON request.
+- **Fetch schema:** sends the standard introspection query to the request's URL as a POST, with the request's headers,
+  authorization (inherited included), environment, network settings and cookies, but without running its scripts; it is
+  listed in History like any send. The schema is kept in memory (per workspace and URL, until Slinger quits) and is never
+  saved with the request. Then:
+  - the query editor completes fields (with their arguments and types), arguments, input object fields, enum values,
+    `true`/`false`, type names (after `on` and in variable definitions) and directives as you type, or with **Ctrl+Space**;
+  - **Show schema** opens a small schema browser: the types (query, mutation and subscription first) with a filter over
+    type and field names, and one type's fields with their arguments, types and descriptions (deprecated fields are struck
+    through). Click a field's type to open it.
+- **Response:** a GraphQL answer is ordinary JSON. When it has an `errors` array a **GraphQL error** chip appears next to the
+  status, since GraphQL servers usually answer failed queries with *200 OK*.
+- Scripts: `pm.request.body` of a GraphQL request has no mode in pre-request scripts (as for body types Slinger keeps
+  as they are); test scripts see the JSON that was sent. `pm.sendRequest` also takes `mode: 'graphql'`.
+- Import and export keep Postman's format (`body.mode = "graphql"`, `body.graphql = {query, variables}` with the variables as
+  JSON text); the operation name is stored as `operationName` next to them, which Postman ignores.
+
+### Digest auth
+
+**Digest Auth** needs only a **Username** and **Password**. Slinger sends the request; when the server answers `401` with a
+`WWW-Authenticate: Digest` challenge, it computes the answer and sends the request once more (MD5, SHA-256 or SHA-512-256,
+each also as `-sess`; qop `auth` or `auth-int`, which hashes the body exactly as sent). A challenge marked *stale* (the
+server's nonce expired) is answered once more; a wrong password ends with the server's `401`. Redirects work: each hop is
+authenticated for its own address, and a redirect to another site drops the authorization unless *Keep the Authorization
+header on redirects to another site* is on. The response's **Headers** tab notes that Digest was used.
+
+**Advanced** holds what Postman stores: realm, nonce, algorithm, qop, nonce count, client nonce and opaque. With a realm and
+a nonce the first request already carries the Authorization header. **Do not answer the challenge automatically**
+(Postman's *Disable retrying the request*) sends the request only once.
+
+### AWS Signature
+
+**AWS Signature** signs the request with AWS Signature Version 4: **Access key**, **Secret key**, **AWS region** (empty =
+`us-east-1`), **Service name** (for example `s3`, `execute-api`, `sts`; empty = `execute-api`) and **Session token** (only for
+temporary credentials). The request is signed right before it is sent, after all headers and the body are final, and signed
+again for every redirect that keeps the authorization. Slinger adds `Authorization`, `X-Amz-Date`, `X-Amz-Security-Token`
+(with a session token) and, for S3, `X-Amz-Content-Sha256`. Postman's option to put the signature into the query string is
+kept in the request but not applied: the signature goes into the Authorization header.
+
+Digest and AWS Signature cannot be used for MCP requests. In code snippets, cURL uses `--digest` / `--aws-sigv4`, Python
+`HTTPDigestAuth` / `requests-aws4auth`, PHP `CURLAUTH_DIGEST`, PowerShell (a small Digest helper in the snippet, since Windows PowerShell 5.1's own Digest client drops the query string) and the `.http` file
+`Authorization: Digest user password`; the other languages say in a comment that the auth has to be computed.
 
 ### Path variables
 
@@ -772,7 +835,7 @@ pm.sendRequest({
   object `{ name: value }` or `"Name: value"` lines; `disabled` entries are skipped), `body` with `mode` `raw` (`raw`, and
   `options.raw.language` `json`/`xml`/`html`/`javascript`/`text` sets the Content-Type unless you set one), `urlencoded`
   (`[{ key, value }]`), `formdata` (`[{ key, value }]`, or `{ key, type: 'file', src: '/path' }`), `file` (`{ src }`) or
-  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic` or `apikey`, in Postman's format; `oauth2` is refused because
+  `graphql` (`{ query, variables }`), `auth` (`bearer`, `basic`, `apikey`, `digest` or `awsv4`, in Postman's format; `oauth2` is refused because
   scripts never get OAuth 2.0 tokens), and `timeout` in ms.
 - **Response.** `res.code`, `res.status` (reason text), `res.headers.get/has/toObject/each`, `res.text()`, `res.json()`,
   `res.responseTime`, `res.responseSize`, `res.cookies.get/has/toObject`, and the same `pm.expect(res).to.have.status(200)`
@@ -819,7 +882,8 @@ are left out of `toObject()`, and the value is fetched from the keychain only wh
 secret (the new value goes to the keychain). Test scripts see `pm.request` with secret variables still written as
 `{{name}}`. Anything a script prints with `console.log` appears in the Console tab (in memory only; never in history, logs or files),
 so avoid printing secrets. History never stores a secret a script read or wrote: it is replaced by `{{name}}` in the recorded URL,
-even if the script put it into the URL. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
+even if the script put it into the URL. The same goes for cookie values a script read or set through `pm.cookies.jar()`
+(4 characters or longer): they are recorded as `[cookie name]`. Copying a secret into a *non-secret* variable (`pm.environment.set('plain', secret)`)
 stores it as plain text, like typing it there would.
 
 **Request changes.** In pre-request scripts `pm.request` is editable: `pm.request.url` (assign a string, or `update()`,
@@ -1080,9 +1144,20 @@ requests, scripts, tests and versions are not exported, and `{{variables}}` stay
     `$'…'` quotes, `-sSL`, `-XPOST`, `--header=…`). Other commands in the text, such as `export TOKEN=…;` or `| jq`, are skipped.
   - `-X`, `-H`, `-A` (User-Agent), `-e` (Referer), `-b` (cookies), `-d` / `--data-raw` / `--data-binary` / `--data-urlencode`
     (several joined with `&`), `--json`, `-F` / `--form-string` (form data; `@file` fields become file fields), `-T` (file
-    body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth), `--oauth2-bearer` (Bearer auth) and `-m` (timeout).
-    A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `-L`, `--compressed`, `-k`,
-    `-v`, ...) are skipped silently.
+    body, PUT), `-G` (data into the query), `-I` (HEAD), `-u` (Basic auth; Digest with `--digest`; AWS Signature with
+    `--aws-sigv4 aws:amz:<region>:<service>`, an `x-amz-security-token` header becoming the session token), `--oauth2-bearer`
+    (Bearer auth) and `-m` (timeout).
+    A URL without `http://` gets it, as curl does. Options that only change how curl runs (`-s`, `--compressed`, `-v`, ...)
+    are skipped silently.
+  - Into the request's **Settings**: `-k` / `--insecure` (SSL verification *Off for this request*), `--max-redirs`,
+    `--post301` / `--post302` / `--post303` (*Follow the original HTTP method*) and `--location-trusted` (*Keep the
+    Authorization header on redirects*). The preview lists them. Redirects are followed whether or not the command has `-L`:
+    curl itself follows none without it, but browsers' *Copy as cURL* never adds `-L`, and the pasted request should behave
+    like the browser's. Turn **Automatically follow redirects** off in the Settings section if you need curl's behaviour.
+  - The proxy (`-x`, `-U`) and certificates (`-E` / `--cert`, `--key`, `--cacert`, `--capath`) are settings for all
+    requests in Slinger: the preview notes that the command uses them and that they are set in **Settings > Network** (a
+    proxy's user name and password are not shown). `-c` / `--cookie-jar` is noted too: responses' cookies go to the
+    workspace's cookie jar anyway.
   - Data without a `Content-Type` is url-encoded form data, as curl sends it; JSON data without one becomes a JSON body (the
     preview notes it). A copied `multipart/form-data` header is dropped, since Slinger sets its own boundary.
   - Shell variables become Slinger variables: `$TOKEN` and `${BASE_URL}` (outside single quotes) are imported as `{{TOKEN}}`
@@ -1476,6 +1551,9 @@ create or edit them, and a command (stdio) runs only after you allowed it in the
 
 Assistants read and set a request's [path variables](#path-variables) too (`path_variables` in `get_request`,
 `create_request`, `update_request` and, for one send, `send_request`).
+
+They read and write [GraphQL](#graphql) bodies as `body: {mode: 'graphql', query, variables, operation_name}` (variables as
+JSON text).
 
 Assistants can also read, add, edit and delete a request's **saved examples**, and keep a real response as an example when they
 send. They can save a **collection version** (a number like 1.4.0, or the next patch / minor / major), see what changed since a

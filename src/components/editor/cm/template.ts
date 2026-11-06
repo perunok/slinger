@@ -5,7 +5,7 @@
  * "create variable" action offering each scope, and an "Edit" action that saves a defined variable's value in place.
  * Shared by TemplateInput (single-line) and CodeEditor (multi-line) so both behave identically.
  */
-import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
+import { autocompletion, type Completion, type CompletionContext, type CompletionResult, type CompletionSource } from '@codemirror/autocomplete'
 import { RangeSetBuilder, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   closeHoverTooltips,
@@ -380,11 +380,20 @@ function suggestionSource(hooks: TemplateHooks) {
   }
 }
 
-export function templateExtension(hooks: TemplateHooks): Extension {
+/**
+ * `{{variable}}` highlighting, hover and completion. `extraSources`: the editor's own completions (e.g. GraphQL fields),
+ * offered next to the variables; CodeMirror allows one `override` list per editor, so they have to be given here.
+ */
+export function templateExtension(hooks: TemplateHooks, extraSources: CompletionSource[] = []): Extension {
   return [
     highlighter(hooks),
     hover(hooks),
     pinnedEditor(hooks),
-    autocompletion({ override: [templateCompletionSource(hooks), suggestionSource(hooks)], icons: false, activateOnTyping: true, closeOnBlur: true }),
+    autocompletion({
+      override: [templateCompletionSource(hooks), suggestionSource(hooks), ...extraSources],
+      icons: extraSources.length > 0,
+      activateOnTyping: true,
+      closeOnBlur: true,
+    }),
   ]
 }

@@ -206,6 +206,9 @@ export function requestDataFromDraft(d: RequestDraft): ScriptRequestData {
     case 'binary':
       body = { mode: 'file' }
       break
+    // A GraphQL body is not exposed to pre-request scripts (pm.request.body.mode is undefined), like other modes Slinger
+    // keeps as they are; test scripts see the JSON that was sent.
+    case 'graphql':
     case 'unsupported':
       body = { mode: 'other' }
       break
@@ -222,6 +225,8 @@ const CREDENTIAL_PARAMS: Record<string, ReadonlySet<string>> = {
   bearer: new Set(['token']),
   apikey: new Set(['value']),
   oauth2: new Set(['clientSecret', 'password', 'code_verifier']),
+  digest: new Set(['password']),
+  awsv4: new Set(['secretKey', 'sessionToken']),
 }
 const PURE_TEMPLATE = /^\s*\{\{[^{}]+\}\}\s*$/
 

@@ -443,11 +443,30 @@ export class RunHost {
       if (type === 'bearer') auth = { kind: 'bearer', bearer: { token: val('token') } }
       else if (type === 'basic') auth = { kind: 'basic', basic: { username: val('username'), password: val('password') } }
       else if (type === 'apikey') auth = { kind: 'apiKey', apiKey: { key: val('key'), value: val('value'), addTo: val('in') === 'query' ? 'query' : 'header' } }
+      else if (type === 'digest') {
+        auth = {
+          kind: 'digest',
+          digest: {
+            username: val('username'),
+            password: val('password'),
+            realm: val('realm'),
+            nonce: val('nonce'),
+            algorithm: val('algorithm'),
+            qop: val('qop'),
+            nonceCount: val('nonceCount'),
+            clientNonce: val('clientNonce'),
+            opaque: val('opaque'),
+            disableRetryRequest: f.disableRetryRequest === true || val('disableRetryRequest') === 'true',
+          },
+        }
+      } else if (type === 'awsv4') {
+        auth = { kind: 'awsv4', awsv4: { accessKey: val('accessKey'), secretKey: val('secretKey'), region: val('region'), service: val('service'), sessionToken: val('sessionToken') } }
+      }
       else if (type === 'oauth2') {
         // Tokens stay in the keychain and are never handed to scripts.
         throw new ScriptApiError('pm.sendRequest: OAuth 2.0 auth is not supported in scripts (tokens are not available to scripts); send the request from a tab, or set an Authorization header from a variable')
       } else if (type !== 'noauth' && type !== 'none' && type !== 'inherit') {
-        throw new ScriptApiError(`pm.sendRequest: auth type "${type}" is not supported (use bearer, basic, apikey or set the header yourself)`)
+        throw new ScriptApiError(`pm.sendRequest: auth type "${type}" is not supported (use bearer, basic, apikey, digest, awsv4 or set the header yourself)`)
       }
     }
 

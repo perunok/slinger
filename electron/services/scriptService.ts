@@ -1,8 +1,8 @@
 /**
  * Main-process side of `runScripts`: loads the active environment, the request's collection variables and the
  * workspace's globals, decides read-only, hands the chain to the sandbox executor, persists writes to those three
- * scopes through their repositories and remembers which secret values a session's scripts read so HttpService can
- * keep them out of history.
+ * scopes through their repositories and remembers which secret values (and, since 0.30, cookie values read or set through
+ * pm.cookies.jar()) a session's scripts handled so HttpService can keep them out of history.
  *
  * Nothing a script prints or computes is logged here: console output travels only in the IPC result.
  */
@@ -26,7 +26,7 @@ const SESSION_TTL_MS = 60 * 60 * 1000
 const MAX_SESSIONS = 500
 
 interface Session {
-  /** secret value -> variable name, for `{{name}}` redaction. */
+  /** secret or cookie value -> what replaces it: `{{name}}` for a variable, `[cookie name]` for a cookie. */
   values: Map<string, string>
   touched: number
 }
@@ -102,20 +102,40 @@ export class ScriptService {
   }
 
   private remember(sessionId: string, key: string, value: string): void {
-    if (value) this.session(sessionId).values.set(value, key)
+    if (value) this.session(sessionId).values.set(value, `{{${key}}}`)
   }
 
-  /** Replaces secret values that scripts of `sessionId` read or wrote with `{{name}}`. */
+  /**
+   * Cookie values a pm.cookies.jar() call returned or set. Like the MCP output's jar redaction, values shorter than 4
+   * characters are left alone (`1`, `en`, `yes` would hide unrelated parts of the URL). A secret's `{{name}}` wins.
+   */
+  private rememberCookies(sessionId: string, call: CookieJarCall, value: unknown): void {
+    const found: Array<{ name: string; value: string }> = []
+    if (call.op === 'get' && typeof value === 'string') found.push({ name: call.name, value })
+    else if (call.op === 'set') found.push({ name: call.cookie.name, value: call.cookie.value })
+    else if (call.op === 'getAll' && Array.isArray(value)) {
+      for (const c of value as Array<{ name?: unknown; value?: unknown }>) {
+        if (typeof c?.name === 'string' && typeof c.value === 'string') found.push({ name: c.name, value: c.value })
+      }
+    }
+    for (const c of found) {
+      if (c.value.length < 4) continue
+      const values = this.session(sessionId).values
+      if (!values.has(c.value)) values.set(c.value, `[cookie ${c.name}]`)
+    }
+  }
+
+  /** Replaces secret values that scripts of `sessionId` read or wrote with `{{name}}`, cookie values with `[cookie name]`. */
   redact(sessionId: string | null | undefined, text: string): string {
     if (!sessionId) return text
     const s = this.sessions.get(sessionId)
     if (!s || s.values.size === 0) return text
     let out = text
     // Longest first, so a secret that contains another one is replaced whole.
-    for (const [value, key] of [...s.values].sort((a, b) => b[0].length - a[0].length)) {
-      if (out.includes(value)) out = out.split(value).join(`{{${key}}}`)
+    for (const [value, replacement] of [...s.values].sort((a, b) => b[0].length - a[0].length)) {
+      if (out.includes(value)) out = out.split(value).join(replacement)
       const encoded = encodeURIComponent(value)
-      if (encoded !== value && out.includes(encoded)) out = out.split(encoded).join(`{{${key}}}`)
+      if (encoded !== value && out.includes(encoded)) out = out.split(encoded).join(replacement)
     }
     return out
   }
@@ -207,7 +227,16 @@ export class ScriptService {
             redact: (text) => this.redact(input.sessionId, text),
             cookieJar: this.cookies && !denySecrets ? this.cookies.jar(workspace.id) : undefined,
           }),
-        ...(this.cookies ? { cookieJar: (call: CookieJarCall) => this.cookies!.scriptOp(workspace.id, call) } : {}),
+        ...(this.cookies
+          ? {
+              cookieJar: async (call: CookieJarCall) => {
+                const outcome = await this.cookies!.scriptOp(workspace.id, call)
+                // The values a script handled stay out of this session's history entries, like secrets do.
+                if (outcome.ok) this.rememberCookies(input.sessionId, call, outcome.value)
+                return outcome
+              },
+            }
+          : {}),
         readSecret: (variableId) => {
           // Only secrets of the environment / globals this run was given; anything else is refused.
           const target = secretIds.get(variableId)

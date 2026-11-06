@@ -277,6 +277,46 @@ describe('scripts', () => {
     expect(await env.api.listCookies(ws)).toEqual([])
   })
 
+  it('cookie values a script read or set through pm.cookies.jar() stay out of history (0.30), like secrets', async () => {
+    await send('/login')
+    await env.api.setCookieScriptDomains(ws, ['127.0.0.1'])
+    const r = await env.api.runScripts(
+      input(`
+        const base = pm.variables.get('base')
+        const jar = pm.cookies.jar()
+        const sid = await jar.get(base, 'session')
+        const all = await jar.getAll(base + '/ui/x')
+        await jar.set(base, 'csrf', 'tok-written-by-script')
+        pm.request.url.query.add({ key: 'sid', value: sid })
+        pm.request.url.query.add({ key: 'theme', value: all.find(c => c.name === 'theme').value })
+        pm.request.url.query.add({ key: 'csrf', value: 'tok-written-by-script' })
+      `),
+    )
+    expect(r.errors).toEqual([])
+    const url = r.request!.url
+    expect(url).toContain('sid=s3cr3t-session-id')
+    const sent = `${server.base}/api/me?${url.split('?')[1]}`
+    await send('/api/me', { url: sent, historyUrl: sent, scriptSessionId: 'cj-session' })
+    expect(server.last().url).toContain('s3cr3t-session-id') // the request itself carried it
+    const [entry] = await env.api.listHistory(ws)
+    // "dark" (theme, read through getAll) is 4 characters and redacted; shorter values would be left alone.
+    expect(entry.url).toBe(`${server.base}/api/me?sid=[cookie session]&theme=[cookie theme]&csrf=[cookie csrf]`)
+    // Another session (scripts that never touched the jar) is not redacted.
+    await send('/api/me', { historyUrl: `${server.base}/api/me?sid=s3cr3t-session-id`, scriptSessionId: 'other' })
+    expect((await env.api.listHistory(ws))[0].url).toBe(`${server.base}/api/me?sid=s3cr3t-session-id`)
+  })
+
+  it('a refused pm.cookies.jar() call remembers nothing; values under 4 characters are not redacted', async () => {
+    await send('/login')
+    const refused = await env.api.runScripts(input(`try { await pm.cookies.jar().get(pm.variables.get('base'), 'session') } catch (e) {}`))
+    expect(refused.errors).toEqual([])
+    await env.api.setCookieScriptDomains(ws, ['127.0.0.1'])
+    await env.api.runScripts(input(`await pm.cookies.jar().set(pm.variables.get('base'), 'n', 'ab1')`))
+    const shown = `${server.base}/api/me?x=s3cr3t-session-id&n=ab1`
+    await send('/api/me', { historyUrl: shown, scriptSessionId: 'cj-session' })
+    expect((await env.api.listHistory(ws))[0].url).toBe(shown)
+  })
+
   it('pm.cookies.jar() refuses domains that are not allowed (empty list = none)', async () => {
     await send('/login')
     const r = await env.api.runScripts(

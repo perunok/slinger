@@ -37,7 +37,7 @@ describe('collection / folder Authorization section', () => {
     await fireEvent.click(screen.getByTestId('overview-section-auth'))
     const kind = (await screen.findByLabelText('Authorization type')) as HTMLSelectElement
     // A collection is the top: it cannot inherit.
-    expect([...kind.options].map((o) => o.value)).toEqual(['none', 'basic', 'bearer', 'apiKey', 'oauth2'])
+    expect([...kind.options].map((o) => o.value)).toEqual(['none', 'basic', 'bearer', 'apiKey', 'digest', 'awsv4', 'oauth2'])
     expect(kind.value).toBe('none')
     expect(tab.dirty).toBe(false)
     await fireEvent.change(kind, { target: { value: 'bearer' } })

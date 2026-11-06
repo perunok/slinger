@@ -347,6 +347,19 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    the settings a send needs (token identity, refresh credentials, header prefix) into an `OAuth2Config`; `execute.ts` then
    calls `refreshOAuth2Token(config, {ifExpiring: true})` (refreshes a token that expires within 30 s) and puts the returned
    `tokenKey` into `auth.oauth2`.
+   **GraphQL bodies** (draft `body.kind === 'graphql'`, document `body: {mode: 'graphql', graphql: {query, variables,
+   operationName?}}` with `variables` as JSON text, as Postman stores it; `src/lib/graphql.ts`) become an ordinary raw body
+   here: `{"query", "variables"?, "operationName"?}` with `contentType: 'application/json'` (main sets it only when the request
+   has no Content-Type). The query and operation name resolve like any text, the variables like a raw JSON body
+   (`resolveJsonTemplates`); variables that are not a JSON object fail before sending (`allowUnresolved`, i.e. snippets,
+   writes them verbatim instead). So main, `HttpRequestInput`, snippets, cURL and History need no GraphQL mode. Main has
+   none; `pm.sendRequest`'s `mode: 'graphql'` (electron/scripts/host.ts) builds the same JSON. **Fetch schema**
+   (`features/requests/graphqlSchemas.svelte.ts`) sends the standard introspection query through `executeDraft` (as a POST,
+   `ExecuteContext.skipScripts`), so environment, auth, secrets, network settings, cookie jar and history apply as for Send;
+   the reduced schema (`schemaFromIntrospection`) lives in memory per workspace + URL template and is never persisted.
+   Completion (`src/lib/graphqlComplete.ts`, a tolerant scanner, no GraphQL engine) and highlighting
+   (`components/editor/cm/graphql.ts`, a StreamParser in the lazily loaded extra-languages chunk) are local. `cm6-graphql`
+   was not used: it needs `graphql` + `graphql-language-service` (far larger than the chunk).
 2. **Main, validation.** `api.ts` zod-validates the input; `HttpService.execute` checks `workspaceId` and `requestRunId`
    (`[A-Za-z0-9._:-]{1,128}`, not already in flight) and registers an `AbortController`.
 3. **Main, build** (`httpExecutor.buildRequest`): rejects any remaining `{{ }}` in URL, header names/values, auth, body and
@@ -355,7 +368,9 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    `auth.oauth2.tokenKey`, as `Authorization: <prefix> <token>` or the `access_token` query parameter; missing or expired
    token = `invalid_input`); builds the body for `raw`, `urlEncoded`,
    `formData` (files read from absolute paths), `binary`; fills a default `Content-Type` only when not set; rejects a body on
-   GET/HEAD.
+   GET/HEAD. Digest and AWS Signature (0.30) set nothing here: they are applied per hop in step 4 (`BuiltRequest.hopAuth`),
+   and their body is serialised once to bytes (a form through `new Response(form)`, which also gives its multipart
+   `Content-Type`), so what is hashed is exactly what is sent, also when a hop is sent again.
 4. **Main, send.** undici's own `fetch` (the `undici` dependency, bundled into app.cjs; not Node's global fetch) with
    `redirect: 'manual'` and, per hop, the dispatcher `NetworkRouter.route(url, {strictSSL})` returns (see
    [Network settings](#network-settings); without a router, as for `cloudFetch`: direct, verified). An abort signal covers the
@@ -375,6 +390,25 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    [Cookie jar](#cookie-jar)); `pm.sendRequest` does too unless the run has `denySecrets`. Before every hop the jar's `Cookie`
    value is merged with the request's own (`shared/cookies.ts` `mergeCookieHeader`, the request wins per name), after every
    hop that hop's `Set-Cookie` values are stored against that hop's URL; a failing jar only logs.
+   **Per-hop auth (0.30)**, applied to the hop's final headers (after the jar's Cookie) while the hop keeps auth (a hop to
+   another origin turns it off unless `followAuthorizationHeader`, like the Authorization header):
+   *Digest* (`services/digestAuth.ts`, `DigestSession`, RFC 7616 / 2617): a `401` whose `WWW-Authenticate` has a Digest
+   challenge with a supported algorithm (MD5, SHA-256, SHA-512-256, each also `-sess`) is answered by sending the same hop
+   again (the 401's body is discarded, its Set-Cookie stored first): qop `auth` (preferred) or `auth-int` (hash of the hop's
+   body bytes) or none (RFC 2069), `nc`/`cnonce`, `opaque`, `userhash`, `username*` for non-ASCII names; once per hop, once
+   more when the new challenge says `stale=true`. `uri` is the hop's path and query; later hops (same origin) reuse the
+   nonce with the next `nc`, and a 401 there is answered against that hop's URI. With realm and nonce in the input (Postman
+   stores the last challenge's), the first request carries the header already; `disableRetryRequest` turns answering off.
+   *AWS Signature Version 4* (`services/awsSigV4.ts`, node:crypto, no SDK): every hop is signed right before it is sent:
+   any Authorization / X-Amz-Date / X-Amz-Security-Token / X-Amz-Content-Sha256 the request set is replaced; `X-Amz-Date`,
+   `X-Amz-Security-Token` (session token) and, for S3 only, `X-Amz-Content-Sha256` (SHA-256 of the body) are added; every
+   header is signed except the `aws4` library's unsigned list (authorization, connection, user-agent, expect, range,
+   x-amzn-trace-id, presigned-expires), plus `host`. Canonical URI: S3 encodes the decoded key once and keeps the path;
+   other services remove dot segments and URI-encode the wire path again (double encoding). Empty region / service are
+   `us-east-1` / `execute-api` (Postman's defaults); Postman's `addAuthDataToQuery` (presigned query) is not implemented and
+   `prepare.ts` warns. Tests: the official SigV4 test suite vectors (`electron/__tests__/awsSigV4.test.ts`) and a server that
+   implements RFC 7616 (`digestAuth.test.ts`). The response gets `authNote` (what was done, never a credential), shown in its
+   Headers tab. MCP requests refuse both (`prepareMcp`): the MCP transport has no per-exchange hook.
    **Errors** (`network.describeSendError`): TLS failures name the problem (self-signed, unknown authority, expired, not valid
    for the host name, client certificate refused or unusable) and point to the request's SSL setting and Settings > Network
    (`details.tls` = the OpenSSL / Node code); with a proxy, a refused tunnel / 407 (`details.proxyStatus`) or an unreachable
@@ -393,7 +427,8 @@ which shows "Inherited from <name>" and the effective type while inheriting. MCP
    never names a path to write; test scripts do not run for a download.
 6. **History.** Every attempt (success, HTTP error, network failure, cancel, validation failure) is recorded by `HttpService`;
    a history write failure never hides the HTTP outcome. Secret values that scripts of the send's `scriptSessionId` read or wrote
-   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`). Error messages never quote resolved
+   are replaced by `{{name}}` in the recorded URL and error message (`ScriptService.redact`); cookie values (4+ characters) that
+   a `pm.cookies.jar()` `get` / `getAll` returned or a `set` wrote in that session become `[cookie name]` (0.30). Error messages never quote resolved
    values: `buildRequest` names an invalid header or credential instead of quoting the platform message, an invalid URL is shown
    as `historyUrl`, and `HttpService` runs every failure message (also the one thrown back to the renderer) through
    `scrubRequestValues`, which replaces each value of the outgoing request that `historyUrl` does not show (resolved URL and its
@@ -996,8 +1031,11 @@ URL, headers, a `BodyDraft`, basic/bearer auth, timeout, and `warnings` for what
 quotes become `{{VAR}}`) or, when the text has `^` line ends or `^"`, like Windows cmd (`^X` -> X first). A new line starting
 with `curl`, `;`, `&&` and `|` separate commands; words not starting with `curl` are other commands and skipped. Options are
 read as curl does (combined short flags, attached values, `--long=value`; an explicit table of options that take a value, so
-unknown flags never swallow the URL). `curlToDraft` builds a `RequestDraft` (query params from the URL), serialized like any
-request. The Import dialog uses it for text that is not JSON and contains a curl command (`containsCurl`), and the URL bar
+unknown flags never swallow the URL). `ParsedCurl.settings` holds the `protocolProfileBehavior` keys an option sets (`-k`,
+`--max-redirs`, `--post30x`, `--location-trusted`; `-L` and its absence change nothing, see the module comment), and app-wide
+options (proxy, certificates, `--cookie-jar`) become `warnings` pointing to Settings > Network. `curlToDraft` builds a
+`RequestDraft` (query params from the URL, the settings as `protocolProfileBehavior`), serialized like any request. Code
+snippets go the other way (`lib/snippets.ts` `SnippetSettings`, read from the settings fields of `HttpRequestInput`). The Import dialog uses it for text that is not JSON and contains a curl command (`containsCurl`), and the URL bar
 (`detectImportText` -> `'curl'` for text starting with `curl`) opens the dialog with it, like a pasted export.
 `importexport/curlImport.ts` places the requests: `defaultCurlTarget` (the open tab's collection and folder), `folderChoices`
 (folder paths in tree order), `addCurlRequests` (optionally `createCollection`, then `createRequest` per command, in order).
@@ -1639,8 +1677,9 @@ Example: `renameFoo(fooId, name)`.
 
 ## Roadmap / not built
 
-Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (Digest, AWS Signature, NTLM,
-Hawk, ...), `require` of Node modules or `postman-collection` in scripts,
+Not present in the code: the OAuth 2.0 implicit grant (deprecated), other request auth types (NTLM, Hawk, OAuth 1.0,
+JWT bearer, Akamai EdgeGrid, ...), AWS Signature in the query string (Postman's `addAuthDataToQuery`), Digest and AWS
+Signature for MCP requests, `require` of Node modules or `postman-collection` in scripts,
 loading remote images in docs, syncing or exporting workflows, realtime collaboration, MCP resources/prompts (the MCP server has
 tools only) and editing OAuth 2.0 settings over MCP, plugin system, protocols other than HTTP and MCP (no WebSocket, GraphQL or
 gRPC), code signing and automatic installation of updates (Slinger only notifies about a new release, see

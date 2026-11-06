@@ -24,7 +24,7 @@
   import { IMPORT_FILE_ACCEPT } from './fileName'
   import { parsePostmanFile, type PostmanFile } from './parse'
   import { copyName, findReimportMatches } from './reimport'
-  import { containsCurl, curlRequestName, parseCurl, type ParsedCurl } from '../../lib/curl'
+  import { containsCurl, curlRequestName, curlSettingsLabels, parseCurl, type ParsedCurl } from '../../lib/curl'
   import { methodColor } from '../requests/method'
   import { addCurlRequests, defaultCurlTarget, folderChoices, NEW_COLLECTION_NAME, type CurlTarget } from './curlImport'
   import type { OpenApiFolderMode, OpenApiPreview } from '../../../shared/types'
@@ -748,8 +748,9 @@
             {[
               `${p.headers.length} header${p.headers.length === 1 ? '' : 's'}`,
               p.body.kind === 'none' ? 'no body' : p.body.kind === 'raw' ? `${p.body.rawLanguage.toUpperCase()} body` : p.body.kind === 'urlEncoded' ? 'form body (url-encoded)' : p.body.kind === 'formData' ? 'form-data body' : 'file body',
-              p.auth ? `${p.auth.kind === 'basic' ? 'Basic' : 'Bearer'} auth` : null,
+              p.auth ? `${({ basic: 'Basic', bearer: 'Bearer', digest: 'Digest', awsv4: 'AWS Signature' } as const)[p.auth.kind]} auth` : null,
               p.timeoutMs ? `timeout ${p.timeoutMs / 1000} s` : null,
+              ...curlSettingsLabels(p),
             ]
               .filter(Boolean)
               .join(' · ')}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { curlRequestName, curlToDraft, looksLikeCurl, parseCurl, type ParsedCurl } from './curl'
+import { curlRequestName, curlSettingsLabels, curlToDraft, looksLikeCurl, parseCurl, type ParsedCurl } from './curl'
 import { dataRows } from './kv'
 
 function one(text: string): ParsedCurl {
@@ -147,11 +147,89 @@ curl -X DELETE https://a.example/two && curl https://a.example/three | jq .`)
   it('lists options it did not import', () => {
     const p = one(`curl -x http://proxy:8080 --cert c.pem --frobnicate https://h.example/ -H 'nocolon'`)
     expect(p.warnings).toEqual([
-      'The proxy http://proxy:8080 was not imported (Slinger uses the system proxy).',
-      '--cert was ignored.',
+      'This command uses the proxy http://proxy:8080, which was not imported: Slinger sets it for all requests in Settings > Network.',
+      'This command uses a client or CA certificate, which was not imported: Slinger sets it for all requests in Settings > Network.',
       '--frobnicate was ignored.',
       'The header "nocolon" has no colon and was skipped.',
     ])
+  })
+
+  describe('request settings and app-wide options (0.30)', () => {
+    it('-k / --insecure turns SSL verification off for the request', () => {
+      expect(one('curl -k https://h.example/').settings).toEqual({ strictSSL: false })
+      expect(one('curl --insecure https://h.example/').settings).toEqual({ strictSSL: false })
+      expect(one('curl -skL https://h.example/')).toMatchObject({ settings: { strictSSL: false }, warnings: [] })
+      expect(one('curl https://h.example/').settings).toEqual({})
+    })
+
+    it('-L and its absence both keep the default (follow redirects, like the browser the command was copied from)', () => {
+      expect(one('curl -L https://h.example/')).toMatchObject({ settings: {}, warnings: [] })
+      expect(one('curl --location https://h.example/')).toMatchObject({ settings: {}, warnings: [] })
+      expect(one('curl https://h.example/').settings).toEqual({})
+    })
+
+    it('--max-redirs sets the maximum (10 is the default; -1 = no limit = the largest maximum)', () => {
+      expect(one('curl -L --max-redirs 3 https://h.example/').settings).toEqual({ maxRedirects: 3 })
+      expect(one('curl --max-redirs=0 https://h.example/').settings).toEqual({ maxRedirects: 0 })
+      expect(one('curl --max-redirs 10 https://h.example/').settings).toEqual({})
+      expect(one('curl --max-redirs -1 https://h.example/').settings).toEqual({ maxRedirects: 1000 })
+      expect(one('curl --max-redirs 5000 https://h.example/').settings).toEqual({ maxRedirects: 1000 })
+      const bad = one('curl --max-redirs lots https://h.example/')
+      expect(bad.settings).toEqual({})
+      expect(bad.warnings).toEqual(['--max-redirs lots is not a number and was ignored.'])
+    })
+
+    it('--post301/302/303 keep the method on redirects; --location-trusted keeps Authorization', () => {
+      for (const f of ['--post301', '--post302', '--post303']) {
+        expect(one(`curl -L ${f} -d a=1 https://h.example/`).settings).toEqual({ followOriginalHttpMethod: true })
+      }
+      expect(one('curl --location-trusted -u a:b https://h.example/')).toMatchObject({ settings: { followAuthorizationHeader: true }, warnings: [] })
+    })
+
+    it('a proxy (credentials hidden), proxy credentials and certificates point to Settings > Network', () => {
+      const p = one('curl --proxy http://bob:pw@proxy.example:3128 -U bob:pw2 https://h.example/')
+      expect(p.warnings).toEqual([
+        'This command uses the proxy http://proxy.example:3128, which was not imported: Slinger sets it for all requests in Settings > Network.',
+        'This command uses proxy credentials, which were not imported: Slinger sets it for all requests in Settings > Network.',
+      ])
+      expect(JSON.stringify(p)).not.toContain('pw')
+      const c = one('curl -E client.pem:secretpass --key k.pem --cacert ca.pem --capath /etc/ssl --pass pp https://h.example/')
+      expect(c.warnings).toEqual(['This command uses a client or CA certificate, which was not imported: Slinger sets it for all requests in Settings > Network.'])
+      expect(JSON.stringify(c)).not.toContain('secretpass')
+    })
+
+    it('-b stays a Cookie header; -c / --cookie-jar points to the cookie jar', () => {
+      const p = one(`curl -b 'sid=abc' -c jar.txt https://h.example/`)
+      expect(p.headers).toEqual([{ key: 'Cookie', value: 'sid=abc' }])
+      expect(p.warnings).toEqual([
+        "The cookie file jar.txt was not used: Slinger keeps the cookies responses set in the workspace's cookie jar (Ctrl+K, Cookies).",
+      ])
+    })
+
+    it('--compressed is silent; -m / --max-time is the timeout', () => {
+      expect(one('curl --compressed -m 7 https://h.example/')).toMatchObject({ timeoutMs: 7000, warnings: [] })
+      expect(one('curl --max-time 0.5 https://h.example/').timeoutMs).toBe(500)
+    })
+
+    it("Chrome's Copy as cURL (cmd) and (bash) with -k and --compressed", () => {
+      const cmd = one(`curl "https://self-signed.example/api" ^
+  -H "accept: */*" ^
+  --compressed ^
+  --insecure`)
+      expect(cmd).toMatchObject({ url: 'https://self-signed.example/api', settings: { strictSSL: false }, warnings: [] })
+      const bash = one(`curl 'https://self-signed.example/api' \\
+  -H 'accept: */*' \\
+  --compressed \\
+  --insecure`)
+      expect(bash).toMatchObject({ url: 'https://self-signed.example/api', settings: { strictSSL: false }, warnings: [] })
+    })
+
+    it('the settings go into the draft (request Settings tab) and the preview labels', () => {
+      const p = one('curl -k --max-redirs 2 --post302 --location-trusted https://h.example/')
+      expect(curlToDraft(p).protocolProfileBehavior).toEqual({ strictSSL: false, maxRedirects: 2, followOriginalHttpMethod: true, followAuthorizationHeader: true })
+      expect(curlSettingsLabels(p)).toEqual(['SSL verification off', 'at most 2 redirects', 'keeps the method on redirects', 'keeps Authorization on redirects'])
+      expect(curlSettingsLabels(one('curl https://h.example/'))).toEqual([])
+    })
   })
 
   it('reports what cannot be read', () => {
