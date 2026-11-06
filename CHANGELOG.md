@@ -3,9 +3,24 @@
 What changed in each version of Slinger, newest first. Slinger shows these notes in the app (Help > Release Notes, and
 once after an update), and each GitHub release uses its version's section.
 
-## 0.30.0 — unreleased
+## 0.31.0 — unreleased
 
 - (filled in at release)
+
+## 0.30.0 — 2026-11-06
+
+### New
+- **GraphQL**: a GraphQL body mode with a query editor (highlighted), variables and operation name. **Fetch schema** loads the server's schema for completion as you type and a small schema browser, and a **GraphQL error** chip marks 200 answers that carry errors. Postman's GraphQL bodies are imported and exported.
+- **Digest** and **AWS Signature v4** authorization (before, Postman collections using them were sent without authorization). Digest answers the server's challenge itself (MD5, SHA-256, SHA-512-256, -sess, qop auth and auth-int); AWS signs every request, also after redirects. Both work in folders and collections, scripts, code snippets and cURL import.
+
+### Improved
+- PowerShell code snippets work in Windows PowerShell 5.1 (built into Windows) as well as PowerShell 7, including file uploads, error answers, SSL verification off and Digest.
+- Code snippets follow the request's settings: SSL verification off, redirects (cURL and PHP now follow redirects like Slinger does) and the cookie jar.
+- cURL import turns `-k`, `--max-redirs`, `--post301/302/303` and `--location-trusted` into request settings, and says what it left out (proxy, certificates, cookie files).
+- The Request Settings section shows a dot when a request's settings differ from the defaults.
+
+### Fixed
+- History no longer shows cookie values that scripts read or set through `pm.cookies.jar()`.
 
 ## 0.29.0 — 2026-10-30
 
